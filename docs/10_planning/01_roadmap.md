@@ -114,7 +114,7 @@ Fluxora/
 │   ├── server/              # Python FastAPI backend + FFmpeg HLS engine
 │   │   ├── main.py
 │   │   ├── config.py
-│   │   ├── requirements.txt
+│   │   ├── pyproject.toml
 │   │   ├── Dockerfile
 │   │   ├── fluxora_server.spec
 │   │   ├── routers/         # auth, files, library, stream, ws

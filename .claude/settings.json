@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(flutter pub *)",
-      "Bash(flutter analyze *)"
+      "Bash(flutter analyze *)",
+      "mcp__dart__pub_dev_search",
+      "Bash(pip3 index *)",
+      "WebFetch(domain:pypi.org)"
     ]
   }
 }

@@ -1,4 +1,4 @@
-﻿name: Server CI
+name: Server CI
 on:
   push:
     paths:
@@ -11,5 +11,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install -r apps/server/requirements-dev.txt
+      - run: pip install "./apps/server[dev]"
       - run: pytest apps/server/tests/ -v

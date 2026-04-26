@@ -29,8 +29,7 @@ Fluxora/
 apps/server/
 ├── main.py
 ├── config.py
-├── requirements.txt
-├── requirements-dev.txt        # black, ruff, pytest
+├── pyproject.toml
 ├── fluxora_server.spec         # PyInstaller
 ├── Dockerfile
 ├── README.md
@@ -225,6 +224,6 @@ scripts/
 | Features are **feature-first** inside each app | Adding a screen never touches other features |
 | All shared Dart code in `packages/fluxora_core/` | Single source of truth for entities, API client, tokens |
 | `apps/server/` is pure Python | Can move to its own repo later with zero refactoring |
-| Each app has independent `pubspec.yaml` / `requirements.txt` | Dependency upgrades are isolated |
+| Each app has independent `pubspec.yaml` / `pyproject.toml` | Dependency upgrades are isolated |
 | CI workflows are path-filtered | A `server/` change never triggers Flutter CI |
 | `shared/` inside each app = that app's local reusables | Not promoted to `fluxora_core/` unless needed by both apps |

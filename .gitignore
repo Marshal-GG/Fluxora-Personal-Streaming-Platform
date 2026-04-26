@@ -21,6 +21,16 @@ build/
 .DS_Store
 Thumbs.db
 
+# Secrets
+*.env
+.env
+config.json
+google-services.json
+GoogleService-Info.plist
+
+# Obfuscation debug symbols (keep privately for crash symbolication)
+build/debug-info/
+
 # Fluxora runtime
 *.db
 *.db-shm

@@ -40,7 +40,7 @@ The FastAPI server is packaged as a **standalone executable** via PyInstaller:
 **Bundle includes:**
 - Python runtime
 - FastAPI + Uvicorn
-- All pip dependencies (`requirements.txt`)
+- All pip dependencies (`pyproject.toml`)
 - FFmpeg binary (bundled, not system FFmpeg)
 - SQLite (bundled via Python stdlib)
 
