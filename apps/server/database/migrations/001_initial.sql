@@ -1,0 +1,1 @@
+﻿-- Initial schema: media_files, libraries, clients, user_settings

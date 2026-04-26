@@ -1,0 +1,18 @@
+﻿name: Mobile CI
+on:
+  push:
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+      - run: flutter pub get
+        working-directory: apps/mobile
+      - run: flutter analyze
+        working-directory: apps/mobile
+      - run: flutter test
+        working-directory: apps/mobile

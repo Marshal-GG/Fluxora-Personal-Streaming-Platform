@@ -1,0 +1,29 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.spec.bak
+
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.vscode/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Fluxora runtime
+*.db
+*.db-shm
+*.db-wal
+/tmp/fluxora/
+~/.fluxora/

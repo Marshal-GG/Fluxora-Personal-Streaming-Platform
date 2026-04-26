@@ -1,0 +1,1 @@
+﻿# PyInstaller build spec â€

@@ -1,0 +1,1 @@
+﻿// Online / Idle / Offline badge

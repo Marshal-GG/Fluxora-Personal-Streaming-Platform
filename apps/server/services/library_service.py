@@ -1,0 +1,1 @@
+﻿# Directory scanning + TMDB enrichment

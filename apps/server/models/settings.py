@@ -1,0 +1,1 @@
+﻿# UserSettings Pydantic model

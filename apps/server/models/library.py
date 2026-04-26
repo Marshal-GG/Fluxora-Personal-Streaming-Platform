@@ -1,0 +1,1 @@
+﻿# Library Pydantic model
