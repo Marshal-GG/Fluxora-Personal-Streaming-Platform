@@ -661,3 +661,39 @@ None â€” CLAUDE.md TOC fix is self-referential maintenance, not a doc-impac
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
 
+## [2026-04-27] — Fix Pytest Exit Code 5
+**Agent:** Antigravity (Gemini)
+**Phase:** Phase 1 — Setup
+**Status:** Complete
+
+### What Was Done
+- Added a placeholder test to `apps/server/tests/test_auth.py` to prevent pytest from exiting with code 5 (no tests collected) in CI.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/tests/test_auth.py` |
+| Modified | `AGENT_LOG.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| None | No doc-impacting changes made. |
+
+### Decisions Made
+- Added a placeholder test to satisfy pytest collection rules until real tests are implemented.
+
+### Blockers / Open Issues
+- None.
+
+### Next Agent Should
+1. Implement `packages/fluxora_core` entities using `freezed` + `json_serializable`.
+2. Implement `packages/fluxora_core` network layer.
+3. Implement `packages/fluxora_core` storage wrapper.
+4. Move to server components (`config.py`, `database/db.py`, etc.).
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
