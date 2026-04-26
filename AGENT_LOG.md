@@ -625,3 +625,39 @@ None â€” CLAUDE.md TOC fix is self-referential maintenance, not a doc-impac
 ---
 ---
 
+## [2026-04-27] — Fix pytest-asyncio Compatibility Issue
+**Agent:** Antigravity (Gemini)
+**Phase:** Phase 1 — Setup
+**Status:** Complete
+
+### What Was Done
+- Bumped `pytest-asyncio` from `0.23.0` to `0.23.7` in `apps/server/pyproject.toml` to fix an `AttributeError` crash during pytest collection when using pytest `8.2.0`+.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/pyproject.toml` |
+| Modified | `AGENT_LOG.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| None | No doc-impacting changes made. |
+
+### Decisions Made
+- Updated `pytest-asyncio` dependency to resolve CI collection failures with `pytest` 8.2.0.
+
+### Blockers / Open Issues
+- None.
+
+### Next Agent Should
+1. Implement `packages/fluxora_core` entities using `freezed` + `json_serializable`.
+2. Implement `packages/fluxora_core` network layer.
+3. Implement `packages/fluxora_core` storage wrapper.
+4. Move to server components (`config.py`, `database/db.py`, etc.).
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
