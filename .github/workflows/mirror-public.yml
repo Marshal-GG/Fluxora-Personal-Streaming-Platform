@@ -1,0 +1,57 @@
+name: Mirror to Public Repo
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Remove private files and references
+        run: |
+          # 1. Delete the files themselves
+          rm -f AGENT_LOG.md
+          rm -f CLAUDE.md
+
+          # 2. Remove the entire "For AI Agents" section from the root README.md
+          sed -i '/## For AI Agents/,$d' README.md 2>/dev/null || true
+
+          # 3. Globally delete any line containing "AGENT_LOG" or "CLAUDE.md" in ALL markdown files
+          find . -name "*.md" -type f -exec sed -i '/AGENT_LOG/d' {} +
+          find . -name "*.md" -type f -exec sed -i '/CLAUDE\.md/d' {} +
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Build clean commit message
+        id: msg
+        run: |
+          # Get the original commit message, strip any agent/log references
+          RAW=$(git log -1 --pretty=%B)
+          CLEAN=$(echo "$RAW" | grep -iv "agent_log\|claude\.md\|agent log\|agent session" || echo "chore: update")
+          echo "message<<EOF" >> $GITHUB_OUTPUT
+          echo "$CLEAN" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Stage filtered files
+        run: |
+          git rm --cached AGENT_LOG.md CLAUDE.md --ignore-unmatch
+          git add -A
+
+      - name: Commit clean state
+        run: |
+          git diff --cached --quiet || git commit -m "${{ steps.msg.outputs.message }}"
+
+      - name: Push to public repo
+        run: |
+          git remote add public https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/Marshal-GG/Fluxora-Personal-Streaming-Platform.git
+          git push public main --force

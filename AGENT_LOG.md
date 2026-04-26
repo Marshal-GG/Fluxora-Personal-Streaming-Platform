@@ -317,3 +317,46 @@
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## [2026-04-27] — Setup Public GitHub Repo Mirror
+**Agent:** Antigravity (Gemini)
+**Phase:** Planning / Maintenance
+**Status:** Complete
+
+### What Was Done
+- Configured a GitHub Actions workflow to automatically mirror code from the private repository to a new public repository.
+- Designed the mirror script to programmatically strip all AI agent files (`CLAUDE.md`, `AGENT_LOG.md`) and scrub all agent references from `README.md` and all documentation files using `sed`.
+- Established the `PUBLIC_REPO_TOKEN` deployment flow so the user never has to manually manage the public repo.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `.github/workflows/mirror-public.yml` |
+| Modified | `AGENT_LOG.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| None | No doc-impacting changes made. |
+
+### Decisions Made
+- Docs will be pushed to the public repo to demonstrate architecture and design skills to recruiters, but will be completely scrubbed of any traces of AI agent involvement.
+
+### Blockers / Open Issues
+- None
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Begin Phase 1 backend implementation:
+   - `apps/server/config.py` — Pydantic `BaseSettings`
+   - `apps/server/database/db.py` — aiosqlite + WAL mode + migration runner
+   - `apps/server/database/migrations/001_initial.sql` — DDL from `docs/03_data/02_database_schema.md`
+   - `apps/server/main.py` — FastAPI app factory + lifespan + router registration
+   - `apps/server/services/discovery_service.py` — Zeroconf mDNS broadcast
+3. Implement `GET /api/v1/info` and `GET /api/v1/files` for first connectivity test
+4. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
