@@ -13,6 +13,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Remove private files and references
         run: |
@@ -53,5 +54,5 @@ jobs:
 
       - name: Push to public repo
         run: |
-          git remote add public https://${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/Marshal-GG/Fluxora-Personal-Streaming-Platform.git
+          git remote add public https://Marshal-GG:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/Marshal-GG/Fluxora-Personal-Streaming-Platform.git
           git push public main --force
