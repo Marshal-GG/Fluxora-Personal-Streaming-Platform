@@ -360,3 +360,50 @@
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## [2026-04-27] — Flutter Workspace Setup & Package Audit
+**Agent:** Claude Sonnet 4.6
+**Phase:** Phase 1 — Setup
+**Status:** Complete
+
+### What Was Done
+- Ran `flutter pub get` on all three Flutter packages (`fluxora_core`, `apps/desktop`, `apps/mobile`)
+- Fixed missing `publish_to: none` in both app `pubspec.yaml` files (required when using `path:` dependencies)
+- Added explicit `flutter: sdk: flutter` direct dependency to `fluxora_core` (was an implicit transitive dep via `flutter_secure_storage`)
+- Added `flutter: '>=3.10.0'` to `fluxora_core` environment constraints
+- Added `flutter_lints ^4.0.0` and `flutter_test` dev dependencies to `fluxora_core` (was missing; desktop/mobile already had them)
+- Created `apps/mobile/analysis_options.yaml` (missing; desktop already had one)
+- Created `packages/fluxora_core/analysis_options.yaml` (missing)
+- All three packages now pass `flutter analyze` with zero issues
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/desktop/pubspec.yaml` |
+| Modified | `apps/mobile/pubspec.yaml` |
+| Modified | `packages/fluxora_core/pubspec.yaml` |
+| Created | `apps/mobile/analysis_options.yaml` |
+| Created | `packages/fluxora_core/analysis_options.yaml` |
+
+### Docs Updated
+None — no doc-impacting changes made.
+
+### Decisions Made
+- `fluxora_core` is a Flutter package (not pure Dart) — explicit, not accidental. Reason: it owns design tokens (`Color`, `TextStyle`) and `flutter_secure_storage` (Flutter plugin).
+- `publish_to: none` added to all three packages — none are intended for pub.dev.
+
+### Blockers / Open Issues
+- All Dart source files in `fluxora_core`, `apps/desktop`, and `apps/mobile` are stubs (comments only) — Phase 1 implementation has not started.
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Implement `packages/fluxora_core` entities — `MediaFile`, `Library`, `Client`, `StreamSession`, `ServerInfo` using `freezed` + `json_serializable`
+3. Implement `packages/fluxora_core` network layer — `ApiException`, `endpoints.dart` constants, `ApiClient` (Dio singleton with auth interceptor)
+4. Implement `packages/fluxora_core` storage — `SecureStorage` wrapper, then barrel export in `fluxora_core.dart`
+5. Move to server: `apps/server/config.py` → `database/db.py` → `main.py` → `GET /api/v1/info`
+6. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

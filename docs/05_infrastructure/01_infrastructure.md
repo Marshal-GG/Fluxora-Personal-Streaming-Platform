@@ -113,10 +113,12 @@ unnecessary builds (e.g., a Python change does not trigger a Flutter build).
 
 | File | Trigger | What it does |
 |------|---------|-------------|
-| `.github/workflows/server.yml` | Push to `apps/server/**` | Python tests → PyInstaller build |
-| `.github/workflows/mobile.yml` | Push to `apps/mobile/**` or `packages/**` | Flutter tests → APK build |
-| `.github/workflows/desktop.yml` | Push to `apps/desktop/**` or `packages/**` | Flutter tests → desktop build |
-| `.github/workflows/release.yml` | Push of tag `v*` | Full builds → GitHub Release |
+| `.github/workflows/server_ci.yml` | Push to `apps/server/**` | Python tests → server CI checks |
+| `.github/workflows/mobile_ci.yml` | Push to `apps/mobile/**` or `packages/**` | Flutter tests → APK checks |
+| `.github/workflows/desktop_ci.yml` | Push to `apps/desktop/**` or `packages/**` | Flutter tests → desktop checks |
+| `.github/workflows/mirror-public.yml` | Push to `main` | Safely mirrors private repository to a public mirror, stripping internal files |
+
+*Note: All GitHub Actions are configured to use modern Node 24 native versions (e.g. `actions/checkout@v5` and `flutter-actions/setup-flutter@v4`).*
 
 ### Pipeline Flow (Release)
 

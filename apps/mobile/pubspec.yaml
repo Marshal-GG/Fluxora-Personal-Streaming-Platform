@@ -1,6 +1,7 @@
 ﻿name: fluxora_mobile
 description: Fluxora mobile client for iOS and Android
 version: 0.1.0+1
+publish_to: none
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
