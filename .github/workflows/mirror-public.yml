@@ -53,5 +53,5 @@ jobs:
 
       - name: Push to public repo
         run: |
-          git remote add public https://x-access-token:${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/Marshal-GG/Fluxora-Personal-Streaming-Platform.git
+          git remote add public https://${{ secrets.PUBLIC_REPO_TOKEN }}@github.com/Marshal-GG/Fluxora-Personal-Streaming-Platform.git
           git push public main --force
