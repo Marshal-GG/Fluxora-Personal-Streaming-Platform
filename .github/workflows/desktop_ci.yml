@@ -1,4 +1,4 @@
-﻿name: Desktop CI
+name: Desktop CI
 on:
   push:
     paths:
@@ -8,8 +8,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@v5
+      - uses: flutter-actions/setup-flutter@v4
       - run: flutter pub get
         working-directory: apps/desktop
       - run: flutter analyze
