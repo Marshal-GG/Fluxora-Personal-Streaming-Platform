@@ -34,6 +34,7 @@ server/
 │       └── 002_sessions.sql
 │
 ├── routers/
+│   ├── info.py             # GET /api/v1/info ✅
 │   ├── auth.py             # /auth endpoints
 │   ├── files.py            # /files endpoints
 │   ├── library.py          # /library endpoints

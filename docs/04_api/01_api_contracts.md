@@ -35,9 +35,10 @@ Token is issued after successful client pairing.
 
 ## Endpoints
 
-### `GET /info`
+### `GET /api/v1/info`
 **Description:** Returns server identity — used during discovery.  
-**Auth:** None required.
+**Auth:** None required.  
+**Status:** ✅ Implemented
 
 **Response:**
 ```json
