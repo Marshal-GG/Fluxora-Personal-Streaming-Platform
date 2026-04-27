@@ -51,18 +51,22 @@ Token is issued after successful client pairing.
 
 ---
 
-### `POST /auth/request-pair`
-**Description:** Client requests to be paired with the server.
+### `POST /api/v1/auth/request-pair`
+**Description:** Client initiates pairing. Creates a pending client record on the server.  
+**Auth:** None required.  
+**Status:** ✅ Implemented
 
 **Request:**
 ```json
 {
+  "client_id": "uuid-generated-by-client",
   "device_name": "Pixel 8 Pro",
-  "platform": "android"
+  "platform": "android",
+  "app_version": "0.1.0"
 }
 ```
 
-**Response (pending):**
+**Response:**
 ```json
 {
   "client_id": "uuid",
@@ -72,16 +76,60 @@ Token is issued after successful client pairing.
 
 ---
 
-### `GET /auth/status/{client_id}`
-**Description:** Poll for pairing approval.
+### `GET /api/v1/auth/status/{client_id}`
+**Description:** Poll for pairing approval. Returns the raw bearer token once on first approved poll — client must store it immediately.  
+**Auth:** None required.  
+**Status:** ✅ Implemented
+
+**Response (pending):**
+```json
+{ "status": "pending_approval", "auth_token": null }
+```
+
+**Response (approved — token only returned on first poll):**
+```json
+{ "status": "approved", "auth_token": "raw-token-store-in-secure-storage" }
+```
+
+**Response (rejected):**
+```json
+{ "status": "rejected", "auth_token": null }
+```
+
+---
+
+### `POST /api/v1/auth/approve/{client_id}`
+**Description:** Control Panel approves a pending pair request.  
+**Auth:** None (Control Panel is localhost-only — network enforcement Phase 2).  
+**Status:** ✅ Implemented
 
 **Response:**
 ```json
-{
-  "status": "approved",
-  "auth_token": "eyJ..."
-}
+{ "client_id": "uuid", "status": "approved" }
 ```
+
+**Errors:** `404` client not found · `409` client already approved/rejected
+
+---
+
+### `POST /api/v1/auth/reject/{client_id}`
+**Description:** Control Panel rejects a pending pair request.  
+**Auth:** None (Control Panel is localhost-only).  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{ "client_id": "uuid", "status": "rejected" }
+```
+
+---
+
+### `DELETE /api/v1/auth/revoke/{client_id}`
+**Description:** Revoke an approved client's access. Takes effect immediately.  
+**Auth:** Bearer token required.  
+**Status:** ✅ Implemented
+
+**Response:** `204 No Content`
 
 ---
 

@@ -1281,6 +1281,14 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 - All documentation written and in sync
 - Flutter workspace configured: all packages pass `flutter analyze` with zero issues
 - `packages/fluxora_core` **implemented**: all 5 entities (`MediaFile`, `Library`, `StreamSession`, `Client`, `ServerInfo`) with `freezed` + `json_serializable` codegen; `ApiClient` (Dio), `ApiException`, `Endpoints`, `SecureStorage`; design tokens (`AppColors`, `AppSizes`, `AppTypography`)
-- `apps/server` — **Phase 1 core implemented**: `config.py` (BaseSettings, platform data dir, DB permissions), `database/db.py` (aiosqlite, WAL mode, migration runner), migrations `001_initial.sql` + `002_sessions.sql` (all 5 tables), `main.py` (FastAPI lifespan, HLS orphan cleanup, structured logging), `GET /api/v1/info` router; all router stubs in place; 2 passing integration tests; ruff + black clean
+- `apps/server` — **Phase 1 core + auth implemented**:
+  - `config.py` — BaseSettings, platform data dir, DB file permissions
+  - `database/db.py` — aiosqlite, WAL mode, migration runner; migrations 001–003 applied
+  - `main.py` — FastAPI lifespan, HLS orphan cleanup, structured logging
+  - `routers/info.py` — `GET /api/v1/info` ✅
+  - `routers/auth.py` — `POST /request-pair`, `GET /status/{id}`, `POST /approve/{id}`, `POST /reject/{id}`, `DELETE /revoke/{id}` ✅
+  - `routers/deps.py` — `validate_token` FastAPI dependency ✅
+  - `services/auth_service.py` — HMAC-SHA256 token hashing, pairing state machine ✅
+  - 8 passing integration tests; ruff + black clean
 
-**Next:** Implement `apps/server` auth — `POST /auth/request-pair`, `GET /auth/status/{client_id}`, `POST /auth/approve/{client_id}`, `DELETE /auth/revoke/{client_id}`, `validate_token` dependency.
+**Next:** Implement `apps/server` mDNS broadcast (`services/discovery_service.py`) + `GET /api/v1/files` + `GET /api/v1/library`.

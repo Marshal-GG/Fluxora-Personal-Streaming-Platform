@@ -41,15 +41,17 @@ CREATE TABLE media_files (
     updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Clients table
+-- Clients table (auth_token = HMAC-SHA256 hash of raw token — never stored in plain)
 CREATE TABLE clients (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     platform    TEXT NOT NULL CHECK(platform IN ('android','ios','windows','macos','linux')),
     last_seen   TIMESTAMP NOT NULL,
     is_trusted  BOOLEAN NOT NULL DEFAULT 0,
-    auth_token  TEXT NOT NULL
+    auth_token  TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending'  -- added by migration 003
 );
+-- status values: 'pending' | 'approved' | 'rejected'
 
 -- Stream sessions table
 CREATE TABLE stream_sessions (
@@ -92,7 +94,15 @@ CREATE TABLE user_settings (
 
 ## Migration Strategy
 
-- Phase 1-3: Manual SQL migration files in `server/migrations/`
-- Naming: `001_initial_schema.sql`, `002_add_settings.sql`, etc.
-- Applied on server startup via lightweight migration runner
+- Phase 1-3: Manual SQL migration files in `apps/server/database/migrations/`
+- Naming: `NNN_description.sql` — zero-padded, applied in alphabetical order
+- Applied on server startup via `database/db.py` migration runner (`_migrations` tracking table)
 - Future: evaluate Alembic if complexity increases
+
+### Applied Migrations
+
+| File | What it does |
+|------|-------------|
+| `001_initial.sql` | Creates `libraries`, `media_files`, `clients`, `user_settings`; seeds settings row |
+| `002_sessions.sql` | Creates `stream_sessions` with indexes |
+| `003_client_status.sql` | Adds `status` column to `clients` (`pending`/`approved`/`rejected`) |

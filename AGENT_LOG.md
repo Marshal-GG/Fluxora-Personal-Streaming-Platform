@@ -390,3 +390,65 @@
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## [2026-04-27] — Server Auth: pairing flow, HMAC tokens, validate_token
+**Agent:** Claude Sonnet 4.6
+**Phase:** Phase 1 — Server Auth
+**Status:** Complete
+
+### What Was Done
+- Implemented `models/client.py` — `PairRequestBody`, `PairResponse`, `AuthStatusResponse` Pydantic models
+- Implemented `services/auth_service.py` — `generate_token()`, `hash_token()`, `verify_token()` (HMAC-SHA256 + constant-time compare); full pairing state machine: `create_pair_request`, `approve_client`, `reject_client`, `revoke_client`, `get_trusted_client_by_token`
+- Implemented `routers/auth.py` — 5 endpoints: `POST /request-pair`, `GET /status/{id}`, `POST /approve/{id}`, `POST /reject/{id}`, `DELETE /revoke/{id}`; raw token returned once on first approved poll then discarded from memory (server only stores hash)
+- Implemented `routers/deps.py` — `validate_token` FastAPI dependency using `HTTPBearer`
+- Added `database/migrations/003_client_status.sql` — `ALTER TABLE clients ADD COLUMN status`
+- Fixed `apps/server/env.example` — corrected env var names to match `config.py` (`FLUXORA_PORT`, `FLUXORA_ENV`, etc.)
+- Updated all tests to cover 8 scenarios including full approval flow, rejection, and protected route enforcement
+- All tests pass (8/8); ruff ✅; black ✅
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/models/client.py` |
+| Modified | `apps/server/services/auth_service.py` |
+| Modified | `apps/server/routers/auth.py` |
+| Created  | `apps/server/routers/deps.py` |
+| Created  | `apps/server/database/migrations/003_client_status.sql` |
+| Modified | `apps/server/env.example` |
+| Modified | `apps/server/tests/test_auth.py` |
+| Modified | `docs/04_api/01_api_contracts.md` |
+| Modified | `docs/03_data/02_database_schema.md` |
+| Modified | `docs/09_backend/01_backend_architecture.md` |
+| Modified | `CLAUDE.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/04_api/01_api_contracts.md` | Updated all auth endpoint paths to `/api/v1/auth/...`; added approve, reject, revoke endpoints; added status markers |
+| `docs/03_data/02_database_schema.md` | Added `status` column to clients table; updated migration strategy with applied migrations table |
+| `docs/09_backend/01_backend_architecture.md` | Added `deps.py` to routers structure; marked `auth_service` as implemented |
+| `CLAUDE.md` | Updated Current Status with full auth implementation detail |
+
+### Decisions Made
+- Raw token returned only once on first `GET /status` poll after approval — stored in `_pending_tokens` dict; server discards it immediately after; server only ever holds HMAC hash
+- `status` column added via migration 003 rather than recreating the table — safe for existing DBs
+- `validate_token` lives in `routers/deps.py` not `services/` — it raises `HTTPException` which belongs in the router layer per architecture rules
+- Rejected clients can re-submit a pair request — `ON CONFLICT` resets status to `pending` if previously rejected
+
+### Blockers / Open Issues
+- `token_hmac_key` defaults to `""` — server will work but tokens are weakly signed; must generate a real key via `secrets.token_hex(32)` and add to `~/.fluxora/.env` before production use
+- `approve` and `reject` endpoints have no auth — Control Panel is assumed localhost-only; network restriction enforcement deferred to Phase 2
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Implement `apps/server/services/discovery_service.py` — `zeroconf` mDNS broadcast of `_fluxora._tcp.local`
+3. Implement `GET /api/v1/files` — list files with optional `library_id` filter
+4. Implement `GET /api/v1/library` — list libraries; `POST /api/v1/library` — create library
+5. Write tests for all new endpoints
+6. Run `ruff check`, `black --check`, `pytest` — all must pass
+7. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

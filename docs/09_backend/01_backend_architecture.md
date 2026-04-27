@@ -35,7 +35,8 @@ server/
 │
 ├── routers/
 │   ├── info.py             # GET /api/v1/info ✅
-│   ├── auth.py             # /auth endpoints
+│   ├── auth.py             # /auth endpoints ✅ (request-pair, status, approve, reject, revoke)
+│   ├── deps.py             # FastAPI dependencies (validate_token) ✅
 │   ├── files.py            # /files endpoints
 │   ├── library.py          # /library endpoints
 │   ├── stream.py           # /stream + /hls endpoints
@@ -69,7 +70,7 @@ server/
 | `ffmpeg_service` | Spawn FFmpeg, manage HLS output, cleanup segments | `start_stream()`, `stop_stream()`, `get_stream_url()` |
 | `library_service` | Scan directories, enrich with TMDB metadata | `scan_library()`, `index_file()`, `fetch_tmdb_metadata()` |
 | `discovery_service` | Broadcast mDNS on LAN | `start_broadcasting()`, `stop_broadcasting()` |
-| `auth_service` | Token generation, pairing approval, validation | `create_pair_request()`, `approve_client()`, `validate_token()` |
+| `auth_service` ✅ | Token generation (HMAC-SHA256), pairing state machine, token validation | `create_pair_request()`, `approve_client()`, `reject_client()`, `revoke_client()`, `get_trusted_client_by_token()` |
 | `webrtc_service` | Manage ICE/STUN/TURN for internet connections | `handle_offer()`, `generate_answer()` |
 
 ---
