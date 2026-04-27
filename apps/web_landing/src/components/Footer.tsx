@@ -12,7 +12,7 @@ export default function Footer() {
         <ul className="footer-links">
           <li>
             <a
-              href="https://github.com/marshalx/fluxora"
+              href="https://github.com/Marshal-GG/Fluxora-Personal-Streaming-Platform"
               target="_blank"
               rel="noopener noreferrer"
             >
