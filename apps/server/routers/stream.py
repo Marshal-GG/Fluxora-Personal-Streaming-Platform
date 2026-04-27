@@ -1,1 +1,3 @@
-﻿# POST /stream/start  POST /stream/stop  GET /hls/{session}/{segment}
+from fastapi import APIRouter
+
+router = APIRouter()

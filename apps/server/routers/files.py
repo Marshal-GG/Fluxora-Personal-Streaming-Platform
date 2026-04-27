@@ -1,1 +1,3 @@
-﻿# GET /files  GET /files/{id}
+from fastapi import APIRouter
+
+router = APIRouter()

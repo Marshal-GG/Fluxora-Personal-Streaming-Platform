@@ -1,1 +1,3 @@
-﻿# CRUD /library  POST /library/{id}/scan
+from fastapi import APIRouter
+
+router = APIRouter()

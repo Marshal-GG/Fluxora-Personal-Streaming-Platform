@@ -1,1 +1,3 @@
-﻿# POST /auth/pair  POST /auth/approve  DELETE /auth/revoke
+from fastapi import APIRouter
+
+router = APIRouter()

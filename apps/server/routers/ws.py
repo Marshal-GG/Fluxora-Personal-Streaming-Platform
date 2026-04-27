@@ -1,1 +1,3 @@
-﻿# WS /ws/events â€” real-time stream and client status
+from fastapi import APIRouter
+
+router = APIRouter()
