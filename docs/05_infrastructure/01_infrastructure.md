@@ -157,7 +157,7 @@ To add/verify custom domains:
 
 This secret was created by running `firebase init hosting:github` and is used by all three deploy jobs
 in the `web_landing_ci.yml` workflow. Manage it at:
-`https://github.com/Marshal-GG/fluxora-private/settings/secrets/actions`
+`https://github.com/Marshal-GG/Fluxora-Private/settings/secrets/actions`
 
 ---
 
@@ -191,6 +191,20 @@ and the same output is what gets deployed to every environment.
 | `deploy-preview` | `github.event_name == 'pull_request'` | Auto-created PR channel | None |
 | `deploy-uat` | `github.ref == 'refs/heads/uat'` | `uat` (expires: 30d, reset on every deploy) | None |
 | `deploy-production` | `github.ref == 'refs/heads/main'` | `live` | See note below |
+
+### Required GitHub token permissions
+
+The `FirebaseExtended/action-hosting-deploy` action posts a GitHub Check Run to show deploy status
+inline on commits and PRs. This requires the following permissions on each deploy job:
+
+| Job | Required permissions |
+|-----|---------------------|
+| `deploy-preview` | `contents: read`, `pull-requests: write`, `checks: write` |
+| `deploy-uat` | `contents: read`, `checks: write` |
+| `deploy-production` | `contents: read`, `checks: write` |
+
+> If `checks: write` is missing, the job crashes with:
+> `RequestError: Resource not accessible by integration (403)` on the check-runs API call.
 
 ### PR Preview channel
 

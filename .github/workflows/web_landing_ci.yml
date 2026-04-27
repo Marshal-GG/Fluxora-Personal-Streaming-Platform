@@ -45,6 +45,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      checks: write
 
     steps:
       - uses: actions/checkout@v5
@@ -74,6 +75,7 @@ jobs:
       url: https://uat.fluxora.marshalx.dev
     permissions:
       contents: read
+      checks: write
 
     steps:
       - uses: actions/checkout@v5
@@ -103,6 +105,7 @@ jobs:
       url: https://fluxora.marshalx.dev
     permissions:
       contents: read
+      checks: write
 
     steps:
       - uses: actions/checkout@v5

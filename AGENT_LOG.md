@@ -270,3 +270,55 @@
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## [2026-04-27] — CI/CD Fixes, PR Preview Docs & Landing Page Polish
+**Agent:** Claude Sonnet 4.6
+**Phase:** Phase 1 — Infrastructure
+**Status:** Complete
+
+### What Was Done
+- Fixed `deploy-uat` job missing `expires: 30d` — Firebase was resetting UAT channel to 7-day TTL on every CI deploy
+- Added `checks: write` permission to all three deploy jobs — Firebase action crashed with 403 trying to post GitHub Check Runs
+- Fixed GitHub repo URLs in Navbar, Hero, and Footer — placeholder `marshalx/fluxora` replaced with real public mirror `Marshal-GG/Fluxora-Personal-Streaming-Platform`
+- Updated git remote URL after GitHub renamed repo from `fluxora-private` → `Fluxora-Private`
+- Documented PR preview channel workflow in infrastructure doc (how to trigger, view URL, when useful)
+- Documented required GitHub token permissions per deploy job
+- Documented `firebase hosting:channel:list` usage with example output
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `.github/workflows/web_landing_ci.yml` |
+| Modified | `apps/web_landing/src/components/Navbar.tsx` |
+| Modified | `apps/web_landing/src/components/Hero.tsx` |
+| Modified | `apps/web_landing/src/components/Footer.tsx` |
+| Modified | `docs/05_infrastructure/01_infrastructure.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/05_infrastructure/01_infrastructure.md` | Added PR preview channel section, required permissions table, channel list usage, updated secret URL to renamed repo |
+
+### Decisions Made
+- `expires: 30d` set on `deploy-uat` job — Firebase resets TTL on every deploy; must be explicit or defaults to 7 days
+- `checks: write` required on all deploy jobs — `FirebaseExtended/action-hosting-deploy@v0` always tries to post a Check Run
+- Public mirror URL used in landing page — private repo link would 404 for all visitors
+
+### Blockers / Open Issues
+- DNS verification for `fluxora.marshalx.dev` still pending
+- `uat.fluxora.marshalx.dev` custom domain not yet added to Firebase Hosting console
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Implement `apps/server/config.py` — `BaseSettings` reading `~/.fluxora/.env`
+3. Implement `apps/server/database/db.py` — aiosqlite connection pool, WAL mode, migration runner
+4. Write `apps/server/database/migrations/001_initial_schema.sql` — all 5 core tables
+5. Implement `apps/server/main.py` — FastAPI app with startup/shutdown lifecycle
+6. Implement `GET /api/v1/info` router + `ServerInfo` Pydantic response model
+7. Run `pytest` and `ruff check` + `black --check` to verify server passes CI
+8. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
