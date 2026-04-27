@@ -1,5 +1,7 @@
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
+
+from main import app
 
 HMAC_KEY = "test-secret-key-for-unit-tests-only"
 
@@ -95,3 +97,26 @@ async def test_rejection_flow(client: AsyncClient):
 async def test_protected_route_requires_token(client: AsyncClient):
     response = await client.delete(f"/api/v1/auth/revoke/{PAIR_BODY['client_id']}")
     assert response.status_code == 403
+
+
+# ── Localhost restriction ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_approve_blocked_from_lan(test_db):
+    async with AsyncClient(
+        transport=ASGITransport(app=app, client=("192.168.1.100", 50000)),
+        base_url="http://test",
+    ) as lan:
+        resp = await lan.post("/api/v1/auth/approve/any-id")
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_reject_blocked_from_lan(test_db):
+    async with AsyncClient(
+        transport=ASGITransport(app=app, client=("192.168.1.100", 50000)),
+        base_url="http://test",
+    ) as lan:
+        resp = await lan.post("/api/v1/auth/reject/any-id")
+    assert resp.status_code == 403

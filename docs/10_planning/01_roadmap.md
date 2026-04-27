@@ -10,17 +10,20 @@
 ### Phase 1 — Core Infrastructure
 > **Goal:** Server boots, client connects on LAN, can stream a file
 
-| Feature | Priority | Notes |
-|---------|----------|-------|
-| FastAPI server scaffolding | Must | `main.py`, routers, db setup |
-| SQLite schema + migrations | Must | Initial schema |
-| mDNS/Zeroconf LAN broadcast | Must | Server side |
-| Flutter client project setup | Must | Clean Architecture structure |
-| mDNS discovery in Flutter | Must | Client-side Dart |
-| `GET /files` endpoint | Must | File browser API |
-| File browser UI in Flutter | Must | Directory tree navigation |
-| Basic FFmpeg HLS streaming | Must | Single quality stream |
-| HLS playback in Flutter | Must | `better_player` / `media_kit` |
+| Feature | Priority | Status | Notes |
+|---------|----------|--------|-------|
+| FastAPI server scaffolding | Must | ✅ Done | `main.py`, all routers, db setup |
+| SQLite schema + migrations | Must | ✅ Done | Migrations 001–003; WAL mode |
+| Client pairing + auth tokens | Must | ✅ Done | HMAC-SHA256, full pairing state machine |
+| mDNS/Zeroconf LAN broadcast | Must | ✅ Done | `_fluxora._tcp.local.` |
+| Library CRUD + scan API | Must | ✅ Done | `GET/POST/DELETE /library`, scan endpoint |
+| `GET /api/v1/files` endpoint | Must | ✅ Done | List + filter by library |
+| Basic FFmpeg HLS streaming | Must | ✅ Done | `POST /stream/start`, HLS segment serving |
+| WebSocket status channel | Must | ✅ Done | Token auth, ping/pong, progress updates |
+| Flutter client project setup | Must | 🔲 Next | Clean Architecture structure |
+| mDNS discovery in Flutter | Must | 🔲 Next | Client-side Dart |
+| File browser UI in Flutter | Must | 🔲 Next | Library + file grid |
+| HLS playback in Flutter | Must | 🔲 Next | `better_player` / `media_kit` |
 
 **Target:** Working LAN stream, file browser, basic connection
 
@@ -98,7 +101,7 @@
 |-----------|-------|--------|
 | M1 — Architecture & Docs Complete | 0 | ✅ Done |
 | M1.5 — Monorepo Scaffold Complete | 0 | ✅ Done |
-| M2 — LAN Streaming MVP | 1 | 🔵 In Progress |
+| M2 — LAN Streaming MVP | 1 | 🔵 In Progress (server ✅, mobile 🔲) |
 | M3 — Auth + Library | 2 | ⬜ Planned |
 | M4 — Internet Streaming | 3 | ⬜ Planned |
 | M5 — Monetization Live | 4 | ⬜ Planned |

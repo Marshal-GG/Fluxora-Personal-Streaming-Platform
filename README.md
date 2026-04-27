@@ -1,7 +1,7 @@
 # Fluxora
 
 > **"Plex meets Syncthing"** — A hybrid file streaming and syncing system  
-> **Status:** Planning Complete — Phase 1 (Core Infrastructure) in progress | Last Updated: 2026-04-27
+> **Status:** Phase 1 server complete — Phase 1 mobile next | Last Updated: 2026-04-27
 
 ---
 
@@ -28,7 +28,9 @@ Fluxora/
 ├── apps/
 │   ├── server/              # Python FastAPI backend + FFmpeg HLS engine
 │   ├── mobile/              # Flutter mobile client (Android + iOS)
-│   └── desktop/             # Flutter desktop control panel (Win/macOS/Linux)
+│   ├── desktop/             # Flutter desktop control panel (Win/macOS/Linux)
+│   ├── web_landing/         # Next.js static landing page → fluxora.marshalx.dev
+│   └── web_app/             # Flutter Web dashboard (Phase 3 — not started)
 ├── packages/
 │   └── fluxora_core/        # Shared Dart entities, network client, design tokens
 ├── docs/                    # All project documentation (11 categories)
@@ -44,6 +46,7 @@ Fluxora/
 │   ├── 09_backend/          # FastAPI structure and service map
 │   ├── 10_planning/         # Roadmap, ADRs, open questions
 │   └── 11_design/           # Brand system, color palette, UI concepts
+├── functions/               # Firebase Cloud Functions (Phase 3 stubs)
 ├── scripts/                 # Build and release automation
 │   ├── scaffold.ps1         # Initial project scaffolding (run once)
 │   ├── build_server.ps1/.sh # PyInstaller builds
@@ -51,7 +54,9 @@ Fluxora/
 │   ├── build_desktop.sh     # Flutter desktop build
 │   └── release.sh           # GitHub Release tagging
 ├── .github/
-│   └── workflows/           # Path-scoped CI (server / mobile / desktop)
+│   └── workflows/           # Path-scoped CI (server / mobile / desktop / web)
+├── firebase.json            # Firebase Hosting + Functions config
+├── .firebaserc              # Firebase project alias
 ├── AGENT_LOG.md             # Append-only log of all agent work sessions
 ├── CLAUDE.md                # AI agent onboarding and mandatory rules
 ├── DESIGN.md                # Design system (Google Stitch spec)
@@ -64,12 +69,12 @@ Fluxora/
 
 | Phase | Goal | Status |
 |-------|------|--------|
-| 0 — Planning | Architecture, docs, monorepo scaffold | ✅ Complete |
-| 1 — Core | LAN streaming MVP | 🔵 Next |
-| 2 — Auth & Library | Pairing, TMDB metadata, polish | ⬜ Planned |
-| 3 — Internet | WebRTC streaming | ⬜ Planned |
-| 4 — Monetization | Free/Plus/Pro/Ultimate tiers | ⬜ Planned |
-| 5 — Advanced | AI, hardware encode, E2E encryption | ⬜ Future |
+| 0 | Architecture, docs, monorepo scaffold | ✅ Complete |
+| 1 | FastAPI server, mDNS, HLS streaming, Flutter client setup, landing page | 🔵 In Progress (server ✅ · mobile 🔲) |
+| 2 | Full library management, Flutter home + player screens | 🔲 Planned |
+| 3 | WebRTC internet streaming, Firebase signaling, Flutter Web dashboard, subscriptions | 🔲 Planned |
+| 4 | Hardware transcoding, advanced client management | 🔲 Planned |
+| 5 | AI recommendations, public release | 🔲 Planned |
 
 ---
 
