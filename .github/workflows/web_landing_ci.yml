@@ -90,6 +90,7 @@ jobs:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FLUXORA_STREAMING_PLATFORM }}
           channelId: uat
+          expires: 30d
           projectId: fluxora-streaming-platform
 
   # ── 4. Production (main branch — requires approval in GitHub Environments) ──

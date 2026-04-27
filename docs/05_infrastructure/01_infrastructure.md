@@ -189,8 +189,51 @@ and the same output is what gets deployed to every environment.
 |-----|------------------|-----------------|---------------|
 | `build` | Always | — | None |
 | `deploy-preview` | `github.event_name == 'pull_request'` | Auto-created PR channel | None |
-| `deploy-uat` | `github.ref == 'refs/heads/uat'` | `uat` | None |
+| `deploy-uat` | `github.ref == 'refs/heads/uat'` | `uat` (expires: 30d, reset on every deploy) | None |
 | `deploy-production` | `github.ref == 'refs/heads/main'` | `live` | See note below |
+
+### PR Preview channel
+
+The `deploy-preview` job creates a **temporary Firebase Hosting channel** for every pull request. It is deleted automatically when the PR closes.
+
+**How to use it:**
+
+1. Create a branch and make your changes:
+   ```bash
+   git checkout -b feature/my-change
+   # edit files
+   git push origin feature/my-change
+   ```
+2. Open a pull request on GitHub (base: `uat` or `main`, compare: `feature/my-change`)
+3. GitHub Actions runs `build` then `deploy-preview`
+4. When `deploy-preview` finishes (~1 min), two things happen:
+   - The Firebase action posts a comment on the PR with the preview URL
+   - The URL also appears in the Actions tab → `deploy-preview` job → last step output
+5. The preview URL looks like: `https://fluxora-streaming-platform--pr-1-xxxxxxxx.web.app`
+6. When you close or merge the PR, Firebase deletes the preview channel automatically
+
+**When it's useful:**
+- Sharing a WIP change with someone for feedback before it hits UAT
+- Visually reviewing a change without polluting the UAT channel
+- Code review — reviewer can click the URL directly from the PR
+
+For solo work, this is optional — pushing directly to `uat` is the normal flow.
+
+### Viewing all active channels
+
+```bash
+firebase hosting:channel:list
+```
+
+This lists every active channel with its URL and expiry. Example output:
+```
+│ uat  │ 2026-04-27 16:30:27 │ https://fluxora-streaming-platform--uat-6opvp06r.web.app │ 2026-05-27 │
+│ live │ 2026-04-27 13:56:39 │ https://fluxora-streaming-platform.web.app               │ never      │
+```
+
+> **UAT expiry note:** Firebase resets the channel expiry on every CI deploy. The `deploy-uat` job
+> sets `expires: 30d` so each push to `uat` gives you another 30 days. The channel will only lapse
+> if the `uat` branch goes untouched for 30+ days straight — in practice this never happens.
 
 > ⚠️ **Production protection — TODO when adding team members**
 >
