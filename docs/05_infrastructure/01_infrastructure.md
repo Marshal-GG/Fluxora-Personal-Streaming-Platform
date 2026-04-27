@@ -338,7 +338,7 @@ unnecessary builds (e.g., a Python change does not trigger a Flutter build).
 | File | Trigger | What it does |
 |------|---------|-------------|
 | `.github/workflows/web_landing_ci.yml` | Push to `apps/web_landing/**` on `main`/`uat`, or any PR | Build → deploy to Firebase Hosting (preview / uat / live) |
-| `.github/workflows/server_ci.yml` | Push to `apps/server/**` | Python tests → server CI checks |
+| `.github/workflows/server_ci.yml` | Push/PR to `apps/server/**` | ruff lint → black format check → pytest |
 | `.github/workflows/mobile_ci.yml` | Push to `apps/mobile/**` or `packages/**` | Flutter tests → APK checks |
 | `.github/workflows/desktop_ci.yml` | Push to `apps/desktop/**` or `packages/**` | Flutter tests → desktop checks |
 | `.github/workflows/mirror-public.yml` | Push to `main` | Safely mirrors private repository to a public mirror, stripping internal files |
