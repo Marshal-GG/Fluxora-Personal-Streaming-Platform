@@ -2,7 +2,7 @@
 
 > **Category:** Infrastructure  
 > **Status:** ✅ Complete  
-> **Last Updated:** 2026-04-27
+> **Last Updated:** 2026-04-27 (Firebase Hosting + CI/CD pipeline added)
 
 ---
 
@@ -104,7 +104,174 @@ Server reads config using **Pydantic `BaseSettings`** (`apps/server/config.py`).
 
 ---
 
-## CI/CD Pipeline
+## Web Landing Page — Firebase Hosting
+
+The public landing page (`apps/web_landing/`) is a Next.js static export hosted on **Firebase Hosting**
+under the `fluxora-streaming-platform` Firebase project.
+
+### Firebase Project
+
+| Detail | Value |
+|--------|-------|
+| Project ID | `fluxora-streaming-platform` |
+| Hosting site | `fluxora-streaming-platform` |
+| Firebase console | https://console.firebase.google.com/project/fluxora-streaming-platform |
+
+### Hosting Channels
+
+Firebase Hosting uses **channels** to serve different versions of the site at different URLs.
+
+| Channel | URL | Behaviour |
+|---------|-----|-----------|
+| `live` | `fluxora.marshalx.dev` (custom) + `fluxora-streaming-platform.web.app` | Permanent — production |
+| `uat` | `uat.fluxora.marshalx.dev` (custom) + `fluxora-streaming-platform--uat-*.web.app` | 30-day TTL, auto-renewed on every deploy |
+| PR preview | Auto-generated `fluxora-streaming-platform--pr-NNN-hash.web.app` | Temporary, created per PR, deleted when PR closes |
+
+> **UAT expiry note:** Firebase only makes the `live` channel permanent. All other channels expire after
+> a maximum of 30 days. In practice this does not matter — every push to the `uat` branch resets the
+> expiry automatically. If the channel does lapse, the next deploy recreates it instantly.
+
+### Custom Domains
+
+| Domain | Channel | DNS (Cloudflare) |
+|--------|---------|-----------------|
+| `fluxora.marshalx.dev` | `live` | `A` records from Firebase console — proxy **OFF** (DNS only) |
+| `uat.fluxora.marshalx.dev` | `uat` | `A` records from Firebase console — proxy **OFF** (DNS only) |
+
+**Why proxy must be OFF:** Firebase Hosting provisions its own TLS certificate via Let's Encrypt by
+performing a TLS handshake directly with your domain. Cloudflare's orange-cloud proxy intercepts this
+handshake and breaks certificate provisioning. Set both records to grey cloud (DNS only).
+
+To add/verify custom domains:
+1. Firebase console → Hosting → **Add custom domain**
+2. Enter the domain, select the target channel
+3. Copy the `A` records Firebase provides
+4. Add them in Cloudflare → DNS, proxy OFF
+5. Click **Verify** in Firebase console — provisioning takes a few minutes
+
+### Required GitHub Secret
+
+| Secret name | What it contains | Where it lives |
+|-------------|-----------------|----------------|
+| `FIREBASE_SERVICE_ACCOUNT_FLUXORA_STREAMING_PLATFORM` | Service account JSON key with Hosting admin permissions | GitHub → repo Settings → Secrets → Actions |
+
+This secret was created by running `firebase init hosting:github` and is used by all three deploy jobs
+in the `web_landing_ci.yml` workflow. Manage it at:
+`https://github.com/Marshal-GG/fluxora-private/settings/secrets/actions`
+
+---
+
+## CI/CD Pipeline — Web Landing
+
+**Workflow file:** `.github/workflows/web_landing_ci.yml`
+
+### How it works
+
+The workflow has **4 jobs** with a strict dependency chain:
+
+```
+push / pull_request
+        │
+        ▼
+   [1] build          ← runs on every trigger
+        │  (uploads artifact: landing-out)
+        ├──▶ [2] deploy-preview   ← PRs only
+        ├──▶ [3] deploy-uat       ← uat branch only
+        └──▶ [4] deploy-production ← main branch only (approval gate: pending team plan upgrade)
+```
+
+All three deploy jobs download the same build artifact — the site is built exactly once
+and the same output is what gets deployed to every environment.
+
+### Job details
+
+| Job | Trigger condition | Firebase channel | Approval gate |
+|-----|------------------|-----------------|---------------|
+| `build` | Always | — | None |
+| `deploy-preview` | `github.event_name == 'pull_request'` | Auto-created PR channel | None |
+| `deploy-uat` | `github.ref == 'refs/heads/uat'` | `uat` | None |
+| `deploy-production` | `github.ref == 'refs/heads/main'` | `live` | See note below |
+
+> ⚠️ **Production protection — TODO when adding team members**
+>
+> The workflow uses `environment: production` which supports a required-reviewer approval gate,
+> but **GitHub Free plan does not expose this feature for private repos**. Currently the gate is
+> not enforced — any push to `main` deploys directly to live.
+>
+> **When to fix this:** as soon as a second developer gets push access to the repo.
+>
+> **Option A — Upgrade to GitHub Team ($4/user/month)**
+> → Environments → `production` → Deployment protection rules → Required reviewers → add reviewer → Save.
+> The Actions job will pause and email the reviewer before deploying.
+>
+> **Option B — Branch protection (free)**
+> → Settings → Branches → Add rule for `main` → Require a pull request before merging → Required approvals: 1 → Save.
+> Forces every change to go through a PR. Reviewer approves the PR, not the deploy itself,
+> but the effect is the same: nothing reaches `main` without a second person signing off.
+>
+> **Current workaround (solo project):** use `uat` as the personal quality gate.
+> Test on UAT, push to `main` only when satisfied. The `uat → main` flow is the gate.
+
+---
+
+## Deploying to UAT
+
+Push any commit to the `uat` branch:
+
+```bash
+git checkout uat
+git merge feature/my-landing-change
+git push origin uat
+```
+
+GitHub Actions will:
+1. Build the Next.js static export
+2. Deploy to the `uat` Firebase channel
+3. Site is live at `uat.fluxora.marshalx.dev` within ~2 minutes
+
+No approval needed. Anyone with push access to the `uat` branch can deploy.
+
+---
+
+## Deploying to Production (Live)
+
+Push to `main` **after getting reviewer approval**:
+
+```bash
+git checkout main
+git merge uat          # or merge your branch
+git push origin main
+```
+
+GitHub Actions starts the `deploy-production` job but **pauses** it immediately,
+waiting for a required reviewer to approve in the Actions UI.
+
+### How approval works
+
+1. A push to `main` triggers the workflow
+2. The `deploy-production` job reaches the `environment: production` gate
+3. GitHub emails all required reviewers and shows a pending approval in the Actions tab
+4. A reviewer goes to **Actions → the workflow run → Review deployments** and clicks **Approve**
+5. The job resumes and deploys to the `live` channel
+
+If nobody approves within 30 days, the pending job expires and must be re-triggered by pushing again.
+
+### Setting up required reviewers (one-time setup)
+
+1. Go to **GitHub → repo → Settings → Environments**
+2. Click **New environment**, name it `production`
+3. Under **Deployment protection rules**, tick **Required reviewers**
+4. Add the GitHub usernames of people who can approve production deploys
+5. Save — the gate is now active on every push to `main`
+6. Repeat for the `uat` environment (no reviewers needed — leave protection rules empty)
+
+> **Important:** The `production` and `uat` environments must exist in GitHub Settings for the
+> workflow's `environment:` block to function. If they don't exist, the approval gate is silently
+> skipped and deploys go straight through.
+
+---
+
+## CI/CD Pipeline — Server, Mobile, Desktop
 
 GitHub Actions is used for all automated builds. Workflows are **path-scoped** to avoid
 unnecessary builds (e.g., a Python change does not trigger a Flutter build).
@@ -113,12 +280,13 @@ unnecessary builds (e.g., a Python change does not trigger a Flutter build).
 
 | File | Trigger | What it does |
 |------|---------|-------------|
+| `.github/workflows/web_landing_ci.yml` | Push to `apps/web_landing/**` on `main`/`uat`, or any PR | Build → deploy to Firebase Hosting (preview / uat / live) |
 | `.github/workflows/server_ci.yml` | Push to `apps/server/**` | Python tests → server CI checks |
 | `.github/workflows/mobile_ci.yml` | Push to `apps/mobile/**` or `packages/**` | Flutter tests → APK checks |
 | `.github/workflows/desktop_ci.yml` | Push to `apps/desktop/**` or `packages/**` | Flutter tests → desktop checks |
 | `.github/workflows/mirror-public.yml` | Push to `main` | Safely mirrors private repository to a public mirror, stripping internal files |
 
-*Note: All GitHub Actions are configured to use modern Node 24 native versions (e.g. `actions/checkout@v5` and `flutter-actions/setup-flutter@v4`).*
+*All workflows use `actions/checkout@v5` and `flutter-actions/setup-flutter@v4` for Node 24 compatibility.*
 
 ### Pipeline Flow (Release)
 

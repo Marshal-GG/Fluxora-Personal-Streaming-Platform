@@ -1,0 +1,25 @@
+{
+  "hosting": {
+    "site": "fluxora-streaming-platform",
+    "public": "apps/web_landing/out",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "trailingSlash": true,
+    "headers": [
+      {
+        "source": "**/*.@(js|css|woff2|woff|ttf)",
+        "headers": [{ "key": "Cache-Control", "value": "max-age=31536000,immutable" }]
+      },
+      {
+        "source": "**",
+        "headers": [{ "key": "X-Content-Type-Options", "value": "nosniff" }]
+      }
+    ]
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": ["node_modules", ".git", "**/*.log"]
+    }
+  ]
+}

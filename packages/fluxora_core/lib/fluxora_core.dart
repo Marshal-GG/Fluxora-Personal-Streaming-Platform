@@ -1,6 +1,7 @@
 library fluxora_core;
 
 export 'entities/client.dart';
+export 'entities/enums.dart';
 export 'entities/library.dart';
 export 'entities/media_file.dart';
 export 'entities/server_info.dart';

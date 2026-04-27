@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -30,6 +30,16 @@ GoogleService-Info.plist
 
 # Obfuscation debug symbols (keep privately for crash symbolication)
 build/debug-info/
+
+# Next.js (web_landing)
+apps/web_landing/.next/
+apps/web_landing/out/
+apps/web_landing/node_modules/
+
+# Firebase
+functions/node_modules/
+functions/lib/
+.firebase/
 
 # Fluxora runtime
 *.db

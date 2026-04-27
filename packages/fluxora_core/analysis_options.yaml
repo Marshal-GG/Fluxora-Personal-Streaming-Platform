@@ -4,6 +4,8 @@ analyzer:
   errors:
     missing_required_param: error
     missing_return: error
+    # @JsonKey on freezed factory params is valid for codegen but triggers this
+    invalid_annotation_target: ignore
   exclude:
     - "**/*.g.dart"
     - "**/*.freezed.dart"

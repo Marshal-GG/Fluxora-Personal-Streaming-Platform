@@ -20,6 +20,7 @@ jobs:
           # 1. Delete the files themselves
           rm -f AGENT_LOG.md
           rm -f CLAUDE.md
+          rm -rf docs/logs
           rm -f .github/workflows/mirror-public.yml
 
           # 2. Remove the entire "For AI Agents" section from the root README.md
@@ -46,7 +47,7 @@ jobs:
 
       - name: Stage filtered files
         run: |
-          git rm --cached AGENT_LOG.md CLAUDE.md .github/workflows/mirror-public.yml --ignore-unmatch
+          git rm -r --cached AGENT_LOG.md CLAUDE.md docs/logs .github/workflows/mirror-public.yml --ignore-unmatch
           git add -A
 
       - name: Commit clean state

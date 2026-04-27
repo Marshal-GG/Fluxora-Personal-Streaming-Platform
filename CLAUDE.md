@@ -67,6 +67,7 @@
 > 4. Write a clear "Next Agent Should" section so the next agent can resume without reading chat history.
 >
 > **AGENT_LOG.md is append-only. Never edit or delete past entries.**
+> **Log Rotation Policy:** If `AGENT_LOG.md` exceeds ~1000 lines, you MUST rotate it: move it to `docs/logs/AGENT_LOG_archive_XX.md`, read the archived log to summarize its progress and next steps, and start a fresh `AGENT_LOG.md` with the summary at the top and the entry template.
 
 
 ---
@@ -193,7 +194,8 @@ Fluxora/
 │   ├── server/                <- Python FastAPI backend
 │   │   ├── main.py
 │   │   ├── config.py
-│   │   ├── pyproject.toml
+│   │   ├── pyproject.toml     <- single source of truth for Python deps + tool config
+│   │   ├── env.example        <- documents expected ~/.fluxora/.env keys
 │   │   ├── fluxora_server.spec
 │   │   ├── routers/           <- auth, files, library, stream, ws
 │   │   ├── services/          <- ffmpeg, library, discovery, auth, webrtc
@@ -210,13 +212,22 @@ Fluxora/
 │   │   ├── analysis_options.yaml
 │   │   └── pubspec.yaml
 │   │
-│   └── desktop/               <- Flutter desktop control panel (Windows/macOS/Linux)
-│       ├── lib/
-│       │   ├── core/          <- DI, router
-│       │   ├── features/      <- dashboard, library, clients, activity, transcoding, logs, settings
-│       │   └── shared/        <- widgets, theme
-│       ├── analysis_options.yaml
-│       └── pubspec.yaml
+│   ├── desktop/               <- Flutter desktop control panel (Windows/macOS/Linux)
+│   │   ├── lib/
+│   │   │   ├── core/          <- DI, router
+│   │   │   ├── features/      <- dashboard, library, clients, activity, transcoding, logs, settings
+│   │   │   └── shared/        <- widgets, theme
+│   │   ├── analysis_options.yaml
+│   │   └── pubspec.yaml
+│   │
+│   ├── web_landing/           <- Next.js public landing page (fluxora.marshalx.dev)
+│   │   ├── src/app/           <- Next.js App Router pages + globals.css
+│   │   ├── src/components/    <- Navbar, Hero, Features, HowItWorks, Platforms, Footer
+│   │   ├── next.config.ts     <- static export for Cloudflare Pages
+│   │   └── package.json
+│   │
+│   └── web_app/               <- Flutter Web dashboard (Phase 3 — not started)
+│       └── (mirrors desktop feature set, accessible via browser)
 │
 ├── packages/
 │   └── fluxora_core/          <- Shared Flutter package (entities, ApiClient, tokens, storage)
@@ -242,8 +253,15 @@ Fluxora/
 │   ├── 10_planning/           <- Roadmap, decisions, open questions
 │   └── 11_design/             <- Design reference HTML + brand README
 │
+├── firebase.json              <- Firebase project config (Cloud Functions)
+├── .firebaserc                <- Firebase project alias (update with real project ID)
+├── functions/                 <- Firebase Cloud Functions (Phase 3 stubs)
+│   ├── src/index.ts           <- health check + Phase 3 stub exports
+│   ├── package.json
+│   └── tsconfig.json
+│
 ├── scripts/                   <- Build and release automation
-└── .github/workflows/         <- Path-scoped CI (server / mobile / desktop / mirror)
+└── .github/workflows/         <- Path-scoped CI (server / mobile / desktop / web / mirror)
 ```
 
 ---
@@ -280,6 +298,8 @@ Fluxora/
 | File paths | `path_provider` | All file/directory paths go through this — never hardcode platform paths |
 | Video | `better_player` | HLS `.m3u8` playback (mobile only); evaluate `media_kit` in Phase 2 if stability issues arise |
 | Cloud (Phase 3+) | Firebase SDK (`firebase_core`, `firebase_messaging`, `cloud_firestore`) | Push notifications, crash reporting (Crashlytics), remote config; feature-flagged — never block core streaming |
+| Web (landing) | Next.js 16 + TypeScript | Static export → Firebase Hosting; hosted at `fluxora.marshalx.dev` |
+| Web (dashboard, Phase 3+) | Flutter Web (`apps/web_app`) | Browser-accessible control panel; shares code with `apps/desktop` |
 
 ---
 
@@ -1212,9 +1232,9 @@ Border radius: cards=12px, buttons=8px, badges=9999px
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Architecture, docs, monorepo scaffold | ✅ Complete |
-| 1 | FastAPI scaffold, mDNS, basic HLS, Flutter project setup | 🔵 In Progress |
+| 1 | FastAPI scaffold, mDNS, basic HLS, Flutter project setup, landing page | 🔵 In Progress |
 | 2 | Full library management, Flutter home/player screens | 🔲 Planned |
-| 3 | WebRTC internet streaming, subscription licensing | 🔲 Planned |
+| 3 | WebRTC internet streaming, Firebase signaling, Flutter Web dashboard, subscription licensing | 🔲 Planned |
 | 4 | Hardware transcoding, advanced client management | 🔲 Planned |
 | 5 | AI recommendations, public release | 🔲 Planned |
 
@@ -1234,6 +1254,9 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 | PyInstaller + FFmpeg | FFmpeg subprocess path must use the bundled binary path, not `PATH` | Resolve FFmpeg path via `sys._MEIPASS` in frozen builds |
 | Token storage (Flutter) | `shared_preferences` is not encrypted | Use `flutter_secure_storage` for the bearer token |
 | Path traversal | File-serving routes could expose files outside the library root | Always canonicalize and prefix-check before serving |
+| Bash / Git Commits | Backticks inside double-quoted commit messages execute as bash commands, causing pathspec errors | Use single quotes (`'`) instead of double quotes to wrap commit messages containing backticks |
+| Pytest & CI | `pytest` exits with code 5 if no tests are found, breaking CI pipelines | Always include at least one placeholder test (e.g. `def test_placeholder(): pass`) |
+| Git Pull / Merge | Running `git pull` with diverged branches creates an unwanted `Merge branch 'main' of...` commit in the history | Always use `git pull --rebase` to pull remote changes without creating an automated merge commit |
 
 ---
 
@@ -1257,6 +1280,7 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation written and in sync
 - Flutter workspace configured: all packages pass `flutter analyze` with zero issues
-- All source files are currently stubs — Phase 1 implementation has not started
+- `packages/fluxora_core` **implemented**: all 5 entities (`MediaFile`, `Library`, `StreamSession`, `Client`, `ServerInfo`) with `freezed` + `json_serializable` codegen; `ApiClient` (Dio), `ApiException`, `Endpoints`, `SecureStorage`; design tokens (`AppColors`, `AppSizes`, `AppTypography`)
+- `apps/server` — still stubs; server implementation not yet started
 
-**Next:** Implement `packages/fluxora_core` entities and network layer, then `apps/server` core (config → db → main → `GET /api/v1/info`).
+**Next:** Implement `apps/server` core — `config.py` → `database/db.py` (migrations) → `main.py` → `GET /api/v1/info`.

@@ -52,13 +52,24 @@ lib/
 └── presentation/     # UI screens, widgets, state management (BLoC/Riverpod)
 ```
 
-### Key Packages (planned)
+### Key Packages — `fluxora_core` (implemented)
 | Package | Purpose |
 |---------|---------|
-| `flutter_bloc` / `riverpod` | State management |
-| `dio` | HTTP client |
-| `video_player` / `better_player` | HLS video playback |
-| `zeroconf` (Dart) | LAN discovery |
+| `dio ^5.4.0` | HTTP client (`ApiClient`) |
+| `flutter_secure_storage ^9.0.0` | Encrypted token/URL storage |
+| `freezed_annotation ^2.4.1` | Immutable data class codegen |
+| `json_annotation ^4.9.0` | JSON serialization annotations |
+| `logger ^2.7.0` | Structured logging |
+| `connectivity_plus ^7.1.1` | Network state monitoring |
+
+### Key Packages — apps (planned)
+| Package | Purpose |
+|---------|---------|
+| `flutter_bloc ^9.1.1` | State management |
+| `get_it` | Dependency injection |
+| `go_router` | Navigation |
+| `better_player` / `media_kit` | HLS video playback |
+| `multicast_dns` | LAN discovery (client-side) |
 | `flutter_webrtc` | WebRTC for internet streaming |
 
 ---
