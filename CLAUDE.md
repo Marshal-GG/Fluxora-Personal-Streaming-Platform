@@ -1005,16 +1005,19 @@ build/debug-info/
 The server must initialize components in this exact order. Starting to accept HTTP requests before migrations run or before permissions are set is a bug.
 
 ```
-1. Load config         — Settings() from config.py; fail fast if required vars missing
-2. Secure DB directory — get_db_dir() + restrict_windows_path() / chmod 700
-3. Connect to DB       — open aiosqlite connection pool
-4. Secure DB file      — secure_db_file() after first connect
-5. Run migrations      — apply any unapplied .sql files in order
-6. Verify keychain     — get_or_create_db_key(); fail fast if keychain unavailable
-7. Start mDNS          — zeroconf broadcast of _fluxora._tcp.local
-8. Register routers    — attach all APIRouter instances to the FastAPI app
-9. Start HTTP server   — uvicorn begins accepting connections
+1. Validate secrets    — fail fast if TOKEN_HMAC_KEY is empty
+2. Secure DB directory — get_data_dir() + restrict_windows_path() / chmod 700
+3. Ensure HLS tmp dir  — hls_tmp_path.mkdir(parents=True, exist_ok=True)
+4. Clean HLS orphans   — delete session dirs left over from a crash
+5. Open DB + migrate   — init_db(): connect, WAL mode, apply pending .sql migrations
+6. Secure DB file      — secure_db_file(): chmod 600 on .db / -wal / -shm
+7. Close orphan sessions — mark ended_at on sessions with no ended_at (crash recovery)
+8. Check FFmpeg        — warn (not fail) if FFmpeg not on PATH
+9. Start mDNS          — zeroconf broadcast of _fluxora._tcp.local
+10. Start HTTP server  — uvicorn begins accepting connections
 ```
+
+> **Note:** Keychain integration (`get_or_create_db_key`) is planned for Phase 2 when TMDB key encryption is added.
 
 Never swap steps. Never skip a step in any environment including tests (use an in-memory test DB for step 3-6, but the order must be preserved).
 
@@ -1232,7 +1235,7 @@ Border radius: cards=12px, buttons=8px, badges=9999px
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Architecture, docs, monorepo scaffold | ✅ Complete |
-| 1 | FastAPI scaffold, mDNS, basic HLS, Flutter project setup, landing page | 🔵 In Progress |
+| 1 | FastAPI scaffold, mDNS, basic HLS, Flutter project setup, landing page | 🔵 In Progress (server ✅, mobile 🔲) |
 | 2 | Full library management, Flutter home/player screens | 🔲 Planned |
 | 3 | WebRTC internet streaming, Firebase signaling, Flutter Web dashboard, subscription licensing | 🔲 Planned |
 | 4 | Hardware transcoding, advanced client management | 🔲 Planned |
@@ -1275,20 +1278,26 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 ## Current Status
 
-> **As of April 2026 — Phase 0 complete. Phase 1 in progress.**
+> **As of April 2026 — Phase 0 complete. Phase 1 server complete. Phase 1 mobile in progress.**
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation written and in sync
 - Flutter workspace configured: all packages pass `flutter analyze` with zero issues
 - `packages/fluxora_core` **implemented**: all 5 entities (`MediaFile`, `Library`, `StreamSession`, `Client`, `ServerInfo`) with `freezed` + `json_serializable` codegen; `ApiClient` (Dio), `ApiException`, `Endpoints`, `SecureStorage`; design tokens (`AppColors`, `AppSizes`, `AppTypography`)
-- `apps/server` — **Phase 1 core + auth implemented**:
+- `apps/server` — **Phase 1 complete** (38 passing tests; ruff + black clean):
   - `config.py` — BaseSettings, platform data dir, DB file permissions
   - `database/db.py` — aiosqlite, WAL mode, migration runner; migrations 001–003 applied
-  - `main.py` — FastAPI lifespan, HLS orphan cleanup, structured logging
+  - `main.py` — FastAPI lifespan (9 ordered steps incl. secret validation, orphan cleanup), mDNS, structured logging
   - `routers/info.py` — `GET /api/v1/info` ✅
-  - `routers/auth.py` — `POST /request-pair`, `GET /status/{id}`, `POST /approve/{id}`, `POST /reject/{id}`, `DELETE /revoke/{id}` ✅
-  - `routers/deps.py` — `validate_token` FastAPI dependency ✅
+  - `routers/auth.py` — full pairing flow (request-pair, status, approve, reject, revoke); approve/reject localhost-only ✅
+  - `routers/deps.py` — `validate_token` + `require_local_caller` FastAPI dependencies ✅
+  - `routers/files.py` — `GET /api/v1/files`, `GET /api/v1/files/{id}` ✅
+  - `routers/library.py` — full library CRUD + `POST /{id}/scan` ✅
+  - `routers/stream.py` — `POST /start/{id}`, `GET/{id}`, `DELETE/{id}` + HLS file serving ✅
+  - `routers/ws.py` — `/ws/status` WebSocket: token auth, ping/pong keepalive, progress updates ✅
   - `services/auth_service.py` — HMAC-SHA256 token hashing, pairing state machine ✅
-  - 8 passing integration tests; ruff + black clean
+  - `services/library_service.py` — library + file CRUD + directory scan ✅
+  - `services/discovery_service.py` — mDNS `_fluxora._tcp.local.` broadcast ✅
+  - `services/ffmpeg_service.py` — async FFmpeg subprocess management, HLS output ✅
 
-**Next:** Implement `apps/server` mDNS broadcast (`services/discovery_service.py`) + `GET /api/v1/files` + `GET /api/v1/library`.
+**Next:** Begin Phase 1 mobile — `apps/mobile` Flutter project: mDNS discovery, pairing flow, library browser.

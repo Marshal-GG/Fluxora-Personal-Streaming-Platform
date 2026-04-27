@@ -1,3 +1,4 @@
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
@@ -21,3 +22,16 @@ async def client(test_db):
         transport=ASGITransport(app=app), base_url="http://test"
     ) as ac:
         yield ac
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limits():
+    """Clear in-memory rate-limit counters so each test gets a clean slate."""
+    from routers.auth import limiter as auth_limiter
+    from routers.stream import limiter as stream_limiter
+
+    for lim in (auth_limiter, stream_limiter):
+        lim._storage.reset()
+    yield
+    for lim in (auth_limiter, stream_limiter):
+        lim._storage.reset()

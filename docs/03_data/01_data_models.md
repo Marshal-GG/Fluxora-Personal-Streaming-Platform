@@ -65,7 +65,8 @@
 | platform | TEXT | ✅ | Enum: `android`, `ios`, `windows`, `macos`, `linux` |
 | last_seen | TIMESTAMP | ✅ | Last connection time |
 | is_trusted | BOOLEAN | ✅ | Whether server has approved this client |
-| auth_token | TEXT | ✅ | Session token |
+| auth_token | TEXT | ✅ | HMAC-SHA256 hash of bearer token — raw token never stored |
+| status | TEXT | ✅ | Enum: `pending`, `approved`, `rejected` (added migration 003) |
 
 ---
 
@@ -110,4 +111,4 @@ UserSettings ──1:1──▶ (singleton)
 - `MediaFile.path` must be an absolute path; must exist at time of indexing
 - `StreamSession.ended_at` must be > `started_at` if set
 - `UserSettings` is a singleton (only one row, id = 1)
-- `Client.auth_token` must be rotated on each new session
+- `Client.auth_token` stores the HMAC-SHA256 hash of the raw bearer token — never the raw token itself

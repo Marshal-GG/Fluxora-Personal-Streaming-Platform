@@ -59,12 +59,24 @@ New Device:
 | Route Pattern | Auth Required | Notes |
 |--------------|--------------|-------|
 | `GET /api/v1/info` | ❌ Public | Server identity only — no sensitive data |
-| `POST /auth/request-pair` | ❌ Public | Pairing initiation |
-| `GET /auth/status/{id}` | ❌ Public | Polling endpoint |
-| `GET /api/v1/files` | ✅ Bearer token | File browser |
-| `GET /api/v1/library/**` | ✅ Bearer token | Metadata, library |
-| `GET /api/v1/stream/**` | ✅ Bearer token | HLS stream |
-| `WS /ws/signal` | ✅ Bearer token | WebRTC signaling |
+| `POST /api/v1/auth/request-pair` | ❌ Public | Pairing initiation |
+| `GET /api/v1/auth/status/{id}` | ❌ Public | Polling endpoint — token returned once on first approved poll |
+| `POST /api/v1/auth/approve/{id}` | 🔒 Localhost only | `require_local_caller` dep — 403 if `request.client.host` not in `{127.0.0.1, ::1, localhost}` |
+| `POST /api/v1/auth/reject/{id}` | 🔒 Localhost only | Same `require_local_caller` restriction |
+| `DELETE /api/v1/auth/revoke/{id}` | ✅ Bearer token | Revoke a client's access |
+| `GET /api/v1/files` | ✅ Bearer token | List indexed media files |
+| `GET /api/v1/files/{id}` | ✅ Bearer token | Single file lookup |
+| `GET /api/v1/library` | ✅ Bearer token | List libraries |
+| `POST /api/v1/library` | ✅ Bearer token | Create library |
+| `GET /api/v1/library/{id}` | ✅ Bearer token | Single library lookup |
+| `DELETE /api/v1/library/{id}` | ✅ Bearer token | Delete library |
+| `POST /api/v1/library/{id}/scan` | ✅ Bearer token | Trigger directory scan |
+| `POST /api/v1/stream/start/{id}` | ✅ Bearer token | Start FFmpeg transcode session |
+| `GET /api/v1/stream/{id}` | ✅ Bearer token | Session details |
+| `DELETE /api/v1/stream/{id}` | ✅ Bearer token | Stop session (owner only) |
+| `GET /api/v1/hls/{session}/{file}` | ✅ Bearer token | Serve HLS playlist or segment |
+| `WS /api/v1/ws/status` | ✅ First-message token | Token sent as `{"type":"auth","token":"..."}` — not in header |
+| `WS /api/v1/ws/signal` | ✅ Bearer token | WebRTC signaling (Phase 3) |
 | All Control Panel routes | ✅ Localhost only | Not exposed externally |
 
 ---
@@ -141,7 +153,9 @@ Rules:
 
 - All `/files`, `/stream`, `/library`, `/ws` routes require a valid, trusted auth token
 - `GET /info` is intentionally public (server name, version — no file paths or user data)
-- `/auth/*` is public but rate-limited (Phase 2)
+- `/auth/request-pair` and `/auth/status/{id}` are public but rate-limited (5/minute per IP)
+- `POST /auth/approve` and `POST /auth/reject` are restricted to `localhost` by `require_local_caller`
+- `TOKEN_HMAC_KEY` must be set — server refuses to start with an empty key
 - File path resolution must always be within configured library roots
 - Control Panel binds to `localhost` only and is never exposed on the network
 - Token hashes stored in DB with a constant-time comparison to prevent timing attacks
@@ -153,9 +167,10 @@ Rules:
 | Addition | Notes |
 |----------|-------|
 | JWT tokens | Replace opaque UUID tokens with short-lived JWTs (15-min access, 30-day refresh) |
-| Rate limiting | `slowapi` middleware on `/auth/*` endpoints |
 | Token refresh flow | `POST /auth/refresh` using refresh token |
 | Audit log | Log all auth events (pair, approve, reject, revoke) to DB |
+
+> **Already implemented in Phase 1:** Rate limiting (`slowapi`, 5/minute on `/auth/request-pair`; 10/minute on stream start); localhost restriction on `approve`/`reject`; startup key validation.
 
 ---
 

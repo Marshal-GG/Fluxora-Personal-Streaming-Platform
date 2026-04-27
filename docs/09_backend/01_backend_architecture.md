@@ -25,40 +25,45 @@
 
 ```
 server/
-├── main.py                 # FastAPI app entry point
-├── config.py               # Settings, env vars, paths
+├── main.py                 # FastAPI app entry point + lifespan (DB, mDNS, HLS cleanup)
+├── config.py               # Settings (BaseSettings), platform data dir, DB permissions
 ├── database/
-│   ├── db.py               # SQLite connection + migrations runner
+│   ├── db.py               # aiosqlite connection pool, WAL mode, migration runner
 │   └── migrations/
-│       ├── 001_initial.sql
-│       └── 002_sessions.sql
+│       ├── 001_initial.sql  # libraries, media_files, clients, user_settings
+│       ├── 002_sessions.sql # stream_sessions
+│       └── 003_client_status.sql  # clients.status column
 │
 ├── routers/
 │   ├── info.py             # GET /api/v1/info ✅
-│   ├── auth.py             # /auth endpoints ✅ (request-pair, status, approve, reject, revoke)
-│   ├── deps.py             # FastAPI dependencies (validate_token) ✅
-│   ├── files.py            # /files endpoints
-│   ├── library.py          # /library endpoints
-│   ├── stream.py           # /stream + /hls endpoints
-│   └── ws.py               # WebSocket endpoints
+│   ├── auth.py             # /auth/* ✅ (request-pair, status, approve, reject, revoke)
+│   ├── deps.py             # validate_token + require_local_caller FastAPI dependencies ✅
+│   ├── files.py            # GET /api/v1/files, GET /api/v1/files/{id} ✅
+│   ├── library.py          # GET/POST /api/v1/library, GET/DELETE /{id}, POST /{id}/scan ✅
+│   ├── stream.py           # POST /start/{id}, GET/{id}, DELETE/{id} + hls_router ✅
+│   └── ws.py               # WS /status: token auth + ping/pong + progress ✅
 │
 ├── services/
-│   ├── ffmpeg_service.py   # FFmpeg subprocess management
-│   ├── library_service.py  # Library scanning + TMDB integration
-│   ├── discovery_service.py # mDNS/Zeroconf broadcasting
-│   ├── auth_service.py     # Token validation, pairing logic
-│   └── webrtc_service.py   # STUN/TURN/signaling management
+│   ├── ffmpeg_service.py   # FFmpeg subprocess management, HLS output ✅
+│   ├── library_service.py  # Library + file CRUD + scan_library ✅
+│   ├── discovery_service.py # mDNS/Zeroconf broadcasting ✅
+│   ├── auth_service.py     # HMAC-SHA256 tokens, pairing state machine ✅
+│   └── webrtc_service.py   # STUN/TURN/signaling (stub)
 │
 ├── models/
-│   ├── media_file.py       # SQLite model
-│   ├── library.py
-│   ├── client.py
-│   ├── stream_session.py
-│   └── settings.py
+│   ├── media_file.py       # MediaFileResponse Pydantic schema ✅
+│   ├── library.py          # LibraryResponse, CreateLibraryBody ✅
+│   ├── client.py           # Client Pydantic schemas ✅
+│   ├── stream_session.py   # StreamStartResponse, StreamSessionResponse ✅
+│   └── settings.py         # ServerInfo schema ✅
 │
-└── utils/
-    ├── file_utils.py       # Path helpers, MIME detection
-    └── tmdb_client.py      # TMDB API wrapper
+└── tests/
+    ├── conftest.py          # test_db + client fixtures; reset_rate_limits autouse
+    ├── test_auth.py         # 10 tests — info + pairing flow + localhost restriction ✅
+    ├── test_library.py      # 8 tests — library CRUD ✅
+    ├── test_files.py        # 6 tests — file listing + filtering ✅
+    ├── test_stream.py       # 10 tests — stream start/stop/HLS (mocked FFmpeg) ✅
+    └── test_ws.py           # 4 tests — WebSocket auth + pong ✅
 ```
 
 ---
@@ -67,9 +72,9 @@ server/
 
 | Service | Responsibility | Key Functions |
 |---------|---------------|---------------|
-| `ffmpeg_service` | Spawn FFmpeg, manage HLS output, cleanup segments | `start_stream()`, `stop_stream()`, `get_stream_url()` |
-| `library_service` | Scan directories, enrich with TMDB metadata | `scan_library()`, `index_file()`, `fetch_tmdb_metadata()` |
-| `discovery_service` | Broadcast mDNS on LAN | `start_broadcasting()`, `stop_broadcasting()` |
+| `ffmpeg_service` ✅ | Spawn FFmpeg, manage HLS output, cleanup segments | `start_stream()`, `stop_stream()`, `cleanup_session_dir()`, `is_running()` |
+| `library_service` ✅ | Library + media file CRUD; TMDB enrichment (Phase 2) | `list_libraries()`, `get_library()`, `create_library()`, `delete_library()`, `list_files()`, `get_file()` |
+| `discovery_service` ✅ | Broadcast `_fluxora._tcp.local.` via mDNS on LAN | `start_discovery()`, `stop_discovery()` |
 | `auth_service` ✅ | Token generation (HMAC-SHA256), pairing state machine, token validation | `create_pair_request()`, `approve_client()`, `reject_client()`, `revoke_client()`, `get_trusted_client_by_token()` |
 | `webrtc_service` | Manage ICE/STUN/TURN for internet connections | `handle_offer()`, `generate_answer()` |
 

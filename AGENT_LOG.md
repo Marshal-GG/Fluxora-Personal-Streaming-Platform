@@ -452,3 +452,290 @@
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## [2026-04-27] — Server Phase 1: Files/Library endpoints + mDNS discovery
+**Agent:** Claude Sonnet 4.6
+**Phase:** Phase 1 — Server Core
+**Status:** Complete
+
+### What Was Done
+- Implemented `services/discovery_service.py` — `start_discovery()` and `stop_discovery()` using `zeroconf`; broadcasts `_fluxora._tcp.local.` with server name, port, IP, and version properties
+- Added `fluxora_server_name: str = "Fluxora Server"` to `config.py Settings`
+- Wired `start_discovery` / `stop_discovery` into `main.py` lifespan (step 6 before HTTP; shutdown after HTTP)
+- Implemented `models/media_file.py` — `MediaFileResponse` Pydantic schema
+- Implemented `models/library.py` — `LibraryResponse`, `CreateLibraryBody` Pydantic schemas
+- Implemented `services/library_service.py` — `list_libraries`, `get_library`, `create_library`, `delete_library`, `list_files`, `get_file`; `root_paths` stored as JSON string in SQLite
+- Implemented `routers/files.py` — `GET /api/v1/files` (with `library_id` filter), `GET /api/v1/files/{id}`; all routes require `validate_token`
+- Implemented `routers/library.py` — `GET /api/v1/library`, `POST /api/v1/library`, `GET /api/v1/library/{id}`, `DELETE /api/v1/library/{id}`; all routes require `validate_token`
+- Wrote `tests/test_library.py` — 8 integration tests covering full CRUD
+- Wrote `tests/test_files.py` — 6 integration tests covering listing, filtering by library_id, and per-file fetch
+- All 22 tests pass; ruff ✅; black ✅
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/config.py` |
+| Modified | `apps/server/main.py` |
+| Modified | `apps/server/services/discovery_service.py` |
+| Modified | `apps/server/services/library_service.py` |
+| Modified | `apps/server/models/media_file.py` |
+| Modified | `apps/server/models/library.py` |
+| Modified | `apps/server/routers/files.py` |
+| Modified | `apps/server/routers/library.py` |
+| Modified | `apps/server/tests/test_library.py` |
+| Modified | `apps/server/tests/test_files.py` |
+| Modified | `docs/04_api/01_api_contracts.md` |
+| Modified | `docs/09_backend/01_backend_architecture.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/04_api/01_api_contracts.md` | Replaced stub `/files` and `/library` with full `/api/v1/files`, `/api/v1/library` contract including all 6 endpoints, schemas, auth, status markers; updated versioning strategy |
+| `docs/09_backend/01_backend_architecture.md` | Updated project structure with all implemented files + test files; updated service map with `library_service` and `discovery_service` actual function signatures |
+
+### Decisions Made
+- `root_paths` stored as JSON text in SQLite (no junction table) — library roots are a small ordered list; JSON avoids a join and keeps the migration simple
+- `fluxora_server_name` added to `Settings` — mDNS name can be overridden via env var; `user_settings` DB name used only for the `/info` endpoint
+- `file_count` computed via `COUNT(*)` sub-query per library — acceptable for Phase 1 with small libraries; optimize with trigger or cached column if performance requires
+
+### Blockers / Open Issues
+- `scan_library` (directory scan + file indexing) not yet implemented — `media_files` can only be populated via direct DB insert or future scan endpoint
+- `approve`/`reject` endpoints still have no auth — Control Panel localhost restriction deferred to Phase 2
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Implement `POST /api/v1/library/{id}/scan` — walk `root_paths` directories, detect media files by extension, insert into `media_files`
+3. Implement `GET /api/v1/stream/start/{file_id}` — spawn FFmpeg, create HLS session, return playlist URL
+4. Implement `GET /api/v1/hls/{session_id}/{filename}` — serve `.m3u8` and `.ts` files
+5. Implement `DELETE /api/v1/stream/{session_id}` — stop FFmpeg, clean up temp files
+6. Run `ruff check`, `black --check`, `pytest` — all must pass
+7. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
+## [2026-04-27] — Server Phase 1: library scan, FFmpeg service, streaming endpoints
+**Agent:** Claude Sonnet 4.6
+**Phase:** Phase 1 — Server Core
+**Status:** Complete
+
+### What Was Done
+- Implemented `scan_library()` in `library_service.py` — walks `root_paths`, skips non-media extensions, inserts new files, updates `last_scanned`; yields event loop every 50 inserts
+- Added `POST /api/v1/library/{id}/scan` to `library.py` router
+- Implemented `services/ffmpeg_service.py` — `start_stream()` spawns `asyncio.create_subprocess_exec`; `stop_stream()` kills process; `cleanup_session_dir()` deletes HLS temp dir; `_ffmpeg_bin()` resolves bundled binary in PyInstaller builds
+- Implemented `models/stream_session.py` — `StreamStartResponse`, `StreamSessionResponse` Pydantic schemas
+- Implemented `routers/stream.py` — `POST /start/{file_id}`, `GET /{session_id}`, `DELETE /{session_id}` (enforces session ownership); `hls_router` with `GET /{session_id}/{filename}` (path traversal guard + `resolve().relative_to()` check)
+- Updated `main.py` — imports `hls_router` from stream module; mounts at `/api/v1/hls`
+- All 22 tests pass; ruff ✅; black ✅
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/services/library_service.py` |
+| Modified | `apps/server/routers/library.py` |
+| Modified | `apps/server/services/ffmpeg_service.py` |
+| Modified | `apps/server/models/stream_session.py` |
+| Modified | `apps/server/routers/stream.py` |
+| Modified | `apps/server/main.py` |
+| Modified | `docs/04_api/01_api_contracts.md` |
+| Modified | `docs/09_backend/01_backend_architecture.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/04_api/01_api_contracts.md` | Added `POST /library/{id}/scan`, `POST /stream/start/{id}`, `GET /stream/{id}`, `DELETE /stream/{id}`, `GET /hls/{id}/playlist.m3u8`, `GET /hls/{id}/{seg}.ts` with full schemas and status markers |
+| `docs/09_backend/01_backend_architecture.md` | Updated project structure (stream.py, ffmpeg_service.py, stream_session.py, library.py scan endpoint); updated service map with ffmpeg_service functions |
+
+### Decisions Made
+- `hls_router` is a separate `APIRouter` inside `stream.py`, mounted at `/api/v1/hls` in `main.py` — keeps HLS serving decoupled from stream CRUD while staying in the same module
+- Path traversal guard uses two checks: early string rejection of `..`/`/`/`\\`, then `resolve().relative_to()` for canonicalized path comparison
+- `connection_type` hardcoded to `'lan'` on session create — WebRTC type update deferred to Phase 3
+
+### Blockers / Open Issues
+- FFmpeg must be installed separately and on `PATH`; startup check (friendly error + download link) deferred
+- Stream tests (mocking FFmpeg subprocess) not yet written — FFmpeg not available in CI without additional setup
+- `approve`/`reject` endpoints still have no auth — Control Panel localhost restriction deferred to Phase 2
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Write tests for the streaming endpoints — mock `ffmpeg_service.start_stream` and `ffmpeg_service.stop_stream` to avoid needing real FFmpeg in CI
+3. Implement the WebSocket router (`routers/ws.py`) — real-time stream status events (ping/pong keepalive)
+4. Consider adding a startup FFmpeg availability check in `main.py` with a clear error message
+5. Run `ruff check`, `black --check`, `pytest` — all must pass
+6. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
+## [2026-04-27] — Server Phase 1: stream tests + WebSocket status router
+**Agent:** Claude Sonnet 4.6
+**Phase:** Phase 1 — Server Core
+**Status:** Complete
+
+### What Was Done
+- Wrote `tests/test_stream.py` — 10 integration tests covering all stream endpoints using `unittest.mock.patch` to mock `ffmpeg_service`; includes HLS playlist serving, path traversal rejection, and session ownership enforcement
+- Implemented `routers/ws.py` — `/api/v1/ws/status` WebSocket endpoint: token auth via first message, 30 s ping / 10 s pong timeout keepalive, `progress` message handling updates `stream_sessions.progress_sec` in DB; uses `asyncio.create_task` for non-blocking ping loop
+- All 32 tests pass; ruff ✅; black ✅
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/tests/test_stream.py` |
+| Modified | `apps/server/routers/ws.py` |
+| Modified | `docs/04_api/01_api_contracts.md` |
+| Modified | `docs/09_backend/01_backend_architecture.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/04_api/01_api_contracts.md` | Replaced `/ws/status` and `/ws/signal` stubs with full implemented `/api/v1/ws/status` contract (handshake, ping/pong, progress) and Phase 3 stub for `/ws/signal` |
+| `docs/09_backend/01_backend_architecture.md` | Updated ws.py entry; added test_stream.py to test file list |
+
+### Decisions Made
+- WebSocket token auth uses first-message JSON pattern (not query param or HTTP header) — avoids exposing token in server access logs or URL history
+- Ping loop runs as a separate `asyncio.create_task` — allows receive loop to stay unblocked between pings; task is cancelled on session end
+- `progress` updates use a targeted UPDATE with `client_id` check — prevents one client updating another client's session
+
+### Blockers / Open Issues
+- FFmpeg startup check not yet implemented — server starts without verifying FFmpeg is on PATH; add a `WARNING` log on startup (not a hard failure, since FFmpeg might be installed after server starts)
+- WebSocket `/ws/signal` for WebRTC deferred to Phase 3
+- `approve`/`reject` endpoints still have no auth — Control Panel localhost restriction deferred to Phase 2
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Phase 1 server is now feature-complete — review CLAUDE.md Phase Roadmap and update Phase 1 status to ✅ Complete
+3. Begin Phase 2: implement `apps/mobile` Flutter project setup — `pubspec.yaml`, DI, router, connect screen (mDNS discovery + manual IP entry), pairing flow
+4. Alternatively: add an FFmpeg startup `WARNING` log to `main.py` if FFmpeg is not found on PATH (non-blocking — just log a warning)
+5. Run `ruff check`, `black --check`, `pytest` — all must pass before starting Phase 2
+6. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
+## [2026-04-27] — Server Phase 1: "fix all" improvements, doc sweep, WS test fixes
+**Agent:** Claude Sonnet 4.6
+**Phase:** Phase 1 — Server Core
+**Status:** Complete
+
+### What Was Done
+- Added `_check_ffmpeg()` startup warning to `main.py` — logs `WARNING` if FFmpeg not on PATH; server still starts, streaming endpoints return 503
+- Added `_close_orphaned_sessions()` to `main.py` lifespan — marks any sessions with `ended_at IS NULL` as ended at startup (crash recovery)
+- Added `@limiter.limit("5/minute")` + `request: Request` parameter to `POST /auth/request-pair` in `routers/auth.py`
+- Added `env.example` entry for `FLUXORA_SERVER_NAME`
+- Completed full doc sweep after all Phase 1 server implementation: `api_contracts`, `backend_architecture`, `data_models` (added `status` field), `security` (route auth matrix), `roadmap` (Phase 1 server ✅)
+- Updated `CLAUDE.md` Current Status to reflect Phase 1 server complete with 36 tests
+- Wrote `tests/test_ws.py` — 4 integration tests for `/api/v1/ws/status` using `TestClient` (sync WebSocket support): `test_ws_auth_ok`, `test_ws_invalid_token_closes`, `test_ws_missing_auth_message_closes`, `test_ws_pong_accepted`
+- Fixed `tests/test_ws.py` TestClient–lifespan conflict: `TestClient(app)` triggers full lifespan including `init_db(production_path)` which overwrites the test DB's `_db` pointer; fixed by patching `main.init_db`, `main.close_db`, `main.start_discovery`, `main.stop_discovery` via a `_lifespan_patches()` context manager in each test
+- Fixed inter-test rate limit accumulation: `slowapi` in-memory counters persisted across tests causing `5/minute` limit to be hit mid-suite; added `reset_rate_limits` autouse fixture to `conftest.py` that calls `lim._storage.reset()` on `auth_limiter` and `stream_limiter` before and after each test
+- **Final state:** 36/36 tests pass; ruff ✅; black ✅
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/main.py` |
+| Modified | `apps/server/env.example` |
+| Modified | `apps/server/routers/auth.py` |
+| Modified | `apps/server/tests/conftest.py` |
+| Created  | `apps/server/tests/test_ws.py` |
+| Modified | `docs/04_api/01_api_contracts.md` |
+| Modified | `docs/09_backend/01_backend_architecture.md` |
+| Modified | `docs/03_data/01_data_models.md` |
+| Modified | `docs/06_security/01_security.md` |
+| Modified | `docs/10_planning/01_roadmap.md` |
+| Modified | `CLAUDE.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/04_api/01_api_contracts.md` | All new endpoints added with full schemas; status markers updated |
+| `docs/09_backend/01_backend_architecture.md` | Project structure updated; service map updated |
+| `docs/03_data/01_data_models.md` | Added `status` field to Client entity; fixed `auth_token` description |
+| `docs/06_security/01_security.md` | Updated route auth matrix with all ~20 implemented endpoints; WS first-message auth noted |
+| `docs/10_planning/01_roadmap.md` | Phase 1 server features marked ✅ Done; Flutter features marked 🔲 Next |
+| `CLAUDE.md` | Updated Current Status; Phase 1 row now shows server-complete with 36 tests |
+
+### Decisions Made
+- `_lifespan_patches()` context manager pattern — single place to declare all lifespan mocks needed by WS tests; avoids repeating four `patch()` calls in each test
+- `reset_rate_limits` autouse fixture — applies globally to all tests; ensures `POST /request-pair` limit never carries over between tests regardless of run order
+- `main.init_db` / `main.close_db` patched as `AsyncMock()` not `MagicMock()` — these are `async def` functions; using `MagicMock` would cause a coroutine-not-awaited error in the lifespan
+
+### Blockers / Open Issues
+- `approve`/`reject` endpoints still have no auth — Control Panel localhost restriction deferred to Phase 2
+- `token_hmac_key` defaults to `""` — must set real key via `secrets.token_hex(32)` before production use
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Phase 1 server is now fully complete (36 tests, ruff ✅, black ✅) — **begin Phase 2: Flutter mobile app setup**
+3. `apps/mobile` Flutter project: `pubspec.yaml` dependencies, DI (`get_it`), router (`go_router`), Connect screen (mDNS discovery + manual IP entry)
+4. Implement the pairing flow: Connect screen → pair request → approval waiting screen → approved (token stored in `flutter_secure_storage`)
+5. Run `flutter analyze` — zero issues required before moving on
+6. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
+## [2026-04-27] — Security hardening: startup key validation + localhost enforcement
+**Agent:** Claude Sonnet 4.6
+**Phase:** Phase 1 — Server Security
+**Status:** Complete
+
+### What Was Done
+- Added `TOKEN_HMAC_KEY` startup validation to `main.py` lifespan (step 1): raises `RuntimeError` with actionable message if the key is empty; server refuses to start insecurely
+- Added `require_local_caller` dependency to `routers/deps.py`: checks `request.client.host` against `{127.0.0.1, ::1, localhost}`; returns `403` for non-loopback callers
+- Applied `require_local_caller` to `POST /auth/approve/{id}` and `POST /auth/reject/{id}` in `routers/auth.py`
+- Added 2 new tests to `test_auth.py`: `test_approve_blocked_from_lan` and `test_reject_blocked_from_lan` — use `ASGITransport(client=("192.168.1.100", 50000))` to simulate a LAN caller and assert `403`
+- Updated `test_ws.py` `_lifespan_patches()`: added `patch.object(_settings, "token_hmac_key", HMAC_KEY)` so the startup key check passes, and `app.dependency_overrides[require_local_caller] = lambda: None` so `TestClient` approve calls succeed
+- Updated lifespan step comments in `main.py` to reflect the correct 9-step order
+- **Final state:** 38/38 tests pass; ruff ✅; black ✅
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/main.py` |
+| Modified | `apps/server/routers/deps.py` |
+| Modified | `apps/server/routers/auth.py` |
+| Modified | `apps/server/tests/test_auth.py` |
+| Modified | `apps/server/tests/test_ws.py` |
+| Modified | `docs/04_api/01_api_contracts.md` |
+| Modified | `docs/06_security/01_security.md` |
+| Modified | `docs/09_backend/01_backend_architecture.md` |
+| Modified | `README.md` |
+| Modified | `CLAUDE.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/04_api/01_api_contracts.md` | Updated `approve`/`reject` auth notes to document `require_local_caller`; added `403` to error lists |
+| `docs/06_security/01_security.md` | Route matrix: `approve`/`reject` changed from "None (Phase 1)" to "🔒 Localhost only"; Security Policies updated; Phase 2 additions note clarified |
+| `docs/09_backend/01_backend_architecture.md` | `deps.py` entry updated; test file list updated with correct counts and `test_ws.py` |
+| `README.md` | Status line updated; repo structure added `web_landing/`, `web_app/`, `functions/`, `firebase.json`, `.firebaserc`; Development Phases table aligned with CLAUDE.md |
+| `CLAUDE.md` | Server Startup Initialization Order rewritten to match actual 9-step implementation; test count updated to 38; Current Status updated |
+
+### Decisions Made
+- `require_local_caller` checks `request.client.host` (not IP range) — simple and correct for Phase 1
+- Startup key check is a hard `RuntimeError` (not a warning) — an empty key silently produces forgeable tokens
+- WS tests use `patch.object` on the shared `_settings` singleton — restores the original value when the context exits, preventing test pollution
+
+### Blockers / Open Issues
+- None — Phase 1 server is fully implemented and hardened
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Phase 1 server is fully complete and hardened (38 tests) — **begin Phase 2: Flutter mobile app**
+3. `apps/mobile`: configure `pubspec.yaml` deps, DI (`get_it`), router (`go_router`), Connect screen (mDNS discovery + manual IP entry)
+4. Implement the pairing flow: Connect → pair request → approval waiting → approved → token in `flutter_secure_storage`
+5. Run `flutter analyze` — zero issues before moving on
+6. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

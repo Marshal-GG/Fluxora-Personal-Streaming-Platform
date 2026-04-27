@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     # Server
     fluxora_host: str = "0.0.0.0"
     fluxora_port: int = 8000
+    fluxora_server_name: str = "Fluxora Server"
     fluxora_log_level: str = "INFO"
     fluxora_env: str = "prod"  # "dev" enables plain log output
 

@@ -1,13 +1,17 @@
 import logging
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from config import settings
 from database.db import get_db
 from models.client import AuthStatusResponse, PairRequestBody, PairResponse
-from routers.deps import validate_token
+from routers.deps import require_local_caller, validate_token
 from services import auth_service
+
+limiter = Limiter(key_func=get_remote_address)
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +19,9 @@ router = APIRouter()
 
 
 @router.post("/request-pair", response_model=PairResponse)
+@limiter.limit("5/minute")
 async def request_pair(
+    request: Request,
     body: PairRequestBody,
     db: aiosqlite.Connection = Depends(get_db),
 ) -> PairResponse:
@@ -56,6 +62,7 @@ async def auth_status(
 async def approve_client(
     client_id: str,
     db: aiosqlite.Connection = Depends(get_db),
+    _local: None = Depends(require_local_caller),
 ) -> PairResponse:
     client = await auth_service.get_client(db, client_id)
     if client is None:
@@ -79,6 +86,7 @@ async def approve_client(
 async def reject_client(
     client_id: str,
     db: aiosqlite.Connection = Depends(get_db),
+    _local: None = Depends(require_local_caller),
 ) -> PairResponse:
     client = await auth_service.get_client(db, client_id)
     if client is None:
