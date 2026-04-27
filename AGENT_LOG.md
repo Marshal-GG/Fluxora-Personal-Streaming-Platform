@@ -322,3 +322,71 @@
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## [2026-04-27] — Server Phase 1: config, database, migrations, GET /api/v1/info
+**Agent:** Claude Sonnet 4.6
+**Phase:** Phase 1 — Server Core
+**Status:** Complete
+
+### What Was Done
+- Implemented `config.py` — `Settings` via `pydantic-settings`; reads `~/.fluxora/.env`; platform-correct data dir (`%APPDATA%\Fluxora` / `~/.fluxora`); `700`/`600` permission helpers; `icacls` for Windows
+- Implemented `database/db.py` — aiosqlite connection, WAL mode, `PRAGMA foreign_keys=ON`, `_migrations` tracking table, migration runner applying `.sql` files in order
+- Implemented `database/migrations/001_initial.sql` — `libraries`, `media_files` (+ 2 indexes), `clients`, `user_settings` (with seed `INSERT OR IGNORE`)
+- Implemented `database/migrations/002_sessions.sql` — `stream_sessions` (+ 3 indexes)
+- Implemented `models/settings.py` — `ServerInfoResponse` Pydantic model
+- Implemented `routers/info.py` — `GET /api/v1/info` reads `user_settings`, returns name/version/tier
+- Stubbed all other routers (`auth`, `files`, `library`, `stream`, `ws`) as empty `APIRouter` so they import cleanly
+- Implemented `main.py` — FastAPI lifespan: dir security → HLS orphan cleanup → `init_db` → `secure_db_file` → router registration; structured JSON logging in prod, plain in dev
+- Implemented `tests/conftest.py` — `test_db` fixture (isolated tmp DB) + `client` fixture (ASGI test client)
+- Implemented `tests/test_auth.py` — 2 integration tests for `GET /api/v1/info` (defaults + settings row update)
+- Fixed `server_ci.yml` — added ruff lint and black format check steps; added PR trigger; set `working-directory`
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/config.py` |
+| Modified | `apps/server/database/db.py` |
+| Modified | `apps/server/database/migrations/001_initial.sql` |
+| Modified | `apps/server/database/migrations/002_sessions.sql` |
+| Modified | `apps/server/models/settings.py` |
+| Created  | `apps/server/routers/info.py` |
+| Modified | `apps/server/routers/auth.py` |
+| Modified | `apps/server/routers/files.py` |
+| Modified | `apps/server/routers/library.py` |
+| Modified | `apps/server/routers/stream.py` |
+| Modified | `apps/server/routers/ws.py` |
+| Modified | `apps/server/main.py` |
+| Modified | `apps/server/tests/conftest.py` |
+| Modified | `apps/server/tests/test_auth.py` |
+| Modified | `.github/workflows/server_ci.yml` |
+| Modified | `docs/05_infrastructure/01_infrastructure.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/05_infrastructure/01_infrastructure.md` | Updated server_ci.yml description to reflect ruff + black + pytest steps |
+
+### Decisions Made
+- `_migrations` table tracks applied migrations by filename — lightweight, no Alembic dependency
+- `executescript()` used for migrations — handles multi-statement SQL files; auto-commits
+- HLS orphan cleanup runs at startup before accepting requests — prevents leftover segments from crashed runs
+- Router stubs use empty `APIRouter()` — avoids import errors while Phase 1 endpoints are not yet implemented
+
+### Blockers / Open Issues
+- `token_hmac_key` in `config.py` defaults to `""` — server will accept empty key until auth is implemented in Phase 1 auth work; must be enforced before pairing endpoint is wired up
+- Keyring integration (`get_or_create_db_key`) not yet implemented — deferred to auth phase
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Implement `apps/server/routers/auth.py` — `POST /auth/request-pair`, `GET /auth/status/{client_id}`, `POST /auth/approve/{client_id}`, `DELETE /auth/revoke/{client_id}`
+3. Implement `apps/server/services/auth_service.py` — token generation (HMAC-SHA256), pairing state machine
+4. Implement `apps/server/models/client.py` — `PairRequestBody`, `PairResponse`, `AuthStatusResponse` Pydantic models
+5. Add `validate_token` dependency for protected routes
+6. Write integration tests for all auth endpoints
+7. Run `ruff check`, `black --check`, `pytest` — all must pass
+8. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
