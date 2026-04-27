@@ -17,16 +17,18 @@ jobs:
 
       - name: Remove private files and references
         run: |
-          # 1. Delete the files themselves
+          # 1. Delete private files
           rm -f AGENT_LOG.md
           rm -f CLAUDE.md
           rm -rf docs/logs
-          rm -f .github/workflows/mirror-public.yml
 
-          # 2. Remove the entire "For AI Agents" section from the root README.md
+          # 2. Remove ALL workflows — public repo is a code mirror only, no CI runs there
+          rm -rf .github/workflows/
+
+          # 3. Remove the entire "For AI Agents" section from the root README.md
           sed -i '/## For AI Agents/,$d' README.md 2>/dev/null || true
 
-          # 3. Globally delete any line containing "AGENT_LOG" or "CLAUDE.md" in ALL markdown files
+          # 4. Globally delete any line containing "AGENT_LOG" or "CLAUDE.md" in ALL markdown files
           find . -name "*.md" -type f -exec sed -i '/AGENT_LOG/d' {} +
           find . -name "*.md" -type f -exec sed -i '/CLAUDE\.md/d' {} +
 
@@ -47,7 +49,7 @@ jobs:
 
       - name: Stage filtered files
         run: |
-          git rm -r --cached AGENT_LOG.md CLAUDE.md docs/logs .github/workflows/mirror-public.yml --ignore-unmatch
+          git rm -r --cached AGENT_LOG.md CLAUDE.md docs/logs .github/workflows/ --ignore-unmatch
           git add -A
 
       - name: Commit clean state
