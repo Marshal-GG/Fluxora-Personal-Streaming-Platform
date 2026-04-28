@@ -296,7 +296,7 @@ Fluxora/
 | WebRTC | `flutter_webrtc` (v1.x+) | Internet streaming only — Phase 3; v0.10.x uses removed v1 Flutter plugin API; do not add until Phase 3 |
 | Storage | `flutter_secure_storage` (via `fluxora_core`) | Bearer token storage; never `shared_preferences` for secrets |
 | File paths | `path_provider` | All file/directory paths go through this — never hardcode platform paths |
-| Video | `media_kit` | HLS `.m3u8` playback (mobile only) — Phase 2; `better_player` dropped (AGP 8+ namespace incompatibility) |
+| Video | `media_kit` ^1.2.6 + `media_kit_video` ^2.0.1 + `media_kit_libs_video` ^1.0.7 | HLS `.m3u8` playback (mobile); `better_player` dropped (AGP 8+ incompatible) |
 | Cloud (Phase 3+) | Firebase SDK (`firebase_core`, `firebase_messaging`, `cloud_firestore`) | Push notifications, crash reporting (Crashlytics), remote config; feature-flagged — never block core streaming |
 | Web (landing) | Next.js 16 + TypeScript | Static export → Firebase Hosting; hosted at `fluxora.marshalx.dev` |
 | Web (dashboard, Phase 3+) | Flutter Web (`apps/web_app`) | Browser-accessible control panel; shares code with `apps/desktop` |
@@ -1278,7 +1278,7 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 ## Current Status
 
-> **As of April 2026 — Phase 0 complete. Phase 1 server complete. Phase 1 mobile complete (on-device testing).**
+> **As of April 2026 — Phase 0 complete. Phase 1 fully complete (M2 done). Phase 2 next.**
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation written and in sync
@@ -1290,14 +1290,13 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
   - All routers: info, auth, files, library, stream, ws ✅
   - All services: auth, library, discovery, ffmpeg ✅
   - `TOKEN_HMAC_KEY` required at startup; stored in `%APPDATA%\Fluxora\.env` (Windows)
-- `apps/mobile` — **Phase 1 complete** (14 passing tests):
+- `apps/mobile` — **Phase 1 complete** (24 passing tests):
   - `core/di/injector.dart` — get_it DI; credentials restored from SecureStorage on restart
   - `core/router/app_router.dart` — go_router with async auth redirect guard
-  - `shared/theme/app_theme.dart` — Material 3 dark ThemeData from design tokens
-  - `features/connect` — mDNS auto-discovery (`multicast_dns` PTR→SRV→A) + manual IP entry ✅
-  - `features/auth` — full pairing flow, `PairCubit` with configurable-interval polling ✅
-  - `features/library` — library grid + files list, `LibraryBloc` ✅
-  - Android platform files generated; network + multicast permissions set ✅
-  - `better_player` removed (AGP 8+ incompatible); `flutter_webrtc` deferred to Phase 3
+  - `features/connect` — mDNS auto-discovery + manual IP; Android `WifiManager.MulticastLock` ✅
+  - `features/auth` — full pairing flow, `PairCubit` with polling ✅
+  - `features/library` — library grid + files list ✅
+  - `features/player` — `media_kit` HLS player; `PlayerCubit` starts/stops stream; auth headers injected into `Media(httpHeaders:)`; `MaterialVideoControls`; landscape + immersive mode ✅
+  - Android platform files; `better_player` removed (AGP 8+ incompatible); `flutter_webrtc` deferred to Phase 3
 
-**Next:** Complete on-device testing → approve first pairing → verify library screen loads → begin Phase 2 (HLS player with `media_kit`, library metadata).
+**Next:** Phase 2 — Desktop control panel (`apps/desktop`) — dashboard + client approval UI (so pairing no longer requires curl). Then: TMDB metadata, playback resume.

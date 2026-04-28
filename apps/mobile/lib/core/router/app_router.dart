@@ -1,18 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
+import 'package:fluxora_core/entities/media_file.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
 import 'package:fluxora_mobile/features/auth/presentation/screens/pairing_screen.dart';
 import 'package:fluxora_mobile/features/connect/domain/entities/discovered_server.dart';
 import 'package:fluxora_mobile/features/connect/presentation/screens/connect_screen.dart';
 import 'package:fluxora_mobile/features/library/presentation/screens/files_screen.dart';
 import 'package:fluxora_mobile/features/library/presentation/screens/library_screen.dart';
+import 'package:fluxora_mobile/features/player/presentation/screens/player_screen.dart';
 
 abstract class Routes {
   static const String connect = '/';
   static const String pairing = '/pairing';
   static const String library = '/library';
   static String libraryFiles(String id) => '/library/$id/files';
+  static const String player = '/player';
 }
 
 final GoRouter appRouter = GoRouter(
@@ -40,6 +43,13 @@ final GoRouter appRouter = GoRouter(
         final id = state.pathParameters['id']!;
         final name = state.extra as String? ?? '';
         return FilesScreen(libraryId: id, libraryName: name);
+      },
+    ),
+    GoRoute(
+      path: Routes.player,
+      builder: (context, state) {
+        final file = state.extra as MediaFile;
+        return PlayerScreen(file: file);
       },
     ),
   ],

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_sizes.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
+import 'package:fluxora_mobile/core/router/app_router.dart';
 import 'package:fluxora_mobile/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_mobile/features/library/presentation/cubit/files_cubit.dart';
 import 'package:fluxora_mobile/features/library/presentation/cubit/files_state.dart';
@@ -67,8 +69,10 @@ class _FilesView extends StatelessWidget {
                   const SizedBox(height: AppSizes.s2),
               itemBuilder: (context, index) => MediaCard(
                 file: files[index],
-                // Player navigation is Phase 2
-                onTap: () {},
+                onTap: () => context.push(
+                  Routes.player,
+                  extra: files[index],
+                ),
               ),
             ),
           FilesFailure(:final message) => Center(

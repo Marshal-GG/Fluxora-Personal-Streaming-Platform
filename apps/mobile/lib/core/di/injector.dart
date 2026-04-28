@@ -8,6 +8,8 @@ import 'package:fluxora_mobile/features/connect/data/repositories/server_discove
 import 'package:fluxora_mobile/features/connect/domain/repositories/server_discovery_repository.dart';
 import 'package:fluxora_mobile/features/library/data/repositories/library_repository_impl.dart';
 import 'package:fluxora_mobile/features/library/domain/repositories/library_repository.dart';
+import 'package:fluxora_mobile/features/player/data/repositories/player_repository_impl.dart';
+import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 
 final GetIt getIt = GetIt.instance;
 
@@ -46,5 +48,9 @@ Future<void> setupInjector() async {
 
   getIt.registerLazySingleton<LibraryRepository>(
     () => LibraryRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+
+  getIt.registerLazySingleton<PlayerRepository>(
+    () => PlayerRepositoryImpl(apiClient: getIt<ApiClient>()),
   );
 }

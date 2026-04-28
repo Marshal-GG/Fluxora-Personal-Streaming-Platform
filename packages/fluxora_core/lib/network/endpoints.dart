@@ -19,7 +19,8 @@ class Endpoints {
   static const String libraryScan = '$_base/library/scan';
 
   // Stream
-  static String stream(String fileId) => '$_base/stream/$fileId';
+  static String streamStart(String fileId) => '$_base/stream/start/$fileId';
+  static String streamSession(String sessionId) => '$_base/stream/$sessionId';
 
   // HLS
   static String hlsPlaylist(String sessionId) =>

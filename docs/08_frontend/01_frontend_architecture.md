@@ -48,7 +48,7 @@
 | `/pairing` | PairingScreen | `PairCubit` | ✅ Done |
 | `/library` | LibraryScreen | `LibraryBloc` | ✅ Done |
 | `/library/:id/files` | FilesScreen | `FilesCubit` | ✅ Done |
-| `/player` | PlayerScreen | — | 🔲 Phase 2 |
+| `/player` | PlayerScreen | `PlayerCubit` | ✅ Done |
 | `/settings` | SettingsScreen | — | 🔲 Phase 2 |
 
 Auth guard: `go_router` `redirect` callback reads `SecureStorage` — unauthenticated users
@@ -93,16 +93,28 @@ apps/mobile/lib/
     │       ├── cubit/pair_state.dart     # PairInitial/Requesting/Pending/Approved/Rejected/Error
     │       └── screens/pairing_screen.dart
     │
-    └── library/
+    ├── library/
+    │   ├── domain/repositories/
+    │   │   └── library_repository.dart   # listLibraries(), listFiles()
+    │   ├── data/repositories/
+    │   │   └── library_repository_impl.dart
+    │   └── presentation/
+    │       ├── bloc/library_bloc.dart    # LibraryStarted, LibraryRefreshed events
+    │       ├── bloc/library_state.dart   # LibraryInitial/Loading/Success/Failure
+    │       ├── screens/library_screen.dart   # 2-column GridView of library cards
+    │       └── screens/files_screen.dart     # ListView of media files; taps push /player
+    │
+    └── player/
+        ├── domain/entities/
+        │   └── stream_start_response.dart    # sessionId, fileId, playlistUrl
         ├── domain/repositories/
-        │   └── library_repository.dart   # listLibraries(), listFiles()
+        │   └── player_repository.dart        # startStream(fileId), stopStream(sessionId)
         ├── data/repositories/
-        │   └── library_repository_impl.dart
+        │   └── player_repository_impl.dart   # POST /stream/start, DELETE /stream/:id
         └── presentation/
-            ├── bloc/library_bloc.dart    # LibraryStarted, LibraryRefreshed events
-            ├── bloc/library_state.dart   # LibraryInitial/Loading/Success/Failure
-            ├── screens/library_screen.dart   # 2-column GridView of library cards
-            └── screens/files_screen.dart     # ListView of media files (player stub)
+            ├── cubit/player_cubit.dart   # startStream → Player+VideoController; stopStream on close
+            ├── cubit/player_state.dart   # PlayerInitial/Loading/Ready/Failure
+            └── screens/player_screen.dart    # Full-screen Video widget + MaterialVideoControls
 ```
 
 ---

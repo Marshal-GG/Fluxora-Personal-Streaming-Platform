@@ -1,7 +1,7 @@
 # Fluxora
 
 > **"Plex meets Syncthing"** — A hybrid file streaming and syncing system  
-> **Status:** Phase 1 server complete — Phase 1 mobile next | Last Updated: 2026-04-27
+> **Status:** Phase 1 complete (M2 — LAN Streaming MVP ✅) | Last Updated: 2026-04-28
 
 ---
 
@@ -14,10 +14,27 @@ Fluxora is a self-hosted, cross-platform media streaming system where your **PC 
 | Backend | Python + FastAPI + FFmpeg (HLS streaming) |
 | Database | SQLite (local, embedded, WAL mode) |
 | LAN Discovery | Zeroconf / mDNS (`_fluxora._tcp.local`) |
-| Internet Transport | WebRTC (STUN/TURN) |
+| Internet Transport | WebRTC (STUN/TURN) — Phase 3 |
 | Mobile Client | Flutter — Android + iOS |
 | Desktop Control Panel | Flutter — Windows, macOS, Linux |
 | Shared Dart Logic | `packages/fluxora_core` (local package) |
+
+---
+
+## Current Status
+
+**M2 — LAN Streaming MVP is complete.** You can run the server, discover it on your phone, pair, browse your media library, and stream a file — all on LAN with no internet required.
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| FastAPI server | ✅ Done | All routers, mDNS, FFmpeg HLS, WebSocket, 38 tests |
+| `fluxora_core` package | ✅ Done | Entities, ApiClient, SecureStorage, design tokens |
+| Flutter mobile — connect | ✅ Done | mDNS auto-discovery + manual IP; Android MulticastLock |
+| Flutter mobile — auth | ✅ Done | Full pairing flow; token in SecureStorage |
+| Flutter mobile — library | ✅ Done | Library grid + file browser |
+| Flutter mobile — player | ✅ Done | `media_kit` HLS player; auth headers; play/pause/seek |
+| Flutter desktop | 🔲 Phase 2 | Control panel — dashboard, client approval |
+| Internet streaming | 🔲 Phase 3 | WebRTC / STUN / TURN |
 
 ---
 
@@ -48,11 +65,6 @@ Fluxora/
 │   └── 11_design/           # Brand system, color palette, UI concepts
 ├── functions/               # Firebase Cloud Functions (Phase 3 stubs)
 ├── scripts/                 # Build and release automation
-│   ├── scaffold.ps1         # Initial project scaffolding (run once)
-│   ├── build_server.ps1/.sh # PyInstaller builds
-│   ├── build_mobile.sh      # Flutter APK + IPA builds
-│   ├── build_desktop.sh     # Flutter desktop build
-│   └── release.sh           # GitHub Release tagging
 ├── .github/
 │   └── workflows/           # Path-scoped CI (server / mobile / desktop / web)
 ├── firebase.json            # Firebase Hosting + Functions config
@@ -70,11 +82,30 @@ Fluxora/
 | Phase | Goal | Status |
 |-------|------|--------|
 | 0 | Architecture, docs, monorepo scaffold | ✅ Complete |
-| 1 | FastAPI server, mDNS, HLS streaming, Flutter client setup, landing page | 🔵 In Progress (server ✅ · mobile 🔲) |
-| 2 | Full library management, Flutter home + player screens | 🔲 Planned |
+| 1 | FastAPI server, mDNS, HLS streaming, Flutter mobile client, HLS player | ✅ Complete |
+| 2 | Desktop control panel, TMDB metadata, playback resume | 🔵 In Progress |
 | 3 | WebRTC internet streaming, Firebase signaling, Flutter Web dashboard, subscriptions | 🔲 Planned |
 | 4 | Hardware transcoding, advanced client management | 🔲 Planned |
 | 5 | AI recommendations, public release | 🔲 Planned |
+
+---
+
+## Quick Start (Development)
+
+### Server
+```bash
+cd apps/server
+pip install -e .[dev]
+uvicorn main:app --reload --host 0.0.0.0 --port 8080
+```
+Requires `TOKEN_HMAC_KEY` in `%APPDATA%\Fluxora\.env` (Windows) or `~/.fluxora/.env` (macOS/Linux).
+
+### Mobile
+```bash
+cd apps/mobile
+flutter pub get
+flutter run          # connects to a physical device or emulator
+```
 
 ---
 

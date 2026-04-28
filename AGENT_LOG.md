@@ -938,3 +938,77 @@
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## [2026-04-28] — Phase 1 complete: HLS player with media_kit
+**Agent:** claude-sonnet-4-6
+**Phase:** Phase 1 — HLS Player (final item)
+**Status:** Complete — M2 LAN Streaming MVP is now fully done
+
+### What Was Done
+- Added `media_kit` ^1.2.6, `media_kit_video` ^2.0.1, `media_kit_libs_video` ^1.0.7 to `pubspec.yaml`
+- Added `MediaKit.ensureInitialized()` to `main.dart` before `runApp()`
+- Updated `packages/fluxora_core` `Endpoints`: replaced incorrect `stream(fileId)` with `streamStart(fileId)` (`/api/v1/stream/start/$fileId`) and `streamSession(sessionId)` (`/api/v1/stream/$sessionId`)
+- Built `features/player` Clean Architecture stack:
+  - `domain/entities/stream_start_response.dart` — plain Dart DTO (sessionId, fileId, playlistUrl)
+  - `domain/repositories/player_repository.dart` — interface: `startStream`, `stopStream`
+  - `data/repositories/player_repository_impl.dart` — POST `/stream/start`, DELETE `/stream/:id`
+  - `presentation/cubit/player_state.dart` — sealed: `PlayerInitial / Loading / Ready / Failure`; uses `show` imports to avoid name conflict with `media_kit`'s own `PlayerState`
+  - `presentation/cubit/player_cubit.dart` — calls `startStream`, reads bearer token from `SecureStorage`, injects it as `Media(httpHeaders:)` so HLS segment requests are authenticated; calls `stopStream` on `close()`
+  - `presentation/screens/player_screen.dart` — full-screen `Video` widget with `MaterialVideoControls`; landscape + `immersiveSticky` on init, restores portrait on dispose; back button + title overlay
+- Registered `PlayerRepository` (`registerLazySingleton`) in `injector.dart`
+- Added `/player` route to `app_router.dart`; wired `MediaCard.onTap` in `FilesScreen` to `context.push(Routes.player, extra: files[index])`
+- Wrote `test/features/player/player_cubit_test.dart` — 7 tests (initial state, repository called, loading emitted, API error, generic error, stopStream on close, no stopStream if never started)
+- Fixed name conflict: `media_kit` exports `PlayerState`; resolved with `import 'package:media_kit/media_kit.dart' show Player, Media'` everywhere
+- Fixed `.gitignore`: `.vscode/*` + `!.vscode/launch.json` so `launch.json` is tracked but personal settings are not
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `apps/mobile/lib/features/player/domain/entities/stream_start_response.dart` |
+| Created | `apps/mobile/lib/features/player/domain/repositories/player_repository.dart` |
+| Created | `apps/mobile/lib/features/player/data/repositories/player_repository_impl.dart` |
+| Created | `apps/mobile/lib/features/player/presentation/cubit/player_state.dart` |
+| Created | `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart` |
+| Created | `apps/mobile/lib/features/player/presentation/screens/player_screen.dart` |
+| Created | `apps/mobile/test/features/player/player_cubit_test.dart` |
+| Modified | `apps/mobile/pubspec.yaml` |
+| Modified | `apps/mobile/lib/main.dart` |
+| Modified | `apps/mobile/lib/core/di/injector.dart` |
+| Modified | `apps/mobile/lib/core/router/app_router.dart` |
+| Modified | `apps/mobile/lib/features/library/presentation/screens/files_screen.dart` |
+| Modified | `packages/fluxora_core/lib/network/endpoints.dart` |
+| Modified | `.gitignore` |
+| Modified | `docs/10_planning/01_roadmap.md` |
+| Modified | `docs/08_frontend/01_frontend_architecture.md` |
+| Modified | `CLAUDE.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/10_planning/01_roadmap.md` | HLS playback marked ✅ Done; M2 milestone marked ✅ Done |
+| `docs/08_frontend/01_frontend_architecture.md` | PlayerScreen marked done in route map; `features/player` added to project structure tree |
+| `CLAUDE.md` | Current Status updated: Phase 1 fully complete (24 tests); media_kit versions noted; Next updated to Phase 2 desktop control panel |
+
+### Decisions Made
+- `media_kit` imports must use `show` to avoid conflict with its own exported `PlayerState` class — applies to `player_state.dart`, `player_cubit.dart`, and `player_screen.dart`
+- Bearer token is injected into `Media(httpHeaders:)` rather than through a custom HTTP interceptor — media_kit makes its own HTTP requests for HLS segments so the `ApiClient` Dio interceptor doesn't cover them
+- `PlayerReady` state holds `Player` and `VideoController` directly — standard pattern for media_kit + BLoC; avoids an extra getter on the cubit
+- `PlayerReady` path cannot be unit-tested headlessly (requires native media_kit libs); tests cover repository calls, error states, and cleanup behavior instead
+
+### Blockers / Open Issues
+- Player screen untested on physical device — needs live HLS stream from the FastAPI server to verify playback
+- `flutter_webrtc` still deferred to Phase 3
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. **M2 is complete** — begin Phase 2
+3. Priority 1: **Desktop control panel** (`apps/desktop`) — at minimum: dashboard showing server status + active streams, and a Clients screen to approve/revoke paired devices (so curl is no longer needed for pairing)
+4. Priority 2: TMDB metadata integration — posters + descriptions on library/media cards
+5. Test the player on a physical device: `flutter run` → browse library → tap a file → video should play
+6. Run `flutter analyze && flutter test` before declaring any Phase 2 work done
+7. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

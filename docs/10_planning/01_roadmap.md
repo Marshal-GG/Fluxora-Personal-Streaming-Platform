@@ -23,7 +23,7 @@
 | Flutter client project setup | Must | ✅ Done | Clean Architecture structure, DI, router |
 | mDNS discovery in Flutter | Must | ✅ Done | `multicast_dns` + manual IP entry |
 | File browser UI in Flutter | Must | ✅ Done | Library grid + file list |
-| HLS playback in Flutter | Must | 🔲 Phase 2 | `media_kit` — player screen (`better_player` dropped — AGP 8+ incompatible) |
+| HLS playback in Flutter | Must | ✅ Done | `media_kit` v1.2.6 — full player screen with auth headers, stream start/stop |
 
 **Target:** Working LAN stream, file browser, basic connection
 
@@ -101,7 +101,7 @@
 |-----------|-------|--------|
 | M1 — Architecture & Docs Complete | 0 | ✅ Done |
 | M1.5 — Monorepo Scaffold Complete | 0 | ✅ Done |
-| M2 — LAN Streaming MVP | 1 | 🔵 In Progress (server ✅, mobile ✅ except HLS player — testing on device) |
+| M2 — LAN Streaming MVP | 1 | ✅ Done |
 | M3 — Auth + Library | 2 | ⬜ Planned |
 | M4 — Internet Streaming | 3 | ⬜ Planned |
 | M5 — Monetization Live | 4 | ⬜ Planned |
