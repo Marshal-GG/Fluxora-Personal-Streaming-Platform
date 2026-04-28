@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -92,7 +92,47 @@ async def start_stream(
         session_id=session_id,
         file_id=file_id,
         playlist_url=_playlist_url(request, session_id),
+        resume_sec=file_row.get("last_progress_sec") or 0.0,
     )
+
+
+# ── PATCH /api/v1/stream/{session_id}/progress ───────────────────────────────
+
+
+@router.patch("/{session_id}/progress", status_code=status.HTTP_204_NO_CONTENT)
+async def update_progress(
+    session_id: str,
+    progress_sec: float = Body(..., embed=True),
+    db: aiosqlite.Connection = Depends(get_db),
+    client: aiosqlite.Row = Depends(validate_token),
+) -> None:
+    """Record the client's current playback position for resume-on-reopen."""
+    async with db.execute(
+        "SELECT id, client_id, file_id FROM stream_sessions WHERE id = ? AND ended_at IS NULL",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+    if row["client_id"] != client["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not your session"
+        )
+
+    now = datetime.now(UTC).isoformat()
+    # Persist to stream_sessions (live value) and media_files (resume marker)
+    await db.execute(
+        "UPDATE stream_sessions SET progress_sec = ? WHERE id = ?",
+        (progress_sec, session_id),
+    )
+    await db.execute(
+        "UPDATE media_files SET last_progress_sec = ?, updated_at = ? WHERE id = ?",
+        (progress_sec, now, row["file_id"]),
+    )
+    await db.commit()
 
 
 # ── DELETE /api/v1/stream/{session_id} ──────────────────────────────────────

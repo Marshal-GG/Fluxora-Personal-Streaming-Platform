@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -23,22 +25,24 @@ class PlayerScreen extends StatelessWidget {
       create: (_) => PlayerCubit(
         repository: GetIt.I<PlayerRepository>(),
         secureStorage: GetIt.I<SecureStorage>(),
-      )..startStream(file.id, file.name),
-      child: _PlayerView(fileName: file.name),
+      )..startStream(file.id, file.title ?? file.name, file.resumeSec),
+      child: _PlayerView(file: file),
     );
   }
 }
 
 class _PlayerView extends StatefulWidget {
-  const _PlayerView({required this.fileName});
+  const _PlayerView({required this.file});
 
-  final String fileName;
+  final MediaFile file;
 
   @override
   State<_PlayerView> createState() => _PlayerViewState();
 }
 
 class _PlayerViewState extends State<_PlayerView> {
+  bool _showResumeBanner = false;
+
   @override
   void initState() {
     super.initState();
@@ -61,12 +65,25 @@ class _PlayerViewState extends State<_PlayerView> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: BlocBuilder<PlayerCubit, PlayerState>(
+      body: BlocConsumer<PlayerCubit, PlayerState>(
+        listenWhen: (_, current) => current is PlayerReady,
+        listener: (context, state) {
+          if (state is PlayerReady && state.resumeSec > 0) {
+            setState(() => _showResumeBanner = true);
+            // Auto-hide the banner after 4 seconds
+            Future.delayed(const Duration(seconds: 4), () {
+              if (mounted) setState(() => _showResumeBanner = false);
+            });
+          }
+        },
         builder: (context, state) => switch (state) {
           PlayerInitial() || PlayerLoading() => const _LoadingView(),
-          PlayerReady(:final controller, :final fileName) => _VideoView(
-              controller: controller,
-              fileName: fileName,
+          PlayerReady(:final controller, :final fileName) => Stack(
+              children: [
+                _VideoView(controller: controller, fileName: fileName),
+                if (_showResumeBanner && state.resumeSec > 0)
+                  _ResumeBanner(resumeSec: state.resumeSec),
+              ],
             ),
           PlayerFailure(:final message) => _ErrorView(message: message),
         },
@@ -112,7 +129,7 @@ class _VideoView extends StatelessWidget {
             controls: MaterialVideoControls,
           ),
         ),
-        // Back button overlay — visible until controls auto-hide
+        // Back button overlay
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(8),
@@ -144,6 +161,42 @@ class _VideoView extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ResumeBanner extends StatelessWidget {
+  const _ResumeBanner({required this.resumeSec});
+
+  final double resumeSec;
+
+  String get _formatted {
+    final d = Duration(seconds: resumeSec.toInt());
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return h > 0 ? '$h:$m:$s' : '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      bottom: 72,
+      left: 0,
+      right: 0,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.7),
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Text(
+            'Resumed from $_formatted',
+            style: AppTypography.bodyMd.copyWith(color: Colors.white),
+          ),
+        ),
+      ),
     );
   }
 }

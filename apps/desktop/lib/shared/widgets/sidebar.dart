@@ -12,6 +12,7 @@ class AppShell extends StatelessWidget {
   static final _destinations = [
     (icon: Icons.dashboard_outlined, label: 'Dashboard', route: Routes.dashboard),
     (icon: Icons.devices_outlined, label: 'Clients', route: Routes.clients),
+    (icon: Icons.video_library_outlined, label: 'Library', route: Routes.library),
   ];
 
   @override

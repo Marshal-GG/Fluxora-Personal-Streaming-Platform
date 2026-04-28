@@ -96,6 +96,20 @@ class ApiClient {
     }
   }
 
+  Future<T> patch<T>(
+    String path, {
+    dynamic body,
+    T Function(dynamic)? fromJson,
+  }) async {
+    try {
+      final response = await _dio.patch<dynamic>(path, data: body);
+      if (fromJson != null) return fromJson(response.data);
+      return response.data as T;
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
   Future<void> delete(String path) async {
     try {
       await _dio.delete<dynamic>(path);

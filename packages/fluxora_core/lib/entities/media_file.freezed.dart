@@ -27,7 +27,13 @@ mixin _$MediaFile {
   int get sizeBytes => throw _privateConstructorUsedError;
   double? get durationSec => throw _privateConstructorUsedError;
   String? get libraryId => throw _privateConstructorUsedError;
-  int? get tmdbId => throw _privateConstructorUsedError;
+  int? get tmdbId =>
+      throw _privateConstructorUsedError; // TMDB-enriched metadata
+  String? get title => throw _privateConstructorUsedError;
+  String? get overview => throw _privateConstructorUsedError;
+  String? get posterUrl =>
+      throw _privateConstructorUsedError; // Resume playback position
+  double get resumeSec => throw _privateConstructorUsedError;
   @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
   DateTime get createdAt => throw _privateConstructorUsedError;
   @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
@@ -57,6 +63,10 @@ abstract class $MediaFileCopyWith<$Res> {
       double? durationSec,
       String? libraryId,
       int? tmdbId,
+      String? title,
+      String? overview,
+      String? posterUrl,
+      double resumeSec,
       @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
       DateTime createdAt,
       @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
@@ -86,6 +96,10 @@ class _$MediaFileCopyWithImpl<$Res, $Val extends MediaFile>
     Object? durationSec = freezed,
     Object? libraryId = freezed,
     Object? tmdbId = freezed,
+    Object? title = freezed,
+    Object? overview = freezed,
+    Object? posterUrl = freezed,
+    Object? resumeSec = null,
     Object? createdAt = null,
     Object? updatedAt = null,
   }) {
@@ -122,6 +136,22 @@ class _$MediaFileCopyWithImpl<$Res, $Val extends MediaFile>
           ? _value.tmdbId
           : tmdbId // ignore: cast_nullable_to_non_nullable
               as int?,
+      title: freezed == title
+          ? _value.title
+          : title // ignore: cast_nullable_to_non_nullable
+              as String?,
+      overview: freezed == overview
+          ? _value.overview
+          : overview // ignore: cast_nullable_to_non_nullable
+              as String?,
+      posterUrl: freezed == posterUrl
+          ? _value.posterUrl
+          : posterUrl // ignore: cast_nullable_to_non_nullable
+              as String?,
+      resumeSec: null == resumeSec
+          ? _value.resumeSec
+          : resumeSec // ignore: cast_nullable_to_non_nullable
+              as double,
       createdAt: null == createdAt
           ? _value.createdAt
           : createdAt // ignore: cast_nullable_to_non_nullable
@@ -151,6 +181,10 @@ abstract class _$$MediaFileImplCopyWith<$Res>
       double? durationSec,
       String? libraryId,
       int? tmdbId,
+      String? title,
+      String? overview,
+      String? posterUrl,
+      double resumeSec,
       @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
       DateTime createdAt,
       @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
@@ -178,6 +212,10 @@ class __$$MediaFileImplCopyWithImpl<$Res>
     Object? durationSec = freezed,
     Object? libraryId = freezed,
     Object? tmdbId = freezed,
+    Object? title = freezed,
+    Object? overview = freezed,
+    Object? posterUrl = freezed,
+    Object? resumeSec = null,
     Object? createdAt = null,
     Object? updatedAt = null,
   }) {
@@ -214,6 +252,22 @@ class __$$MediaFileImplCopyWithImpl<$Res>
           ? _value.tmdbId
           : tmdbId // ignore: cast_nullable_to_non_nullable
               as int?,
+      title: freezed == title
+          ? _value.title
+          : title // ignore: cast_nullable_to_non_nullable
+              as String?,
+      overview: freezed == overview
+          ? _value.overview
+          : overview // ignore: cast_nullable_to_non_nullable
+              as String?,
+      posterUrl: freezed == posterUrl
+          ? _value.posterUrl
+          : posterUrl // ignore: cast_nullable_to_non_nullable
+              as String?,
+      resumeSec: null == resumeSec
+          ? _value.resumeSec
+          : resumeSec // ignore: cast_nullable_to_non_nullable
+              as double,
       createdAt: null == createdAt
           ? _value.createdAt
           : createdAt // ignore: cast_nullable_to_non_nullable
@@ -238,6 +292,10 @@ class _$MediaFileImpl implements _MediaFile {
       this.durationSec,
       this.libraryId,
       this.tmdbId,
+      this.title,
+      this.overview,
+      this.posterUrl,
+      this.resumeSec = 0.0,
       @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
       required this.createdAt,
       @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
@@ -262,6 +320,17 @@ class _$MediaFileImpl implements _MediaFile {
   final String? libraryId;
   @override
   final int? tmdbId;
+// TMDB-enriched metadata
+  @override
+  final String? title;
+  @override
+  final String? overview;
+  @override
+  final String? posterUrl;
+// Resume playback position
+  @override
+  @JsonKey()
+  final double resumeSec;
   @override
   @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
   final DateTime createdAt;
@@ -271,7 +340,7 @@ class _$MediaFileImpl implements _MediaFile {
 
   @override
   String toString() {
-    return 'MediaFile(id: $id, path: $path, name: $name, extension: $extension, sizeBytes: $sizeBytes, durationSec: $durationSec, libraryId: $libraryId, tmdbId: $tmdbId, createdAt: $createdAt, updatedAt: $updatedAt)';
+    return 'MediaFile(id: $id, path: $path, name: $name, extension: $extension, sizeBytes: $sizeBytes, durationSec: $durationSec, libraryId: $libraryId, tmdbId: $tmdbId, title: $title, overview: $overview, posterUrl: $posterUrl, resumeSec: $resumeSec, createdAt: $createdAt, updatedAt: $updatedAt)';
   }
 
   @override
@@ -291,6 +360,13 @@ class _$MediaFileImpl implements _MediaFile {
             (identical(other.libraryId, libraryId) ||
                 other.libraryId == libraryId) &&
             (identical(other.tmdbId, tmdbId) || other.tmdbId == tmdbId) &&
+            (identical(other.title, title) || other.title == title) &&
+            (identical(other.overview, overview) ||
+                other.overview == overview) &&
+            (identical(other.posterUrl, posterUrl) ||
+                other.posterUrl == posterUrl) &&
+            (identical(other.resumeSec, resumeSec) ||
+                other.resumeSec == resumeSec) &&
             (identical(other.createdAt, createdAt) ||
                 other.createdAt == createdAt) &&
             (identical(other.updatedAt, updatedAt) ||
@@ -299,8 +375,22 @@ class _$MediaFileImpl implements _MediaFile {
 
   @JsonKey(includeFromJson: false, includeToJson: false)
   @override
-  int get hashCode => Object.hash(runtimeType, id, path, name, extension,
-      sizeBytes, durationSec, libraryId, tmdbId, createdAt, updatedAt);
+  int get hashCode => Object.hash(
+      runtimeType,
+      id,
+      path,
+      name,
+      extension,
+      sizeBytes,
+      durationSec,
+      libraryId,
+      tmdbId,
+      title,
+      overview,
+      posterUrl,
+      resumeSec,
+      createdAt,
+      updatedAt);
 
   /// Create a copy of MediaFile
   /// with the given fields replaced by the non-null parameter values.
@@ -328,6 +418,10 @@ abstract class _MediaFile implements MediaFile {
       final double? durationSec,
       final String? libraryId,
       final int? tmdbId,
+      final String? title,
+      final String? overview,
+      final String? posterUrl,
+      final double resumeSec,
       @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
       required final DateTime createdAt,
       @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
@@ -351,7 +445,15 @@ abstract class _MediaFile implements MediaFile {
   @override
   String? get libraryId;
   @override
-  int? get tmdbId;
+  int? get tmdbId; // TMDB-enriched metadata
+  @override
+  String? get title;
+  @override
+  String? get overview;
+  @override
+  String? get posterUrl; // Resume playback position
+  @override
+  double get resumeSec;
   @override
   @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
   DateTime get createdAt;

@@ -33,8 +33,9 @@ void main() {
     repository = MockPlayerRepository();
     secureStorage = MockSecureStorage();
     when(() => secureStorage.getAuthToken()).thenAnswer((_) async => tToken);
-    // Default stub — stopStream must never throw during cubit.close()
+    // Default stubs — must never throw during cubit.close()
     when(() => repository.stopStream(any())).thenAnswer((_) async {});
+    when(() => repository.updateProgress(any(), any())).thenAnswer((_) async {});
   });
 
   PlayerCubit buildCubit() => PlayerCubit(
@@ -56,7 +57,7 @@ void main() {
 
       final cubit = buildCubit();
       // await so the async body fully completes (errors are caught internally)
-      await cubit.startStream(tFileId, tFileName);
+      await cubit.startStream(tFileId, tFileName, 0.0);
 
       verify(() => repository.startStream(tFileId)).called(1);
       await cubit.close();
@@ -70,7 +71,7 @@ void main() {
       final states = <PlayerState>[];
       final sub = cubit.stream.listen(states.add);
 
-      await cubit.startStream(tFileId, tFileName);
+      await cubit.startStream(tFileId, tFileName, 0.0);
 
       expect(states.first, isA<PlayerLoading>());
       await sub.cancel();
@@ -85,7 +86,7 @@ void main() {
         );
       },
       build: buildCubit,
-      act: (cubit) => cubit.startStream(tFileId, tFileName),
+      act: (cubit) => cubit.startStream(tFileId, tFileName, 0.0),
       expect: () => [
         isA<PlayerLoading>(),
         isA<PlayerFailure>(),
@@ -99,7 +100,7 @@ void main() {
             .thenThrow(Exception('network failure'));
       },
       build: buildCubit,
-      act: (cubit) => cubit.startStream(tFileId, tFileName),
+      act: (cubit) => cubit.startStream(tFileId, tFileName, 0.0),
       expect: () => [
         isA<PlayerLoading>(),
         isA<PlayerFailure>(),
@@ -114,7 +115,7 @@ void main() {
       final cubit = buildCubit();
       // _sessionId is set before Player() — even if Player init fails the
       // server session exists and must be cleaned up on close
-      await cubit.startStream(tFileId, tFileName);
+      await cubit.startStream(tFileId, tFileName, 0.0);
       await cubit.close();
 
       verify(() => repository.stopStream(tSessionId)).called(1);

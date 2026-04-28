@@ -4,8 +4,11 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Optional
 
 import aiosqlite
+
+from services.tmdb_service import TmdbService
 
 logger = logging.getLogger(__name__)
 
@@ -126,8 +129,16 @@ async def get_file(db: aiosqlite.Connection, file_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-async def scan_library(db: aiosqlite.Connection, library_id: str) -> int:
-    """Walk root_paths, insert new media files; return count of new files added."""
+async def scan_library(
+    db: aiosqlite.Connection,
+    library_id: str,
+    tmdb_api_key: Optional[str] = None,
+) -> int:
+    """Walk root_paths, insert new media files; return count of new files added.
+
+    If *tmdb_api_key* is provided, each newly-added file is enriched with TMDB
+    metadata (title, overview, poster_url) on a best-effort basis.
+    """
     row = await get_library(db, library_id)
     if row is None:
         raise ValueError(f"Library not found: {library_id}")
@@ -135,6 +146,7 @@ async def scan_library(db: aiosqlite.Connection, library_id: str) -> int:
     root_paths: list[str] = row["root_paths"]
     now = datetime.now(UTC).isoformat()
     added = 0
+    new_file_ids: list[tuple[str, str]] = []  # (file_id, stem for TMDB query)
 
     for root in root_paths:
         root_path = Path(root)
@@ -186,6 +198,7 @@ async def scan_library(db: aiosqlite.Connection, library_id: str) -> int:
                 ),
             )
             added += 1
+            new_file_ids.append((file_id, file_path.stem))
             if added % 50 == 0:
                 await asyncio.sleep(0)
 
@@ -194,4 +207,49 @@ async def scan_library(db: aiosqlite.Connection, library_id: str) -> int:
     )
     await db.commit()
     logger.info("Scan complete: library=%s added=%d", library_id, added)
+
+    # ── TMDB enrichment (best-effort) ──────────────────────────────────────
+    if tmdb_api_key and new_file_ids:
+        await _enrich_with_tmdb(db, new_file_ids, tmdb_api_key)
+
     return added
+
+
+async def _enrich_with_tmdb(
+    db: aiosqlite.Connection,
+    file_stems: list[tuple[str, str]],
+    api_key: str,
+) -> None:
+    """Query TMDB for each (file_id, stem) pair and persist metadata."""
+    svc = TmdbService(api_key)
+    enriched = 0
+
+    for file_id, stem in file_stems:
+        # Yield to event loop regularly to avoid starving other coroutines
+        await asyncio.sleep(0)
+
+        meta = await svc.search(stem)
+        if meta is None:
+            continue
+
+        await db.execute(
+            """
+            UPDATE media_files
+            SET tmdb_id = ?, title = ?, overview = ?, poster_url = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                meta.tmdb_id,
+                meta.title,
+                meta.overview,
+                meta.poster_url,
+                datetime.now(UTC).isoformat(),
+                file_id,
+            ),
+        )
+        enriched += 1
+
+    if enriched:
+        await db.commit()
+    logger.info("TMDB enrichment done: %d/%d files updated", enriched, len(file_stems))

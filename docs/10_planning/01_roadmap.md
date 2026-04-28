@@ -1,7 +1,7 @@
 # Project Roadmap & Milestones
 
 > **Category:** Planning  
-> **Status:** Active — Updated 2026-04-28
+> **Status:** Active — Updated 2026-04-28 (Phase 3 complete)
 
 ---
 
@@ -32,27 +32,28 @@
 ### Phase 2 — Auth, Library & Polish
 > **Goal:** Secure pairing, media libraries with metadata, polished UI
 
-| Feature | Priority | Notes |
-|---------|----------|-------|
-| Client pairing + auth tokens | Must | `POST /auth/request-pair` flow |
-| PC Control Panel (Flutter Desktop) | Must | ✅ Done — Dashboard + Clients screens (approve/reject/revoke) |
-| Library manager + scan API | Should | Directory indexing |
-| TMDB metadata integration | Should | Movies + TV |
-| Library UI in Flutter client | Should | Grid with posters |
-| Playback resume (progress tracking) | Should | `stream_sessions` |
-| UI design system + dark theme | Should | Final visual polish |
+| Feature | Priority | Status | Notes |
+|---------|----------|--------|-------|
+| Client pairing + auth tokens | Must | ✅ Done | `POST /auth/request-pair` flow |
+| PC Control Panel (Flutter Desktop) | Must | ✅ Done | Dashboard + Clients + Library screens |
+| Library manager + scan API | Should | ✅ Done | Directory indexing, file count |
+| TMDB metadata integration | Should | ✅ Done | Migration 004/005; title, overview, poster_url, 46 tests ✅ |
+| Library UI in Flutter client | Should | ✅ Done | Grid with TMDB poster thumbnails |
+| Playback resume (progress tracking) | Should | ✅ Done | `resume_sec` via WS + `last_progress_sec` DB field |
+| UI design system + dark theme | Should | ✅ Done | `AppColors`, `AppTypography`, `AppSizes` in `fluxora_core` |
 
 **Target:** Production-quality LAN experience with auth + library
 
 ---
 
 ### Phase 3 — Internet Streaming (WebRTC)
-> **Goal:** Stream works when away from home
+> **Goal:** Stream works when away from home  
+> **Note:** Originally Phase 3 in the plan; TMDB + Resume was completed as part of Phase 2 polish.
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| WebRTC signaling server | Must | WS `/ws/signal` |
-| Flutter WebRTC integration | Must | `flutter_webrtc` |
+| WebRTC signaling server | Must | WS `/ws/signal` (scaffolded, not implemented) |
+| Flutter WebRTC integration | Must | `flutter_webrtc` — deferred (AGP 8+ issues) |
 | STUN/TURN configuration | Must | Google STUN + TURN server |
 | Smart path selection (LAN vs WebRTC) | Must | Auto-switching logic |
 | Connection quality monitoring | Should | Detect degradation, switch paths |
@@ -102,7 +103,8 @@
 | M1 — Architecture & Docs Complete | 0 | ✅ Done |
 | M1.5 — Monorepo Scaffold Complete | 0 | ✅ Done |
 | M2 — LAN Streaming MVP | 1 | ✅ Done |
-| M3 — Auth + Library | 2 | ⬜ Planned |
+| M3 — Auth + Library + TMDB + Resume | 2 | ✅ Done |
+| M3.5 — Desktop Control Panel Parity | 2 | ✅ Done |
 | M4 — Internet Streaming | 3 | ⬜ Planned |
 | M5 — Monetization Live | 4 | ⬜ Planned |
 | M6 — Advanced Features | 5 | ⬜ Future |

@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active — Sourced from Planning Session (2026-04-27)
+> **Status:** Active — Updated 2026-04-28
 
 ---
 
@@ -181,11 +181,18 @@ Token is issued after successful client pairing.
     "duration_sec": 8880.0,
     "library_id": "uuid",
     "tmdb_id": 27205,
+    "title": "Inception",
+    "overview": "A thief who steals corporate secrets through...",
+    "poster_url": "https://image.tmdb.org/t/p/w500/9gk7adHYeDvHkCSEqAvQNLV5Uge.jpg",
+    "resume_sec": 342.5,
     "created_at": "2026-04-27T10:00:00+00:00",
     "updated_at": "2026-04-27T10:00:00+00:00"
   }
 ]
 ```
+
+> **Note:** `title`, `overview`, `poster_url` are `null` until the library has been enriched via TMDB.  
+> `resume_sec` defaults to `0.0` until the client reports playback progress via WebSocket.
 
 ---
 

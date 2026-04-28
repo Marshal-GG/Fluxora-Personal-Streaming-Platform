@@ -1,7 +1,7 @@
 # Component Architecture
 
 > **Category:** Architecture  
-> **Status:** Active — Sourced from Planning Session (2026-04-27)
+> **Status:** Active — Updated 2026-04-28
 
 ---
 
@@ -106,8 +106,11 @@
 - **Sources:** HTTP (Dio), mDNS (Dart Zeroconf), WebRTC (flutter_webrtc)
 
 ### PC Control Panel (Flutter Desktop)
-- **Responsibility:** Server-side dashboard — start/stop server, monitor active streams, manage libraries, control client access
-- **Interfaces:** Communicates with local FastAPI server via HTTP
+- **Responsibility:** Server-side dashboard — monitor server health, manage clients (approve/reject/revoke), browse the library with TMDB metadata and resume progress indicators
+- **Screens implemented:** Dashboard (stats), Clients (pairing management), Library (file list + filter chips + resume bar)
+- **Interfaces:** Communicates with local FastAPI server via HTTP (`localhost:8080`)
+- **State management:** BLoC (Cubit) with GetIt DI
+- **Routes:** `/ ` (Dashboard) · `/clients` (Clients) · `/library` (Library)
 
 ---
 

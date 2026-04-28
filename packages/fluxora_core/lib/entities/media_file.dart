@@ -15,6 +15,12 @@ class MediaFile with _$MediaFile {
     double? durationSec,
     String? libraryId,
     int? tmdbId,
+    // TMDB-enriched metadata
+    String? title,
+    String? overview,
+    String? posterUrl,
+    // Resume playback position
+    @Default(0.0) double resumeSec,
     @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
     required DateTime createdAt,
     @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)

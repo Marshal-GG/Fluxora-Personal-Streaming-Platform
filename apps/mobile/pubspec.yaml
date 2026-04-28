@@ -21,6 +21,7 @@ dependencies:
   media_kit: ^1.2.6
   media_kit_video: ^2.0.1
   media_kit_libs_video: ^1.0.7
+  cached_network_image: ^3.3.1
 
 dev_dependencies:
   flutter_test:

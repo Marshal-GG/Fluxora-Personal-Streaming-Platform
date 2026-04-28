@@ -19,12 +19,15 @@ class PlayerReady extends PlayerState {
     required this.fileName,
     required this.player,
     required this.controller,
+    this.resumeSec = 0.0,
   });
 
   final String sessionId;
   final String fileName;
   final Player player;
   final VideoController controller;
+  /// The position the player was seeked to on open (0 = fresh start).
+  final double resumeSec;
 }
 
 class PlayerFailure extends PlayerState {

@@ -5,6 +5,7 @@ class StreamStartResponse(BaseModel):
     session_id: str
     file_id: str
     playlist_url: str
+    resume_sec: float = 0.0  # seconds to seek to on open (resume playback)
 
 
 class StreamSessionResponse(BaseModel):

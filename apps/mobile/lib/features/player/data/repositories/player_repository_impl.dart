@@ -20,4 +20,11 @@ class PlayerRepositoryImpl implements PlayerRepository {
   @override
   Future<void> stopStream(String sessionId) =>
       _apiClient.delete(Endpoints.streamSession(sessionId));
+
+  @override
+  Future<void> updateProgress(String sessionId, double progressSec) =>
+      _apiClient.patch<void>(
+        Endpoints.streamProgress(sessionId),
+        body: {'progress_sec': progressSec},
+      );
 }

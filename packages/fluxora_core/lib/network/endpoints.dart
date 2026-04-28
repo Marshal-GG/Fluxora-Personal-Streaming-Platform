@@ -28,6 +28,8 @@ class Endpoints {
   // Stream
   static String streamStart(String fileId) => '$_base/stream/start/$fileId';
   static String streamSession(String sessionId) => '$_base/stream/$sessionId';
+  static String streamProgress(String sessionId) =>
+      '$_base/stream/$sessionId/progress';
 
   // HLS
   static String hlsPlaylist(String sessionId) =>

@@ -36,8 +36,11 @@ apps/server/
 ├── database/
 │   ├── db.py
 │   └── migrations/
-│       ├── 001_initial.sql
-│       └── 002_sessions.sql
+│       ├── 001_initial.sql     # media_files, libraries, clients, tmdb_id
+│       ├── 002_sessions.sql    # stream_sessions
+│       ├── 003_usage.sql       # usage_events
+│       ├── 004_tmdb_metadata.sql  # title, overview, poster_url
+│       └── 005_progress.sql    # last_progress_sec
 ├── routers/
 │   ├── auth.py
 │   ├── files.py
@@ -49,9 +52,10 @@ apps/server/
 │   ├── library_service.py
 │   ├── discovery_service.py
 │   ├── auth_service.py
+│   ├── tmdb_service.py
 │   └── webrtc_service.py
 ├── models/
-│   ├── media_file.py
+│   ├── media_file.py           # MediaFileResponse (resume_sec alias)
 │   ├── library.py
 │   ├── client.py
 │   ├── stream_session.py
@@ -64,7 +68,8 @@ apps/server/
     ├── test_auth.py
     ├── test_files.py
     ├── test_library.py
-    └── test_stream.py
+    ├── test_stream.py
+    └── test_tmdb.py            # 46 tests total
 ```
 
 ---
@@ -129,29 +134,33 @@ apps/desktop/
     ├── app.dart
     ├── core/
     │   ├── di/
+    │   │   └── injector.dart   # GetIt: ApiClient, Dashboard, Clients, Library
     │   └── router/
+    │       └── app_router.dart # Routes: /, /clients, /library
     ├── features/
     │   ├── dashboard/
+    │   │   ├── data/
+    │   │   ├── domain/
     │   │   └── presentation/
     │   ├── library/
     │   │   ├── data/
     │   │   ├── domain/
-    │   │   └── presentation/
+    │   │   └── presentation/   # Stats row, filter chips, file list + resume bar
     │   ├── clients/
     │   │   ├── data/
     │   │   ├── domain/
     │   │   └── presentation/
     │   ├── activity/
-    │   │   └── presentation/
+    │   │   └── presentation/   # Scaffolded, not implemented
     │   ├── transcoding/
-    │   │   └── presentation/
+    │   │   └── presentation/   # Scaffolded, not implemented
     │   ├── logs/
-    │   │   └── presentation/
+    │   │   └── presentation/   # Scaffolded, not implemented
     │   └── settings/
-    │       └── presentation/
+    │       └── presentation/   # Scaffolded, not implemented
     └── shared/
         ├── widgets/
-        │   ├── sidebar.dart
+        │   ├── sidebar.dart    # AppShell + nav (Dashboard, Clients, Library)
         │   ├── stat_card.dart
         │   ├── data_table.dart
         │   └── status_badge.dart

@@ -16,6 +16,10 @@ _$MediaFileImpl _$$MediaFileImplFromJson(Map<String, dynamic> json) =>
       durationSec: (json['duration_sec'] as num?)?.toDouble(),
       libraryId: json['library_id'] as String?,
       tmdbId: (json['tmdb_id'] as num?)?.toInt(),
+      title: json['title'] as String?,
+      overview: json['overview'] as String?,
+      posterUrl: json['poster_url'] as String?,
+      resumeSec: (json['resume_sec'] as num?)?.toDouble() ?? 0.0,
       createdAt: utcDateTimeFromJson(json['created_at'] as String),
       updatedAt: utcDateTimeFromJson(json['updated_at'] as String),
     );
@@ -30,6 +34,10 @@ Map<String, dynamic> _$$MediaFileImplToJson(_$MediaFileImpl instance) =>
       'duration_sec': instance.durationSec,
       'library_id': instance.libraryId,
       'tmdb_id': instance.tmdbId,
+      'title': instance.title,
+      'overview': instance.overview,
+      'poster_url': instance.posterUrl,
+      'resume_sec': instance.resumeSec,
       'created_at': utcDateTimeToJson(instance.createdAt),
       'updated_at': utcDateTimeToJson(instance.updatedAt),
     };

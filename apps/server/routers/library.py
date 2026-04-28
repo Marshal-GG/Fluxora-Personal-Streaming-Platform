@@ -4,6 +4,7 @@ import logging
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from config import settings
 from database.db import get_db
 from models.library import CreateLibraryBody, LibraryResponse
 from routers.deps import validate_token
@@ -89,7 +90,11 @@ async def scan_library(
             status_code=status.HTTP_404_NOT_FOUND, detail="Library not found"
         )
     try:
-        added = await library_service.scan_library(db, library_id)
+        added = await library_service.scan_library(
+            db,
+            library_id,
+            tmdb_api_key=settings.fluxora_tmdb_key or None,
+        )
     except Exception:
         logger.error("Scan failed for library %s", library_id, exc_info=True)
         raise HTTPException(
