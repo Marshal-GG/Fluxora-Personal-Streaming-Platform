@@ -55,6 +55,7 @@ class ApiException implements Exception {
   bool get isForbidden => statusCode == 403;
   bool get isNotFound => statusCode == 404;
   bool get isServerError => statusCode != null && statusCode! >= 500;
+  bool get isTierLimit => statusCode == 429;
 
   @override
   String toString() => 'ApiException($errorCode, $statusCode): $message';

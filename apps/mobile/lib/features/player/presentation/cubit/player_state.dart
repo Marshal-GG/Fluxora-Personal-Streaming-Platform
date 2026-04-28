@@ -40,9 +40,24 @@ class PlayerReady extends PlayerState {
   final double resumeSec;
   /// The active streaming transport.
   final StreamPath streamPath;
+
+  PlayerReady copyWith({StreamPath? streamPath}) => PlayerReady(
+        sessionId: sessionId,
+        fileName: fileName,
+        player: player,
+        controller: controller,
+        resumeSec: resumeSec,
+        streamPath: streamPath ?? this.streamPath,
+      );
 }
 
 class PlayerFailure extends PlayerState {
   const PlayerFailure(this.message);
   final String message;
+}
+
+/// The server rejected the stream start because the account's tier concurrency
+/// limit has been reached.  Shown as an upgrade prompt rather than a generic error.
+class PlayerTierLimit extends PlayerState {
+  const PlayerTierLimit();
 }

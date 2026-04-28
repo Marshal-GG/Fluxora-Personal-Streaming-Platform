@@ -417,6 +417,53 @@ Client connects → sends auth message → server replies auth_ok
 
 ---
 
+### `GET /api/v1/settings`
+**Description:** Return the current server settings.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "server_name": "My Fluxora Server",
+  "subscription_tier": "plus",
+  "max_concurrent_streams": 3,
+  "transcoding_enabled": true,
+  "license_key": null
+}
+```
+
+---
+
+### `PATCH /api/v1/settings`
+**Description:** Update one or more server settings. Changing `tier` automatically adjusts `max_concurrent_streams` to match the tier limit.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Request (all fields optional):**
+```json
+{
+  "server_name": "My Fluxora Server",
+  "tier": "plus",
+  "license_key": "FLUXORA-ABCD-1234-EFGH-5678",
+  "transcoding_enabled": true
+}
+```
+
+**Tier values and stream limits:**
+
+| Tier | Concurrent streams |
+|------|-------------------|
+| `free` | 1 |
+| `plus` | 3 |
+| `pro` | 10 |
+| `ultimate` | 9999 (unlimited) |
+
+**Response:** Same schema as `GET /api/v1/settings`.  
+**Errors:** `422` invalid tier or blank server_name · `403` not from localhost
+
+---
+
 ## Error Codes
 
 | Code | Meaning |

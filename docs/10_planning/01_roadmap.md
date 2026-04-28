@@ -57,7 +57,7 @@
 | Flutter WebRTC integration | Must | ✅ Done | `flutter_webrtc 1.4.1`; `WebRtcSignalingService` + `PlayerCubit` smart-path (WebRTC→HLS fallback, 8 s timeout) |
 | STUN/TURN configuration | Must | ✅ Done | Google STUN default; TURN via env vars (server-side ready) |
 | Smart path selection (LAN vs WebRTC) | Must | ✅ Done | `NetworkPathDetector` /24 subnet check; LAN → HLS direct, WAN → WebRTC |
-| Connection quality monitoring | Should | ⬜ Planned | ICE state callbacks wired; dashboarding TBD |
+| Connection quality monitoring | Should | ✅ Done | `_handleSignalingDegradation` in `PlayerCubit`; ICE failure → badge switches HLS + signaling closed; `_readyOnce` guard prevents resume banner re-fire |
 | Player transport badge | Should | ✅ Done | `_TransportBadge` chip — HLS/WebRTC, auto-hides after 5 s |
 
 **Target:** Full remote streaming over internet
@@ -67,12 +67,12 @@
 ### Phase 4 — Monetization
 > **Goal:** Tier system live, upgrade flows working
 
-| Feature | Priority | Notes |
-|---------|----------|-------|
-| Subscription tier enforcement | Must | DB + API middleware |
-| License key / payment validation | Must | Integration TBD |
-| Upgrade prompt UI | Should | In-app upsell |
-| Free/Plus/Pro/Ultimate tier limits | Must | Stream concurrency, features |
+| Feature | Priority | Status | Notes |
+|---------|----------|--------|-------|
+| Subscription tier enforcement | Must | ✅ Done | `user_settings.subscription_tier` + `GET/PATCH /api/v1/settings`; `require_local_caller`; 9 tests ✅ |
+| License key / payment validation | Must | 🔵 Partial | Key stored in DB; format-only validation; payment provider integration TBD |
+| Upgrade prompt UI | Should | ✅ Done | Mobile: `PlayerTierLimit` state + `_TierLimitView` on 429; Desktop: tier selector + stream limit badge in Settings |
+| Free/Plus/Pro/Ultimate tier limits | Must | ✅ Done | Tier change auto-updates `max_concurrent_streams`; stream router reads from DB (not config); migration 007 aligns existing rows |
 
 **Tier Breakdown:**
 | Tier | Price | Stream Limit | Features |
@@ -107,8 +107,8 @@
 | M2 — LAN Streaming MVP | 1 | ✅ Done |
 | M3 — Auth + Library + TMDB + Resume | 2 | ✅ Done |
 | M3.5 — Desktop Control Panel Parity (incl. Settings) | 2 | ✅ Done |
-| M4 — Internet Streaming | 3 | 🔄 In Progress |
-| M5 — Monetization Live | 4 | ⬜ Planned |
+| M4 — Internet Streaming | 3 | ✅ Done |
+| M5 — Monetization Live | 4 | 🔄 In Progress |
 | M6 — Advanced Features | 5 | ⬜ Future |
 
 ---

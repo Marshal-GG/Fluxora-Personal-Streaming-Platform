@@ -13,7 +13,7 @@ from config import settings
 from database.db import get_db
 from models.stream_session import StreamSessionResponse, StreamStartResponse
 from routers.deps import validate_token
-from services import ffmpeg_service, library_service
+from services import ffmpeg_service, library_service, settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +47,14 @@ async def start_stream(
             status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
         )
 
-    # Enforce stream concurrency limit
+    # Enforce tier-aware stream concurrency limit (reads from user_settings DB row)
+    max_streams = await settings_service.get_max_concurrent_streams(db)
     async with db.execute(
         "SELECT COUNT(*) FROM stream_sessions WHERE client_id = ? AND ended_at IS NULL",
         (client["id"],),
     ) as cur:
         row = await cur.fetchone()
-    if row and row[0] >= settings.fluxora_max_streams:
+    if row and row[0] >= max_streams:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Stream concurrency limit reached",

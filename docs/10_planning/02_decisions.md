@@ -70,7 +70,7 @@
 
 ### ADR-008 — Tiered Monetization Model
 - **Date:** 2026-04-27
-- **Status:** Proposed
+- **Status:** Accepted
 - **Context:** Project needs revenue model; hardware and infrastructure have costs
 - **Decision:** Free / Plus ($4.99) / Pro ($9.99) / Ultimate ($19.99) tiers, differentiated by stream concurrency and features
 - **Consequences:** Free tier drives adoption; upgrade path is natural; license enforcement must be robust server-side
@@ -92,3 +92,12 @@
 - **Context:** Power users want to know which streaming path is active. Debugging reports are easier with a visible transport indicator.
 - **Decision:** Show `_TransportBadge` chip (HLS / WebRTC) in the bottom-right player overlay. Auto-hides after 5 seconds. Not persistent — does not interfere with viewing.
 - **Consequences:** Minimal code (single `StatelessWidget`). Auto-dismiss means it doesn't distract regular users. Can be promoted to a permanent Settings toggle later.
+
+---
+
+### ADR-011 — DB-Driven Tier Concurrency Limits
+- **Date:** 2026-04-28
+- **Status:** Accepted
+- **Context:** Tier enforcement requires `max_concurrent_streams` to reflect the current tier at all times. Hard-coding the limits in `config.py` would diverge from the DB row after a `PATCH /settings` tier change.
+- **Decision:** `settings_service.py` maps each tier to its stream limit (`free=1, plus=3, pro=10, ultimate=9999`) and writes `max_concurrent_streams` to `user_settings` on every tier change. The stream router reads the limit from the DB row, not from config.
+- **Consequences:** Single source of truth in the DB; `migration_007` back-fills any stale rows; correct concurrency enforced immediately after PATCH without server restart.

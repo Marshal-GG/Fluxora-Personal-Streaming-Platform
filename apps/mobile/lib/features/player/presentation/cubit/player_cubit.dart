@@ -88,8 +88,13 @@ class PlayerCubit extends Cubit<PlayerState> {
 
       _startProgressTimer();
     } on ApiException catch (e, st) {
-      _log.e('Failed to start stream', error: e, stackTrace: st);
-      emit(PlayerFailure(e.message));
+      if (e.isTierLimit) {
+        _log.w('[Player] Stream concurrency limit reached (429)');
+        emit(const PlayerTierLimit());
+      } else {
+        _log.e('Failed to start stream', error: e, stackTrace: st);
+        emit(PlayerFailure(e.message));
+      }
     } catch (e, st) {
       _log.e('Failed to start stream', error: e, stackTrace: st);
       emit(const PlayerFailure('Failed to start stream. Please try again.'));
@@ -113,20 +118,23 @@ class PlayerCubit extends Cubit<PlayerState> {
     _signaling = WebRtcSignalingService(
       serverWsUrl: serverUrl,
       authToken: token,
-      onStateChange: (state) {
-        if (completer.isCompleted) return;
-        switch (state) {
-          case SignalingState.connected:
-            completer.complete(StreamPath.webRtc);
-          case SignalingState.failed:
-            _log.w('[WebRTC] Signaling failed — falling back to HLS');
-            completer.complete(StreamPath.hls);
-          case SignalingState.closed:
-            if (!completer.isCompleted) {
+      onStateChange: (sigState) {
+        if (!completer.isCompleted) {
+          // Pre-connection: drive the initial path selection.
+          switch (sigState) {
+            case SignalingState.connected:
+              completer.complete(StreamPath.webRtc);
+            case SignalingState.failed:
+              _log.w('[WebRTC] Signaling failed — falling back to HLS');
               completer.complete(StreamPath.hls);
-            }
-          default:
-            break;
+            case SignalingState.closed:
+              if (!completer.isCompleted) completer.complete(StreamPath.hls);
+            default:
+              break;
+          }
+        } else {
+          // Post-connection: handle ICE degradation while streaming.
+          _handleSignalingDegradation(sigState);
         }
       },
     );
@@ -146,6 +154,23 @@ class PlayerCubit extends Cubit<PlayerState> {
         return StreamPath.hls;
       },
     );
+  }
+
+  /// Called when ICE degrades after the stream is already playing.
+  ///
+  /// Updates the transport badge to HLS and closes the signaling session.
+  /// The media_kit player continues uninterrupted because it was always
+  /// reading from an HLS playlist — WebRTC only drove the signaling badge.
+  void _handleSignalingDegradation(SignalingState sigState) {
+    if (sigState != SignalingState.failed) return;
+    final current = state;
+    if (current is! PlayerReady) return;
+    if (current.streamPath != StreamPath.webRtc) return;
+
+    _log.w('[Player] WebRTC degraded — switching transport badge to HLS');
+    emit(current.copyWith(streamPath: StreamPath.hls));
+    _signaling?.close();
+    _signaling = null;
   }
 
   // ---------------------------------------------------------------------------

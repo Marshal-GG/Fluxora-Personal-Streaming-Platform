@@ -6,6 +6,15 @@ import 'package:fluxora_desktop/core/di/injector.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_state.dart';
 
+const _kTiers = ['free', 'plus', 'pro', 'ultimate'];
+
+const _kTierLabels = {
+  'free': 'Free — 1 stream',
+  'plus': 'Plus — 3 streams · \$4.99/mo',
+  'pro': 'Pro — 10 streams · \$9.99/mo',
+  'ultimate': 'Ultimate — Unlimited · \$19.99/mo',
+};
+
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
@@ -27,32 +36,59 @@ class _SettingsView extends StatefulWidget {
 
 class _SettingsViewState extends State<_SettingsView> {
   late final TextEditingController _urlController;
+  late final TextEditingController _nameController;
+  late final TextEditingController _licenseController;
   final _formKey = GlobalKey<FormState>();
+  String _selectedTier = 'free';
 
   @override
   void initState() {
     super.initState();
     _urlController = TextEditingController();
+    _nameController = TextEditingController();
+    _licenseController = TextEditingController();
   }
 
   @override
   void dispose() {
     _urlController.dispose();
+    _nameController.dispose();
+    _licenseController.dispose();
     super.dispose();
+  }
+
+  void _syncFromState(SettingsState state) {
+    String? url;
+    String? name;
+    String? license;
+    String? tier;
+
+    if (state is SettingsLoaded) {
+      url = state.serverUrl;
+      name = state.serverName;
+      license = state.licenseKey ?? '';
+      tier = state.tier;
+    } else if (state is SettingsSaved) {
+      url = state.serverUrl;
+      name = state.serverName;
+      tier = state.tier;
+    }
+
+    if (url != null && _urlController.text != url) _urlController.text = url;
+    if (name != null && _nameController.text != name) _nameController.text = name;
+    if (license != null && _licenseController.text != license) {
+      _licenseController.text = license;
+    }
+    if (tier != null && _selectedTier != tier) {
+      setState(() => _selectedTier = tier!);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return BlocConsumer<SettingsCubit, SettingsState>(
       listener: (context, state) {
-        if (state is SettingsLoaded || state is SettingsSaved) {
-          final url = state is SettingsLoaded
-              ? state.serverUrl
-              : (state as SettingsSaved).serverUrl;
-          if (_urlController.text != url) {
-            _urlController.text = url;
-          }
-        }
+        _syncFromState(state);
         if (state is SettingsSaved) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -60,8 +96,7 @@ class _SettingsViewState extends State<_SettingsView> {
               backgroundColor: AppColors.success,
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+                  borderRadius: BorderRadius.circular(8)),
             ),
           );
         }
@@ -72,15 +107,13 @@ class _SettingsViewState extends State<_SettingsView> {
               backgroundColor: AppColors.error,
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+                  borderRadius: BorderRadius.circular(8)),
             ),
           );
         }
       },
       builder: (context, state) {
         final isLoading = state is SettingsLoading;
-        const isSaving = false; // saving is instant via cubit
 
         return Padding(
           padding: const EdgeInsets.all(32),
@@ -90,122 +123,129 @@ class _SettingsViewState extends State<_SettingsView> {
               const Text('Settings', style: AppTypography.headingLg),
               const SizedBox(height: 4),
               Text(
-                'Configure your Fluxora server connection.',
-                style: AppTypography.bodyMd.copyWith(
-                  color: AppColors.textMuted,
-                ),
+                'Configure your Fluxora server connection and subscription.',
+                style: AppTypography.bodyMd
+                    .copyWith(color: AppColors.textMuted),
               ),
               const SizedBox(height: 32),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 560),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _SectionCard(
-                        title: 'Server Connection',
+              Expanded(
+                child: SingleChildScrollView(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _SettingRow(
-                            label: 'Server URL',
-                            hint:
-                                'The base URL of your Fluxora server, e.g.\nhttp://localhost:8080 or http://192.168.1.10:8080',
-                            child: isLoading
-                                ? const SizedBox(
-                                    height: 40,
-                                    child: Center(
-                                      child: SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      ),
-                                    ),
-                                  )
-                                : TextFormField(
-                                    controller: _urlController,
-                                    style: AppTypography.bodyMd.copyWith(
-                                      color: AppColors.textPrimary,
-                                      fontFamily: 'monospace',
-                                    ),
-                                    decoration: InputDecoration(
-                                      hintText: 'http://localhost:8080',
-                                      hintStyle: AppTypography.bodyMd.copyWith(
-                                        color: AppColors.textMuted,
-                                      ),
-                                      filled: true,
-                                      fillColor: AppColors.surface,
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                        borderSide: const BorderSide(
-                                          color: AppColors.surfaceRaised,
-                                        ),
-                                      ),
-                                      enabledBorder: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                        borderSide: const BorderSide(
-                                          color: AppColors.surfaceRaised,
-                                        ),
-                                      ),
-                                      focusedBorder: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                        borderSide: const BorderSide(
-                                          color: AppColors.primary,
-                                          width: 2,
-                                        ),
-                                      ),
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 10,
-                                      ),
-                                    ),
-                                  ),
+                          // ── Server connection ──────────────────────────
+                          _SectionCard(
+                            title: 'Server Connection',
+                            children: [
+                              _SettingRow(
+                                label: 'Server URL',
+                                hint:
+                                    'The base URL of your Fluxora server, e.g.\nhttp://localhost:8080 or http://192.168.1.10:8080',
+                                child: _buildTextField(
+                                  isLoading: isLoading,
+                                  controller: _urlController,
+                                  hintText: 'http://localhost:8080',
+                                  monospace: true,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              _SettingRow(
+                                label: 'Server Name',
+                                hint: 'Displayed to clients during discovery.',
+                                child: _buildTextField(
+                                  isLoading: isLoading,
+                                  controller: _nameController,
+                                  hintText: 'Fluxora Server',
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 20),
+                          const SizedBox(height: 24),
+                          // ── Subscription ───────────────────────────────
+                          _SectionCard(
+                            title: 'Subscription',
+                            children: [
+                              _SettingRow(
+                                label: 'Plan',
+                                hint:
+                                    'Changing the plan updates your stream concurrency limit immediately.',
+                                child: isLoading
+                                    ? const _LoadingField()
+                                    : _TierSelector(
+                                        selectedTier: _selectedTier,
+                                        onChanged: (t) =>
+                                            setState(() => _selectedTier = t),
+                                      ),
+                              ),
+                              const SizedBox(height: 16),
+                              _SettingRow(
+                                label: 'License Key',
+                                hint:
+                                    'Optional. Enter your license key to activate a paid plan.',
+                                child: _buildTextField(
+                                  isLoading: isLoading,
+                                  controller: _licenseController,
+                                  hintText: 'FLUXORA-XXXX-XXXX-XXXX-XXXX',
+                                  monospace: true,
+                                ),
+                              ),
+                              if (state is SettingsLoaded) ...[
+                                const SizedBox(height: 12),
+                                _StreamLimitBadge(
+                                    maxStreams:
+                                        state.maxConcurrentStreams),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 24),
+                          // ── Save button ────────────────────────────────
                           Align(
                             alignment: Alignment.centerLeft,
                             child: FilledButton(
-                              onPressed: isLoading || isSaving
+                              onPressed: isLoading
                                   ? null
-                                  : () {
-                                      context
-                                          .read<SettingsCubit>()
-                                          .saveServerUrl(_urlController.text);
-                                    },
+                                  : () => context
+                                      .read<SettingsCubit>()
+                                      .saveSettings(
+                                        serverUrl: _urlController.text,
+                                        serverName: _nameController.text,
+                                        tier: _selectedTier,
+                                        licenseKey:
+                                            _licenseController.text.trim().isEmpty
+                                                ? null
+                                                : _licenseController.text.trim(),
+                                      ),
                               style: FilledButton.styleFrom(
                                 backgroundColor: AppColors.primary,
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
+                                    borderRadius: BorderRadius.circular(8)),
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 12,
-                                ),
+                                    horizontal: 20, vertical: 12),
                               ),
                               child: const Text('Save Settings'),
                             ),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 24),
-                      const _SectionCard(
-                        title: 'About',
-                        children: [
-                          _InfoRow(
-                            label: 'App Version',
-                            value: '0.1.0+1',
-                          ),
-                          SizedBox(height: 8),
-                          _InfoRow(
-                            label: 'Platform',
-                            value: 'Desktop Control Panel',
+                          const SizedBox(height: 24),
+                          // ── About ──────────────────────────────────────
+                          const _SectionCard(
+                            title: 'About',
+                            children: [
+                              _InfoRow(
+                                  label: 'App Version', value: '0.1.0+1'),
+                              SizedBox(height: 8),
+                              _InfoRow(
+                                  label: 'Platform',
+                                  value: 'Desktop Control Panel'),
+                            ],
                           ),
                         ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -215,9 +255,136 @@ class _SettingsViewState extends State<_SettingsView> {
       },
     );
   }
+
+  Widget _buildTextField({
+    required bool isLoading,
+    required TextEditingController controller,
+    required String hintText,
+    bool monospace = false,
+  }) {
+    if (isLoading) return const _LoadingField();
+    return TextFormField(
+      controller: controller,
+      style: AppTypography.bodyMd.copyWith(
+        color: AppColors.textPrimary,
+        fontFamily: monospace ? 'monospace' : null,
+      ),
+      decoration: InputDecoration(
+        hintText: hintText,
+        hintStyle:
+            AppTypography.bodyMd.copyWith(color: AppColors.textMuted),
+        filled: true,
+        fillColor: AppColors.surface,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: AppColors.surfaceRaised),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: AppColors.surfaceRaised),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide:
+              const BorderSide(color: AppColors.primary, width: 2),
+        ),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      ),
+    );
+  }
 }
 
-// ── Section card ─────────────────────────────────────────────────────────────
+// ── Tier selector ─────────────────────────────────────────────────────────────
+
+class _TierSelector extends StatelessWidget {
+  const _TierSelector({
+    required this.selectedTier,
+    required this.onChanged,
+  });
+
+  final String selectedTier;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.surfaceRaised),
+      ),
+      child: DropdownButton<String>(
+        value: selectedTier,
+        isExpanded: true,
+        underline: const SizedBox.shrink(),
+        dropdownColor: AppColors.surface,
+        style: AppTypography.bodyMd.copyWith(color: AppColors.textPrimary),
+        items: _kTiers
+            .map(
+              (t) => DropdownMenuItem(
+                value: t,
+                child: Text(_kTierLabels[t] ?? t),
+              ),
+            )
+            .toList(),
+        onChanged: (v) {
+          if (v != null) onChanged(v);
+        },
+      ),
+    );
+  }
+}
+
+// ── Stream limit badge ────────────────────────────────────────────────────────
+
+class _StreamLimitBadge extends StatelessWidget {
+  const _StreamLimitBadge({required this.maxStreams});
+
+  final int maxStreams;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = maxStreams >= 9999
+        ? 'Unlimited concurrent streams'
+        : '$maxStreams concurrent stream${maxStreams == 1 ? '' : 's'} allowed';
+    return Row(
+      children: [
+        const Icon(Icons.info_outline,
+            size: 14, color: AppColors.textMuted),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: AppTypography.caption
+              .copyWith(color: AppColors.textMuted),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Loading placeholder ───────────────────────────────────────────────────────
+
+class _LoadingField extends StatelessWidget {
+  const _LoadingField();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 40,
+      child: Center(
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Section card ──────────────────────────────────────────────────────────────
 
 class _SectionCard extends StatelessWidget {
   const _SectionCard({required this.title, required this.children});
@@ -284,7 +451,8 @@ class _SettingRow extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             hint!,
-            style: AppTypography.caption.copyWith(color: AppColors.textMuted),
+            style: AppTypography.caption
+                .copyWith(color: AppColors.textMuted),
           ),
         ],
       ],
@@ -308,16 +476,14 @@ class _InfoRow extends StatelessWidget {
           width: 120,
           child: Text(
             label,
-            style: AppTypography.bodySm.copyWith(
-              color: AppColors.textMuted,
-            ),
+            style: AppTypography.bodySm
+                .copyWith(color: AppColors.textMuted),
           ),
         ),
         Text(
           value,
-          style: AppTypography.bodySm.copyWith(
-            color: AppColors.textPrimary,
-          ),
+          style: AppTypography.bodySm
+              .copyWith(color: AppColors.textPrimary),
         ),
       ],
     );

@@ -43,6 +43,9 @@ class _PlayerView extends StatefulWidget {
 class _PlayerViewState extends State<_PlayerView> {
   bool _showResumeBanner = false;
   bool _showTransportBadge = false;
+  // Tracks whether the player has become ready at least once so the resume
+  // banner is not re-shown if the transport badge updates due to ICE degradation.
+  bool _readyOnce = false;
 
   @override
   void initState() {
@@ -70,14 +73,18 @@ class _PlayerViewState extends State<_PlayerView> {
         listenWhen: (_, current) => current is PlayerReady,
         listener: (context, state) {
           if (state is PlayerReady) {
-            if (state.resumeSec > 0) {
-              setState(() => _showResumeBanner = true);
-              // Auto-hide the resume banner after 4 seconds
-              Future.delayed(const Duration(seconds: 4), () {
-                if (mounted) setState(() => _showResumeBanner = false);
-              });
+            // Resume banner — only on the first Ready transition.
+            if (!_readyOnce) {
+              _readyOnce = true;
+              if (state.resumeSec > 0) {
+                setState(() => _showResumeBanner = true);
+                Future.delayed(const Duration(seconds: 4), () {
+                  if (mounted) setState(() => _showResumeBanner = false);
+                });
+              }
             }
-            // Show transport badge briefly on stream start
+            // Transport badge on every Ready transition (initial start +
+            // any subsequent path change due to ICE degradation).
             setState(() => _showTransportBadge = true);
             Future.delayed(const Duration(seconds: 5), () {
               if (mounted) setState(() => _showTransportBadge = false);
@@ -96,6 +103,7 @@ class _PlayerViewState extends State<_PlayerView> {
                     _TransportBadge(streamPath: streamPath),
                 ],
               ),
+          PlayerTierLimit() => const _TierLimitView(),
           PlayerFailure(:final message) => _ErrorView(message: message),
         },
       ),
@@ -236,6 +244,50 @@ class _ErrorView extends StatelessWidget {
             child: const Text('Go Back'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Shown when the server returns 429 — the account has reached its concurrent
+/// stream limit.  Prompts the user to upgrade via the desktop control panel.
+class _TierLimitView extends StatelessWidget {
+  const _TierLimitView();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.workspace_premium_outlined,
+              color: AppColors.primary,
+              size: 56,
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Stream Limit Reached',
+              style: AppTypography.headingLg.copyWith(color: AppColors.textPrimary),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Your current plan only allows a limited number of simultaneous streams.\n\n'
+              'Stop another active stream or upgrade your plan in the Fluxora Control Panel.',
+              style: AppTypography.bodyMd.copyWith(color: AppColors.textSecondary),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 28),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.of(context).pop(),
+              icon: const Icon(Icons.arrow_back, size: 18),
+              label: const Text('Go Back'),
+            ),
+          ],
+        ),
       ),
     );
   }

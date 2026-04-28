@@ -1,7 +1,7 @@
 # Fluxora
 
 > **"Plex meets Syncthing"** — A hybrid file streaming and syncing system  
-> **Status:** Phase 1 complete (M2 — LAN Streaming MVP ✅) | Last Updated: 2026-04-28
+> **Status:** Phases 1–3 complete ≤ Phase 4 (Monetization) in progress | Last Updated: 2026-04-28
 
 ---
 
@@ -27,14 +27,15 @@ Fluxora is a self-hosted, cross-platform media streaming system where your **PC 
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| FastAPI server | ✅ Done | All routers, mDNS, FFmpeg HLS, WebSocket, 38 tests |
+| FastAPI server | ✅ Done | All routers incl. settings, mDNS, FFmpeg HLS, WebSocket, WebRTC signaling; 60 tests |
 | `fluxora_core` package | ✅ Done | Entities, ApiClient, SecureStorage, design tokens |
 | Flutter mobile — connect | ✅ Done | mDNS auto-discovery + manual IP; Android MulticastLock |
 | Flutter mobile — auth | ✅ Done | Full pairing flow; token in SecureStorage |
-| Flutter mobile — library | ✅ Done | Library grid + file browser |
-| Flutter mobile — player | ✅ Done | `media_kit` HLS player; auth headers; play/pause/seek |
-| Flutter desktop | 🔲 Phase 2 | Control panel — dashboard, client approval |
-| Internet streaming | 🔲 Phase 3 | WebRTC / STUN / TURN |
+| Flutter mobile — library | ✅ Done | Library grid + file browser + TMDB poster thumbnails |
+| Flutter mobile — player | ✅ Done | `media_kit` HLS player; WebRTC smart-path; transport badge; resume; tier limit UI |
+| Flutter desktop | ✅ Done | Dashboard + Clients + Settings screens; 23 tests |
+| Internet streaming | ✅ Done | WebRTC P2P + HLS fallback; LAN bypass; ICE degradation monitoring |
+| Monetization (tier enforcement) | 🔵 In Progress | Tiers + concurrency limits live; license key stored; payment provider TBD |
 
 ---
 
@@ -83,10 +84,11 @@ Fluxora/
 |-------|------|--------|
 | 0 | Architecture, docs, monorepo scaffold | ✅ Complete |
 | 1 | FastAPI server, mDNS, HLS streaming, Flutter mobile client, HLS player | ✅ Complete |
-| 2 | Desktop control panel, TMDB metadata, playback resume | 🔵 In Progress |
-| 3 | WebRTC internet streaming, Firebase signaling, Flutter Web dashboard, subscriptions | 🔲 Planned |
-| 4 | Hardware transcoding, advanced client management | 🔲 Planned |
-| 5 | AI recommendations, public release | 🔲 Planned |
+| 2 | Desktop control panel, TMDB metadata, playback resume | ✅ Complete |
+| 3 | WebRTC internet streaming, smart-path LAN bypass, transport badge | ✅ Complete |
+| 4 | Tier enforcement, license key, upgrade UI | 🔵 In Progress |
+| 5 | Hardware transcoding, advanced client management | 🔲 Planned |
+| 6 | AI recommendations, public release | 🔲 Planned |
 
 ---
 

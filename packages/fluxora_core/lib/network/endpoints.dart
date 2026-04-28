@@ -37,6 +37,9 @@ class Endpoints {
   static String hlsSegment(String sessionId, String segment) =>
       '$_base/hls/$sessionId/$segment.ts';
 
+  // Settings (localhost-only)
+  static const String serverSettings = '$_base/settings';
+
   // WebSocket
   static const String wsSignal = '$_base/ws/signal';
   static const String wsStatus = '$_base/ws/status';

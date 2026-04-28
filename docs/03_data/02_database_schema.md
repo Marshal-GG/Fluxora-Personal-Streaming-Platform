@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active — Sourced from Planning Session (2026-04-27)
+> **Status:** Active — Updated 2026-04-28 (migrations 004-007; TMDB, resume, license_key, tier alignment)
 
 ---
 
@@ -29,16 +29,20 @@ CREATE TABLE libraries (
 
 -- Media files table
 CREATE TABLE media_files (
-    id           TEXT PRIMARY KEY,
-    path         TEXT NOT NULL UNIQUE,
-    name         TEXT NOT NULL,
-    extension    TEXT NOT NULL,
-    size_bytes   INTEGER NOT NULL,
-    duration_sec REAL,
-    library_id   TEXT REFERENCES libraries(id) ON DELETE SET NULL,
-    tmdb_id      INTEGER,
-    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id                TEXT PRIMARY KEY,
+    path              TEXT NOT NULL UNIQUE,
+    name              TEXT NOT NULL,
+    extension         TEXT NOT NULL,
+    size_bytes        INTEGER NOT NULL,
+    duration_sec      REAL,
+    library_id        TEXT REFERENCES libraries(id) ON DELETE SET NULL,
+    tmdb_id           INTEGER,
+    title             TEXT,              -- migration 004: TMDB title
+    overview          TEXT,              -- migration 004: TMDB overview/synopsis
+    poster_url        TEXT,              -- migration 004: TMDB poster URL
+    last_progress_sec REAL NOT NULL DEFAULT 0.0,  -- migration 005: resume position
+    created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Clients table (auth_token = HMAC-SHA256 hash of raw token — never stored in plain)
@@ -70,10 +74,11 @@ CREATE TABLE user_settings (
     id                       INTEGER PRIMARY KEY CHECK(id = 1),
     server_name              TEXT NOT NULL DEFAULT 'Fluxora Server',
     transcoding_enabled      BOOLEAN NOT NULL DEFAULT 1,
-    max_concurrent_streams   INTEGER NOT NULL DEFAULT 3,
+    max_concurrent_streams   INTEGER NOT NULL DEFAULT 1,  -- migration 007: corrected to match free-tier limit
     subscription_tier        TEXT NOT NULL DEFAULT 'free'
                              CHECK(subscription_tier IN ('free','plus','pro','ultimate')),
-    tmdb_api_key             TEXT
+    tmdb_api_key             TEXT,
+    license_key              TEXT       -- migration 006: user's paid-plan license key
 );
 ```
 
@@ -106,3 +111,7 @@ CREATE TABLE user_settings (
 | `001_initial.sql` | Creates `libraries`, `media_files`, `clients`, `user_settings`; seeds settings row |
 | `002_sessions.sql` | Creates `stream_sessions` with indexes |
 | `003_client_status.sql` | Adds `status` column to `clients` (`pending`/`approved`/`rejected`) |
+| `004_tmdb_metadata.sql` | Adds `title`, `overview`, `poster_url` to `media_files` |
+| `005_resume_progress.sql` | Adds `last_progress_sec REAL NOT NULL DEFAULT 0.0` to `media_files` |
+| `006_settings_license.sql` | Adds `license_key TEXT` to `user_settings` |
+| `007_align_tier_limits.sql` | Corrects `max_concurrent_streams` to match actual tier limits (`free=1, plus=3, pro=10, ultimate=9999`) on the existing row |

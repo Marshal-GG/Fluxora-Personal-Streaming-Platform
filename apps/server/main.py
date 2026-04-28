@@ -12,6 +12,7 @@ from slowapi.util import get_remote_address
 from config import get_data_dir, secure_db_file, settings
 from database.db import close_db, init_db
 from routers import auth, files, info, library, signal, ws
+from routers import settings as settings_router
 from routers.stream import hls_router
 from routers.stream import router as stream_router
 from services.discovery_service import start_discovery, stop_discovery
@@ -166,3 +167,4 @@ app.include_router(stream_router, prefix="/api/v1/stream", tags=["stream"])
 app.include_router(hls_router, prefix="/api/v1/hls", tags=["hls"])
 app.include_router(ws.router, prefix="/api/v1/ws", tags=["ws"])
 app.include_router(signal.router, prefix="/api/v1/ws", tags=["signal"])
+app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["settings"])

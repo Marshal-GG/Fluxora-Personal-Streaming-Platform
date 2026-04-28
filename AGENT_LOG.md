@@ -528,3 +528,211 @@ Phase 3 remaining:
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## [2026-04-28] — Phase 3 Complete: ICE Degradation / Connection Quality Monitoring
+**Agent:** claude-sonnet-4-6
+**Phase:** Phase 3 — Internet Streaming
+**Status:** Complete
+
+### What Was Done
+- Implemented the last Phase 3 "Should" item: connection quality monitoring / ICE degradation auto-fallback
+- **`player_state.dart`** — added `PlayerReady.copyWith({StreamPath? streamPath})` so the cubit can re-emit an updated badge state without recreating the entire player/controller
+- **`player_cubit.dart`** — split `_tryWebRtc` `onStateChange` callback into two phases:
+  - Pre-connection: resolves the `Completer<StreamPath>` as before (no behaviour change)
+  - Post-connection: delegates to new `_handleSignalingDegradation(sigState)` method
+  - `_handleSignalingDegradation`: on `SignalingState.failed` while in `PlayerReady(streamPath: webRtc)` → emits `copyWith(streamPath: hls)`, closes and nulls `_signaling`; media_kit player is uninterrupted (it was always reading HLS)
+- **`player_screen.dart`** — added `_readyOnce` flag to `_PlayerViewState`; resume banner only fires on first `PlayerReady` transition; transport badge re-fires on any `PlayerReady` (covers degradation badge re-show)
+- All Phase 3 roadmap items now ✅ Done; M4 milestone marked complete
+- `flutter analyze` → **No issues** ✅ · `flutter test` → **24/24 pass** ✅
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/mobile/lib/features/player/presentation/cubit/player_state.dart` |
+| Modified | `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart` |
+| Modified | `apps/mobile/lib/features/player/presentation/screens/player_screen.dart` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/10_planning/01_roadmap.md` | Connection quality monitoring → ✅ Done; M4 milestone → ✅ Done |
+| `docs/08_frontend/01_frontend_architecture.md` | Status updated; Key Technical Decisions table: ICE degradation + resume banner guard rows added; player tree comments updated |
+
+### Decisions Made
+- Media transport stays on HLS throughout; WebRTC drives only the signaling badge — degradation handling is purely badge + signaling cleanup, no player reinit needed
+- `_readyOnce` is the simplest guard: stateful bool set on first `PlayerReady`, prevents resume banner double-fire without adding complexity to the state model
+
+### Blockers / Open Issues
+- On-device WAN testing still pending (needs physical Android device + outside-LAN network)
+- Desktop tests for `DashboardCubit` / `ClientsCubit` not yet written
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Run `flutter analyze` in all Flutter packages and `pytest` in `apps/server/` to confirm clean baselines
+3. **Phase 4 — Monetization**: subscription tier enforcement, license key validation, upgrade prompt UI, Free/Plus/Pro/Ultimate tier limits
+4. Alternatively: write desktop tests for `DashboardCubit` and `ClientsCubit` (mocktail + bloc_test already in dev deps) — quick win before Phase 4
+5. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
+## [2026-04-29] — Phase 4: Subscription tier system + mobile upgrade prompt + desktop settings
+**Agent:** claude-sonnet-4-6
+**Phase:** Phase 4 — Monetization
+**Status:** Complete (license key payment validation deferred — integration TBD)
+
+### What Was Done
+
+**Server**
+- `database/migrations/006_settings_license.sql` — adds `license_key TEXT` to `user_settings`
+- `database/migrations/007_align_tier_limits.sql` — corrects existing free-tier rows where `max_concurrent_streams` was 3 (initial default); now enforces `free=1, plus=3, pro=10, ultimate=9999`
+- `services/settings_service.py` — `get_settings()`, `update_settings()`, `get_max_concurrent_streams()`; `TIER_STREAM_LIMITS` dict; tier change auto-sets `max_concurrent_streams`
+- `models/settings.py` — extended with `UserSettingsResponse` and `UpdateSettingsBody` (Pydantic v2 field validator on `server_name`)
+- `routers/settings.py` — `GET /api/v1/settings` and `PATCH /api/v1/settings` (both `require_local_caller`)
+- `routers/stream.py` — stream concurrency check now reads `max_concurrent_streams` from `user_settings` DB row (was `settings.fluxora_max_streams` config) so a tier change takes effect immediately
+- `main.py` — imported `settings_router` (aliased to avoid shadowing `config.settings`)
+- `tests/test_settings.py` — 9 tests: defaults, tier update, stream-limit auto-update, invalid tier 422, license key storage, blank name 422, partial update preserves fields, free-tier blocks second stream
+- All 63 server tests pass ✅
+
+**`packages/fluxora_core`**
+- `network/api_exception.dart` — added `bool get isTierLimit => statusCode == 429`
+- `network/endpoints.dart` — added `serverSettings = '/api/v1/settings'`
+
+**`apps/mobile`**
+- `player_state.dart` — added `PlayerTierLimit` sealed state (no fields needed)
+- `player_cubit.dart` — `startStream` catches `ApiException.isTierLimit` and emits `PlayerTierLimit` instead of generic `PlayerFailure`
+- `player_screen.dart` — added `_TierLimitView` with upgrade messaging and back button; added to switch expression
+
+**`apps/desktop`**
+- `settings_state.dart` — `SettingsLoaded` extended with `serverName`, `tier`, `maxConcurrentStreams`, `licenseKey?`; `SettingsSaved` extended with `serverName`, `tier`
+- `settings_cubit.dart` — `loadSettings()` now fetches from `GET /settings` (best-effort, non-fatal); new `saveSettings()` replaces `saveServerUrl()` — patches server + saves URL locally
+- `settings_screen.dart` — full rewrite: Server Connection card (URL + server name), Subscription card (tier dropdown, license key field, stream-limit badge), Save button, About card; uses plain `DropdownButton` (avoids `DropdownButtonFormField.value` deprecation in Flutter 3.33)
+
+### Quality Gates
+- `flutter analyze --no-fatal-infos` → **No issues** ✅ (mobile, desktop, core)
+- `flutter test` mobile → **24/24 pass** ✅
+- `pytest` server → **63/63 pass** ✅
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `apps/server/database/migrations/006_settings_license.sql` |
+| Created | `apps/server/database/migrations/007_align_tier_limits.sql` |
+| Created | `apps/server/services/settings_service.py` |
+| Modified | `apps/server/models/settings.py` |
+| Created | `apps/server/routers/settings.py` |
+| Modified | `apps/server/routers/stream.py` |
+| Modified | `apps/server/main.py` |
+| Created | `apps/server/tests/test_settings.py` |
+| Modified | `packages/fluxora_core/lib/network/api_exception.dart` |
+| Modified | `packages/fluxora_core/lib/network/endpoints.dart` |
+| Modified | `apps/mobile/lib/features/player/presentation/cubit/player_state.dart` |
+| Modified | `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart` |
+| Modified | `apps/mobile/lib/features/player/presentation/screens/player_screen.dart` |
+| Modified | `apps/desktop/lib/features/settings/presentation/cubit/settings_state.dart` |
+| Modified | `apps/desktop/lib/features/settings/presentation/cubit/settings_cubit.dart` |
+| Modified | `apps/desktop/lib/features/settings/presentation/screens/settings_screen.dart` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/04_api/01_api_contracts.md` | Added `GET /api/v1/settings` and `PATCH /api/v1/settings` with full schema + tier table |
+| `docs/10_planning/01_roadmap.md` | Phase 4 table updated with Status column and current state; M5 → 🔄 In Progress |
+
+### Decisions Made
+- Stream concurrency limit is now fully DB-driven — `settings.fluxora_max_streams` config is no longer consulted for live enforcement (it still exists in `config.py` as a fallback default for new installs if the DB row is missing)
+- License key is stored as plain text in the DB — no encryption applied yet because it has no secret value until payment validation is wired
+- Desktop `SettingsCubit.loadSettings()` fetches server settings best-effort; if the server is offline, it falls back to sensible defaults without crashing
+- Used plain `DropdownButton` instead of `DropdownButtonFormField` to avoid the `value` deprecation in Flutter 3.33+
+
+### Blockers / Open Issues
+- License key payment/crypto validation is deferred ("Integration TBD") — the key is stored and displayed but not validated against any payment provider
+- Desktop tests for `DashboardCubit`, `ClientsCubit`, `SettingsCubit` not yet written
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Run `flask analyze` in all Flutter packages and `pytest` in `apps/server/` to confirm clean baselines
+3. **Phase 5 options**: hardware encoding (NVENC/VAAPI), E2E encryption, multi-user/family sharing
+4. Alternatively: write desktop cubit tests (`DashboardCubit`, `ClientsCubit`, `SettingsCubit`) — still outstanding
+5. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
+## Session — 2026-04-28 (Desktop Cubit Tests)
+
+### Goal
+Write the outstanding desktop cubit unit tests flagged in the previous session's "Next Agent Should" section: `DashboardCubit`, `ClientsCubit`, `SettingsCubit`.
+
+### What Was Done
+
+Three test files added under `apps/desktop/test/`:
+
+**`test/features/dashboard/dashboard_cubit_test.dart`** (5 tests)
+- `initial state is DashboardInitial`
+- `emits [Loading, Loaded]` when load succeeds
+- `loaded state carries correct server info and client lists` (serverName, approvedCount, pendingCount)
+- `emits [Loading, Failure]` with `ApiException` message on API error
+- `emits [Loading, Failure]` with default message on generic exception
+
+**`test/features/clients/clients_cubit_test.dart`** (13 tests)
+- `load`: initial, success, failure (ApiException + generic)
+- `setFilter`: approved-only, clear filter, no-op when not loaded
+- `approve`: processingIds set then cleared after reload; error path clears processingId; no-op when not loaded
+- `reject`: processingIds set then cleared after reload; error path clears processingId; no-op when not loaded
+
+**`test/features/settings/settings_cubit_test.dart`** (13 tests)
+- `loadSettings`: all defaults when storage empty + server offline; uses saved URL; merges server settings on success; saved URL + server settings; defaults when `getServerUrl` throws
+- `saveSettings`: SettingsError on blank URL; SettingsError on URL without scheme; SettingsError on blank name; SettingsSaved with trimmed values + verify calls; SettingsError when PATCH throws; license_key included in body when provided; license_key absent from body when null
+
+Total desktop test suite: **34 tests** (up from 1 placeholder).
+
+### Approach Notes
+- `DashboardRepository` and `ClientsRepository` are abstract → mocked with `extends Mock implements`.
+- `SecureStorage` and `ApiClient` are concrete classes → same `implements` pattern works because `Mock.noSuchMethod` intercepts all calls; concrete fields are never initialized on the mock.
+- Generic method stubs (`get<Map<String,dynamic>>`, `patch<void>`) work correctly because Dart captures type arguments in `Invocation.typeArguments` and mocktail matches on them.
+- `configure()` (sync void) stubbed with `thenAnswer((_) {})`.
+- `saveServerUrl()` / `patch<void>()` (async void) stubbed with `thenAnswer((_) async {})`.
+- `blocTest` `seed:` parameter used for `setFilter`, `approve`, `reject` tests to avoid needing to drive the cubit through `load()` first.
+
+### Quality Gates
+- `flutter analyze --no-fatal-infos` → **No issues** ✅ (desktop)
+- `flutter test` desktop → **34/34 pass** ✅
+- `flutter test` mobile → **24/24 pass** ✅ (regression check)
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `apps/desktop/test/features/dashboard/dashboard_cubit_test.dart` |
+| Created | `apps/desktop/test/features/clients/clients_cubit_test.dart` |
+| Created | `apps/desktop/test/features/settings/settings_cubit_test.dart` |
+
+### Docs Updated
+None — pure test additions, no code or API changes.
+
+### Decisions Made
+- Kept `test/placeholder_test.dart` in place; it continues to satisfy any CI config that expects at least one test to exist before the real suite runs.
+- Used `blocTest`'s `seed:` parameter rather than re-driving the cubit through prior states — keeps tests fast and focused.
+
+### Blockers / Open Issues
+- License key payment/crypto validation still deferred ("Integration TBD").
+- On-device WAN testing for WebRTC not yet performed (requires physical device + real outside-LAN network).
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything.
+2. Run `flutter analyze` in all Flutter packages and `pytest` in `apps/server/` to confirm clean baselines.
+3. **Phase 5 options** (pick one):
+   - Hardware encoding (NVENC/VAAPI) — `apps/server/services/ffmpeg.py` + new transcoding settings
+   - E2E encryption for internet streams
+   - Multi-user / family sharing (new `users` table, auth model changes)
+4. Or: wire up a real payment/license-key validation provider for Phase 4 completion.
+5. Append a new entry to `AGENT_LOG.md` when done.
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

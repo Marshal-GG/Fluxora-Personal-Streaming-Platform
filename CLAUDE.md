@@ -1235,11 +1235,12 @@ Border radius: cards=12px, buttons=8px, badges=9999px
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Architecture, docs, monorepo scaffold | ✅ Complete |
-| 1 | FastAPI scaffold, mDNS, basic HLS, Flutter project setup, landing page | 🔵 In Progress (server ✅, mobile ✅ except HLS player — on-device testing) |
-| 2 | Full library management, Flutter home/player screens | 🔲 Planned |
-| 3 | WebRTC internet streaming, Firebase signaling, Flutter Web dashboard, subscription licensing | 🔲 Planned |
-| 4 | Hardware transcoding, advanced client management | 🔲 Planned |
-| 5 | AI recommendations, public release | 🔲 Planned |
+| 1 | FastAPI scaffold, mDNS, basic HLS, Flutter mobile project setup | ✅ Complete |
+| 2 | Full library management, TMDB metadata, playback resume, Desktop Control Panel | ✅ Complete |
+| 3 | WebRTC internet streaming, smart-path LAN bypass, transport badge, ICE degradation | ✅ Complete |
+| 4 | Tier enforcement, license key, upgrade UI, payment provider integration | 🔵 In Progress |
+| 5 | Hardware transcoding, advanced client management | 🔲 Planned |
+| 6 | AI recommendations, public release | 🔲 Planned |
 
 Full roadmap: `docs/10_planning/01_roadmap.md`
 
@@ -1278,25 +1279,24 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 ## Current Status
 
-> **As of April 2026 — Phase 0 complete. Phase 1 fully complete (M2 done). Phase 2 next.**
+> **As of April 2026 — Phases 1–4 complete or in-progress. Phase 4 (Monetization) active.**
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
-- All documentation written and in sync
-- Flutter workspace configured: all packages pass `flutter analyze` with zero issues
-- `.vscode/launch.json` configured: Server, Mobile, Desktop configs + `Server + Mobile` compound
-- `packages/fluxora_core` **implemented**: all 5 entities with `freezed` + `json_serializable` codegen; `ApiClient` (Dio), `ApiException`, `Endpoints`, `SecureStorage`; design tokens
-- `apps/server` — **Phase 1 complete** (38 passing tests; ruff + black clean):
-  - Full FastAPI lifespan (10 ordered steps), mDNS (`AsyncZeroconf`), structured logging
-  - All routers: info, auth, files, library, stream, ws ✅
-  - All services: auth, library, discovery, ffmpeg ✅
-  - `TOKEN_HMAC_KEY` required at startup; stored in `%APPDATA%\Fluxora\.env` (Windows)
-- `apps/mobile` — **Phase 1 complete** (24 passing tests):
-  - `core/di/injector.dart` — get_it DI; credentials restored from SecureStorage on restart
-  - `core/router/app_router.dart` — go_router with async auth redirect guard
-  - `features/connect` — mDNS auto-discovery + manual IP; Android `WifiManager.MulticastLock` ✅
-  - `features/auth` — full pairing flow, `PairCubit` with polling ✅
-  - `features/library` — library grid + files list ✅
-  - `features/player` — `media_kit` HLS player; `PlayerCubit` starts/stops stream; auth headers injected into `Media(httpHeaders:)`; `MaterialVideoControls`; landscape + immersive mode ✅
-  - Android platform files; `better_player` removed (AGP 8+ incompatible); `flutter_webrtc` deferred to Phase 3
+- All documentation written and in sync with code
+- `apps/server` — **Phases 1–4 complete** (60 passing tests; ruff + black clean):
+  - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured logging
+  - Routers: info, auth, files, library, stream, ws, signal, settings ✅
+  - Services: auth, library, discovery, ffmpeg, webrtc, settings, tmdb ✅
+  - Migrations 001–007 applied on startup ✅
+  - Tier enforcement: `PATCH /settings` → tier → `max_concurrent_streams` updated in DB; stream router reads from DB; 429 on excess ✅
+- `apps/mobile` — **Phases 1–3 complete** (14 passing tests):
+  - `features/connect` — mDNS + manual IP + `MulticastLock` ✅
+  - `features/auth` — full pairing flow ✅
+  - `features/library` — library grid + TMDB poster thumbnails ✅
+  - `features/player` — `media_kit` HLS player; `NetworkPathDetector` smart-path; `WebRtcSignalingService`; 8 s ICE timeout → HLS fallback; `_TransportBadge`; playback resume; `PlayerTierLimit` → `_TierLimitView` on 429 ✅
+- `apps/desktop` — **Phase 2 complete** (23 passing tests):
+  - Dashboard screen (server info + client stats) ✅
+  - Clients screen (approve/reject/filter) ✅
+  - Settings screen (server URL, server name, tier selector, license key, stream-limit badge) ✅
 
-**Next:** Phase 2 — Desktop control panel (`apps/desktop`) — dashboard + client approval UI (so pairing no longer requires curl). Then: TMDB metadata, playback resume.
+**Next:** Complete Phase 4 monetization — integrate payment provider (Stripe/Paddle); connect license key to actual entitlement verification; add upgrade flow in mobile app.

@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active — Updated 2026-04-28 (Phase 3 WebRTC smart-path + transport badge implemented)
+> **Status:** Active — Updated 2026-04-28 (Phase 3 complete — WebRTC + LAN path selection + transport badge + ICE degradation monitoring)
 
 ---
 
@@ -15,7 +15,7 @@
 | HTTP Client | `ApiClient` (Dio) from `fluxora_core` |
 | Video Playback | `media_kit` — Phase 2 (player screen not yet built) |
 | LAN Discovery | `multicast_dns` (Dart) — PTR→SRV→A resolution |
-| WebRTC | `flutter_webrtc ^1.4.1` — Phase 3 ✅ (`WebRtcSignalingService`, LAN skip, transport badge) |
+| WebRTC | `flutter_webrtc ^1.4.1` — Phase 3 ✅ (`WebRtcSignalingService`, LAN skip, transport badge, ICE degradation → HLS fallback) |
 | Storage (secrets) | `flutter_secure_storage` (tokens, server URL, client ID) |
 | Routing | `go_router` v13 with async auth redirect guard |
 | DI | `get_it` — lazy singletons for repos, factories for BLoCs |
@@ -26,8 +26,8 @@
 
 | Target | Purpose | Status |
 |--------|---------|--------|
-| **Flutter Mobile** (Android/iOS) | End-user streaming client | ✅ Phase 1 complete (HLS player done) |
-| **Flutter Desktop** (Windows/macOS/Linux) | PC control panel / server management | 🔵 Phase 2 in progress |
+| **Flutter Mobile** (Android/iOS) | End-user streaming client | ✅ Phase 1–3 complete |
+| **Flutter Desktop** (Windows/macOS/Linux) | PC control panel / server management | ✅ Phase 2 complete (Dashboard + Clients + Settings done) |
 
 ---
 
@@ -115,9 +115,9 @@ apps/mobile/lib/
         │   ├── webrtc_signaling_service.dart  # WebSocket SDP/ICE handshake + RTCPeerConnection lifecycle
         │   └── network_path_detector.dart    # isLan() — RFC-1918 /24 subnet check; LAN→HLS, WAN→WebRTC
         └── presentation/
-            ├── cubit/player_cubit.dart   # startStream → LAN check → WebRTC (8 s timeout) → HLS fallback
-            ├── cubit/player_state.dart   # PlayerInitial/Loading/Ready(streamPath)/Failure; StreamPath enum
-            └── screens/player_screen.dart    # Full-screen Video + MaterialVideoControls + _TransportBadge chip
+            ├── cubit/player_cubit.dart   # startStream → LAN check → WebRTC (8 s timeout) → HLS fallback; _handleSignalingDegradation for ICE drop
+            ├── cubit/player_state.dart   # PlayerInitial/Loading/Ready(streamPath)/Failure; StreamPath enum; PlayerReady.copyWith
+            └── screens/player_screen.dart    # Full-screen Video + MaterialVideoControls + _TransportBadge chip; _readyOnce guard
 ```
 
 ---
@@ -127,7 +127,7 @@ apps/mobile/lib/
 ```
 UI Event ──▶ BLoC/Cubit ──▶ Repository (interface) ──▶ ApiClient (fluxora_core)
                 │                                              │
-                └──────────── State emitted ◀─────────────────┘
+                └──────────── State emitted ◀──────────────────┘
 ```
 
 - Use **Cubit** when there are no multi-event chains (connect discovery, pairing, file list)
@@ -177,7 +177,9 @@ restore credentials before any repository is used.
 | Video player | `media_kit v1.2.6` | `better_player` incompatible with AGP 8+ |
 | WebRTC | `flutter_webrtc ^1.4.1` — Phase 3 ✅ | `WebRtcSignalingService` + `NetworkPathDetector`; LAN detection skips negotiation; 8 s ICE timeout with HLS fallback |
 | Smart path | `NetworkPathDetector.isLan()` | Pure in-process /24 subnet check; no DNS, no ICMP; fails-safe to WAN |
-| Transport badge | `_TransportBadge` chip | Auto-hides after 5 s; HLS (dark chip) vs WebRTC (deep-purple chip + `cell_tower` icon) |
+| Transport badge | `_TransportBadge` chip | Auto-hides after 5 s; HLS (dark chip) vs WebRTC (deep-purple chip + `cell_tower` icon); re-appears on ICE degradation |
+| ICE degradation | `_handleSignalingDegradation()` in `PlayerCubit` | `SignalingState.failed` post-connection → `copyWith(streamPath: hls)` emitted; signaling closed; player uninterrupted (HLS was always underlying transport) |
+| Resume banner guard | `_readyOnce` in `_PlayerViewState` | Prevents resume banner from re-firing when `PlayerReady` is re-emitted for transport switch |
 | Poll interval | Configurable `Duration` on `PairCubit` | Default 3s in production; 30ms in tests — avoids slow test suite |
 
 ---
@@ -193,10 +195,16 @@ restore credentials before any repository is used.
 ```
 test/
 ├── features/
-│   ├── connect/connect_cubit_test.dart   # 4 tests
-│   ├── auth/pair_cubit_test.dart         # 5 tests
-│   └── library/library_bloc_test.dart    # 5 tests
+│   ├── connect/connect_cubit_test.dart   # 4 tests  (mobile)
+│   ├── auth/pair_cubit_test.dart         # 5 tests  (mobile)
+│   └── library/library_bloc_test.dart    # 5 tests  (mobile)
 └── placeholder_test.dart
+
+Desktop test/
+└── features/
+    ├── dashboard/dashboard_cubit_test.dart  # 3 tests ✅
+    ├── clients/clients_cubit_test.dart      # 7 tests ✅
+    └── settings/settings_cubit_test.dart    # 13 tests ✅ (loadSettings + saveSettings; license_key PATCH)
 ```
 
 ---
@@ -247,7 +255,15 @@ apps/desktop/lib/
     ├── activity/                # 🔲 Phase 2 — scaffold only
     ├── transcoding/             # 🔲 Phase 2 — scaffold only
     ├── logs/                    # 🔲 Phase 2 — scaffold only
-    └── settings/                # 🔲 Phase 2 — scaffold only
+    └── settings/                # ✅ Implemented
+        ├── domain/repositories/
+        │   └── settings_repository.dart
+        ├── data/repositories/
+        │   └── settings_repository_impl.dart
+        └── presentation/
+            ├── cubit/settings_cubit.dart   # loadSettings(), saveSettings(); tier→streams badge
+            ├── cubit/settings_state.dart   # SettingsInitial/Loading/Loaded/Saved/Error
+            └── screens/settings_screen.dart  # URL + server name + tier selector + license key + stream limit badge
 ```
 
 ### Desktop routes
@@ -260,6 +276,6 @@ apps/desktop/lib/
 | `/activity` | — | — | 🔲 Phase 2 |
 | `/transcoding` | — | — | 🔲 Phase 2 |
 | `/logs` | — | — | 🔲 Phase 2 |
-| `/settings` | — | — | 🔲 Phase 2 |
+| `/settings` | SettingsScreen | `SettingsCubit` | ✅ Done |
 
 Desktop uses `ShellRoute` with a fixed 200 px `_Sidebar` on the left and the page content in an `Expanded` right panel. No authentication required — all API calls are localhost-only (`require_local_caller`) or no-auth (`GET /info`).

@@ -1,7 +1,7 @@
 # Data Models
 
 > **Category:** Data  
-> **Status:** Active — Sourced from Planning Session (2026-04-27)
+> **Status:** Active — Updated 2026-04-28 (TMDB fields, last_progress_sec, license_key)
 
 ---
 
@@ -20,6 +20,10 @@
 | duration_sec | REAL | ❌ | Duration (if media) |
 | library_id | TEXT | ❌ | FK → Library |
 | tmdb_id | INTEGER | ❌ | TMDB metadata ID |
+| title | TEXT | ❌ | TMDB canonical title (migration 004) |
+| overview | TEXT | ❌ | TMDB plot synopsis (migration 004) |
+| poster_url | TEXT | ❌ | TMDB poster image URL (migration 004) |
+| last_progress_sec | REAL | ✅ | Resume position in seconds; default 0.0 (migration 005) |
 | created_at | TIMESTAMP | ✅ | When indexed |
 | updated_at | TIMESTAMP | ✅ | Last scan update |
 
@@ -78,9 +82,10 @@
 | id | INTEGER | ✅ | Always 1 (singleton) |
 | server_name | TEXT | ✅ | Display name of server |
 | transcoding_enabled | BOOLEAN | ✅ | Whether FFmpeg transcoding is on |
-| max_concurrent_streams | INTEGER | ✅ | Stream limit |
+| max_concurrent_streams | INTEGER | ✅ | Stream limit (auto-set by tier change) |
 | subscription_tier | TEXT | ✅ | Enum: `free`, `plus`, `pro`, `ultimate` |
 | tmdb_api_key | TEXT | ❌ | User's TMDB key |
+| license_key | TEXT | ❌ | Paid-plan license key; format-validated (migration 006) |
 
 ---
 

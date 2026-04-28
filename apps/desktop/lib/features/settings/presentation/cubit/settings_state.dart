@@ -11,15 +11,31 @@ final class SettingsLoading extends SettingsState {
 }
 
 final class SettingsLoaded extends SettingsState {
-  const SettingsLoaded({required this.serverUrl});
+  const SettingsLoaded({
+    required this.serverUrl,
+    required this.serverName,
+    required this.tier,
+    required this.maxConcurrentStreams,
+    this.licenseKey,
+  });
 
   final String serverUrl;
+  final String serverName;
+  final String tier;
+  final int maxConcurrentStreams;
+  final String? licenseKey;
 }
 
 final class SettingsSaved extends SettingsState {
-  const SettingsSaved({required this.serverUrl});
+  const SettingsSaved({
+    required this.serverUrl,
+    required this.serverName,
+    required this.tier,
+  });
 
   final String serverUrl;
+  final String serverName;
+  final String tier;
 }
 
 final class SettingsError extends SettingsState {
