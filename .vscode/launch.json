@@ -1,0 +1,80 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        // ─── Server ───────────────────────────────────────────────
+        {
+            "name": "Server",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": ["main:app", "--host", "0.0.0.0", "--port", "8080"],
+            "cwd": "${workspaceFolder}/apps/server",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Server (reload)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "uvicorn",
+            "args": ["main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"],
+            "cwd": "${workspaceFolder}/apps/server",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        // ─── Mobile ───────────────────────────────────────────────
+        {
+            "name": "Mobile",
+            "cwd": "apps/mobile",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "Mobile (profile)",
+            "cwd": "apps/mobile",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "Mobile (release)",
+            "cwd": "apps/mobile",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        },
+        // ─── Desktop ──────────────────────────────────────────────
+        {
+            "name": "Desktop",
+            "cwd": "apps/desktop",
+            "request": "launch",
+            "type": "dart"
+        },
+        {
+            "name": "Desktop (profile)",
+            "cwd": "apps/desktop",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "profile"
+        },
+        {
+            "name": "Desktop (release)",
+            "cwd": "apps/desktop",
+            "request": "launch",
+            "type": "dart",
+            "flutterMode": "release"
+        }
+    ],
+    "compounds": [
+        {
+            "name": "Server + Mobile",
+            "configurations": ["Server", "Mobile"],
+            "stopAll": true
+        },
+        {
+            "name": "Server + Desktop",
+            "configurations": ["Server", "Desktop"],
+            "stopAll": true
+        }
+    ]
+}

@@ -14,7 +14,8 @@ venv/
 .flutter-plugins-dependencies
 *.iml
 .idea/
-.vscode/
+.vscode/*
+!.vscode/launch.json
 build/
 
 # OS
