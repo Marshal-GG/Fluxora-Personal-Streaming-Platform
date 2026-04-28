@@ -739,3 +739,202 @@
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+---
+## [2026-04-28] — Phase 1 Mobile: Connect, Auth, Library
+**Agent:** claude-sonnet-4-6
+**Phase:** Phase 1
+**Status:** Complete
+
+### What Was Done
+- Implemented the full Phase 1 Flutter mobile app (`apps/mobile`) from scratch on branch `feature/mobile-phase1`
+- Added `flutter_secure_storage: ^9.0.0` and `logger: ^2.7.0` as direct dependencies to `pubspec.yaml`
+- **Foundation:** `AppTheme` (dark ThemeData from DESIGN.md tokens), `main.dart`, `FluxoraApp`, DI via `get_it`, `go_router` with async auth-guard redirect
+- **Shared widgets:** `LoadingOverlay`, `StatusBadge` (online/idle/offline), `MediaCard`
+- **Feature: connect** — `DiscoveredServer` entity, `ServerDiscoveryRepository` interface + mDNS impl (`multicast_dns` — PTR→SRV→A resolution for `_fluxora._tcp.local.`), `ConnectCubit`, `ConnectScreen` (scan animation, server list, manual IP entry)
+- **Feature: auth** — `AuthRepository` interface + impl (request-pair, poll-status, save-credentials), `PairCubit` (requesting→pending→approved/rejected via configurable-interval `Timer.periodic`), `PairingScreen`
+- **Feature: library** — `LibraryRepository` interface + impl, `LibraryBloc` (Started/Refreshed), `LibraryScreen` (2-column grid), `FilesCubit`, `FilesScreen` (list with `MediaCard`)
+- **Router:** `_guardRedirect` reads `SecureStorage` async; redirects to `/library` if credentials exist, or `/` if accessing a protected route without auth
+- **DI startup:** restores saved `serverUrl` + `authToken` into `ApiClient` on app restart
+- **Tests:** 17 tests across connect/auth/library — all pass; `flutter analyze` zero issues
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/mobile/pubspec.yaml` |
+| Modified | `apps/mobile/lib/main.dart` |
+| Modified | `apps/mobile/lib/app.dart` |
+| Modified | `apps/mobile/lib/shared/theme/app_theme.dart` |
+| Modified | `apps/mobile/lib/shared/widgets/loading_overlay.dart` |
+| Modified | `apps/mobile/lib/shared/widgets/status_badge.dart` |
+| Modified | `apps/mobile/lib/shared/widgets/media_card.dart` |
+| Modified | `apps/mobile/lib/core/di/injector.dart` |
+| Modified | `apps/mobile/lib/core/router/app_router.dart` |
+| Created | `apps/mobile/lib/features/connect/domain/entities/discovered_server.dart` |
+| Created | `apps/mobile/lib/features/connect/domain/repositories/server_discovery_repository.dart` |
+| Created | `apps/mobile/lib/features/connect/data/repositories/server_discovery_repository_impl.dart` |
+| Created | `apps/mobile/lib/features/connect/presentation/cubit/connect_state.dart` |
+| Created | `apps/mobile/lib/features/connect/presentation/cubit/connect_cubit.dart` |
+| Created | `apps/mobile/lib/features/connect/presentation/screens/connect_screen.dart` |
+| Created | `apps/mobile/lib/features/auth/domain/repositories/auth_repository.dart` |
+| Created | `apps/mobile/lib/features/auth/data/repositories/auth_repository_impl.dart` |
+| Created | `apps/mobile/lib/features/auth/presentation/cubit/pair_state.dart` |
+| Created | `apps/mobile/lib/features/auth/presentation/cubit/pair_cubit.dart` |
+| Created | `apps/mobile/lib/features/auth/presentation/screens/pairing_screen.dart` |
+| Created | `apps/mobile/lib/features/library/domain/repositories/library_repository.dart` |
+| Created | `apps/mobile/lib/features/library/data/repositories/library_repository_impl.dart` |
+| Created | `apps/mobile/lib/features/library/presentation/bloc/library_event.dart` |
+| Created | `apps/mobile/lib/features/library/presentation/bloc/library_state.dart` |
+| Created | `apps/mobile/lib/features/library/presentation/bloc/library_bloc.dart` |
+| Created | `apps/mobile/lib/features/library/presentation/cubit/files_state.dart` |
+| Created | `apps/mobile/lib/features/library/presentation/cubit/files_cubit.dart` |
+| Created | `apps/mobile/lib/features/library/presentation/screens/library_screen.dart` |
+| Created | `apps/mobile/lib/features/library/presentation/screens/files_screen.dart` |
+| Created | `apps/mobile/test/features/connect/connect_cubit_test.dart` |
+| Created | `apps/mobile/test/features/auth/pair_cubit_test.dart` |
+| Created | `apps/mobile/test/features/library/library_bloc_test.dart` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/10_planning/01_roadmap.md` | Phase 1 mobile milestones updated to ✅ Done |
+| `AGENT_LOG.md` | This entry appended |
+
+### Decisions Made
+- `PairCubit` accepts `pollInterval` constructor param (default 3s) so tests use 30ms without slow waits
+- `go_router` async redirect guards both directions (unauthed → protected, authed → connect/pairing)
+- `isA<>()` matchers used in all BLoC tests — sealed state classes intentionally don't implement `==`
+- `logger` and `flutter_secure_storage` added as explicit direct deps — used directly in DI layer, not just transitive
+
+### Blockers / Open Issues
+- HLS player (Phase 2): `MediaCard.onTap` is a no-op stub pending `better_player` integration
+- UI not visually verified on device — correctness confirmed via `flutter analyze` + tests
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Phase 1 mobile is complete (17 tests, zero analyze issues) — branch: `feature/mobile-phase1`
+3. Next: **Phase 2 mobile** — HLS player screen (`better_player`), wire `MediaCard.onTap` → `/player/:sessionId`, stream start/stop via `ApiClient`
+4. Then: **Desktop control panel** (`apps/desktop`) — Dashboard, Library management, Client approval UI
+5. Run `flutter analyze` in all affected packages before declaring done
+6. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
+## [2026-04-28] — On-device testing: build fixes, server fixes, doc update
+**Agent:** claude-sonnet-4-6
+**Phase:** Phase 1 — Mobile on-device testing
+**Status:** Complete
+
+### What Was Done
+- Generated Android platform files via `flutter create . --org dev.marshalx --platforms android,ios` — `android/` and `ios/` directories were missing entirely
+- Added required Android permissions to `AndroidManifest.xml`: `INTERNET`, `ACCESS_NETWORK_STATE`, `ACCESS_WIFI_STATE`, `CHANGE_WIFI_MULTICAST_STATE` (needed for mDNS multicast)
+- Fixed app label: `fluxora_mobile` → `Fluxora`
+- Removed `better_player: ^0.0.84` from `pubspec.yaml` — missing `namespace` in its `build.gradle` causes AGP 8+ build failure; will use `media_kit` in Phase 2
+- Removed `flutter_webrtc: ^0.10.0` from `pubspec.yaml` — uses removed v1 Flutter plugin API (`PluginRegistry.Registrar`), fails to compile; deferred to Phase 3 with v1.x+
+- Removed auto-generated `test/widget_test.dart` (created by `flutter create`) — conflicts with existing test structure
+- Fixed `services/discovery_service.py` — replaced synchronous `Zeroconf` with `AsyncZeroconf`; both `start_discovery()` and `stop_discovery()` are now `async def` using `async_register_service` / `async_unregister_service` / `async_close`; prevents `EventLoopBlocked` crash on startup
+- Updated `main.py` lifespan — `await start_discovery(...)` and `await stop_discovery()`
+- Created `%APPDATA%\Fluxora\.env` with `TOKEN_HMAC_KEY` and `FLUXORA_PORT=8080` — server was failing startup and broadcasting wrong port (8000 vs 8080)
+- Configured `.vscode/launch.json` — Server, Server (reload), Mobile, Desktop configs + `Server + Mobile` / `Server + Desktop` compound configs
+- Full doc sweep: updated frontend arch, tech stack, backend arch, infrastructure, roadmap, CLAUDE.md
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `apps/mobile/android/` (full platform tree) |
+| Modified | `apps/mobile/android/app/src/main/AndroidManifest.xml` |
+| Modified | `apps/mobile/pubspec.yaml` |
+| Modified | `apps/server/services/discovery_service.py` |
+| Modified | `apps/server/main.py` |
+| Created | `C:\Users\marsh\AppData\Roaming\Fluxora\.env` |
+| Modified | `.vscode/launch.json` |
+| Modified | `docs/08_frontend/01_frontend_architecture.md` |
+| Modified | `docs/02_architecture/02_tech_stack.md` |
+| Modified | `docs/09_backend/01_backend_architecture.md` |
+| Modified | `docs/05_infrastructure/01_infrastructure.md` |
+| Modified | `docs/10_planning/01_roadmap.md` |
+| Modified | `CLAUDE.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/08_frontend/01_frontend_architecture.md` | Full rewrite: actual implemented structure, routes, state classes, DI pattern, testing approach, tech decisions |
+| `docs/02_architecture/02_tech_stack.md` | Split mobile packages into implemented vs deferred; noted `better_player` dropped, `flutter_webrtc` deferred to Phase 3 |
+| `docs/09_backend/01_backend_architecture.md` | `discovery_service` noted as using `AsyncZeroconf`; `start_discovery`/`stop_discovery` marked async |
+| `docs/05_infrastructure/01_infrastructure.md` | Platform data dir table added (Windows path is `%APPDATA%\Fluxora`); startup sequence updated to 10 steps; TOKEN_HMAC_KEY documented; VSCode launch configs documented; dev commands updated |
+| `docs/10_planning/01_roadmap.md` | HLS player note updated: `better_player` → `media_kit`; M2 status updated |
+| `CLAUDE.md` | Phase 1 mobile marked complete; `better_player` → `media_kit`; `flutter_webrtc` noted as Phase 3 only with version caveat; Known Risks updated; Current Status updated |
+
+### Decisions Made
+- `AsyncZeroconf` is required when running inside FastAPI lifespan — synchronous `Zeroconf.register_service()` calls `run_coro_with_timeout` which deadlocks on an already-running event loop
+- `better_player` is permanently dropped — AGP 8+ requires `namespace` in build.gradle; the package is unmaintained and will not be fixed
+- `flutter_webrtc` v0.10.x uses `PluginRegistry.Registrar` which was removed from the Flutter embedding; will use v1.x+ when Phase 3 begins
+- `.env` on Windows lives at `%APPDATA%\Fluxora\.env` (not `~/.fluxora/.env` as the Linux-only comment in code implied)
+
+### Blockers / Open Issues
+- HLS player (`media_kit`) not yet added — Phase 2
+- `flutter_webrtc` not yet added — Phase 3
+- On-device pairing not yet verified (server running, mobile building)
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Verify on-device pairing works: run server → run mobile → approve pair request via `curl -X POST http://localhost:8080/api/v1/auth/approve/<client_id>`
+3. Begin **Phase 2**: add `media_kit` for HLS player, wire `MediaCard.onTap` → start stream → `/player` screen
+4. Begin **Desktop control panel** (`apps/desktop`) — Dashboard + Client approval UI so pairing can be approved without curl
+5. Run `flutter analyze` + `flutter test` before declaring any Phase 2 work done
+6. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
+## [2026-04-28] — On-device fixes: ApiClient URL, MulticastLock, port default
+**Agent:** claude-sonnet-4-6
+**Phase:** Phase 1 — Mobile on-device testing
+**Status:** Complete
+
+### What Was Done
+- Fixed pairing failure: `ApiClient` had empty `baseUrl` when the pairing request was made — `configure(baseUrl: server.url)` now called in `ConnectScreen` at the point of server selection (both auto-discovered tile tap and manual entry connect button)
+- Fixed manual entry default port: `8000` → `8080` to match server config
+- Fixed mDNS auto-discovery on Android: Android silently drops multicast packets without a `WifiManager.MulticastLock`; implemented `MethodChannel('dev.marshalx.fluxora/multicast')` in `MainActivity.kt` exposing `acquire`/`release`; `ConnectCubit.startDiscovery()` acquires lock before scanning, releases in `stopDiscovery()` and `close()`; failure is non-fatal (iOS/desktop platforms silently continue)
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `apps/mobile/lib/features/connect/presentation/screens/connect_screen.dart` |
+| Modified | `apps/mobile/lib/features/connect/presentation/cubit/connect_cubit.dart` |
+| Modified | `apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/MainActivity.kt` |
+| Modified | `docs/08_frontend/01_frontend_architecture.md` |
+| Modified | `CLAUDE.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/08_frontend/01_frontend_architecture.md` | Added MulticastLock and ApiClient.configure() to key decisions; updated connect feature description |
+| `CLAUDE.md` | Updated Known Risks: mDNS on Android — mitigation now describes the implemented MulticastLock channel |
+
+### Decisions Made
+- `ApiClient.configure()` called from `ConnectScreen` (presentation layer) via `GetIt.I<ApiClient>()` — acceptable because this is DI resolution, not a direct HTTP call; it is the correct moment since the user has explicitly selected a server
+- MulticastLock failure is caught and logged as warning, not error — iOS and desktop platforms don't have the channel and must continue working
+
+### Blockers / Open Issues
+- Router AP isolation may still prevent mDNS if the MulticastLock fix isn't enough — manual entry always works
+- Confirmed: pairing flow works end-to-end (pair request → server approval → token stored → library screen)
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything
+2. Phase 1 is fully working on-device — begin **Phase 2: HLS player**
+3. Add `media_kit` to `pubspec.yaml` for HLS `.m3u8` playback
+4. Wire `MediaCard.onTap` → `POST /stream/start/{file_id}` → navigate to `/player` with session
+5. Build the player screen with play/pause, seek, and stop (DELETE /stream/{session_id})
+6. Also consider: **Desktop control panel** (`apps/desktop`) — client approval UI so pairing doesn't require curl
+7. Append a new entry to `AGENT_LOG.md` when done
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

@@ -14,7 +14,7 @@
 | ASGI Server | Uvicorn |
 | Streaming | FFmpeg (subprocess) → HLS |
 | Database | SQLite (via `aiosqlite` for async) |
-| LAN Discovery | `zeroconf` Python library |
+| LAN Discovery | `zeroconf` Python library — `AsyncZeroconf` (async-safe) |
 | WebRTC Signaling | `aiortc` or custom WebSocket handshake |
 | Metadata | TMDB REST API |
 | Process Management | `asyncio` subprocess for FFmpeg |
@@ -74,7 +74,7 @@ server/
 |---------|---------------|---------------|
 | `ffmpeg_service` ✅ | Spawn FFmpeg, manage HLS output, cleanup segments | `start_stream()`, `stop_stream()`, `cleanup_session_dir()`, `is_running()` |
 | `library_service` ✅ | Library + media file CRUD; TMDB enrichment (Phase 2) | `list_libraries()`, `get_library()`, `create_library()`, `delete_library()`, `list_files()`, `get_file()` |
-| `discovery_service` ✅ | Broadcast `_fluxora._tcp.local.` via mDNS on LAN | `start_discovery()`, `stop_discovery()` |
+| `discovery_service` ✅ | Broadcast `_fluxora._tcp.local.` via mDNS on LAN — uses `AsyncZeroconf` to avoid blocking FastAPI's event loop | `start_discovery()` (async), `stop_discovery()` (async) |
 | `auth_service` ✅ | Token generation (HMAC-SHA256), pairing state machine, token validation | `create_pair_request()`, `approve_client()`, `reject_client()`, `revoke_client()`, `get_trusted_client_by_token()` |
 | `webrtc_service` | Manage ICE/STUN/TURN for internet connections | `handle_offer()`, `generate_answer()` |
 

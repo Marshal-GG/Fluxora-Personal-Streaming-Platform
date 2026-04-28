@@ -17,6 +17,7 @@
 | Local Discovery | Zeroconf (mDNS) | Auto-pairing on LAN |
 | Internet Transport | WebRTC | STUN/TURN for NAT traversal |
 | Frontend Framework | Flutter | Dart, cross-platform |
+| State Management | `flutter_bloc` (BLoC/Cubit) | Confirmed at Phase 1 mobile implementation |
 | Metadata API | TMDB API | Movie/TV show metadata |
 | PC Control Panel | Flutter Desktop | Electron alternative |
 
@@ -62,15 +63,21 @@ lib/
 | `logger ^2.7.0` | Structured logging |
 | `connectivity_plus ^7.1.1` | Network state monitoring |
 
-### Key Packages — apps (planned)
+### Key Packages — `apps/mobile` (implemented — Phase 1)
 | Package | Purpose |
 |---------|---------|
-| `flutter_bloc ^9.1.1` | State management |
-| `get_it` | Dependency injection |
-| `go_router` | Navigation |
-| `better_player` / `media_kit` | HLS video playback |
-| `multicast_dns` | LAN discovery (client-side) |
-| `flutter_webrtc` | WebRTC for internet streaming |
+| `flutter_bloc ^9.1.1` | BLoC / Cubit state management |
+| `get_it ^7.6.7` | Dependency injection |
+| `go_router ^13.0.0` | Declarative routing with async auth guard |
+| `multicast_dns ^0.3.2` | LAN discovery — PTR→SRV→A resolution |
+| `flutter_secure_storage ^9.0.0` | Secure token + server URL storage |
+| `logger ^2.7.0` | Structured logging |
+
+### Key Packages — deferred (Phase 2+)
+| Package | Phase | Purpose |
+|---------|-------|---------|
+| `media_kit` | Phase 2 | HLS video playback (replaces `better_player` — incompatible with AGP 8+) |
+| `flutter_webrtc` (v1.x+) | Phase 3 | WebRTC internet streaming (v0.10.x uses removed v1 Flutter plugin API) |
 
 ---
 

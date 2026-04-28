@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _check_ffmpeg()
 
     # 9. Start mDNS broadcast
-    start_discovery(settings.fluxora_server_name, settings.fluxora_port)
+    await start_discovery(settings.fluxora_server_name, settings.fluxora_port)
 
     logger.info(
         "Fluxora Server starting on %s:%s",
@@ -141,7 +141,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     # Shutdown
-    stop_discovery()
+    await stop_discovery()
     await close_db()
     logger.info("Fluxora Server stopped")
 

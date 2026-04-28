@@ -1,12 +1,13 @@
 import logging
 import socket
 
-from zeroconf import ServiceInfo, Zeroconf
+from zeroconf import ServiceInfo
+from zeroconf.asyncio import AsyncZeroconf
 
 logger = logging.getLogger(__name__)
 
 _SERVICE_TYPE = "_fluxora._tcp.local."
-_zeroconf: Zeroconf | None = None
+_zeroconf: AsyncZeroconf | None = None
 _service_info: ServiceInfo | None = None
 
 
@@ -19,7 +20,7 @@ def _local_ip() -> str:
         return "127.0.0.1"
 
 
-def start_discovery(server_name: str, port: int) -> None:
+async def start_discovery(server_name: str, port: int) -> None:
     global _zeroconf, _service_info
 
     ip = _local_ip()
@@ -35,18 +36,18 @@ def start_discovery(server_name: str, port: int) -> None:
         server=f"{hostname}.local.",
     )
 
-    _zeroconf = Zeroconf()
-    _zeroconf.register_service(_service_info)
+    _zeroconf = AsyncZeroconf()
+    await _zeroconf.async_register_service(_service_info)
     logger.info("mDNS broadcasting '%s' on %s:%d", server_name, ip, port)
 
 
-def stop_discovery() -> None:
+async def stop_discovery() -> None:
     global _zeroconf, _service_info
 
     if _zeroconf and _service_info:
         try:
-            _zeroconf.unregister_service(_service_info)
-            _zeroconf.close()
+            await _zeroconf.async_unregister_service(_service_info)
+            await _zeroconf.async_close()
             logger.info("mDNS broadcast stopped")
         except Exception:
             logger.warning("Error stopping mDNS", exc_info=True)

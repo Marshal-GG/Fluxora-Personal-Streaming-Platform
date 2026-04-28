@@ -19,11 +19,19 @@ binary that runs on the user's machine and is managed via the Flutter desktop co
 | Component | Location | Notes |
 |-----------|----------|-------|
 | FastAPI Server | User's PC | Windows / macOS / Linux |
-| SQLite Database | `~/.fluxora/fluxora.db` | Embedded, WAL mode |
-| HLS Temp Segments | `~/.fluxora/hls/` | Cleaned after stream ends |
-| Config File | `~/.fluxora/config.json` | Editable from Control Panel |
+| SQLite Database | Platform data dir (see below) | Embedded, WAL mode |
+| HLS Temp Segments | `{data_dir}/hls/` | Cleaned after stream ends |
+| Secrets / Config | `{data_dir}/.env` | `BaseSettings` reads on startup |
 | Flutter Mobile Client | Android / iOS device | Downloaded from app store |
 | Flutter Desktop Control Panel | User's PC | Installed alongside server |
+
+**Platform data directory:**
+
+| Platform | Path |
+|----------|------|
+| Windows | `%APPDATA%\Fluxora\` (e.g. `C:\Users\<user>\AppData\Roaming\Fluxora\`) |
+| macOS | `~/Library/Application Support/Fluxora/` |
+| Linux | `~/.fluxora/` |
 
 ---
 
@@ -72,25 +80,29 @@ bash scripts/build_server.sh
 ## Server Startup Sequence
 
 ```
-1. User launches Fluxora Server (via Control Panel or CLI)
-2. Server reads config from ~/.fluxora/config.json
-3. DB migration check → apply any pending migrations
-4. Start mDNS broadcast  (_fluxora._tcp.local, port 8000)
-5. Start Uvicorn on 0.0.0.0:{FLUXORA_PORT}  (default: 8000)
-6. Control Panel connects via localhost
-7. Server is ready — mDNS visible on LAN, HTTP API active
+1.  Validate secrets       — fail fast if TOKEN_HMAC_KEY is empty
+2.  Secure data directory  — create {data_dir}/ with owner-only permissions
+3.  Ensure HLS tmp dir     — {data_dir}/hls/ created if missing
+4.  Clean HLS orphans      — delete session dirs from previous crash
+5.  Open DB + migrate      — aiosqlite, WAL mode, apply pending .sql migrations
+6.  Secure DB file         — chmod 600 on .db / -wal / -shm (non-Windows)
+7.  Close orphan sessions  — mark ended_at on sessions with no ended_at
+8.  Check FFmpeg           — warn (not fail) if FFmpeg not on PATH
+9.  Start mDNS broadcast   — AsyncZeroconf _fluxora._tcp.local on FLUXORA_PORT
+10. Start HTTP server      — uvicorn begins accepting connections
 ```
 
 ---
 
 ## Environment Variables / Config
 
-All settings can be overridden via environment variable or `~/.fluxora/config.json`.
-Server reads config using **Pydantic `BaseSettings`** (`apps/server/config.py`).
+All settings are read from `{data_dir}/.env` (platform path above) via **Pydantic `BaseSettings`** (`apps/server/config.py`).
+Settings can also be overridden via environment variables (same names, uppercase).
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `FLUXORA_PORT` | `8000` | HTTP server port |
+| `TOKEN_HMAC_KEY` | *(required)* | HMAC-SHA256 key for token hashing — generate once with `secrets.token_hex(32)` |
+| `FLUXORA_PORT` | `8000` | HTTP server port — set to `8080` to match uvicorn `--port 8080` |
 | `FLUXORA_HOST` | `0.0.0.0` | Bind address |
 | `FLUXORA_DB_PATH` | `~/.fluxora/fluxora.db` | SQLite database path |
 | `FLUXORA_HLS_TMP` | `~/.fluxora/hls/` | HLS segment temp directory |
@@ -368,11 +380,23 @@ unnecessary builds (e.g., a Python change does not trigger a Flutter build).
 
 | Task | Command |
 |------|---------|
-| Run server (dev) | `uvicorn main:app --reload --app-dir apps/server` |
-| Run mobile (dev) | `flutter run` (from `apps/mobile/`) |
-| Run desktop (dev) | `flutter run -d windows` (from `apps/desktop/`) |
-| Run Python tests | `pytest apps/server/tests/` |
+| Run server | `cd apps/server && uvicorn main:app --host 0.0.0.0 --port 8080` |
+| Run server (reload) | `cd apps/server && uvicorn main:app --host 0.0.0.0 --port 8080 --reload` |
+| Run mobile (dev) | `cd apps/mobile && flutter run` |
+| Run desktop (dev) | `cd apps/desktop && flutter run -d windows` |
+| Run Python tests | `cd apps/server && pytest tests/ -v` |
 | Run Flutter tests | `flutter test` (from each app dir) |
+
+**VSCode launch configurations** (`.vscode/launch.json`):
+
+| Config | Description |
+|--------|-------------|
+| `Server` | Uvicorn with debugger attached — breakpoints work |
+| `Server (reload)` | Same + `--reload` for auto-restart on file save |
+| `Mobile` | Flutter debug on connected device |
+| `Desktop` | Flutter debug on Windows |
+| `Server + Mobile` (compound) | Launches both simultaneously; `stopAll: true` |
+| `Server + Desktop` (compound) | Launches both simultaneously |
 
 ---
 

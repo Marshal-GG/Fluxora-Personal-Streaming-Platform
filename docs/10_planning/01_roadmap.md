@@ -20,10 +20,10 @@
 | `GET /api/v1/files` endpoint | Must | ✅ Done | List + filter by library |
 | Basic FFmpeg HLS streaming | Must | ✅ Done | `POST /stream/start`, HLS segment serving |
 | WebSocket status channel | Must | ✅ Done | Token auth, ping/pong, progress updates |
-| Flutter client project setup | Must | 🔲 Next | Clean Architecture structure |
-| mDNS discovery in Flutter | Must | 🔲 Next | Client-side Dart |
-| File browser UI in Flutter | Must | 🔲 Next | Library + file grid |
-| HLS playback in Flutter | Must | 🔲 Next | `better_player` / `media_kit` |
+| Flutter client project setup | Must | ✅ Done | Clean Architecture structure, DI, router |
+| mDNS discovery in Flutter | Must | ✅ Done | `multicast_dns` + manual IP entry |
+| File browser UI in Flutter | Must | ✅ Done | Library grid + file list |
+| HLS playback in Flutter | Must | 🔲 Phase 2 | `media_kit` — player screen (`better_player` dropped — AGP 8+ incompatible) |
 
 **Target:** Working LAN stream, file browser, basic connection
 
@@ -101,7 +101,7 @@
 |-----------|-------|--------|
 | M1 — Architecture & Docs Complete | 0 | ✅ Done |
 | M1.5 — Monorepo Scaffold Complete | 0 | ✅ Done |
-| M2 — LAN Streaming MVP | 1 | 🔵 In Progress (server ✅, mobile 🔲) |
+| M2 — LAN Streaming MVP | 1 | 🔵 In Progress (server ✅, mobile ✅ except HLS player — testing on device) |
 | M3 — Auth + Library | 2 | ⬜ Planned |
 | M4 — Internet Streaming | 3 | ⬜ Planned |
 | M5 — Monetization Live | 4 | ⬜ Planned |

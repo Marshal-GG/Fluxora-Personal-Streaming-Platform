@@ -15,9 +15,9 @@ dependencies:
   flutter_bloc: ^9.1.1
   go_router: ^13.0.0
   get_it: ^7.6.7
-  better_player: ^0.0.84
-  flutter_webrtc: ^0.10.0
   multicast_dns: ^0.3.2
+  flutter_secure_storage: ^9.0.0
+  logger: ^2.7.0
 
 dev_dependencies:
   flutter_test:

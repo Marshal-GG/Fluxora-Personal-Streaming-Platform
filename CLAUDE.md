@@ -293,10 +293,10 @@ Fluxora/
 | State | BLoC or Riverpod | Pick one per feature; do not mix patterns within a feature |
 | HTTP | `dio` (via `fluxora_core`) | All HTTP calls through the single `ApiClient` instance |
 | LAN Discovery | Dart `multicast_dns` | Scan for `_fluxora._tcp.local` |
-| WebRTC | `flutter_webrtc` | Internet streaming only; never used on LAN |
+| WebRTC | `flutter_webrtc` (v1.x+) | Internet streaming only — Phase 3; v0.10.x uses removed v1 Flutter plugin API; do not add until Phase 3 |
 | Storage | `flutter_secure_storage` (via `fluxora_core`) | Bearer token storage; never `shared_preferences` for secrets |
 | File paths | `path_provider` | All file/directory paths go through this — never hardcode platform paths |
-| Video | `better_player` | HLS `.m3u8` playback (mobile only); evaluate `media_kit` in Phase 2 if stability issues arise |
+| Video | `media_kit` | HLS `.m3u8` playback (mobile only) — Phase 2; `better_player` dropped (AGP 8+ namespace incompatibility) |
 | Cloud (Phase 3+) | Firebase SDK (`firebase_core`, `firebase_messaging`, `cloud_firestore`) | Push notifications, crash reporting (Crashlytics), remote config; feature-flagged — never block core streaming |
 | Web (landing) | Next.js 16 + TypeScript | Static export → Firebase Hosting; hosted at `fluxora.marshalx.dev` |
 | Web (dashboard, Phase 3+) | Flutter Web (`apps/web_app`) | Browser-accessible control panel; shares code with `apps/desktop` |
@@ -1235,7 +1235,7 @@ Border radius: cards=12px, buttons=8px, badges=9999px
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Architecture, docs, monorepo scaffold | ✅ Complete |
-| 1 | FastAPI scaffold, mDNS, basic HLS, Flutter project setup, landing page | 🔵 In Progress (server ✅, mobile 🔲) |
+| 1 | FastAPI scaffold, mDNS, basic HLS, Flutter project setup, landing page | 🔵 In Progress (server ✅, mobile ✅ except HLS player — on-device testing) |
 | 2 | Full library management, Flutter home/player screens | 🔲 Planned |
 | 3 | WebRTC internet streaming, Firebase signaling, Flutter Web dashboard, subscription licensing | 🔲 Planned |
 | 4 | Hardware transcoding, advanced client management | 🔲 Planned |
@@ -1250,8 +1250,8 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 | Area | Gotcha | Mitigation |
 |------|--------|-----------|
 | FFmpeg | Must be installed separately by the user; PyInstaller cannot bundle it | Startup check with friendly error message and download link |
-| mDNS on Android 12+ | Multicast restricted on newer Android | Implement IP range scan fallback + manual server entry |
-| `flutter_webrtc` | Less mature than web WebRTC; test on real devices | Budget integration testing time; have fallback to relay-only |
+| mDNS on Android 12+ | Android silently drops multicast packets without `WifiManager.MulticastLock` | Implemented: `MainActivity.kt` exposes `MethodChannel('dev.marshalx.fluxora/multicast')` — `ConnectCubit.startDiscovery()` acquires the lock before scanning, releases on close; manual IP entry remains as fallback |
+| `flutter_webrtc` | v0.10.x uses removed v1 Flutter plugin API (`PluginRegistry.Registrar`) — fails to compile on AGP 8+ | Use v1.x+ when adding in Phase 3; do not add earlier |
 | SQLite concurrency | WAL mode helps but high client counts can still lock | Connection pool limit; queue writes; plan PostgreSQL migration path for Pro |
 | HLS temp files | FFmpeg writes to `/tmp` — can fill up on long sessions | Enforce cleanup on stream close AND on server startup (orphan cleanup) |
 | PyInstaller + FFmpeg | FFmpeg subprocess path must use the bundled binary path, not `PATH` | Resolve FFmpeg path via `sys._MEIPASS` in frozen builds |
@@ -1278,26 +1278,26 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 ## Current Status
 
-> **As of April 2026 — Phase 0 complete. Phase 1 server complete. Phase 1 mobile in progress.**
+> **As of April 2026 — Phase 0 complete. Phase 1 server complete. Phase 1 mobile complete (on-device testing).**
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation written and in sync
 - Flutter workspace configured: all packages pass `flutter analyze` with zero issues
-- `packages/fluxora_core` **implemented**: all 5 entities (`MediaFile`, `Library`, `StreamSession`, `Client`, `ServerInfo`) with `freezed` + `json_serializable` codegen; `ApiClient` (Dio), `ApiException`, `Endpoints`, `SecureStorage`; design tokens (`AppColors`, `AppSizes`, `AppTypography`)
+- `.vscode/launch.json` configured: Server, Mobile, Desktop configs + `Server + Mobile` compound
+- `packages/fluxora_core` **implemented**: all 5 entities with `freezed` + `json_serializable` codegen; `ApiClient` (Dio), `ApiException`, `Endpoints`, `SecureStorage`; design tokens
 - `apps/server` — **Phase 1 complete** (38 passing tests; ruff + black clean):
-  - `config.py` — BaseSettings, platform data dir, DB file permissions
-  - `database/db.py` — aiosqlite, WAL mode, migration runner; migrations 001–003 applied
-  - `main.py` — FastAPI lifespan (9 ordered steps incl. secret validation, orphan cleanup), mDNS, structured logging
-  - `routers/info.py` — `GET /api/v1/info` ✅
-  - `routers/auth.py` — full pairing flow (request-pair, status, approve, reject, revoke); approve/reject localhost-only ✅
-  - `routers/deps.py` — `validate_token` + `require_local_caller` FastAPI dependencies ✅
-  - `routers/files.py` — `GET /api/v1/files`, `GET /api/v1/files/{id}` ✅
-  - `routers/library.py` — full library CRUD + `POST /{id}/scan` ✅
-  - `routers/stream.py` — `POST /start/{id}`, `GET/{id}`, `DELETE/{id}` + HLS file serving ✅
-  - `routers/ws.py` — `/ws/status` WebSocket: token auth, ping/pong keepalive, progress updates ✅
-  - `services/auth_service.py` — HMAC-SHA256 token hashing, pairing state machine ✅
-  - `services/library_service.py` — library + file CRUD + directory scan ✅
-  - `services/discovery_service.py` — mDNS `_fluxora._tcp.local.` broadcast ✅
-  - `services/ffmpeg_service.py` — async FFmpeg subprocess management, HLS output ✅
+  - Full FastAPI lifespan (10 ordered steps), mDNS (`AsyncZeroconf`), structured logging
+  - All routers: info, auth, files, library, stream, ws ✅
+  - All services: auth, library, discovery, ffmpeg ✅
+  - `TOKEN_HMAC_KEY` required at startup; stored in `%APPDATA%\Fluxora\.env` (Windows)
+- `apps/mobile` — **Phase 1 complete** (14 passing tests):
+  - `core/di/injector.dart` — get_it DI; credentials restored from SecureStorage on restart
+  - `core/router/app_router.dart` — go_router with async auth redirect guard
+  - `shared/theme/app_theme.dart` — Material 3 dark ThemeData from design tokens
+  - `features/connect` — mDNS auto-discovery (`multicast_dns` PTR→SRV→A) + manual IP entry ✅
+  - `features/auth` — full pairing flow, `PairCubit` with configurable-interval polling ✅
+  - `features/library` — library grid + files list, `LibraryBloc` ✅
+  - Android platform files generated; network + multicast permissions set ✅
+  - `better_player` removed (AGP 8+ incompatible); `flutter_webrtc` deferred to Phase 3
 
-**Next:** Begin Phase 1 mobile — `apps/mobile` Flutter project: mDNS discovery, pairing flow, library browser.
+**Next:** Complete on-device testing → approve first pairing → verify library screen loads → begin Phase 2 (HLS player with `media_kit`, library metadata).
