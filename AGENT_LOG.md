@@ -387,3 +387,52 @@ dart fix --apply  →  7 const fixes applied cleanly
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## Session Log — 2026-04-28 (Phase 3 — WebRTC Signaling Server)
+
+### Objective
+Implement the WebRTC signaling server (`WS /api/v1/ws/signal`) — Phase 3's first deliverable — enabling internet streaming by exchanging SDP offers/answers and ICE candidates between the mobile client and the server's `aiortc` peer connection.
+
+### What Was Built
+
+#### `services/webrtc_service.py` (replaced stub)
+- In-memory `_PeerSession` registry (`client_id → RTCPeerConnection`)
+- `create_peer_connection(client_id)` — creates `aiortc.RTCPeerConnection` with ICE config; closes any stale session first
+- `handle_offer(client_id, sdp)` — sets remote description, queues pending ICE candidates, creates + sets local description, returns answer SDP
+- `add_ice_candidate(client_id, candidate)` — adds immediately if remote desc is set, otherwise queues for post-offer drain
+- `close_peer_connection(client_id)` — unregisters and closes PC gracefully
+- ICE server config: Google STUN by default; reads `WEBRTC_TURN_URL/USERNAME/PASSWORD` env vars for TURN (Q-002 resolution path ready)
+
+#### `routers/signal.py` (new)
+- `WS /api/v1/ws/signal` — same auth handshake as `/ws/status` (bearer token in first message)
+- Full message protocol: `offer → answer`, `ice-candidate` (both directions)
+- Structured error replies: `invalid_json`, `missing_sdp`, `offer_failed`, `unknown_type`
+- Server-generated ICE candidates forwarded to client via `@pc.on("icecandidate")` callback
+- Clean teardown: `close_peer_connection()` always called in `finally` block
+
+#### `main.py` (updated)
+- Imported `signal` router and registered at `/api/v1/ws` prefix alongside the existing `ws` router
+
+#### `tests/test_signal.py` (new, 8 tests)
+- Auth flow: valid token → `auth_ok`, invalid token closes, missing auth message closes
+- SDP flow: `offer` → `answer` round-trip
+- ICE candidate forwarding verified
+- Error cases: unknown type, invalid JSON, offer without `sdp`
+- `aiortc` is mocked — tests are hermetic and fast (< 1s)
+
+### Verification
+```
+pytest tests/test_signal.py  →  8 passed in 0.91s
+pytest (full suite)          →  54 passed, 0 failed in 3.42s
+```
+
+### Pending Work (Next Session)
+Phase 3 remaining:
+1. Flutter WebRTC integration (`flutter_webrtc` in mobile app)
+2. Smart LAN-vs-WebRTC path selection in mobile client
+3. Connection quality monitoring
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

@@ -379,20 +379,41 @@ Client connects → sends auth message → server replies auth_ok
 ---
 
 ### `WebSocket /api/v1/ws/signal`
-**Description:** WebRTC signaling channel for internet connections.  
-**Status:** 🔲 Planned (Phase 3)
+**Description:** WebRTC signaling channel — exchanges SDP offer/answer and ICE candidates so that the mobile client and server can establish a direct peer-to-peer WebRTC connection for internet streaming.  
+**Status:** ✅ Implemented
 
-**Messages:**
+**Handshake (identical to `/ws/status`):**
 ```json
-// Client → Server (offer)
-{ "type": "offer", "sdp": "...", "client_id": "uuid" }
+// Client → Server (first message, within 10 s)
+{ "type": "auth", "token": "<bearer>" }
 
-// Server → Client (answer)
-{ "type": "answer", "sdp": "..." }
+// Server → Client (on success)
+{ "type": "auth_ok", "client_id": "uuid" }
+```
+
+**Signaling messages:**
+```json
+// Client → Server (SDP offer)
+{ "type": "offer", "sdp": "<SDP string>" }
+
+// Server → Client (SDP answer)
+{ "type": "answer", "sdp": "<SDP string>" }
 
 // ICE candidates (both directions)
-{ "type": "ice-candidate", "candidate": "..." }
+{ "type": "ice-candidate", "candidate": "<candidate line>",
+  "sdpMid": "<mid>", "sdpMLineIndex": <index> }
 ```
+
+**Error replies:**
+```json
+{ "type": "error", "code": "<code>", "detail": "<message>" }
+```
+| Code | Cause |
+|------|-------|
+| `invalid_json` | Message body is not valid JSON |
+| `missing_sdp` | `offer` message has no `sdp` field |
+| `offer_failed` | Server-side `RTCPeerConnection` error |
+| `unknown_type` | Unrecognised message type |
 
 ---
 

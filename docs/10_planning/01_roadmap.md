@@ -51,13 +51,13 @@
 > **Goal:** Stream works when away from home  
 > **Note:** Originally Phase 3 in the plan; TMDB + Resume was completed as part of Phase 2 polish.
 
-| Feature | Priority | Notes |
-|---------|----------|-------|
-| WebRTC signaling server | Must | WS `/ws/signal` (scaffolded, not implemented) |
-| Flutter WebRTC integration | Must | `flutter_webrtc` — deferred (AGP 8+ issues) |
-| STUN/TURN configuration | Must | Google STUN + TURN server |
-| Smart path selection (LAN vs WebRTC) | Must | Auto-switching logic |
-| Connection quality monitoring | Should | Detect degradation, switch paths |
+| Feature | Priority | Status | Notes |
+|---------|----------|--------|-------|
+| WebRTC signaling server | Must | ✅ Done | `WS /api/v1/ws/signal` — auth, SDP relay, ICE forwarding, 8 tests ✅ |
+| Flutter WebRTC integration | Must | ⬜ Planned | `flutter_webrtc` — deferred (AGP 8+ issues) |
+| STUN/TURN configuration | Must | ⬜ Planned | Google STUN configured; TURN env vars ready |
+| Smart path selection (LAN vs WebRTC) | Must | ⬜ Planned | Auto-switching logic |
+| Connection quality monitoring | Should | ⬜ Planned | Detect degradation, switch paths |
 
 **Target:** Full remote streaming over internet
 
@@ -106,7 +106,7 @@
 | M2 — LAN Streaming MVP | 1 | ✅ Done |
 | M3 — Auth + Library + TMDB + Resume | 2 | ✅ Done |
 | M3.5 — Desktop Control Panel Parity (incl. Settings) | 2 | ✅ Done |
-| M4 — Internet Streaming | 3 | ⬜ Planned |
+| M4 — Internet Streaming | 3 | 🔄 In Progress |
 | M5 — Monetization Live | 4 | ⬜ Planned |
 | M6 — Advanced Features | 5 | ⬜ Future |
 
