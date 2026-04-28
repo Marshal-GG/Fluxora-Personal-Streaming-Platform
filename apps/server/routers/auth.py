@@ -7,7 +7,13 @@ from slowapi.util import get_remote_address
 
 from config import settings
 from database.db import get_db
-from models.client import AuthStatusResponse, PairRequestBody, PairResponse
+from models.client import (
+    AuthStatusResponse,
+    ClientListItem,
+    ClientListResponse,
+    PairRequestBody,
+    PairResponse,
+)
 from routers.deps import require_local_caller, validate_token
 from services import auth_service
 
@@ -16,6 +22,28 @@ limiter = Limiter(key_func=get_remote_address)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get("/clients", response_model=ClientListResponse)
+async def list_clients(
+    db: aiosqlite.Connection = Depends(get_db),
+    _local: None = Depends(require_local_caller),
+) -> ClientListResponse:
+    rows = await auth_service.list_clients(db)
+    return ClientListResponse(
+        clients=[
+            ClientListItem(
+                id=row["id"],
+                name=row["name"],
+                platform=row["platform"],
+                status=row["status"],
+                last_seen=row["last_seen"],
+                is_trusted=bool(row["is_trusted"]),
+            )
+            for row in rows
+        ],
+        total=len(rows),
+    )
 
 
 @router.post("/request-pair", response_model=PairResponse)

@@ -1,7 +1,7 @@
 # Project Roadmap & Milestones
 
 > **Category:** Planning  
-> **Status:** Active — Sourced from Planning Session (2026-04-27)
+> **Status:** Active — Updated 2026-04-28
 
 ---
 
@@ -35,7 +35,7 @@
 | Feature | Priority | Notes |
 |---------|----------|-------|
 | Client pairing + auth tokens | Must | `POST /auth/request-pair` flow |
-| PC Control Panel (Flutter Desktop) | Must | Dashboard + client management |
+| PC Control Panel (Flutter Desktop) | Must | ✅ Done — Dashboard + Clients screens (approve/reject/revoke) |
 | Library manager + scan API | Should | Directory indexing |
 | TMDB metadata integration | Should | Movies + TV |
 | Library UI in Flutter client | Should | Grid with posters |

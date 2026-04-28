@@ -18,3 +18,17 @@ class PairResponse(BaseModel):
 class AuthStatusResponse(BaseModel):
     status: Literal["pending_approval", "approved", "rejected"]
     auth_token: str | None = None
+
+
+class ClientListItem(BaseModel):
+    id: str
+    name: str
+    platform: str
+    status: str
+    last_seen: str
+    is_trusted: bool
+
+
+class ClientListResponse(BaseModel):
+    clients: list[ClientListItem]
+    total: int

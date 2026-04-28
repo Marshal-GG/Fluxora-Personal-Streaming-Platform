@@ -133,6 +133,32 @@ Token is issued after successful client pairing.
 
 ---
 
+### `GET /api/v1/auth/clients`
+**Description:** List all paired clients (all statuses). Used by the desktop control panel.  
+**Auth:** Localhost only — `require_local_caller` dependency rejects non-loopback callers with `403`.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "clients": [
+    {
+      "id": "uuid",
+      "name": "Pixel 8 Pro",
+      "platform": "android",
+      "status": "approved",
+      "last_seen": "2026-04-28T12:00:00",
+      "is_trusted": true
+    }
+  ],
+  "total": 1
+}
+```
+
+**Errors:** `403` not from localhost
+
+---
+
 ### `GET /api/v1/files`
 **Description:** List indexed media files. Optionally filter by library.  
 **Auth:** Bearer token required.  

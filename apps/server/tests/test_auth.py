@@ -120,3 +120,41 @@ async def test_reject_blocked_from_lan(test_db):
     ) as lan:
         resp = await lan.post("/api/v1/auth/reject/any-id")
     assert resp.status_code == 403
+
+
+# ── GET /clients ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_clients_empty(client: AsyncClient):
+    response = await client.get("/api/v1/auth/clients")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["clients"] == []
+    assert data["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_list_clients_returns_after_pair_request(client: AsyncClient):
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+
+    response = await client.get("/api/v1/auth/clients")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 1
+    item = data["clients"][0]
+    assert item["id"] == PAIR_BODY["client_id"]
+    assert item["name"] == PAIR_BODY["device_name"]
+    assert item["platform"] == PAIR_BODY["platform"]
+    assert item["status"] == "pending"
+    assert item["is_trusted"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_clients_blocked_from_lan(test_db):
+    async with AsyncClient(
+        transport=ASGITransport(app=app, client=("192.168.1.100", 50000)),
+        base_url="http://test",
+    ) as lan:
+        resp = await lan.get("/api/v1/auth/clients")
+    assert resp.status_code == 403

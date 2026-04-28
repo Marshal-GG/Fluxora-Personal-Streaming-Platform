@@ -97,6 +97,17 @@ async def revoke_client(db: aiosqlite.Connection, client_id: str) -> None:
     logger.info("Client revoked: %s", client_id)
 
 
+async def list_clients(db: aiosqlite.Connection) -> list[aiosqlite.Row]:
+    async with db.execute(
+        """
+        SELECT id, name, platform, status, last_seen, is_trusted
+        FROM clients
+        ORDER BY last_seen DESC
+        """
+    ) as cur:
+        return await cur.fetchall()
+
+
 async def get_trusted_client_by_token(
     db: aiosqlite.Connection, raw_token: str, hmac_key: str
 ) -> aiosqlite.Row | None:

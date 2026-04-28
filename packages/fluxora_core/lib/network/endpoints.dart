@@ -10,6 +10,13 @@ class Endpoints {
   static const String requestPair = '$_base/auth/request-pair';
   static String authStatus(String clientId) =>
       '$_base/auth/status/$clientId';
+  static const String authClients = '$_base/auth/clients';
+  static String authApprove(String clientId) =>
+      '$_base/auth/approve/$clientId';
+  static String authReject(String clientId) =>
+      '$_base/auth/reject/$clientId';
+  static String authRevoke(String clientId) =>
+      '$_base/auth/revoke/$clientId';
 
   // Files
   static const String files = '$_base/files';

@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active — Updated 2026-04-28 (Phase 1 mobile implemented)
+> **Status:** Active — Updated 2026-04-28 (Phase 2 desktop control panel implemented)
 
 ---
 
@@ -26,8 +26,8 @@
 
 | Target | Purpose | Status |
 |--------|---------|--------|
-| **Flutter Mobile** (Android/iOS) | End-user streaming client | 🔵 Phase 1 complete (no player yet) |
-| **Flutter Desktop** (Windows/macOS/Linux) | PC control panel / server management | 🔲 Phase 2 |
+| **Flutter Mobile** (Android/iOS) | End-user streaming client | ✅ Phase 1 complete (HLS player done) |
+| **Flutter Desktop** (Windows/macOS/Linux) | PC control panel / server management | 🔵 Phase 2 in progress |
 
 ---
 
@@ -193,3 +193,68 @@ test/
 │   └── library/library_bloc_test.dart    # 5 tests
 └── placeholder_test.dart
 ```
+
+---
+
+## Flutter Desktop Project Structure (Phase 2 — implemented)
+
+```
+apps/desktop/lib/
+├── main.dart                    # setupInjector() → runApp()
+├── app.dart                     # MaterialApp.router — AppTheme.dark + appRouter
+│
+├── core/
+│   ├── di/
+│   │   └── injector.dart        # get_it: ApiClient (localhost:8080), DashboardRepository, ClientsRepository
+│   └── router/
+│       └── app_router.dart      # GoRouter + Routes + ShellRoute wrapping AppShell
+│
+├── shared/
+│   ├── theme/
+│   │   └── app_theme.dart       # AppTheme.dark — Material 3 ThemeData + NavigationRailTheme
+│   └── widgets/
+│       ├── sidebar.dart         # AppShell + _Sidebar + _NavItem — 200 px fixed-width nav rail
+│       ├── stat_card.dart       # Dashboard stat card with icon + value + label
+│       └── status_badge.dart    # ClientStatus badge (Approved/Pending/Rejected)
+│
+└── features/
+    ├── dashboard/               # ✅ Implemented
+    │   ├── domain/repositories/
+    │   │   └── dashboard_repository.dart   # getServerInfo(), getClients()
+    │   ├── data/repositories/
+    │   │   └── dashboard_repository_impl.dart
+    │   └── presentation/
+    │       ├── cubit/dashboard_cubit.dart  # load() fetches info + clients in sequence
+    │       ├── cubit/dashboard_state.dart  # DashboardInitial/Loading/Loaded/Failure
+    │       └── screens/dashboard_screen.dart  # ServerInfoCard + stat cards (approved/pending/total)
+    │
+    ├── clients/                 # ✅ Implemented
+    │   ├── domain/repositories/
+    │   │   └── clients_repository.dart   # getClients(), approveClient(), rejectClient()
+    │   ├── data/repositories/
+    │   │   └── clients_repository_impl.dart
+    │   └── presentation/
+    │       ├── cubit/clients_cubit.dart   # load(), approve(), reject(), setFilter()
+    │       ├── cubit/clients_state.dart   # ClientsInitial/Loading/Loaded(filter, processingIds)/Failure
+    │       └── screens/clients_screen.dart  # Filter chips + list of ClientTile with action buttons
+    │
+    ├── library/                 # 🔲 Phase 2 — scaffold only
+    ├── activity/                # 🔲 Phase 2 — scaffold only
+    ├── transcoding/             # 🔲 Phase 2 — scaffold only
+    ├── logs/                    # 🔲 Phase 2 — scaffold only
+    └── settings/                # 🔲 Phase 2 — scaffold only
+```
+
+### Desktop routes
+
+| Route | Screen | State class | Status |
+|-------|--------|-------------|--------|
+| `/` | DashboardScreen | `DashboardCubit` | ✅ Done |
+| `/clients` | ClientsScreen | `ClientsCubit` | ✅ Done |
+| `/library` | — | — | 🔲 Phase 2 |
+| `/activity` | — | — | 🔲 Phase 2 |
+| `/transcoding` | — | — | 🔲 Phase 2 |
+| `/logs` | — | — | 🔲 Phase 2 |
+| `/settings` | — | — | 🔲 Phase 2 |
+
+Desktop uses `ShellRoute` with a fixed 200 px `_Sidebar` on the left and the page content in an `Expanded` right panel. No authentication required — all API calls are localhost-only (`require_local_caller`) or no-auth (`GET /info`).

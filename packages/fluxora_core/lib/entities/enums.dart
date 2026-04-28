@@ -33,6 +33,20 @@ enum ClientPlatform {
   linux,
 }
 
+enum ClientStatus {
+  pending,
+  approved,
+  rejected;
+
+  static ClientStatus fromJson(String value) => switch (value) {
+        'approved' => ClientStatus.approved,
+        'rejected' => ClientStatus.rejected,
+        _ => ClientStatus.pending,
+      };
+
+  String toJson() => name;
+}
+
 enum SubscriptionTier {
   @JsonValue('free')
   free,
