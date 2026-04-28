@@ -338,3 +338,52 @@ Implemented the full Library feature in `apps/desktop` to bring the control pane
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## Session Log — 2026-04-28 (Desktop Settings Screen)
+
+### Objective
+Resolve the hardcoded `localhost:8080` server URL in the desktop control panel by implementing a fully functional Settings screen backed by `SecureStorage`.
+
+### What Was Built
+
+#### `features/settings/presentation/cubit/settings_state.dart` (new)
+- Sealed class hierarchy: `SettingsInitial`, `SettingsLoading`, `SettingsLoaded`, `SettingsSaved`, `SettingsError`
+- No external dependencies (dropped `equatable` — sealed classes already provide exhaustive matching)
+
+#### `features/settings/presentation/cubit/settings_cubit.dart` (new)
+- `loadSettings()` — reads stored URL from `SecureStorage`, falls back to `http://localhost:8080`
+- `saveServerUrl(String url)` — validates URL (non-empty, parseable `http://` scheme + authority), saves to `SecureStorage`, calls `ApiClient.configure(baseUrl:)` so all in-flight and future requests immediately use the new host — **no restart required**
+
+#### `features/settings/presentation/screens/settings_screen.dart` (new)
+- `BlocProvider` wraps `SettingsCubit` from GetIt
+- **Section cards:** "Server Connection" (URL text field + Save button), "About" (version + platform rows)
+- `BlocConsumer` listener: success SnackBar (green, `AppColors.success`) on save; error SnackBar (red) on validation failure
+- Pre-populates field from `SettingsLoaded` state; shows `CircularProgressIndicator` while loading
+
+#### `core/di/injector.dart` (updated)
+- Registers `FlutterSecureStorage` (with `WindowsOptions`) + `SecureStorage` singleton
+- **Reads persisted URL at startup** — `ApiClient` is constructed with the saved URL, not the hardcoded default
+- Registers `SettingsCubit` as a `registerFactory` (new instance per screen push)
+
+#### `core/router/app_router.dart` (updated)
+- Added `Routes.settings = '/settings'` constant
+- Added `GoRoute(path: '/settings', builder: SettingsScreen)` inside the `ShellRoute`
+
+#### `shared/widgets/sidebar.dart` (updated)
+- `_Sidebar` now accepts `isSettingsSelected` + `onSettingsTap` parameters (location is only in scope in `AppShell.build`)
+- Settings nav item highlights correctly when on `/settings` route and navigates on tap
+
+### Verification
+```
+dart analyze lib  →  No issues found!  (0 errors, 0 warnings)
+dart fix --apply  →  7 const fixes applied cleanly
+```
+
+### Pending Work (Next Session)
+1. On-device smoke test with real TMDB API key
+2. Phase 3: WebRTC signalling server implementation
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

@@ -35,12 +35,13 @@
 | Feature | Priority | Status | Notes |
 |---------|----------|--------|-------|
 | Client pairing + auth tokens | Must | ✅ Done | `POST /auth/request-pair` flow |
-| PC Control Panel (Flutter Desktop) | Must | ✅ Done | Dashboard + Clients + Library screens |
+| PC Control Panel (Flutter Desktop) | Must | ✅ Done | Dashboard + Clients + Library + Settings screens |
 | Library manager + scan API | Should | ✅ Done | Directory indexing, file count |
 | TMDB metadata integration | Should | ✅ Done | Migration 004/005; title, overview, poster_url, 46 tests ✅ |
 | Library UI in Flutter client | Should | ✅ Done | Grid with TMDB poster thumbnails |
 | Playback resume (progress tracking) | Should | ✅ Done | `resume_sec` via WS + `last_progress_sec` DB field |
 | UI design system + dark theme | Should | ✅ Done | `AppColors`, `AppTypography`, `AppSizes` in `fluxora_core` |
+| Desktop Settings screen | Should | ✅ Done | Configurable server URL persisted via `flutter_secure_storage` |
 
 **Target:** Production-quality LAN experience with auth + library
 
@@ -104,7 +105,7 @@
 | M1.5 — Monorepo Scaffold Complete | 0 | ✅ Done |
 | M2 — LAN Streaming MVP | 1 | ✅ Done |
 | M3 — Auth + Library + TMDB + Resume | 2 | ✅ Done |
-| M3.5 — Desktop Control Panel Parity | 2 | ✅ Done |
+| M3.5 — Desktop Control Panel Parity (incl. Settings) | 2 | ✅ Done |
 | M4 — Internet Streaming | 3 | ⬜ Planned |
 | M5 — Monetization Live | 4 | ⬜ Planned |
 | M6 — Advanced Features | 5 | ⬜ Future |

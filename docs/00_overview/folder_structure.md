@@ -134,9 +134,9 @@ apps/desktop/
     ├── app.dart
     ├── core/
     │   ├── di/
-    │   │   └── injector.dart   # GetIt: ApiClient, Dashboard, Clients, Library
+    │   │   └── injector.dart   # GetIt: SecureStorage, ApiClient (persisted URL), Dashboard, Clients, Library, Settings
     │   └── router/
-    │       └── app_router.dart # Routes: /, /clients, /library
+    │       └── app_router.dart # Routes: /, /clients, /library, /settings
     ├── features/
     │   ├── dashboard/
     │   │   ├── data/
@@ -157,10 +157,15 @@ apps/desktop/
     │   ├── logs/
     │   │   └── presentation/   # Scaffolded, not implemented
     │   └── settings/
-    │       └── presentation/   # Scaffolded, not implemented
+    │       └── presentation/
+    │           ├── cubit/
+    │           │   ├── settings_cubit.dart  # load/save server URL, ApiClient.configure()
+    │           │   └── settings_state.dart  # Sealed: Initial/Loading/Loaded/Saved/Error
+    │           └── screens/
+    │               └── settings_screen.dart # Server URL form + About section
     └── shared/
         ├── widgets/
-        │   ├── sidebar.dart    # AppShell + nav (Dashboard, Clients, Library)
+        │   ├── sidebar.dart    # AppShell + nav (Dashboard, Clients, Library, Settings)
         │   ├── stat_card.dart
         │   ├── data_table.dart
         │   └── status_badge.dart

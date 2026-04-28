@@ -21,6 +21,7 @@ class AppShell extends StatelessWidget {
     final selectedIndex = _destinations.indexWhere(
       (d) => location == d.route || location.startsWith('${d.route}/'),
     );
+    final isSettingsSelected = location == Routes.settings;
 
     return Scaffold(
       body: Row(
@@ -29,6 +30,8 @@ class AppShell extends StatelessWidget {
             selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
             onDestinationSelected: (i) =>
                 context.go(_destinations[i].route),
+            isSettingsSelected: isSettingsSelected,
+            onSettingsTap: () => context.go(Routes.settings),
           ),
           const VerticalDivider(),
           Expanded(child: child),
@@ -42,10 +45,14 @@ class _Sidebar extends StatelessWidget {
   const _Sidebar({
     required this.selectedIndex,
     required this.onDestinationSelected,
+    required this.isSettingsSelected,
+    required this.onSettingsTap,
   });
 
   final int selectedIndex;
   final ValueChanged<int> onDestinationSelected;
+  final bool isSettingsSelected;
+  final VoidCallback onSettingsTap;
 
   @override
   Widget build(BuildContext context) {
@@ -105,8 +112,8 @@ class _Sidebar extends StatelessWidget {
           _NavItem(
             icon: Icons.settings_outlined,
             label: 'Settings',
-            isSelected: false,
-            onTap: () {},
+            isSelected: isSettingsSelected,
+            onTap: onSettingsTap,
           ),
           const SizedBox(height: 12),
         ],

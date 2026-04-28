@@ -106,11 +106,11 @@
 - **Sources:** HTTP (Dio), mDNS (Dart Zeroconf), WebRTC (flutter_webrtc)
 
 ### PC Control Panel (Flutter Desktop)
-- **Responsibility:** Server-side dashboard — monitor server health, manage clients (approve/reject/revoke), browse the library with TMDB metadata and resume progress indicators
-- **Screens implemented:** Dashboard (stats), Clients (pairing management), Library (file list + filter chips + resume bar)
-- **Interfaces:** Communicates with local FastAPI server via HTTP (`localhost:8080`)
+- **Responsibility:** Server-side dashboard — monitor server health, manage clients (approve/reject/revoke), browse the library with TMDB metadata and resume indicators, configure server connection
+- **Screens implemented:** Dashboard (stats) · Clients (pairing management) · Library (file list + filter chips + resume bar) · Settings (server URL config + About)
+- **Interfaces:** HTTP to FastAPI server; URL configurable at runtime via Settings screen (persisted in `flutter_secure_storage`)
 - **State management:** BLoC (Cubit) with GetIt DI
-- **Routes:** `/ ` (Dashboard) · `/clients` (Clients) · `/library` (Library)
+- **Routes:** `/` (Dashboard) · `/clients` (Clients) · `/library` (Library) · `/settings` (Settings)
 
 ---
 

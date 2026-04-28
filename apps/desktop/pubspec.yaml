@@ -16,6 +16,7 @@ dependencies:
   go_router: ^13.0.0
   get_it: ^7.6.7
   logger: ^2.7.0
+  flutter_secure_storage: ^9.2.4
 
 dev_dependencies:
   flutter_test:
