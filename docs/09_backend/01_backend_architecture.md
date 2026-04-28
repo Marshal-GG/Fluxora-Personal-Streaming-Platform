@@ -1,7 +1,7 @@
 # Backend Architecture
 
 > **Category:** Backend  
-> **Status:** Active — Sourced from Planning Session (2026-04-27)
+> **Status:** Active — Updated 2026-04-28 (Phase 3 WebRTC signaling server implemented)
 
 ---
 
@@ -15,7 +15,7 @@
 | Streaming | FFmpeg (subprocess) → HLS |
 | Database | SQLite (via `aiosqlite` for async) |
 | LAN Discovery | `zeroconf` Python library — `AsyncZeroconf` (async-safe) |
-| WebRTC Signaling | `aiortc` or custom WebSocket handshake |
+| WebRTC Signaling | `aiortc 1.9.0` — RTCPeerConnection, ICE, DataChannel |
 | Metadata | TMDB REST API |
 | Process Management | `asyncio` subprocess for FFmpeg |
 
@@ -41,14 +41,15 @@ server/
 │   ├── files.py            # GET /api/v1/files, GET /api/v1/files/{id} ✅
 │   ├── library.py          # GET/POST /api/v1/library, GET/DELETE /{id}, POST /{id}/scan ✅
 │   ├── stream.py           # POST /start/{id}, GET/{id}, DELETE/{id} + hls_router ✅
-│   └── ws.py               # WS /status: token auth + ping/pong + progress ✅
+│   ├── ws.py               # WS /status: token auth + ping/pong + progress ✅
+│   └── signal.py           # WS /signal: SDP offer/answer + ICE relay ✅
 │
 ├── services/
 │   ├── ffmpeg_service.py   # FFmpeg subprocess management, HLS output ✅
 │   ├── library_service.py  # Library + file CRUD + scan_library ✅
 │   ├── discovery_service.py # mDNS/Zeroconf broadcasting ✅
 │   ├── auth_service.py     # HMAC-SHA256 tokens, pairing state machine ✅
-│   └── webrtc_service.py   # STUN/TURN/signaling (stub)
+│   └── webrtc_service.py   # aiortc RTCPeerConnection registry; SDP/ICE handling; graceful teardown ✅
 │
 ├── models/
 │   ├── media_file.py       # MediaFileResponse Pydantic schema ✅
@@ -63,7 +64,8 @@ server/
     ├── test_library.py      # 8 tests — library CRUD ✅
     ├── test_files.py        # 6 tests — file listing + filtering ✅
     ├── test_stream.py       # 10 tests — stream start/stop/HLS (mocked FFmpeg) ✅
-    └── test_ws.py           # 4 tests — WebSocket auth + pong ✅
+    ├── test_ws.py           # 4 tests — WebSocket auth + pong ✅
+    └── test_signal.py       # 8 tests — WS signaling auth + SDP/ICE protocol ✅
 ```
 
 ---
@@ -76,7 +78,7 @@ server/
 | `library_service` ✅ | Library + media file CRUD; TMDB enrichment (Phase 2) | `list_libraries()`, `get_library()`, `create_library()`, `delete_library()`, `list_files()`, `get_file()` |
 | `discovery_service` ✅ | Broadcast `_fluxora._tcp.local.` via mDNS on LAN — uses `AsyncZeroconf` to avoid blocking FastAPI's event loop | `start_discovery()` (async), `stop_discovery()` (async) |
 | `auth_service` ✅ | Token generation (HMAC-SHA256), pairing state machine, token validation | `create_pair_request()`, `approve_client()`, `reject_client()`, `revoke_client()`, `get_trusted_client_by_token()` |
-| `webrtc_service` | Manage ICE/STUN/TURN for internet connections | `handle_offer()`, `generate_answer()` |
+| `webrtc_service` ✅ | Manage `RTCPeerConnection` registry, ICE/STUN/TURN, graceful teardown | `create_peer_connection()`, `handle_offer()`, `close_connection()` |
 
 ---
 

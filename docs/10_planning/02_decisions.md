@@ -74,3 +74,21 @@
 - **Context:** Project needs revenue model; hardware and infrastructure have costs
 - **Decision:** Free / Plus ($4.99) / Pro ($9.99) / Ultimate ($19.99) tiers, differentiated by stream concurrency and features
 - **Consequences:** Free tier drives adoption; upgrade path is natural; license enforcement must be robust server-side
+
+---
+
+### ADR-009 — LAN vs WAN Smart Path Selection via Subnet Check
+- **Date:** 2026-04-28
+- **Status:** Accepted
+- **Context:** WebRTC negotiation (SDP + ICE) takes up to 8 seconds and drains mobile battery. On a home LAN the server is reachable over HLS directly with sub-100 ms latency. There is no benefit to WebRTC on LAN.
+- **Decision:** Implement `NetworkPathDetector.isLan(serverUrl)` — a pure in-process check that compares the server IP against device IPv4 interfaces using a /24 subnet mask. If LAN: stream HLS directly. If WAN: attempt WebRTC with 8 s timeout, fallback to HLS.
+- **Consequences:** Zero battery drain for the common case (home LAN). WAN users get WebRTC P2P. /24 is a pragmatic approximation; edge cases with non-/24 subnets route WAN→WebRTC (safe, not broken). No external network call.
+
+---
+
+### ADR-010 — Transport Badge on Player Screen
+- **Date:** 2026-04-28
+- **Status:** Accepted
+- **Context:** Power users want to know which streaming path is active. Debugging reports are easier with a visible transport indicator.
+- **Decision:** Show `_TransportBadge` chip (HLS / WebRTC) in the bottom-right player overlay. Auto-hides after 5 seconds. Not persistent — does not interfere with viewing.
+- **Consequences:** Minimal code (single `StatelessWidget`). Auto-dismiss means it doesn't distract regular users. Can be promoted to a permanent Settings toggle later.

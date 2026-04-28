@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active — Updated 2026-04-28 (Phase 2 desktop control panel implemented)
+> **Status:** Active — Updated 2026-04-28 (Phase 3 WebRTC smart-path + transport badge implemented)
 
 ---
 
@@ -15,7 +15,7 @@
 | HTTP Client | `ApiClient` (Dio) from `fluxora_core` |
 | Video Playback | `media_kit` — Phase 2 (player screen not yet built) |
 | LAN Discovery | `multicast_dns` (Dart) — PTR→SRV→A resolution |
-| WebRTC | `flutter_webrtc` — Phase 3 only (not currently a dependency) |
+| WebRTC | `flutter_webrtc ^1.4.1` — Phase 3 ✅ (`WebRtcSignalingService`, LAN skip, transport badge) |
 | Storage (secrets) | `flutter_secure_storage` (tokens, server URL, client ID) |
 | Routing | `go_router` v13 with async auth redirect guard |
 | DI | `get_it` — lazy singletons for repos, factories for BLoCs |
@@ -111,10 +111,13 @@ apps/mobile/lib/
         │   └── player_repository.dart        # startStream(fileId), stopStream(sessionId)
         ├── data/repositories/
         │   └── player_repository_impl.dart   # POST /stream/start, DELETE /stream/:id
+        ├── data/services/
+        │   ├── webrtc_signaling_service.dart  # WebSocket SDP/ICE handshake + RTCPeerConnection lifecycle
+        │   └── network_path_detector.dart    # isLan() — RFC-1918 /24 subnet check; LAN→HLS, WAN→WebRTC
         └── presentation/
-            ├── cubit/player_cubit.dart   # startStream → Player+VideoController; stopStream on close
-            ├── cubit/player_state.dart   # PlayerInitial/Loading/Ready/Failure
-            └── screens/player_screen.dart    # Full-screen Video widget + MaterialVideoControls
+            ├── cubit/player_cubit.dart   # startStream → LAN check → WebRTC (8 s timeout) → HLS fallback
+            ├── cubit/player_state.dart   # PlayerInitial/Loading/Ready(streamPath)/Failure; StreamPath enum
+            └── screens/player_screen.dart    # Full-screen Video + MaterialVideoControls + _TransportBadge chip
 ```
 
 ---
@@ -171,8 +174,10 @@ restore credentials before any repository is used.
 | Android MulticastLock | `MethodChannel('dev.marshalx.fluxora/multicast')` | Android silently drops multicast without `WifiManager.MulticastLock`; acquired in `ConnectCubit.startDiscovery()`, released on close; non-fatal if unavailable (iOS/desktop) |
 | ApiClient configure | Called in `ConnectScreen` on server select | Server URL must be set on `ApiClient` before any pairing request; done at navigation time, not at app start |
 | UUID generation | Custom via `dart:math` + `Random.secure()` | Avoids adding `uuid` package for one use |
-| Video player | Deferred to Phase 2 | `better_player` incompatible with AGP 8+; will use `media_kit` |
-| WebRTC | Deferred to Phase 3 | `flutter_webrtc 0.10.x` uses removed v1 plugin API; evaluate v1.x when building |
+| Video player | `media_kit v1.2.6` | `better_player` incompatible with AGP 8+ |
+| WebRTC | `flutter_webrtc ^1.4.1` — Phase 3 ✅ | `WebRtcSignalingService` + `NetworkPathDetector`; LAN detection skips negotiation; 8 s ICE timeout with HLS fallback |
+| Smart path | `NetworkPathDetector.isLan()` | Pure in-process /24 subnet check; no DNS, no ICMP; fails-safe to WAN |
+| Transport badge | `_TransportBadge` chip | Auto-hides after 5 s; HLS (dark chip) vs WebRTC (deep-purple chip + `cell_tower` icon) |
 | Poll interval | Configurable `Duration` on `PairCubit` | Default 3s in production; 30ms in tests — avoids slow test suite |
 
 ---

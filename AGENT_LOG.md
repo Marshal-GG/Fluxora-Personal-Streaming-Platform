@@ -436,3 +436,95 @@ Phase 3 remaining:
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+## Session Log — 2026-04-28 (Phase 3 — Flutter WebRTC Integration)
+
+### Objective
+Implement the Flutter-side WebRTC client so the mobile app can negotiate a peer-to-peer session with the server's signaling endpoint and automatically fall back to HLS if it fails.
+
+### What Was Built
+
+#### `pubspec.yaml` (updated)
+- Added `flutter_webrtc: ^1.4.1`
+
+#### `features/player/data/services/webrtc_signaling_service.dart` (new)
+- `SignalingState` enum: `idle → connecting → connected | failed | closed`
+- `WebRtcSignalingService(serverWsUrl, authToken, onStateChange)`:
+  - Opens `dart:io WebSocket` to `/api/v1/ws/signal`
+  - Sends bearer-token auth handshake; on `auth_ok` creates `RTCPeerConnection`
+  - Generates SDP offer, sends to server, sets answer as remote description
+  - Forwards local ICE candidates to server; applies remote candidates from server
+  - `_signalUrl()` converts `http(s)://` base URL to `ws(s)://` signal URL
+  - `close()` tears down PC + socket cleanly
+
+#### `features/player/presentation/cubit/player_state.dart` (updated)
+- Added `StreamPath` enum (`hls`, `webRtc`)
+- Added `streamPath` field to `PlayerReady` (default: `StreamPath.hls`)
+
+#### `features/player/presentation/cubit/player_cubit.dart` (updated)
+- `startStream()` now calls `_tryWebRtc()` before opening the media player
+- `_tryWebRtc()` races ICE connected vs 8-second timeout → returns `StreamPath`
+- On WebRTC success: `streamPath = StreamPath.webRtc` in emitted `PlayerReady`
+- On timeout/failure: falls back silently to HLS — stream always starts
+- `close()` calls `_signaling?.close()` for clean teardown
+
+### Verification
+```
+flutter pub get  →  success (no conflicts)
+dart analyze lib/features/player  →  No issues found!
+```
+
+### Pending Work (Next Session)
+Phase 3 remaining:
+1. STUN/TURN configuration testing with real NAT
+2. Smart path selection: LAN detection → skip WebRTC negotiation on local network
+3. Connection quality monitoring + auto-switch
+4. Player screen UI badge (HLS vs WebRTC indicator)
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
+## Session Log — 2026-04-28 (Phase 3 — Smart Path Selection + Transport Badge)
+
+### Objective
+Implement LAN vs WAN path detection so WebRTC is only attempted on internet connections, and add a transport badge to the player UI so users can see which streaming path is active.
+
+### What Was Built
+
+#### `features/player/data/services/network_path_detector.dart` (new)
+- `NetworkPathDetector.isLan(serverUrl)` — static async method
+- Parses server URL host; checks RFC-1918 private ranges (10.x, 172.16-31.x, 192.168.x, 169.254.x)
+- Enumerates device IPv4 network interfaces; compares /24 subnet octets
+- localhost/loopback always returns `true`; non-IP hostnames default to `false` (WAN)
+- Fails-safe to `false` (WAN) on any IO error so WebRTC is attempted rather than suppressed
+
+#### `features/player/presentation/cubit/player_cubit.dart` (updated)
+- Added `NetworkPathDetector.isLan()` check before `_tryWebRtc()`
+- LAN → skip WebRTC, use HLS directly (logged at debug level)
+- WAN → attempt WebRTC with 8-second ICE timeout, HLS fallback
+
+#### `features/player/presentation/cubit/player_state.dart` (updated)
+- Added `StreamPath` enum (`hls`, `webRtc`) and `streamPath` field on `PlayerReady`
+
+#### `features/player/presentation/screens/player_screen.dart` (updated)
+- Added `_showTransportBadge` bool + 5-second auto-hide timer triggered on `PlayerReady`
+- Added `_TransportBadge` widget: positioned chip at bottom-right of video overlay
+  - Deep purple + `cell_tower` icon for WebRTC; dark chip + `stream` icon for HLS
+  - Uses `AnimatedOpacity` for smooth appearance
+
+### Verification
+```
+dart analyze lib/features/player  →  No issues found!
+```
+
+### Pending Work (Next Session)
+Phase 3 remaining:
+1. Connection quality monitoring + ICE state degradation auto-switch
+2. End-to-end test on real device with WAN connection
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

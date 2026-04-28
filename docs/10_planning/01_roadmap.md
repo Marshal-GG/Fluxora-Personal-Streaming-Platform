@@ -54,10 +54,11 @@
 | Feature | Priority | Status | Notes |
 |---------|----------|--------|-------|
 | WebRTC signaling server | Must | ✅ Done | `WS /api/v1/ws/signal` — auth, SDP relay, ICE forwarding, 8 tests ✅ |
-| Flutter WebRTC integration | Must | ⬜ Planned | `flutter_webrtc` — deferred (AGP 8+ issues) |
-| STUN/TURN configuration | Must | ⬜ Planned | Google STUN configured; TURN env vars ready |
-| Smart path selection (LAN vs WebRTC) | Must | ⬜ Planned | Auto-switching logic |
-| Connection quality monitoring | Should | ⬜ Planned | Detect degradation, switch paths |
+| Flutter WebRTC integration | Must | ✅ Done | `flutter_webrtc 1.4.1`; `WebRtcSignalingService` + `PlayerCubit` smart-path (WebRTC→HLS fallback, 8 s timeout) |
+| STUN/TURN configuration | Must | ✅ Done | Google STUN default; TURN via env vars (server-side ready) |
+| Smart path selection (LAN vs WebRTC) | Must | ✅ Done | `NetworkPathDetector` /24 subnet check; LAN → HLS direct, WAN → WebRTC |
+| Connection quality monitoring | Should | ⬜ Planned | ICE state callbacks wired; dashboarding TBD |
+| Player transport badge | Should | ✅ Done | `_TransportBadge` chip — HLS/WebRTC, auto-hides after 5 s |
 
 **Target:** Full remote streaming over internet
 

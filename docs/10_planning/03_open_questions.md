@@ -1,7 +1,7 @@
 # Open Questions & Research Items
 
 > **Category:** Planning  
-> **Status:** Active — Updated 2026-04-28
+> **Status:** Active — Updated 2026-04-28 (Phase 3 resolution)
 
 ---
 
@@ -24,12 +24,12 @@
 
 | # | Topic | Notes | Done? |
 |---|-------|-------|-------|
-| R-001 | `flutter_webrtc` package maturity and maintenance status | Check pub.dev activity, GitHub issues | ❌ |
+| R-001 | `flutter_webrtc` package maturity and maintenance status | ✅ **Resolved** — `flutter_webrtc ^1.4.1` integrated; active maintenance, v1 plugin API (no breaking change) | ✅ |
 | R-002 | `media_kit` vs `better_player` for HLS on all Flutter platforms | ✅ **media_kit v1.2.6 chosen** — `better_player` dropped (AGP 8+ incompatible) | ✅ |
 | R-003 | Dart `zeroconf` package — does it support both registration and discovery? | ✅ **AsyncZeroconf required** — sync version deadlocks on FastAPI event loop | ✅ |
 | R-004 | PyInstaller + FFmpeg bundling — size and startup time | Reference: `omni_bridge_server.spec` pattern | ❌ |
 | R-005 | TMDB API rate limits on free tier | ✅ **Mitigated** — enrichment runs per-file during scan, not batched | ✅ |
-| R-006 | STUN server reliability — Google public vs. self-hosted | Evaluate uptime requirements | ❌ |
+| R-006 | STUN server reliability — Google public vs. self-hosted | ✅ **Partially resolved** — Google STUN used by default; TURN env-var support implemented (`WEBRTC_TURN_URL`, `WEBRTC_TURN_USERNAME`, `WEBRTC_TURN_CREDENTIAL`); production uptime evaluation pending | ❌ |
 
 ---
 
@@ -37,7 +37,7 @@
 
 | Risk | Impact | Likelihood | Mitigation |
 |------|--------|-----------|------------|
-| WebRTC complexity delays Phase 3 | High | Medium | Timebox; use `flutter_webrtc` + reference implementations |
+| WebRTC complexity delays Phase 3 | High | ✅ Resolved | Signaling engine complete; smart path selection + badge shipped Phase 3 |
 | FFmpeg transcoding too slow on weak PCs | High | Medium | Hardware encode fallback; document minimum PC specs |
 | mDNS blocked on managed/corporate networks | Medium | Medium | Manual IP entry fallback always available |
 | App store approval issues (iOS) for streaming | High | Low | Review App Store guidelines; may need server-side media validation |

@@ -42,6 +42,7 @@ class _PlayerView extends StatefulWidget {
 
 class _PlayerViewState extends State<_PlayerView> {
   bool _showResumeBanner = false;
+  bool _showTransportBadge = false;
 
   @override
   void initState() {
@@ -68,23 +69,33 @@ class _PlayerViewState extends State<_PlayerView> {
       body: BlocConsumer<PlayerCubit, PlayerState>(
         listenWhen: (_, current) => current is PlayerReady,
         listener: (context, state) {
-          if (state is PlayerReady && state.resumeSec > 0) {
-            setState(() => _showResumeBanner = true);
-            // Auto-hide the banner after 4 seconds
-            Future.delayed(const Duration(seconds: 4), () {
-              if (mounted) setState(() => _showResumeBanner = false);
+          if (state is PlayerReady) {
+            if (state.resumeSec > 0) {
+              setState(() => _showResumeBanner = true);
+              // Auto-hide the resume banner after 4 seconds
+              Future.delayed(const Duration(seconds: 4), () {
+                if (mounted) setState(() => _showResumeBanner = false);
+              });
+            }
+            // Show transport badge briefly on stream start
+            setState(() => _showTransportBadge = true);
+            Future.delayed(const Duration(seconds: 5), () {
+              if (mounted) setState(() => _showTransportBadge = false);
             });
           }
         },
         builder: (context, state) => switch (state) {
           PlayerInitial() || PlayerLoading() => const _LoadingView(),
-          PlayerReady(:final controller, :final fileName) => Stack(
-              children: [
-                _VideoView(controller: controller, fileName: fileName),
-                if (_showResumeBanner && state.resumeSec > 0)
-                  _ResumeBanner(resumeSec: state.resumeSec),
-              ],
-            ),
+          PlayerReady(:final controller, :final fileName, :final streamPath) =>
+              Stack(
+                children: [
+                  _VideoView(controller: controller, fileName: fileName),
+                  if (_showResumeBanner && state.resumeSec > 0)
+                    _ResumeBanner(resumeSec: state.resumeSec),
+                  if (_showTransportBadge)
+                    _TransportBadge(streamPath: streamPath),
+                ],
+              ),
           PlayerFailure(:final message) => _ErrorView(message: message),
         },
       ),
@@ -225,6 +236,59 @@ class _ErrorView extends StatelessWidget {
             child: const Text('Go Back'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A small, auto-dismissed chip that indicates which transport is active.
+///
+/// Shown briefly when the player first becomes ready, then fades out.
+class _TransportBadge extends StatelessWidget {
+  const _TransportBadge({required this.streamPath});
+
+  final StreamPath streamPath;
+
+  @override
+  Widget build(BuildContext context) {
+    final isWebRtc = streamPath == StreamPath.webRtc;
+    return Positioned(
+      bottom: 80,
+      right: 16,
+      child: AnimatedOpacity(
+        opacity: 1.0,
+        duration: const Duration(milliseconds: 300),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: isWebRtc
+                ? Colors.deepPurple.withValues(alpha: 0.85)
+                : Colors.black54,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isWebRtc ? Colors.deepPurpleAccent : Colors.white24,
+              width: 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isWebRtc ? Icons.cell_tower : Icons.stream,
+                color: Colors.white,
+                size: 14,
+              ),
+              const SizedBox(width: 5),
+              Text(
+                isWebRtc ? 'WebRTC' : 'HLS',
+                style: AppTypography.label.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

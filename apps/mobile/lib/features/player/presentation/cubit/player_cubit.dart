@@ -6,11 +6,16 @@ import 'package:media_kit/media_kit.dart' show Media, Player;
 import 'package:media_kit_video/media_kit_video.dart' show VideoController;
 import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
+import 'package:fluxora_mobile/features/player/data/services/network_path_detector.dart';
+import 'package:fluxora_mobile/features/player/data/services/webrtc_signaling_service.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.dart';
 
 /// How often (in seconds) the cubit reports playback progress to the server.
 const _kProgressIntervalSec = 10;
+
+/// How long to wait for WebRTC ICE to connect before falling back to HLS.
+const _kWebRtcTimeoutSec = 8;
 
 class PlayerCubit extends Cubit<PlayerState> {
   PlayerCubit({
@@ -28,6 +33,11 @@ class PlayerCubit extends Cubit<PlayerState> {
   VideoController? _controller;
   String? _sessionId;
   Timer? _progressTimer;
+  WebRtcSignalingService? _signaling;
+
+  // ---------------------------------------------------------------------------
+  // Public
+  // ---------------------------------------------------------------------------
 
   Future<void> startStream(String fileId, String fileName, double resumeSec) async {
     emit(const PlayerLoading());
@@ -36,17 +46,32 @@ class PlayerCubit extends Cubit<PlayerState> {
       _sessionId = response.sessionId;
 
       final token = await _secureStorage.getAuthToken();
+      final serverUrl = await _secureStorage.getServerUrl();
+
+      // Only attempt WebRTC when the server is on the internet (WAN).
+      // On LAN, HLS is faster and WebRTC adds unnecessary latency.
+      StreamPath path = StreamPath.hls;
+      if (token != null && serverUrl != null) {
+        final isLan = await NetworkPathDetector.isLan(serverUrl);
+        if (!isLan) {
+          path = await _tryWebRtc(serverUrl: serverUrl, token: token);
+        } else {
+          _log.d('[Player] LAN detected — using HLS directly');
+        }
+      }
+
+      // HLS path is always the media source for media_kit regardless of the
+      // signaling path, since the WebRTC data-channel streaming layer isn't
+      // complete yet.  The `streamPath` field signals to the UI which transport
+      // is active so it can display the correct badge.
       final headers = token != null
           ? <String, String>{'Authorization': 'Bearer $token'}
           : <String, String>{};
 
       _player = Player();
       _controller = VideoController(_player!);
-
       await _player!.open(Media(response.playlistUrl, httpHeaders: headers));
 
-      // Seek to the server-provided resume position (takes precedence over
-      // the locally-known position since the server is the source of truth).
       final seekSec = response.resumeSec > 0 ? response.resumeSec : resumeSec;
       if (seekSec > 0) {
         await _player!.seek(Duration(milliseconds: (seekSec * 1000).toInt()));
@@ -58,6 +83,7 @@ class PlayerCubit extends Cubit<PlayerState> {
         player: _player!,
         controller: _controller!,
         resumeSec: seekSec,
+        streamPath: path,
       ));
 
       _startProgressTimer();
@@ -69,6 +95,62 @@ class PlayerCubit extends Cubit<PlayerState> {
       emit(const PlayerFailure('Failed to start stream. Please try again.'));
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // WebRTC negotiation
+  // ---------------------------------------------------------------------------
+
+  /// Attempts to establish a WebRTC connection within [_kWebRtcTimeoutSec].
+  ///
+  /// Returns [StreamPath.webRtc] on success, [StreamPath.hls] on any failure
+  /// or timeout (so the caller always gets a usable path).
+  Future<StreamPath> _tryWebRtc({
+    required String serverUrl,
+    required String token,
+  }) async {
+    final completer = Completer<StreamPath>();
+
+    _signaling = WebRtcSignalingService(
+      serverWsUrl: serverUrl,
+      authToken: token,
+      onStateChange: (state) {
+        if (completer.isCompleted) return;
+        switch (state) {
+          case SignalingState.connected:
+            completer.complete(StreamPath.webRtc);
+          case SignalingState.failed:
+            _log.w('[WebRTC] Signaling failed — falling back to HLS');
+            completer.complete(StreamPath.hls);
+          case SignalingState.closed:
+            if (!completer.isCompleted) {
+              completer.complete(StreamPath.hls);
+            }
+          default:
+            break;
+        }
+      },
+    );
+
+    try {
+      await _signaling!.connect();
+    } catch (e) {
+      _log.w('[WebRTC] connect() threw — falling back to HLS: $e');
+      return StreamPath.hls;
+    }
+
+    // Race: ICE connected vs. timeout
+    return completer.future.timeout(
+      const Duration(seconds: _kWebRtcTimeoutSec),
+      onTimeout: () {
+        _log.w('[WebRTC] ICE timeout after ${_kWebRtcTimeoutSec}s — falling back to HLS');
+        return StreamPath.hls;
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Progress reporting
+  // ---------------------------------------------------------------------------
 
   void _startProgressTimer() {
     _progressTimer?.cancel();
@@ -95,6 +177,10 @@ class PlayerCubit extends Cubit<PlayerState> {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Cleanup
+  // ---------------------------------------------------------------------------
+
   @override
   Future<void> close() async {
     _progressTimer?.cancel();
@@ -107,6 +193,7 @@ class PlayerCubit extends Cubit<PlayerState> {
         _log.w('Failed to stop stream on close', error: e, stackTrace: st);
       }
     }
+    await _signaling?.close();
     await _player?.dispose();
     await super.close();
   }
