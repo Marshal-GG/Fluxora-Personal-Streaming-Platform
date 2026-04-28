@@ -797,6 +797,97 @@ class StreamBloc {
 
 ---
 
+## Git Commit Convention
+
+All commits **must** follow this structure. Future agents must use this format when writing commit messages.
+
+### Format
+
+```
+<type>(<scope>): <short summary, imperative, ≤72 chars>
+
+## <Area 1> — <what changed>
+- <bullet: specific change, file/class names, no fluff>
+- <bullet>
+
+## <Area 2> — <what changed>
+- <bullet>
+
+## Docs
+- <what docs were updated and why>
+```
+
+### Types
+
+| Type | When to use |
+|------|-------------|
+| `feat` | New feature or capability added |
+| `fix` | Bug fix |
+| `refactor` | Code restructure without behavior change |
+| `docs` | Documentation-only changes |
+| `test` | Adding or updating tests only |
+| `chore` | Tooling, dependencies, config |
+| `perf` | Performance improvement |
+
+### Scopes (use the most specific one)
+
+| Scope | Covers |
+|-------|--------|
+| `phase<N>` | A multi-area milestone commit (e.g. `phase4`) |
+| `server` | `apps/server/` |
+| `mobile` | `apps/mobile/` |
+| `desktop` | `apps/desktop/` |
+| `core` | `packages/fluxora_core/` |
+| `docs` | `docs/` only |
+| `db` | Migrations or schema changes |
+| `ci` | CI/CD pipeline |
+
+### Rules
+
+- **Subject line:** imperative mood, no period, ≤ 72 chars (`feat(server): add settings router`)
+- **Body sections:** Use `## Area — description` headers to group related changes
+- **Bullet format:** Each bullet names the exact file, class, or function changed
+- **Docs bullet:** Always end with a `## Docs` section if any `.md` files were updated
+- **No vague bullets:** ❌ "various fixes" ✅ "settings_service.py: map tier → max_concurrent_streams"
+- **Test counts:** When tests are added, state the count (`9 settings tests, 5 TMDB tests added`)
+
+### Real Example (from this repo)
+
+```
+feat(phase4): tier enforcement, license key, TMDB metadata & full doc sync
+
+## Server — Tier Enforcement & Settings Service
+- Add settings_service.py: GET/PATCH /api/v1/settings with tier → max_concurrent_streams
+  mapping (free=1, plus=3, pro=10, ultimate=9999); writes limit to DB on every tier change
+- Add routers/settings.py wired into main.py at /api/v1 prefix
+- Add models/settings.py: UserSettings Pydantic schema with tier + license_key fields
+- Add migrations/004–007: TMDB columns, last_progress_sec, license_key, max_concurrent_streams
+- routers/stream.py: enforce max_concurrent_streams from DB row; return 429 on excess
+- 60 total passing tests (9 settings tests, 5 TMDB tests added)
+
+## Mobile — TMDB, Resume & Tier Limit UI
+- player_state.dart: add StreamPath enum + lastProgressSec to PlayerReady
+- player_cubit.dart: POST resume position on pause/dispose; restore on start
+- player_screen.dart: add PlayerTierLimit → _TierLimitView on 429 response
+
+## Desktop — Settings Screen
+- settings_cubit.dart: loadSettings() / saveSettings() via PATCH /settings
+- settings_state.dart: sealed states Initial/Loading/Loaded/Saved/Error
+- settings_screen.dart: tier selector, license key, max-streams badge
+- 23 desktop tests passing (dashboard: 3, clients: 7, settings: 13)
+
+## Docs
+- database_schema.md: migrations 004–007 documented
+- data_models.md: TMDB fields, last_progress_sec, license_key added
+- backend_architecture.md: settings router/service, test counts updated
+- frontend_architecture.md: desktop settings ✅, routes table, test counts
+- decisions.md: ADR-008 → Accepted; ADR-011 (DB-driven tier limits) added
+- open_questions.md: Q-007 resolved; Q-005/Q-006 partial
+- CLAUDE.md + README.md + docs/00_overview/README.md: phase roadmap updated
+```
+
+---
+
 ## Testing Discipline
 
 ### Python

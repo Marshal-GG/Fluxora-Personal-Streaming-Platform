@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     # Security — generate once with: secrets.token_hex(32)
     token_hmac_key: str = ""
 
+    # License — generate once with: secrets.token_hex(32)
+    # Used to sign/verify FLUXORA-<TIER>-<EXPIRY>-<SIG> keys.
+    fluxora_license_secret: str = ""
+
     @property
     def db_path(self) -> Path:
         return Path(self.fluxora_db_path)

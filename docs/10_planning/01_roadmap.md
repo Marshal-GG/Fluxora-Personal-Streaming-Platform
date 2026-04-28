@@ -1,7 +1,7 @@
 # Project Roadmap & Milestones
 
 > **Category:** Planning  
-> **Status:** Active — Updated 2026-04-28 (Phase 3 complete)
+> **Status:** Active — Updated 2026-04-29 (Phase 4: license key validation + upgrade flow implemented)
 
 ---
 
@@ -70,8 +70,9 @@
 | Feature | Priority | Status | Notes |
 |---------|----------|--------|-------|
 | Subscription tier enforcement | Must | ✅ Done | `user_settings.subscription_tier` + `GET/PATCH /api/v1/settings`; `require_local_caller`; 9 tests ✅ |
-| License key / payment validation | Must | 🔵 Partial | Key stored in DB; format-only validation; payment provider integration TBD |
-| Upgrade prompt UI | Should | ✅ Done | Mobile: `PlayerTierLimit` state + `_TierLimitView` on 429; Desktop: tier selector + stream limit badge in Settings |
+| License key validation | Must | ✅ Done | `license_service.py` — HMAC-SHA256 signed keys (`FLUXORA-<TIER>-<EXPIRY>-<SIG>`); `_enrich_license()` in `settings_service`; format validator on `UpdateSettingsBody`; `license_status` + `license_tier` in API response; 20 tests ✅ |
+| Payment provider integration | Should | 🔲 Planned | Select provider (Polar.sh / Keygen.sh); wire to `generate_key` CLI for key issuance |
+| Upgrade prompt UI | Must | ✅ Done | Mobile: `PlayerTierLimit` state + `_TierLimitView` → `UpgradeScreen` (tier cards + activation guide); Desktop: tier selector + stream limit badge in Settings |
 | Free/Plus/Pro/Ultimate tier limits | Must | ✅ Done | Tier change auto-updates `max_concurrent_streams`; stream router reads from DB (not config); migration 007 aligns existing rows |
 
 **Tier Breakdown:**

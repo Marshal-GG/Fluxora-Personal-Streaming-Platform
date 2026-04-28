@@ -13,6 +13,7 @@ import 'package:fluxora_core/storage/secure_storage.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.dart';
+import 'package:fluxora_mobile/features/upgrade/presentation/screens/upgrade_screen.dart';
 
 class PlayerScreen extends StatelessWidget {
   const PlayerScreen({required this.file, super.key});
@@ -250,7 +251,7 @@ class _ErrorView extends StatelessWidget {
 }
 
 /// Shown when the server returns 429 — the account has reached its concurrent
-/// stream limit.  Prompts the user to upgrade via the desktop control panel.
+/// stream limit.  Prompts the user to free a slot or see upgrade plans.
 class _TierLimitView extends StatelessWidget {
   const _TierLimitView();
 
@@ -262,29 +263,63 @@ class _TierLimitView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.workspace_premium_outlined,
-              color: AppColors.primary,
-              size: 56,
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: const BoxDecoration(
+                gradient: AppColors.brandGradient,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.workspace_premium,
+                color: Colors.white,
+                size: 40,
+              ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
             Text(
               'Stream Limit Reached',
-              style: AppTypography.headingLg.copyWith(color: AppColors.textPrimary),
+              style: AppTypography.headingLg
+                  .copyWith(color: AppColors.textPrimary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
             Text(
-              'Your current plan only allows a limited number of simultaneous streams.\n\n'
-              'Stop another active stream or upgrade your plan in the Fluxora Control Panel.',
-              style: AppTypography.bodyMd.copyWith(color: AppColors.textSecondary),
+              'Your current plan only allows a limited number of simultaneous '
+              'streams. Free a slot or upgrade to stream on more devices.',
+              style: AppTypography.bodyMd
+                  .copyWith(color: AppColors.textSecondary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 28),
-            ElevatedButton.icon(
-              onPressed: () => Navigator.of(context).pop(),
-              icon: const Icon(Icons.arrow_back, size: 18),
-              label: const Text('Go Back'),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const UpgradeScreen(),
+                  ),
+                ),
+                icon: const Icon(Icons.workspace_premium, size: 18),
+                label: const Text('Upgrade Plan'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.arrow_back, size: 18),
+                label: const Text('Go Back'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.textSecondary,
+                  side: const BorderSide(color: AppColors.surfaceRaised),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
             ),
           ],
         ),

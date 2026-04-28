@@ -1,10 +1,10 @@
-"""Server settings CRUD — reads and writes the single user_settings row."""
-
 from __future__ import annotations
 
 import logging
 
 import aiosqlite
+
+from services import license_service
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +20,11 @@ VALID_TIERS = frozenset(TIER_STREAM_LIMITS)
 
 
 async def get_settings(db: aiosqlite.Connection) -> dict:
-    """Return the current user_settings row as a dict."""
+    """Return the current user_settings row as a dict, enriched with license status."""
     async with db.execute("SELECT * FROM user_settings WHERE id = 1") as cur:
         row = await cur.fetchone()
-    if row is None:
-        return _defaults()
-    return dict(row)
+    base = dict(row) if row is not None else _defaults()
+    return _enrich_license(base)
 
 
 async def update_settings(
@@ -71,7 +70,7 @@ async def update_settings(
     )
     await db.commit()
     logger.info("Settings updated: tier=%s max_streams=%d", new_tier, new_max_streams)
-    return await get_settings(db)
+    return _enrich_license(await get_settings(db))
 
 
 async def get_max_concurrent_streams(db: aiosqlite.Connection) -> int:
@@ -99,3 +98,11 @@ def _defaults() -> dict:
         "license_key": None,
         "tmdb_api_key": None,
     }
+
+
+def _enrich_license(row: dict) -> dict:
+    """Annotate a settings dict with license_status and license_tier."""
+    result = license_service.validate_key(row.get("license_key"))
+    row["license_status"] = result.reason if not result.valid else "valid"
+    row["license_tier"] = result.tier
+    return row

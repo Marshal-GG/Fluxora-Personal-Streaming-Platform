@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active — Updated 2026-04-28 (Phase 3 complete — WebRTC + LAN path selection + transport badge + ICE degradation monitoring)
+> **Status:** Active — Updated 2026-04-29 (Phase 4: license verification + mobile upgrade flow)
 
 ---
 
@@ -49,7 +49,7 @@
 | `/library` | LibraryScreen | `LibraryBloc` | ✅ Done |
 | `/library/:id/files` | FilesScreen | `FilesCubit` | ✅ Done |
 | `/player` | PlayerScreen | `PlayerCubit` | ✅ Done |
-| `/settings` | SettingsScreen | — | 🔲 Phase 2 |
+| `/upgrade` (push) | UpgradeScreen | — (stateless) | ✅ Done |
 
 Auth guard: `go_router` `redirect` callback reads `SecureStorage` — unauthenticated users
 are redirected to `/`, authenticated users skip `/` and `/pairing` directly to `/library`.
@@ -181,6 +181,8 @@ restore credentials before any repository is used.
 | ICE degradation | `_handleSignalingDegradation()` in `PlayerCubit` | `SignalingState.failed` post-connection → `copyWith(streamPath: hls)` emitted; signaling closed; player uninterrupted (HLS was always underlying transport) |
 | Resume banner guard | `_readyOnce` in `_PlayerViewState` | Prevents resume banner from re-firing when `PlayerReady` is re-emitted for transport switch |
 | Poll interval | Configurable `Duration` on `PairCubit` | Default 3s in production; 30ms in tests — avoids slow test suite |
+| Upgrade screen | `UpgradeScreen` (push, not go_router route) | Mobile cannot call `PATCH /settings` (localhost-only); screen shows tier plans + instructs user to activate key in Desktop Control Panel |
+| Tier limit view | `_TierLimitView` in `player_screen.dart` | Replaces generic error on 429; gradient icon + `FilledButton` → `UpgradeScreen`, `OutlinedButton` → Go Back |
 
 ---
 
@@ -205,6 +207,8 @@ Desktop test/
     ├── dashboard/dashboard_cubit_test.dart  # 3 tests ✅
     ├── clients/clients_cubit_test.dart      # 7 tests ✅
     └── settings/settings_cubit_test.dart    # 13 tests ✅ (loadSettings + saveSettings; license_key PATCH)
+
+Server tests: 29 passed — test_license_service (20) + test_settings (9)
 ```
 
 ---

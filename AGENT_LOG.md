@@ -736,3 +736,85 @@ None — pure test additions, no code or API changes.
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+---
+## [2026-04-29] — Phase 4: Self-Hosted License Key Service + Mobile Upgrade Flow
+**Agent:** Antigravity (Gemini)
+**Phase:** Phase 4 — Monetization
+**Status:** Complete
+
+### What Was Done
+
+**Server — license_service.py:**
+- Implemented `services/license_service.py`: HMAC-SHA256 signed key generation and validation
+- Key format: `FLUXORA-<TIER>-<EXPIRY>-<SIG>` (4-segment, base64url signature)
+- Advisory mode when `FLUXORA_LICENSE_SECRET` absent from `.env` — keys accepted for structure only
+- CLI: `python -m services.license_service --tier pro --days 365`
+- Added `fluxora_license_secret: str | None` to `config.py` Settings
+
+**Server — settings enrichment:**
+- Added `_enrich_license()` to `settings_service.py` — calls `license_service.validate_key()`, injects `license_status` + `license_tier` into every GET/PATCH response
+- Added `license_status: str` and `license_tier: str` to `UserSettingsResponse` in `models/settings.py`
+- Added strict `FLUXORA-*-*-*` format validator on `UpdateSettingsBody.license_key`
+- Updated `routers/settings.py` `_to_response()` to pass through new fields
+
+**Server — tests:**
+- 20 new unit tests in `tests/test_license_service.py` covering: valid key, expired key, invalid signature, wrong tier, malformed key, advisory mode, CLI generation
+- Updated `tests/test_settings.py` fixture to use a valid 4-segment key format
+
+**Mobile — upgrade flow:**
+- Created `UpgradeScreen` (push, not go_router route): tier comparison cards (Free/Plus/Pro/Ultimate) with pricing, concurrency limits, feature bullets, and 4-step activation guide pointing to Desktop Control Panel
+- Created `UpgradeState` + `LicenseSubmitStatus` as plain Dart classes with manual `copyWith` (no freezed dependency)
+- Updated `_TierLimitView` in `player_screen.dart`: replaces generic error on 429; gradient icon + "Upgrade Plan" `FilledButton` → `UpgradeScreen`, `OutlinedButton` → Go Back
+
+**Docs:**
+- `docs/09_backend/01_backend_architecture.md`: added `license_service.py` to structure + service map; updated test counts (20 + 9)
+- `docs/08_frontend/01_frontend_architecture.md`: added `/upgrade` route, `upgrade/` feature subtree, tier limit design notes, server test count footer
+- `docs/10_planning/01_roadmap.md`: license key validation ✅, payment provider 🔲 Planned, upgrade UI notes updated
+- `CLAUDE.md`: phase 4 active status + commit format section
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `apps/server/services/license_service.py` |
+| Created | `apps/server/tests/test_license_service.py` |
+| Created | `apps/mobile/lib/features/upgrade/presentation/cubit/upgrade_state.dart` |
+| Created | `apps/mobile/lib/features/upgrade/presentation/screens/upgrade_screen.dart` |
+| Modified | `apps/server/config.py` |
+| Modified | `apps/server/models/settings.py` |
+| Modified | `apps/server/services/settings_service.py` |
+| Modified | `apps/server/routers/settings.py` |
+| Modified | `apps/server/tests/test_settings.py` |
+| Modified | `apps/mobile/lib/features/player/presentation/screens/player_screen.dart` |
+| Modified | `docs/08_frontend/01_frontend_architecture.md` |
+| Modified | `docs/09_backend/01_backend_architecture.md` |
+| Modified | `docs/10_planning/01_roadmap.md` |
+| Modified | `CLAUDE.md` |
+
+### Quality Gates
+- `pytest apps/server/` → **80/80 pass** ✅ (60 pre-existing + 20 new license tests)
+- `flutter analyze` → no issues reported at time of implementation ✅
+
+### Decisions Made
+- Mobile cannot call `PATCH /settings` (restricted to `localhost` by `require_local_caller`); `UpgradeScreen` is intentionally informational — guides user to Desktop Control Panel for key entry. This preserves architectural integrity.
+- Did not add `freezed` for `UpgradeState` — project policy avoids new code-gen dependencies unless already established.
+- Advisory mode (`FLUXORA_LICENSE_SECRET` absent) allows development without a secret configured; production should always have the secret set.
+
+### Blockers / Open Issues
+- Payment provider (Polar.sh / Keygen.sh) not yet integrated; `generate_key` CLI is the manual bridge for now.
+- On-device WAN WebRTC testing still pending (Phase 3 carry-over).
+
+### Next Agent Should
+1. Read `CLAUDE.md` and `AGENT_LOG.md` before touching anything.
+2. Run `pytest apps/server/` and `flutter analyze` to confirm clean baselines.
+3. **Phase 4 completion:** Integrate a payment provider (Polar.sh recommended) → automate `license_service.generate_key()` issuance on purchase.
+4. **Phase 5 options:**
+   - Hardware encoding (NVENC/VAAPI)
+   - Desktop feature modules: `library/`, `activity/`, `logs/`, `transcoding/`
+   - E2E encryption for internet streams
+5. Append a new entry to `AGENT_LOG.md` when done.
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

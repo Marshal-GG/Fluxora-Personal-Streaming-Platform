@@ -20,6 +20,8 @@ def _to_response(row: dict) -> UserSettingsResponse:
         max_concurrent_streams=row["max_concurrent_streams"],
         transcoding_enabled=bool(row["transcoding_enabled"]),
         license_key=row.get("license_key"),
+        license_status=row.get("license_status", "none"),
+        license_tier=row.get("license_tier"),
     )
 
 
