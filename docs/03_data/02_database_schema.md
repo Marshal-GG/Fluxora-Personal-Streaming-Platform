@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active — Updated 2026-04-28 (migrations 004-007; TMDB, resume, license_key, tier alignment)
+> **Status:** Active - Updated 2026-04-29 (migrations 004-008; TMDB, resume, license_key, tier alignment, Polar orders)
 
 ---
 
@@ -80,6 +80,14 @@ CREATE TABLE user_settings (
     tmdb_api_key             TEXT,
     license_key              TEXT       -- migration 006: user's paid-plan license key
 );
+
+-- Polar paid-order idempotency table
+CREATE TABLE polar_orders (
+    order_id       TEXT PRIMARY KEY,
+    tier           TEXT NOT NULL,
+    license_key    TEXT NOT NULL,
+    processed_at   TEXT NOT NULL
+);
 ```
 
 ---
@@ -115,3 +123,4 @@ CREATE TABLE user_settings (
 | `005_resume_progress.sql` | Adds `last_progress_sec REAL NOT NULL DEFAULT 0.0` to `media_files` |
 | `006_settings_license.sql` | Adds `license_key TEXT` to `user_settings` |
 | `007_align_tier_limits.sql` | Corrects `max_concurrent_streams` to match actual tier limits (`free=1, plus=3, pro=10, ultimate=9999`) on the existing row |
+| `008_polar_orders.sql` | Creates `polar_orders` to make Polar paid-order license issuance idempotent without storing customer email |

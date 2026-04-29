@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services.tmdb_service import TmdbService, TmdbMeta
-
+from services.tmdb_service import TmdbService
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -15,7 +14,9 @@ MOVIE_HIT = {
     "id": 123,
     "media_type": "movie",
     "title": "Inception",
-    "overview": "A thief who steals corporate secrets through the use of dream-sharing.",
+    "overview": (
+        "A thief who steals corporate secrets through the use of dream-sharing."
+    ),
     "poster_path": "/inception.jpg",
 }
 
@@ -120,7 +121,7 @@ async def test_search_returns_tv_meta():
 
 @pytest.mark.asyncio
 async def test_search_skips_person_results():
-    """Person results should be ignored; service returns None when only persons present."""
+    """Person-only results return None."""
     svc = TmdbService(api_key="fake-key")
 
     with patch("httpx.AsyncClient") as mock_cls:

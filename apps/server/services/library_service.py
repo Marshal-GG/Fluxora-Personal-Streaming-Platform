@@ -4,7 +4,6 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 import aiosqlite
 
@@ -132,7 +131,7 @@ async def get_file(db: aiosqlite.Connection, file_id: str) -> dict | None:
 async def scan_library(
     db: aiosqlite.Connection,
     library_id: str,
-    tmdb_api_key: Optional[str] = None,
+    tmdb_api_key: str | None = None,
 ) -> int:
     """Walk root_paths, insert new media files; return count of new files added.
 

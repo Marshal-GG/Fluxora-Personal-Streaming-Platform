@@ -1,7 +1,7 @@
 # Tech Stack
 
 > **Category:** Architecture  
-> **Status:** Active — Sourced from Planning Session (2026-04-27)
+> **Status:** Active - Updated 2026-04-29 (Polar webhooks added)
 
 ---
 
@@ -19,6 +19,7 @@
 | Frontend Framework | Flutter | Dart, cross-platform |
 | State Management | `flutter_bloc` (BLoC/Cubit) | Confirmed at Phase 1 mobile implementation |
 | Metadata API | TMDB API | Movie/TV show metadata |
+| Payment Webhooks | Polar Standard Webhooks | Paid-order license issuance |
 | PC Control Panel | Flutter Desktop | Electron alternative |
 
 ---
@@ -102,6 +103,7 @@ lib/
 | TMDB API | Movie/TV metadata, posters, descriptions | Free |
 | STUN Server | WebRTC NAT traversal | Free (Google public) |
 | TURN Server | WebRTC relay | Paid / self-hosted |
+| Polar | Payment webhook events for license issuance | Paid provider / sandbox available |
 
 ---
 

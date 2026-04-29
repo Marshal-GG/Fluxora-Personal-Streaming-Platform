@@ -1,8 +1,8 @@
 # Infrastructure, Deployment & CI/CD
 
 > **Category:** Infrastructure  
-> **Status:** ✅ Complete  
-> **Last Updated:** 2026-04-27 (Firebase Hosting + CI/CD pipeline added)
+> **Status:** Active  
+> **Last Updated:** 2026-04-29 (Firebase Hosting, CI/CD, Polar webhook config)
 
 ---
 
@@ -113,6 +113,10 @@ Settings can also be overridden via environment variables (same names, uppercase
 | `FLUXORA_TURN_URL` | `""` | TURN server URL (Phase 3) |
 | `FLUXORA_TURN_USER` | `""` | TURN username (Phase 3) |
 | `FLUXORA_TURN_PASS` | `""` | TURN password (Phase 3) |
+| `FLUXORA_LICENSE_SECRET` | `""` | HMAC secret for signing Fluxora license keys |
+| `POLAR_WEBHOOK_SECRET` | `""` | Polar Standard Webhooks secret for `/api/v1/webhook/polar` |
+
+See [`02_polar_webhook_deployment.md`](./02_polar_webhook_deployment.md) for Polar product metadata, event subscription, local testing, and production caveats.
 
 ---
 

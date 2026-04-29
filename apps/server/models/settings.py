@@ -13,7 +13,7 @@ class UserSettingsResponse(BaseModel):
     max_concurrent_streams: int
     transcoding_enabled: bool
     license_key: str | None = None
-    license_status: str = "none"   # none | valid | expired | invalid | no_secret
+    license_status: str = "none"  # none | valid | expired | invalid | no_secret
     license_tier: str | None = None  # tier encoded in the key (if valid/no_secret)
 
 

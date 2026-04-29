@@ -1,8 +1,8 @@
 # Security Architecture
 
 > **Category:** Security  
-> **Status:** ✅ Complete  
-> **Last Updated:** 2026-04-27
+> **Status:** Active  
+> **Last Updated:** 2026-04-29
 
 ---
 
@@ -77,6 +77,7 @@ New Device:
 | `GET /api/v1/hls/{session}/{file}` | ✅ Bearer token | Serve HLS playlist or segment |
 | `WS /api/v1/ws/status` | ✅ First-message token | Token sent as `{"type":"auth","token":"..."}` — not in header |
 | `WS /api/v1/ws/signal` | ✅ Bearer token | WebRTC signaling (Phase 3) |
+| `POST /api/v1/webhook/polar` | 🔒 Polar signature | Public route; verifies Standard Webhooks headers before JSON parsing |
 | All Control Panel routes | ✅ Localhost only | Not exposed externally |
 
 ---
@@ -95,6 +96,7 @@ New Device:
 | TURN relay eavesdropping | 🟢 Low | WebRTC DTLS/SRTP encrypts all media; relay sees only ciphertext |
 | Auth endpoint brute-force | 🟡 Medium | Rate limiting on `/auth/*` (Phase 2) |
 | Malicious file path in request | 🔴 High | Server validates and sanitizes all file path params |
+| Payment webhook spoofing or replay | 🔴 High | Standard Webhooks HMAC validation, signed timestamp tolerance, `polar_orders.order_id` idempotency |
 
 ---
 
@@ -124,6 +126,8 @@ New Device:
 | Device names | SQLite `clients` table | Plain text — not sensitive |
 | Media file paths | SQLite `files` table | Paths within library roots only |
 | TURN credentials | `~/.fluxora/config.json` | Read-only file; not exposed via API |
+| Fluxora license keys | SQLite `user_settings` / `polar_orders` | Entitlement tokens; never logged or returned in webhook responses |
+| Polar customer email | Not stored by Fluxora | Use Polar dashboard for customer lookup; server stores only `order_id`, `tier`, `license_key`, `processed_at` |
 
 ---
 
@@ -159,6 +163,8 @@ Rules:
 - File path resolution must always be within configured library roots
 - Control Panel binds to `localhost` only and is never exposed on the network
 - Token hashes stored in DB with a constant-time comparison to prevent timing attacks
+- `/api/v1/webhook/polar` is externally reachable by design, but must reject requests without valid `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers
+- Webhook handlers must not log customer email addresses, license keys, request bodies, or webhook secrets
 
 ---
 

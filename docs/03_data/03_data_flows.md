@@ -1,7 +1,7 @@
 # Data Flow Diagrams
 
 > **Category:** Data  
-> **Status:** Active — Sourced from Planning Session (2026-04-27)
+> **Status:** Active - Updated 2026-04-29 (Polar payment webhook flow added)
 
 ---
 
@@ -100,6 +100,34 @@
 
 ---
 
+## Flow 5 - Polar Paid Order to License Key
+
+```
+[Polar]
+    |
+    |---> POST /api/v1/webhook/polar
+          Headers: webhook-id, webhook-timestamp, webhook-signature
+
+[FastAPI Server]
+    |
+    |---> Verify Standard Webhooks signature before JSON parsing
+    |---> Reject replayed deliveries outside timestamp tolerance
+    |---> For order.paid:
+          |
+          |---> Read product.metadata.tier
+          |---> Check polar_orders for existing order_id
+          |---> Generate FLUXORA-<TIER>-<EXPIRY>-<SIG> key
+          |---> INSERT polar_orders(order_id, tier, license_key, processed_at)
+          |---> Return 200 with issued=true, without echoing the key
+```
+
+Notes:
+- `order.created` is processed only when the payload is already marked paid.
+- Duplicate deliveries return `200` with `status: "skipped"` to stop retry loops.
+- Customer email is not stored; license keys are not logged.
+
+---
+
 ## Event Flows
 
 | Event | Trigger | Action |
@@ -109,3 +137,4 @@
 | `stream.ended` | Client disconnects / stops | Set `ended_at` on session |
 | `library.scan_complete` | Scan finishes | Update `last_scanned`; notify panel |
 | `client.pair_request` | New client connects | Notify control panel for approval |
+| `license.issued` | Polar paid order webhook | Store idempotent license issuance row in `polar_orders` |

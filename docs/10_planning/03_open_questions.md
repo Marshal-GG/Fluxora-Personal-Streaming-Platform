@@ -1,7 +1,7 @@
 # Open Questions & Research Items
 
 > **Category:** Planning  
-> **Status:** Active — Updated 2026-04-28 (Phase 3 resolution)
+> **Status:** Active - Updated 2026-04-29 (Phase 4 payment decisions updated)
 
 ---
 
@@ -13,8 +13,8 @@
 | Q-002 | Self-host TURN server vs. use a service (Twilio, Metered.ca)? Cost vs. complexity tradeoff. | High | ❌ |
 | Q-003 | Should HLS segments be stored in temp dir or memory-mapped? Impact on performance with many concurrent streams. | Medium | ❌ |
 | Q-004 | How to handle FFmpeg hardware encoding detection? Check at startup; fall back to software. | Low | ❌ |
-| Q-005 | Payment processor for monetization — Stripe? Paddle? In-app purchases (Google/Apple)? | High | 🔵 Partial — license_key stored in DB; payment integration TBD |
-| Q-006 | License key server — self-hosted or third-party (Keygen.sh, Polar.sh)? | High | 🔵 Partial — format-only validation in place; provider not yet selected |
+| Q-005 | Payment processor for monetization — Stripe? Paddle? In-app purchases (Google/Apple)? | High | 🔵 Partial — Polar selected and server webhook implemented; dashboard setup + delivery/retrieval flow pending |
+| Q-006 | License key server — self-hosted or third-party (Keygen.sh, Polar.sh)? | High | ✅ **Resolved: self-hosted Fluxora HMAC keys issued from Polar paid-order webhooks** |
 | Q-007 | mDNS behavior on Android 12+ (multicast permission changes) — needs investigation | Medium | ✅ **Resolved** — `MulticastLock` acquired via `MethodChannel` in `ConnectCubit`; non-fatal on non-Android |
 | Q-008 | Should `control_panel` and `client` share a Flutter monorepo with shared packages? | Low | ✅ **Resolved: Yes** — `packages/fluxora_core` |
 

@@ -52,7 +52,8 @@ async def update_settings(
     )
 
     if new_tier not in VALID_TIERS:
-        raise ValueError(f"Invalid tier: {new_tier!r}. Must be one of {sorted(VALID_TIERS)}")
+        valid_tiers = ", ".join(sorted(VALID_TIERS))
+        raise ValueError(f"Invalid tier: {new_tier!r}. Must be one of {valid_tiers}")
 
     new_max_streams = TIER_STREAM_LIMITS[new_tier]
 

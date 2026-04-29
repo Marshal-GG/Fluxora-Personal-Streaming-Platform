@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active — Updated 2026-04-29 (Phase 4: license verification + mobile upgrade flow)
+> **Status:** Active - Updated 2026-04-29 (Phase 4: license verification, mobile upgrade flow, Polar webhook)
 
 ---
 
@@ -208,7 +208,7 @@ Desktop test/
     ├── clients/clients_cubit_test.dart      # 7 tests ✅
     └── settings/settings_cubit_test.dart    # 13 tests ✅ (loadSettings + saveSettings; license_key PATCH)
 
-Server tests: 29 passed — test_license_service (20) + test_settings (9)
+Server monetization tests: 48 passed — test_license_service (20) + test_settings (9) + test_webhook (19)
 ```
 
 ---

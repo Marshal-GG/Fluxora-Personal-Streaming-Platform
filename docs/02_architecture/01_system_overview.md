@@ -1,7 +1,7 @@
 # System Architecture Overview
 
 > **Category:** Architecture  
-> **Status:** Active — Sourced from Planning Session (2026-04-27)
+> **Status:** Active - Updated 2026-04-29 (Polar webhook integration added)
 
 ---
 
@@ -57,6 +57,7 @@
 | Flutter Client | Cross-platform UI (mobile + desktop) | Flutter/Dart |
 | PC Control Panel | Desktop server management UI | Flutter Desktop |
 | TMDB Integration | Metadata fetching for media libraries | TMDB REST API |
+| Polar Webhook | Paid-order license key issuance | Standard Webhooks + HMAC-SHA256 |
 
 ---
 
@@ -86,6 +87,7 @@ Client attempts connection:
 | Server ↔ TMDB | Outbound | HTTPS REST |
 | Client ↔ STUN/TURN | Outbound | WebRTC/UDP |
 | Server ↔ mDNS | LAN broadcast | UDP multicast |
+| Polar → Server | Inbound | HTTPS POST + Standard Webhooks signature |
 
 ---
 
@@ -99,6 +101,7 @@ Client attempts connection:
 | Internet transport | WebRTC | NAT traversal without port forwarding |
 | Client framework | Flutter | Single codebase for mobile + desktop |
 | DB | SQLite | Local-first, no server needed, embedded |
+| Payment provider | Polar webhook into self-hosted server | Merchant-of-record flow while preserving local license enforcement |
 | Clean Architecture | Domain/Data/Presentation | Testable, scalable Flutter structure |
 
 ---

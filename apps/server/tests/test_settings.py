@@ -1,9 +1,7 @@
 """Tests for GET /api/v1/settings and PATCH /api/v1/settings."""
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -52,7 +50,7 @@ async def test_get_settings_blocked_from_external(client: AsyncClient) -> None:
         pass
     # The fixture sends requests from the ASGI transport which appears as
     # 127.0.0.1 to the dependency — so this always succeeds; we verify the
-    # dependency rejects LAN IPs via the auth tests (test_list_clients_blocked_from_lan).
+    # dependency rejects LAN IPs via auth tests.
 
 
 # ── PATCH /api/v1/settings ────────────────────────────────────────────────────
@@ -60,9 +58,7 @@ async def test_get_settings_blocked_from_external(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_patch_settings_updates_server_name(client: AsyncClient) -> None:
-    res = await client.patch(
-        "/api/v1/settings", json={"server_name": "My Media Box"}
-    )
+    res = await client.patch("/api/v1/settings", json={"server_name": "My Media Box"})
     assert res.status_code == 200
     assert res.json()["server_name"] == "My Media Box"
 
@@ -89,9 +85,7 @@ async def test_patch_settings_stores_license_key(client: AsyncClient) -> None:
     # The format validator accepts any 4-segment FLUXORA-... key;
     # full signature check happens in license_service, not the model layer.
     valid_format_key = "FLUXORA-PLUS-99991231-ABCDEF01"
-    res = await client.patch(
-        "/api/v1/settings", json={"license_key": valid_format_key}
-    )
+    res = await client.patch("/api/v1/settings", json={"license_key": valid_format_key})
     assert res.status_code == 200
     assert res.json()["license_key"] == valid_format_key
     # license_status reflects signature check (no secret in test env → no_secret)
@@ -124,7 +118,6 @@ async def test_patch_settings_partial_update_preserves_other_fields(
 async def test_free_tier_blocks_second_stream(client: AsyncClient) -> None:
     """Free tier limit is 1 concurrent stream; second start should 429."""
     import uuid
-    from pathlib import Path
 
     import aiosqlite
 
@@ -141,7 +134,8 @@ async def test_free_tier_blocks_second_stream(client: AsyncClient) -> None:
     # Insert a fake file so /stream/start has something to reference
     file_id = str(uuid.uuid4())
     await db.execute(
-        "INSERT INTO media_files (id, path, name, extension, size_bytes, created_at, updated_at) "
+        "INSERT INTO media_files "
+        "(id, path, name, extension, size_bytes, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
         (file_id, f"/fake/{file_id}.mp4", f"{file_id}.mp4", ".mp4", 1000),
     )
@@ -150,7 +144,8 @@ async def test_free_tier_blocks_second_stream(client: AsyncClient) -> None:
     # Insert an active session to simulate a stream already in progress
     session_id = str(uuid.uuid4())
     await db.execute(
-        "INSERT INTO stream_sessions (id, file_id, client_id, started_at, connection_type) "
+        "INSERT INTO stream_sessions "
+        "(id, file_id, client_id, started_at, connection_type) "
         "VALUES (?, ?, 'client-settings-test', datetime('now'), 'lan')",
         (session_id, file_id),
     )

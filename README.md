@@ -1,7 +1,7 @@
 # Fluxora
 
 > **"Plex meets Syncthing"** — A hybrid file streaming and syncing system  
-> **Status:** Phases 1–3 complete ≤ Phase 4 (Monetization) in progress | Last Updated: 2026-04-28
+> **Status:** Phases 1-3 complete; Phase 4 (Monetization) in progress | Last Updated: 2026-04-29
 
 ---
 
@@ -15,6 +15,7 @@ Fluxora is a self-hosted, cross-platform media streaming system where your **PC 
 | Database | SQLite (local, embedded, WAL mode) |
 | LAN Discovery | Zeroconf / mDNS (`_fluxora._tcp.local`) |
 | Internet Transport | WebRTC (STUN/TURN) — Phase 3 |
+| Payment Webhooks | Polar Standard Webhooks |
 | Mobile Client | Flutter — Android + iOS |
 | Desktop Control Panel | Flutter — Windows, macOS, Linux |
 | Shared Dart Logic | `packages/fluxora_core` (local package) |
@@ -27,7 +28,7 @@ Fluxora is a self-hosted, cross-platform media streaming system where your **PC 
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| FastAPI server | ✅ Done | All routers incl. settings, mDNS, FFmpeg HLS, WebSocket, WebRTC signaling; 60 tests |
+| FastAPI server | ✅ Done | All routers incl. settings/webhook, mDNS, FFmpeg HLS, WebSocket, WebRTC signaling; 102 tests |
 | `fluxora_core` package | ✅ Done | Entities, ApiClient, SecureStorage, design tokens |
 | Flutter mobile — connect | ✅ Done | mDNS auto-discovery + manual IP; Android MulticastLock |
 | Flutter mobile — auth | ✅ Done | Full pairing flow; token in SecureStorage |
@@ -35,7 +36,7 @@ Fluxora is a self-hosted, cross-platform media streaming system where your **PC 
 | Flutter mobile — player | ✅ Done | `media_kit` HLS player; WebRTC smart-path; transport badge; resume; tier limit UI |
 | Flutter desktop | ✅ Done | Dashboard + Clients + Settings screens; 23 tests |
 | Internet streaming | ✅ Done | WebRTC P2P + HLS fallback; LAN bypass; ICE degradation monitoring |
-| Monetization (tier enforcement) | 🔵 In Progress | Tiers + concurrency limits live; license key stored; payment provider TBD |
+| Monetization (tier enforcement) | 🔵 In Progress | Tiers + concurrency limits live; license validation + Polar webhook implemented; customer delivery/retrieval flow pending |
 
 ---
 
@@ -86,7 +87,7 @@ Fluxora/
 | 1 | FastAPI server, mDNS, HLS streaming, Flutter mobile client, HLS player | ✅ Complete |
 | 2 | Desktop control panel, TMDB metadata, playback resume | ✅ Complete |
 | 3 | WebRTC internet streaming, smart-path LAN bypass, transport badge | ✅ Complete |
-| 4 | Tier enforcement, license key, upgrade UI | 🔵 In Progress |
+| 4 | Tier enforcement, license key, upgrade UI, Polar payment webhook | 🔵 In Progress |
 | 5 | Hardware transcoding, advanced client management | 🔲 Planned |
 | 6 | AI recommendations, public release | 🔲 Planned |
 

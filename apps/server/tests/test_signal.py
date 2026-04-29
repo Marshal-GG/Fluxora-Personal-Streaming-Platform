@@ -158,9 +158,7 @@ def test_signal_ice_candidate_accepted(test_db, monkeypatch):
     """ICE candidate messages must be forwarded to the webrtc_service without error."""
     monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
     with _lifespan_patches(), _mock_webrtc():
-        with patch(
-            "routers.signal.add_ice_candidate", new=AsyncMock()
-        ) as mock_add_ice:
+        with patch("routers.signal.add_ice_candidate", new=AsyncMock()) as mock_add_ice:
             with TestClient(app) as http:
                 token = _approve_client(http)
                 with http.websocket_connect("/api/v1/ws/signal") as ws:
@@ -169,7 +167,9 @@ def test_signal_ice_candidate_accepted(test_db, monkeypatch):
 
                     ice_msg = {
                         "type": "ice-candidate",
-                        "candidate": "candidate:1 1 UDP 2130706431 192.168.1.1 54321 typ host",
+                        "candidate": (
+                            "candidate:1 1 UDP 2130706431 " "192.168.1.1 54321 typ host"
+                        ),
                         "sdpMid": "0",
                         "sdpMLineIndex": 0,
                     }

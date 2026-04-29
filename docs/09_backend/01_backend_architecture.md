@@ -1,7 +1,7 @@
 # Backend Architecture
 
 > **Category:** Backend  
-> **Status:** Active — Updated 2026-04-29 (Phase 4: self-hosted license key verification implemented)
+> **Status:** Active - Updated 2026-04-29 (Phase 4: license verification + Polar webhook implemented)
 
 ---
 
@@ -17,6 +17,7 @@
 | LAN Discovery | `zeroconf` Python library — `AsyncZeroconf` (async-safe) |
 | WebRTC Signaling | `aiortc 1.9.0` — RTCPeerConnection, ICE, DataChannel |
 | Metadata | TMDB REST API |
+| Payments | Polar Standard Webhooks |
 | Process Management | `asyncio` subprocess for FFmpeg |
 
 ---
@@ -36,7 +37,8 @@ server/
 │       ├── 004_tmdb_metadata.sql  # title, overview, poster_url on media_files
 │       ├── 005_resume_progress.sql # last_progress_sec on media_files
 │       ├── 006_settings_license.sql # license_key on user_settings
-│       └── 007_align_tier_limits.sql # corrects max_concurrent_streams per tier
+│       ├── 007_align_tier_limits.sql # corrects max_concurrent_streams per tier
+│       └── 008_polar_orders.sql # paid Polar order idempotency + generated keys
 │
 ├── routers/
 │   ├── info.py             # GET /api/v1/info ✅
@@ -47,7 +49,8 @@ server/
 │   ├── stream.py           # POST /start/{id}, GET/{id}, DELETE/{id} + hls_router ✅
 │   ├── ws.py               # WS /status: token auth + ping/pong + progress ✅
 │   ├── signal.py           # WS /signal: SDP offer/answer + ICE relay ✅
-│   └── settings.py         # GET/PATCH /api/v1/settings; require_local_caller ✅
+│   ├── settings.py         # GET/PATCH /api/v1/settings; require_local_caller ✅
+│   └── webhook.py          # POST /api/v1/webhook/polar; Standard Webhooks signature ✅
 │
 │   ├── services/
 │   │   ├── ffmpeg_service.py   # FFmpeg subprocess management, HLS output ✅
@@ -57,6 +60,7 @@ server/
 │   │   ├── webrtc_service.py   # aiortc RTCPeerConnection registry; SDP/ICE handling; graceful teardown ✅
 │   │   ├── settings_service.py # GET/PATCH user_settings; tier→max_streams mapping; _enrich_license() ✅
 │   │   ├── license_service.py  # HMAC-SHA256 key gen/validation; FLUXORA-<TIER>-<EXPIRY>-<SIG> format; CLI generator ✅
+│   │   ├── webhook_service.py  # Polar signature validation + paid-order license issuance ✅
 │   │   └── tmdb_service.py     # TMDB REST API search; enriches media_files after scan ✅
 │
 │   ├── models/
@@ -68,7 +72,7 @@ server/
 │
 │   └── tests/
 │       ├── conftest.py          # test_db + client fixtures; reset_rate_limits autouse
-│       ├── test_auth.py         # 10 tests — info + pairing flow + localhost restriction ✅
+│       ├── test_auth.py         # 13 tests — info + pairing flow + localhost restriction + client listing ✅
 │       ├── test_library.py      # 8 tests — library CRUD ✅
 │       ├── test_files.py        # 6 tests — file listing + filtering ✅
 │       ├── test_stream.py       # 10 tests — stream start/stop/HLS (mocked FFmpeg) ✅
@@ -76,7 +80,8 @@ server/
 │       ├── test_signal.py       # 8 tests — WS signaling auth + SDP/ICE protocol ✅
 │       ├── test_settings.py     # 9 tests — GET/PATCH settings + tier concurrency + 429 enforcement + license_status ✅
 │       ├── test_license_service.py # 20 tests — key validation (happy/expired/bad-sig/advisory/malformed) + generation ✅
-│       └── test_tmdb_service.py # 5 tests — TMDB search (movie/TV/person/network-error/missing-poster) ✅
+│       ├── test_tmdb_service.py # 5 tests — TMDB search (movie/TV/person/network-error/missing-poster) ✅
+│       └── test_webhook.py      # 19 tests — Polar signature, paid orders, router responses ✅
 ```
 
 ---
@@ -91,6 +96,7 @@ server/
 | `auth_service` ✅ | Token generation (HMAC-SHA256), pairing state machine, token validation | `create_pair_request()`, `approve_client()`, `reject_client()`, `revoke_client()`, `get_trusted_client_by_token()` |
 | `webrtc_service` ✅ | Manage `RTCPeerConnection` registry, ICE/STUN/TURN, graceful teardown | `create_peer_connection()`, `handle_offer()`, `close_connection()` |
 | `license_service` ✅ | HMAC-SHA256 signed key gen/validation; format `FLUXORA-<TIER>-<EXPIRY>-<SIG>`; advisory mode when secret absent | `validate_key()`, `generate_key()`, `LicenseResult` |
+| `webhook_service` ✅ | Verify Polar Standard Webhooks signatures; issue idempotent license keys for paid orders without logging PII | `verify_polar_signature()`, `handle_order_paid()`, `handle_order_created()` |
 
 ---
 
@@ -133,6 +139,7 @@ Output: .m3u8 playlist + numbered .ts segment files
 | TMDB API | Movie/TV metadata, posters | API Key (user-provided or default) |
 | STUN Server | WebRTC NAT traversal | None (public servers) |
 | TURN Server | WebRTC relay fallback | Username + Credential |
+| Polar | Payment webhooks for license key issuance | Standard Webhooks HMAC secret |
 
 ---
 
@@ -146,6 +153,8 @@ Output: .m3u8 playlist + numbered .ts segment files
 | TMDB API down | Cache last known metadata; log + skip enrichment |
 | Client token expired | Return 401; client must re-pair |
 | Stream concurrency exceeded | Return 429 with `Retry-After` header |
+| Polar webhook invalid signature | Return 403 before parsing JSON |
+| Polar webhook secret missing | Return 501 so production misconfiguration is visible |
 
 ---
 

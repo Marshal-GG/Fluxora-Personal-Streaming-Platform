@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # Used to sign/verify FLUXORA-<TIER>-<EXPIRY>-<SIG> keys.
     fluxora_license_secret: str = ""
 
+    # Polar.sh webhook secret — copy from Polar dashboard → Webhooks.
+    # Without this, the /api/v1/webhook/polar endpoint returns 501.
+    polar_webhook_secret: str = ""
+
     @property
     def db_path(self) -> Path:
         return Path(self.fluxora_db_path)

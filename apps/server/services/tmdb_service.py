@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 import httpx
 
@@ -23,7 +22,7 @@ class TmdbMeta:
     tmdb_id: int
     title: str
     overview: str
-    poster_url: Optional[str]
+    poster_url: str | None
 
 
 class TmdbService:
@@ -32,7 +31,7 @@ class TmdbService:
     def __init__(self, api_key: str) -> None:
         self._key = api_key
 
-    async def search(self, query: str) -> Optional[TmdbMeta]:
+    async def search(self, query: str) -> TmdbMeta | None:
         """Return the best-matching TMDB result for *query*, or None on failure."""
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -52,7 +51,7 @@ class TmdbService:
                 tmdb_id: int = item["id"]
                 title: str = item.get("title") or item.get("name") or query
                 overview: str = item.get("overview") or ""
-                poster_path: Optional[str] = item.get("poster_path")
+                poster_path: str | None = item.get("poster_path")
                 poster_url = f"{_POSTER_BASE}{poster_path}" if poster_path else None
 
                 return TmdbMeta(

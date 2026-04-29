@@ -939,3 +939,30 @@ Implement the Polar.sh payment webhook to automate license key issuance on purch
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+### Session 43 — CLAUDE.md Restructuring
+**Date:** 2026-04-29
+
+**Goal:** Reduce `CLAUDE.md` size by extracting detailed development guidelines to a dedicated docs file, improving agent readability and memory efficiency.
+
+#### Files Modified
+| File | Action | Details |
+|------|--------|---------|
+| `CLAUDE.md` | Modified | Extracted ~1,000 lines of guidelines into a separate file; added a redirect link. |
+| `docs/12_guidelines/01_development_guidelines.md` | Created | Migrated Tech Stack, Architecture Rules, Code Conventions, DB Migration Rules, API Key Management, and other granular rules. |
+
+#### Docs Updated
+- `CLAUDE.md`
+- `docs/12_guidelines/01_development_guidelines.md`
+
+#### Architectural & Security Decisions
+- **`CLAUDE.md` optimization:** Retained the "Mandatory Agent Rules" and "Hard Prohibitions" in `CLAUDE.md` for immediate visibility. Moved all contextual / reference rules out to `12_guidelines` so they can be parsed only when needed, drastically lowering the static context overhead for AI agents interacting with the repository.
+
+### Next Steps
+1. **Polar dashboard** (manual): Create product → add `metadata.tier` → point webhook to `/api/v1/webhook/polar` → copy secret to `.env`.
+2. **Phase 5 desktop modules:** `library/`, `activity/`, `logs/`, `transcoding/` screens.
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---

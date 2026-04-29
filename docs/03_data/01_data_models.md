@@ -1,7 +1,7 @@
 # Data Models
 
 > **Category:** Data  
-> **Status:** Active — Updated 2026-04-28 (TMDB fields, last_progress_sec, license_key)
+> **Status:** Active - Updated 2026-04-29 (TMDB fields, resume progress, license keys, Polar orders)
 
 ---
 
@@ -89,6 +89,18 @@
 
 ---
 
+### Entity: `PolarOrder`
+> Tracks paid Polar orders that have already issued a Fluxora license key
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| order_id | TEXT | ✅ | Polar order ID; primary key and idempotency key |
+| tier | TEXT | ✅ | Fluxora tier decoded from Polar product metadata |
+| license_key | TEXT | ✅ | Generated Fluxora license key; never logged or returned by webhook |
+| processed_at | TEXT | ✅ | UTC timestamp when the order was processed |
+
+---
+
 ## Relationships
 
 ```
@@ -96,6 +108,7 @@ Library ──1:N──▶ MediaFile
 MediaFile ──1:N──▶ StreamSession
 Client ──1:N──▶ StreamSession
 UserSettings ──1:1──▶ (singleton)
+PolarOrder ── independent idempotency table for payment webhooks
 ```
 
 ---
@@ -117,3 +130,5 @@ UserSettings ──1:1──▶ (singleton)
 - `StreamSession.ended_at` must be > `started_at` if set
 - `UserSettings` is a singleton (only one row, id = 1)
 - `Client.auth_token` stores the HMAC-SHA256 hash of the raw bearer token — never the raw token itself
+- `PolarOrder.order_id` is unique; duplicate webhook deliveries must not issue duplicate license keys
+- `PolarOrder` intentionally does not store customer email or other payment PII

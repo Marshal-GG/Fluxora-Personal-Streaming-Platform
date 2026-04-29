@@ -1,7 +1,7 @@
 # Project Roadmap & Milestones
 
 > **Category:** Planning  
-> **Status:** Active — Updated 2026-04-29 (Phase 4: license key validation + upgrade flow implemented)
+> **Status:** Active - Updated 2026-04-29 (Phase 4: license validation, upgrade flow, and Polar webhook implemented)
 
 ---
 
@@ -71,7 +71,7 @@
 |---------|----------|--------|-------|
 | Subscription tier enforcement | Must | ✅ Done | `user_settings.subscription_tier` + `GET/PATCH /api/v1/settings`; `require_local_caller`; 9 tests ✅ |
 | License key validation | Must | ✅ Done | `license_service.py` — HMAC-SHA256 signed keys (`FLUXORA-<TIER>-<EXPIRY>-<SIG>`); `_enrich_license()` in `settings_service`; format validator on `UpdateSettingsBody`; `license_status` + `license_tier` in API response; 20 tests ✅ |
-| Payment provider integration | Should | 🔲 Planned | Select provider (Polar.sh / Keygen.sh); wire to `generate_key` CLI for key issuance |
+| Payment provider integration | Should | 🔵 In Progress | Polar webhook endpoint implemented for `order.paid` + signed key issuance; Polar dashboard setup and customer delivery/retrieval flow still pending |
 | Upgrade prompt UI | Must | ✅ Done | Mobile: `PlayerTierLimit` state + `_TierLimitView` → `UpgradeScreen` (tier cards + activation guide); Desktop: tier selector + stream limit badge in Settings |
 | Free/Plus/Pro/Ultimate tier limits | Must | ✅ Done | Tier change auto-updates `max_concurrent_streams`; stream router reads from DB (not config); migration 007 aligns existing rows |
 
@@ -109,7 +109,7 @@
 | M3 — Auth + Library + TMDB + Resume | 2 | ✅ Done |
 | M3.5 — Desktop Control Panel Parity (incl. Settings) | 2 | ✅ Done |
 | M4 — Internet Streaming | 3 | ✅ Done |
-| M5 — Monetization Live | 4 | 🔄 In Progress |
+| M5 — Monetization Live | 4 | 🔄 In Progress (server-side Polar webhook done; ops/customer delivery pending) |
 | M6 — Advanced Features | 5 | ⬜ Future |
 
 ---

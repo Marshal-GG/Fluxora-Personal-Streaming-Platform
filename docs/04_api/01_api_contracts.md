@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active — Updated 2026-04-28
+> **Status:** Active - Updated 2026-04-29 (settings license fields + Polar webhook)
 
 ---
 
@@ -24,7 +24,7 @@
 
 ## Authentication
 
-All endpoints (except `/info` and `/auth/*`) require:
+All endpoints (except `/info`, `/auth/*`, and signed payment webhooks) require:
 ```
 Authorization: Bearer {auth_token}
 ```
@@ -429,7 +429,9 @@ Client connects → sends auth message → server replies auth_ok
   "subscription_tier": "plus",
   "max_concurrent_streams": 3,
   "transcoding_enabled": true,
-  "license_key": null
+  "license_key": null,
+  "license_status": "missing",
+  "license_tier": "free"
 }
 ```
 
@@ -445,7 +447,7 @@ Client connects → sends auth message → server replies auth_ok
 {
   "server_name": "My Fluxora Server",
   "tier": "plus",
-  "license_key": "FLUXORA-ABCD-1234-EFGH-5678",
+  "license_key": "FLUXORA-PLUS-20270429-A1B2C3D4",
   "transcoding_enabled": true
 }
 ```
@@ -464,16 +466,53 @@ Client connects → sends auth message → server replies auth_ok
 
 ---
 
+### `POST /api/v1/webhook/polar`
+**Description:** Receives Polar payment webhook events and issues a signed Fluxora license key after a paid order.  
+**Auth:** Public endpoint, but every request must pass Polar Standard Webhooks signature validation.  
+**Status:** ✅ Implemented
+
+**Required headers:**
+| Header | Description |
+|--------|-------------|
+| `webhook-id` | Polar delivery ID; included in the signed payload |
+| `webhook-timestamp` | Unix timestamp; rejected outside the replay window |
+| `webhook-signature` | Standard Webhooks signature list, e.g. `v1,<base64>` |
+
+**Handled events:**
+| Event | Behavior |
+|-------|----------|
+| `order.paid` | Generate and store a license key if the order was not processed before |
+| `order.created` | Generate only if the payload is already marked paid; unpaid orders are skipped |
+| Any other event | Return `200` with `status: "ignored"` |
+
+**Response:**
+```json
+{
+  "status": "processed",
+  "event": "order.paid",
+  "issued": true
+}
+```
+
+**Notes:**
+- `POLAR_WEBHOOK_SECRET` must be configured or the endpoint returns `501`.
+- Invalid signatures return `403`; signed invalid JSON returns `400`.
+- Duplicate paid orders return `200` with `status: "skipped"` to avoid retry loops.
+- License keys are stored server-side and are not logged or returned in webhook responses.
+
+---
+
 ## Error Codes
 
 | Code | Meaning |
 |------|---------|
 | 400 | Bad Request — missing or invalid params |
 | 401 | Unauthorized — missing or invalid token |
-| 403 | Forbidden — client not trusted / tier limit |
+| 403 | Forbidden — client not trusted / invalid webhook signature |
 | 404 | Not Found — file or library not found |
 | 429 | Too Many Requests — stream concurrency limit |
 | 500 | Internal Server Error |
+| 501 | Not Implemented — webhook integration not configured |
 | 503 | FFmpeg unavailable |
 
 ---

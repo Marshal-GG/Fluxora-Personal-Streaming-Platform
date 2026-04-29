@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 from datetime import date, timedelta
-from unittest.mock import patch
 
 import pytest
 
@@ -24,19 +23,21 @@ def _make_key(tier_code: str, expiry: str, secret: str = _TEST_SECRET) -> str:
 # Import the service and patch settings for every test
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def patch_secret(monkeypatch):
     """Inject a known license secret into the settings singleton."""
     import config
+
     monkeypatch.setattr(config.settings, "fluxora_license_secret", _TEST_SECRET)
 
 
 from services.license_service import generate_key, validate_key  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # validate_key — happy paths
 # ---------------------------------------------------------------------------
+
 
 class TestValidateKeyHappy:
     def test_valid_lifetime_key(self):
@@ -55,7 +56,13 @@ class TestValidateKeyHappy:
         assert result.tier == "pro"
 
     def test_all_tiers(self):
-        for code, tier in [("FREE", "free"), ("PLUS", "plus"), ("PRO", "pro"), ("ULTI", "ultimate")]:
+        tiers = [
+            ("FREE", "free"),
+            ("PLUS", "plus"),
+            ("PRO", "pro"),
+            ("ULTI", "ultimate"),
+        ]
+        for code, tier in tiers:
             key = _make_key(code, "99991231")
             result = validate_key(key)
             assert result.valid is True, f"Expected valid for {code}"
@@ -75,6 +82,7 @@ class TestValidateKeyHappy:
 # ---------------------------------------------------------------------------
 # validate_key — failure paths
 # ---------------------------------------------------------------------------
+
 
 class TestValidateKeyFailures:
     def test_none_returns_empty(self):
@@ -120,6 +128,7 @@ class TestValidateKeyFailures:
 
     def test_no_secret_advisory_mode(self, monkeypatch):
         import config
+
         monkeypatch.setattr(config.settings, "fluxora_license_secret", "")
         key = _make_key("PLUS", "99991231")
         result = validate_key(key)
@@ -143,6 +152,7 @@ class TestValidateKeyFailures:
 # ---------------------------------------------------------------------------
 # generate_key
 # ---------------------------------------------------------------------------
+
 
 class TestGenerateKey:
     def test_generates_valid_key(self):
@@ -169,6 +179,7 @@ class TestGenerateKey:
 
     def test_no_secret_raises(self, monkeypatch):
         import config
+
         monkeypatch.setattr(config.settings, "fluxora_license_secret", "")
         with pytest.raises(ValueError, match="FLUXORA_LICENSE_SECRET"):
             generate_key("plus")

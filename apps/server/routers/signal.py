@@ -111,7 +111,11 @@ async def _authenticate(websocket: WebSocket) -> str | None:
         return None
 
     db = await get_db()
-    client = await get_trusted_client_by_token(db, msg["token"], settings.token_hmac_key)
+    client = await get_trusted_client_by_token(
+        db,
+        msg["token"],
+        settings.token_hmac_key,
+    )
     if client is None:
         await websocket.close(code=1008, reason="Invalid or revoked token")
         return None
@@ -181,8 +185,14 @@ async def _signal_loop(websocket: WebSocket, client_id: str) -> None:
         try:
             msg = json.loads(raw)
         except ValueError:
-            await _ws_send(websocket, {"type": "error", "code": "invalid_json",
-                                       "detail": "Message must be valid JSON"})
+            await _ws_send(
+                websocket,
+                {
+                    "type": "error",
+                    "code": "invalid_json",
+                    "detail": "Message must be valid JSON",
+                },
+            )
             continue
 
         msg_type = msg.get("type")
@@ -190,15 +200,27 @@ async def _signal_loop(websocket: WebSocket, client_id: str) -> None:
         if msg_type == "offer":
             sdp = msg.get("sdp")
             if not sdp:
-                await _ws_send(websocket, {"type": "error", "code": "missing_sdp",
-                                           "detail": "offer must include 'sdp'"})
+                await _ws_send(
+                    websocket,
+                    {
+                        "type": "error",
+                        "code": "missing_sdp",
+                        "detail": "offer must include 'sdp'",
+                    },
+                )
                 continue
             try:
                 answer_sdp = await handle_offer(client_id, sdp)
             except Exception:
                 logger.exception("Failed to handle SDP offer: client=%s", client_id)
-                await _ws_send(websocket, {"type": "error", "code": "offer_failed",
-                                           "detail": "Failed to process SDP offer"})
+                await _ws_send(
+                    websocket,
+                    {
+                        "type": "error",
+                        "code": "offer_failed",
+                        "detail": "Failed to process SDP offer",
+                    },
+                )
                 continue
             await _ws_send(websocket, {"type": "answer", "sdp": answer_sdp})
             logger.info("SDP answer sent: client=%s", client_id)
@@ -215,5 +237,11 @@ async def _signal_loop(websocket: WebSocket, client_id: str) -> None:
             logger.debug(
                 "Unknown signal message type=%r: client=%s", msg_type, client_id
             )
-            await _ws_send(websocket, {"type": "error", "code": "unknown_type",
-                                       "detail": f"Unknown message type: {msg_type!r}"})
+            await _ws_send(
+                websocket,
+                {
+                    "type": "error",
+                    "code": "unknown_type",
+                    "detail": f"Unknown message type: {msg_type!r}",
+                },
+            )

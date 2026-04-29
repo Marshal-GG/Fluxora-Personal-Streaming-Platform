@@ -109,7 +109,11 @@ async def update_progress(
 ) -> None:
     """Record the client's current playback position for resume-on-reopen."""
     async with db.execute(
-        "SELECT id, client_id, file_id FROM stream_sessions WHERE id = ? AND ended_at IS NULL",
+        """
+        SELECT id, client_id, file_id
+        FROM stream_sessions
+        WHERE id = ? AND ended_at IS NULL
+        """,
         (session_id,),
     ) as cur:
         row = await cur.fetchone()

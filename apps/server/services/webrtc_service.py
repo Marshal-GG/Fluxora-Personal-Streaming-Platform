@@ -26,8 +26,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
-from aiortc.contrib.media import MediaPlayer, MediaRelay
+from aiortc import (
+    RTCConfiguration,
+    RTCIceServer,
+    RTCPeerConnection,
+    RTCSessionDescription,
+)
+from aiortc.contrib.media import MediaRelay
 
 from config import settings
 
@@ -140,9 +145,7 @@ async def add_ice_candidate(client_id: str, candidate: dict) -> None:
     """
     session = _sessions.get(client_id)
     if session is None:
-        logger.warning(
-            "ICE candidate for unknown client=%s — discarding", client_id
-        )
+        logger.warning("ICE candidate for unknown client=%s — discarding", client_id)
         return
 
     pc = session.pc
