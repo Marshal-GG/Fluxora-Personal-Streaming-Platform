@@ -1,6 +1,6 @@
 # Fluxora — Project Overview
 
-> **Status:** Phases 1-4 complete or in progress - Phase 4 (Monetization) active  
+> **Status:** Phases 1-4 complete. Phase 5 active.  
 > **Created:** 2026-04-27  
 > **Last Updated:** 2026-04-29
 

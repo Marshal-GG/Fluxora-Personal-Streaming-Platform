@@ -1,3 +1,5 @@
+import Link from 'next/link'
+
 export default function Footer() {
   return (
     <footer className="footer">
@@ -23,7 +25,10 @@ export default function Footer() {
             <a href="#features">Features</a>
           </li>
           <li>
-            <a href="#how-it-works">Docs</a>
+            <a href="#pricing">Pricing</a>
+          </li>
+          <li>
+            <Link href="/manage">Manage Subscription</Link>
           </li>
         </ul>
       </div>

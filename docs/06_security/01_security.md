@@ -97,6 +97,7 @@ New Device:
 | Auth endpoint brute-force | 🟡 Medium | Rate limiting on `/auth/*` (Phase 2) |
 | Malicious file path in request | 🔴 High | Server validates and sanitizes all file path params |
 | Payment webhook spoofing or replay | 🔴 High | Standard Webhooks HMAC validation, signed timestamp tolerance, `polar_orders.order_id` idempotency |
+| License key sharing or theft | 🟡 Medium | Phase 1-4: None (honor system, fully self-hosted validation). Phase 5/Future: Bind key to unique Server ID via cloud activation check. |
 
 ---
 

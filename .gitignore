@@ -15,6 +15,7 @@ venv/
 *.iml
 .idea/
 .vscode/*
+.claude/
 !.vscode/launch.json
 build/
 

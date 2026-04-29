@@ -1,4 +1,4 @@
-﻿name: fluxora_core
+name: fluxora_core
 description: Shared Dart entities, network client, storage, and design tokens
 version: 0.1.0
 publish_to: none
@@ -16,6 +16,7 @@ dependencies:
   json_annotation: ^4.9.0
   logger: ^2.7.0
   connectivity_plus: ^7.1.1
+  equatable: ^2.0.8
 
 dev_dependencies:
   flutter_test:

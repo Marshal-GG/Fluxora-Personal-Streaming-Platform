@@ -17,6 +17,7 @@ dependencies:
   get_it: ^7.6.7
   logger: ^2.7.0
   flutter_secure_storage: ^9.2.4
+  equatable: ^2.0.8
 
 dev_dependencies:
   flutter_test:

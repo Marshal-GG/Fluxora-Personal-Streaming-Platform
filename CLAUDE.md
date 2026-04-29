@@ -98,6 +98,7 @@ Before writing a single word, run a mental (or literal `grep`) sweep against thi
 | `docs/10_planning/01_roadmap.md` | Any milestone started, completed, or descoped |
 | `docs/10_planning/02_decisions.md` | Any architectural decision locked in |
 | `docs/10_planning/03_open_questions.md` | Any open question answered or added |
+| `docs/01_product/06_polar_product_setup.md` | Configuration steps for Polar.sh products changed |
 | `docs/00_overview/README.md` | Status column of any doc changes; new doc added |
 | `DESIGN.md` | Any color, spacing, typography, or component spec changed |
 | `README.md` | Project-level summary, structure, or setup steps changed |
@@ -243,7 +244,7 @@ Fluxora/
 │
 ├── docs/                      <- All planning and architecture documentation
 │   ├── 00_overview/           <- Project summary, folder structure
-│   ├── 01_product/            <- Vision, requirements, user stories
+│   ├── 01_product/            <- Vision, requirements, user stories, Polar setup
 │   ├── 02_architecture/       <- System overview, tech stack, component architecture
 │   ├── 03_data/               <- Data models, SQLite schema, data flows
 │   ├── 04_api/                <- REST + WebSocket API contracts
@@ -337,7 +338,7 @@ Border radius: cards=12px, buttons=8px, badges=9999px
 | 1 | FastAPI scaffold, mDNS, basic HLS, Flutter mobile project setup | ✅ Complete |
 | 2 | Full library management, TMDB metadata, playback resume, Desktop Control Panel | ✅ Complete |
 | 3 | WebRTC internet streaming, smart-path LAN bypass, transport badge, ICE degradation | ✅ Complete |
-| 4 | Tier enforcement, license key, upgrade UI, payment provider integration | 🔵 In Progress (Polar webhook implemented; ops/customer delivery pending) |
+| 4 | Tier enforcement, license key, upgrade UI, payment provider integration | ✅ Complete (Polar webhook + product config docs + UI alignment done) |
 | 5 | Hardware transcoding, advanced client management | 🔲 Planned |
 | 6 | AI recommendations, public release | 🔲 Planned |
 
@@ -378,7 +379,7 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 ## Current Status
 
-> **As of April 2026 — Phases 1–3 complete, Phase 4 core infrastructure plus server-side Polar webhook implemented.**
+> **As of April 2026 — Phases 1–4 complete (Monetization + Polar webhook + product docs).**
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation written and in sync with code
@@ -396,9 +397,9 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
   - `features/library` — library grid + TMDB poster thumbnails ✅
   - `features/player` — `media_kit` HLS; `NetworkPathDetector`; WebRTC 8 s timeout → HLS fallback; `_TransportBadge`; resume; `PlayerTierLimit` → `_TierLimitView` → `UpgradeScreen` ✅
   - `features/upgrade` — `UpgradeScreen` tier comparison cards + activation guide (points to Desktop Control Panel) ✅
-- `apps/desktop` — **Phase 2 complete** (23 passing tests):
+- `apps/desktop` — **Phases 1-4 complete** (23 passing tests):
   - Dashboard screen (server info + client stats) ✅
   - Clients screen (approve/reject/filter) ✅
   - Settings screen (server URL, server name, tier selector, license key, stream-limit badge) ✅
 
-**Next:** Finish Phase 4 operations — configure Polar dashboard products/webhook secrets and add a customer delivery or owner retrieval flow for issued keys. Then Phase 5 desktop feature modules (`activity/`, `logs/`, `transcoding/`) or hardware transcoding.
+**Next:** Phase 5 — Advanced Features (Hardware Encoding, AI Organization, Desktop feature modules like `activity/`, `logs/`, `transcoding/`).

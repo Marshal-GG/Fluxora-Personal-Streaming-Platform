@@ -40,6 +40,9 @@ class Endpoints {
   // Settings (localhost-only)
   static const String serverSettings = '$_base/settings';
 
+  // Orders / license keys (localhost-only, owner retrieval)
+  static const String orders = '$_base/orders';
+
   // WebSocket
   static const String wsSignal = '$_base/ws/signal';
   static const String wsStatus = '$_base/ws/status';

@@ -8,6 +8,9 @@ import 'package:fluxora_desktop/features/dashboard/data/repositories/dashboard_r
 import 'package:fluxora_desktop/features/dashboard/domain/repositories/dashboard_repository.dart';
 import 'package:fluxora_desktop/features/library/data/repositories/library_repository_impl.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
+import 'package:fluxora_desktop/features/orders/data/repositories/orders_repository_impl.dart';
+import 'package:fluxora_desktop/features/orders/domain/repositories/orders_repository.dart';
+import 'package:fluxora_desktop/features/orders/presentation/cubit/orders_cubit.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
 
 final getIt = GetIt.instance;
@@ -47,5 +50,13 @@ Future<void> setupInjector() async {
       secureStorage: getIt<SecureStorage>(),
       apiClient: getIt<ApiClient>(),
     ),
+  );
+
+  // ── Orders ────────────────────────────────────────────────────────────────────
+  getIt.registerLazySingleton<OrdersRepository>(
+    () => OrdersRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+  getIt.registerFactory<OrdersCubit>(
+    () => OrdersCubit(repository: getIt<OrdersRepository>()),
   );
 }
