@@ -165,6 +165,93 @@
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
 
+---
+## [2026-04-29] — Phase 4: Polar Webhook Hardening + Full Server Gate
+**Agent:** Local coding session
+**Phase:** Phase 4 — Monetization
+**Status:** Complete for server-side webhook hardening; customer delivery/retrieval still pending
+
+### What Was Done
+- Reviewed uncommitted work since the last commit and found the Polar webhook implementation in progress.
+- Re-read `CLAUDE.md` fully after the user called it out, then read the security/data/backend/API docs required for this security-sensitive backend change.
+- Corrected Polar signature validation from a GitHub-style `sha256=<hex>` header to Polar's Standard Webhooks headers: `webhook-id`, `webhook-timestamp`, and `webhook-signature`.
+- Added replay protection via timestamp tolerance and support for multiple `v1,<base64>` signatures.
+- Moved safe license issuance to `order.paid`; `order.created` is processed only when the payload is already marked paid.
+- Removed customer email storage from `polar_orders`.
+- Stopped echoing generated license keys in webhook responses and ensured keys/emails are not logged.
+- Expanded webhook tests to 19 tests covering Standard Webhooks signatures, timestamp replay, rotated signatures, paid/unpaid order behavior, duplicates, invalid JSON, and router responses.
+- Ran server-wide Ruff/Black cleanup required by the full backend quality gate.
+- Synced API, data, security, architecture, roadmap, README, and CLAUDE status docs with the actual Polar webhook design.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `apps/server/database/migrations/008_polar_orders.sql` |
+| Created | `apps/server/routers/webhook.py` |
+| Created | `apps/server/services/webhook_service.py` |
+| Created | `apps/server/tests/test_webhook.py` |
+| Modified | `apps/server/models/settings.py` |
+| Modified | `apps/server/routers/signal.py` |
+| Modified | `apps/server/routers/stream.py` |
+| Modified | `apps/server/services/library_service.py` |
+| Modified | `apps/server/services/settings_service.py` |
+| Modified | `apps/server/services/tmdb_service.py` |
+| Modified | `apps/server/services/webrtc_service.py` |
+| Modified | `apps/server/tests/test_license_service.py` |
+| Modified | `apps/server/tests/test_settings.py` |
+| Modified | `apps/server/tests/test_signal.py` |
+| Modified | `apps/server/tests/test_tmdb_service.py` |
+| Modified | `docs/05_infrastructure/02_polar_webhook_deployment.md` |
+| Modified | `docs/05_infrastructure/01_infrastructure.md` |
+| Modified | `README.md` |
+| Modified | `CLAUDE.md` |
+| Modified | `AGENT_LOG.md` |
+
+### Docs Updated
+| Doc File | What Changed |
+|----------|-------------|
+| `docs/00_overview/README.md` | Updated status date |
+| `docs/02_architecture/01_system_overview.md` | Added Polar webhook component/integration/decision |
+| `docs/02_architecture/02_tech_stack.md` | Added Polar Standard Webhooks to stack and external services |
+| `docs/03_data/01_data_models.md` | Added `PolarOrder` model and no-PII validation notes |
+| `docs/03_data/02_database_schema.md` | Added `polar_orders` schema and migration 008 |
+| `docs/03_data/03_data_flows.md` | Added Polar paid-order-to-license-key flow |
+| `docs/04_api/01_api_contracts.md` | Added `POST /api/v1/webhook/polar`; updated settings license response fields |
+| `docs/05_infrastructure/01_infrastructure.md` | Added license/webhook env vars and linked Polar webhook guide |
+| `docs/05_infrastructure/02_polar_webhook_deployment.md` | Added accurate Polar product/event/local testing guide and production caveats |
+| `docs/06_security/01_security.md` | Added webhook route, spoof/replay threat, license-key handling, no-PII rules |
+| `docs/08_frontend/01_frontend_architecture.md` | Updated Phase 4/server monetization test counts |
+| `docs/09_backend/01_backend_architecture.md` | Added webhook router/service/migration/tests and Polar integration |
+| `docs/10_planning/01_roadmap.md` | Marked payment integration in progress with server webhook done and delivery pending |
+| `docs/10_planning/03_open_questions.md` | Resolved self-hosted license server choice; Polar selected partially |
+
+### Decisions Made
+- Use Polar Standard Webhooks directly instead of adding a new SDK dependency.
+- Treat license keys as entitlement tokens: store them server-side, but do not log them or return them in webhook responses.
+- Do not store Polar customer emails in Fluxora; use Polar dashboard for customer lookup.
+- Keep M5 "Monetization Live" in progress because the server can issue keys, but customer delivery or owner retrieval UX still needs to be built.
+
+### Blockers / Open Issues
+- Polar dashboard setup is still manual: products need `metadata.tier`, webhook events need `order.paid`, and `.env` needs `POLAR_WEBHOOK_SECRET`.
+- Customer delivery/retrieval is not implemented yet. Generated keys are stored in `polar_orders`, but there is no desktop UI or email/customer-portal handoff.
+- Full server tests pass with one pre-existing `pythonjsonlogger` deprecation warning.
+
+### Quality Gates
+- `python -m ruff check .` — passed
+- `python -m black --check --diff --workers 1 .` — passed
+- `pytest tests/ -v` — 102 passed, 1 warning
+
+### Next Agent Should
+1. Add an owner-facing retrieval path for issued license keys, preferably localhost-only in the desktop Settings or a new Licenses screen.
+2. Configure Polar dashboard manually: create Plus/Pro/Ultimate products, set `metadata.tier`, subscribe webhook to `order.paid`, and copy `POLAR_WEBHOOK_SECRET` into the server `.env`.
+3. Consider whether automatic customer delivery should use Polar benefits/license-key APIs, transactional email, or a local owner-mediated flow.
+4. Continue Phase 5 only after the Phase 4 key delivery/retrieval gap is closed.
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
 ## [2026-04-28] — Docs: Align Phase 2 desktop documentation
 **Agent:** claude-sonnet-4-6 (thinking)
 **Phase:** Phase 2 — Desktop Control Panel
@@ -813,6 +900,40 @@ None — pure test additions, no code or API changes.
    - Desktop feature modules: `library/`, `activity/`, `logs/`, `transcoding/`
    - E2E encryption for internet streams
 5. Append a new entry to `AGENT_LOG.md` when done.
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` or any git write command
+- [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
+---
+
+## Session — 2026-04-29 | Phase 4: Polar.sh Payment Integration
+
+### Objective
+Implement the Polar.sh payment webhook to automate license key issuance on purchase, completing Phase 4 monetization infrastructure.
+
+### Completed
+| Area | Work |
+|------|------|
+| **services/webhook_service.py** | HMAC-SHA256 Polar signature verification; `handle_order_created` + `handle_subscription_created`; idempotent `_order_already_processed` guard; tier→key mapping via `license_service.generate_key()` |
+| **routers/webhook.py** | `POST /api/v1/webhook/polar`; verifies signature before JSON parse; returns 501 if `POLAR_WEBHOOK_SECRET` absent; 403 on bad sig; 200 always on valid events |
+| **database/migrations/008_polar_orders.sql** | `polar_orders` table: `order_id PK`, `customer_email`, `tier`, `license_key`, `processed_at` |
+| **config.py** | Added `polar_webhook_secret: str = ""` field |
+| **main.py** | Registered `webhook.router` at `/api/v1/webhook` |
+| **env.example** | Documented `FLUXORA_LICENSE_SECRET` and `POLAR_WEBHOOK_SECRET` |
+| **tests/test_webhook.py** | 16 new tests: signature verification ×5, service unit ×6, HTTP integration ×5 |
+
+### Test Results
+- **99 tests passing** (0 failures). +16 from this session.
+
+### Architecture Notes
+- Signature verified **before** JSON parse — no wasted CPU on untrusted payloads.
+- Returns 200 for all valid-signature events (even duplicates) to prevent Polar retry storms.
+- 501 if `POLAR_WEBHOOK_SECRET` absent — makes misconfiguration visible immediately.
+- Idempotency guaranteed via `polar_orders` table primary key.
+
+### Next Steps
+1. **Polar dashboard** (manual): Create product → add `metadata.tier` → point webhook to `/api/v1/webhook/polar` → copy secret to `.env`.
+2. **Phase 5 desktop modules:** `library/`, `activity/`, `logs/`, `transcoding/` screens.
 
 ### Hard Rules Checklist
 - [x] Did NOT run any `git commit` / `git push` or any git write command
