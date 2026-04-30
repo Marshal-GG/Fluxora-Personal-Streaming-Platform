@@ -4,12 +4,22 @@ on:
     paths:
       - 'apps/mobile/**'
       - 'packages/**'
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/**'
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.32.0'
+          cache: true
+      - run: flutter pub get
+        working-directory: packages/fluxora_core
       - run: flutter pub get
         working-directory: apps/mobile
       - run: flutter analyze

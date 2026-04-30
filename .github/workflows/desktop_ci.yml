@@ -4,12 +4,22 @@ on:
     paths:
       - 'apps/desktop/**'
       - 'packages/**'
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'packages/**'
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: flutter-actions/setup-flutter@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.32.0'  # Dart 3.8.x — required for null-aware map syntax
+          cache: true
+      - run: flutter pub get
+        working-directory: packages/fluxora_core
       - run: flutter pub get
         working-directory: apps/desktop
       - run: flutter analyze
