@@ -28,6 +28,7 @@ build/
 
 # Local scratch / experimentation — never committed
 scratch/
+.tmp_design_fetch/
 
 # OS
 .DS_Store

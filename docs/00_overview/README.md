@@ -57,5 +57,6 @@ Python/FastAPI executable on the user's home machine.
 - [Data Models](../03_data/01_data_models.md)
 - [API Contracts](../04_api/01_api_contracts.md)
 - [Roadmap](../10_planning/01_roadmap.md)
+- [Desktop Redesign Plan](../11_design/desktop_redesign_plan.md)
 - [Folder Structure](./folder_structure.md)
 - [Agent Work Log](../../AGENT_LOG.md)

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Fluxora · Desktop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    background:
+      radial-gradient(1200px circle at 0% 0%, rgba(168,85,247,0.12), transparent 50%),
+      radial-gradient(1000px circle at 100% 100%, rgba(34,211,238,0.06), transparent 50%),
+      #08061A;
+    color: #E2E8F0;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); }
+
+  #app-window {
+    height: 100vh;
+    display: flex; flex-direction: column;
+    background: rgba(8,6,26,0.85);
+    backdrop-filter: blur(40px);
+  }
+  .titlebar {
+    height: 36px; flex-shrink: 0;
+    background: rgba(6,4,16,0.9);
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    display: flex; align-items: center; padding: 0 16px;
+  }
+  .main {
+    flex: 1; min-height: 0;
+    display: flex; overflow: hidden;
+  }
+  .grad-text {
+    background: linear-gradient(135deg, #C084FC, #A855F7);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hoverable-card { transition: all 200ms ease; }
+  .hoverable-card:hover {
+    border-color: rgba(168,85,247,0.4) !important;
+    background: rgba(168,85,247,0.05) !important;
+  }
+  button { font-family: inherit; }
+  input { font-family: inherit; }
+  input:focus { border-color: rgba(168,85,247,0.5) !important; }
+</style>
+</head>
+<body>
+<div id="app-window"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="app/components/tweaks-panel.jsx"></script>
+<script type="text/babel" src="app/data/fluxora-data.jsx"></script>
+<script type="text/babel" src="app/data/fluxora-data-2.jsx"></script>
+<script type="text/babel" src="app/components/icons.jsx"></script>
+<script type="text/babel" src="app/components/logo.jsx"></script>
+<script type="text/babel" src="app/components/primitives.jsx"></script>
+<script type="text/babel" src="app/components/sidebar.jsx"></script>
+<script type="text/babel" src="app/components/topbar.jsx"></script>
+<script type="text/babel" src="app/screens/dashboard.jsx"></script>
+<script type="text/babel" src="app/screens/library.jsx"></script>
+<script type="text/babel" src="app/pages/library-tabs.jsx"></script>
+<script type="text/babel" src="app/screens/clients.jsx"></script>
+<script type="text/babel" src="app/screens/groups.jsx"></script>
+<script type="text/babel" src="app/screens/activity.jsx"></script>
+<script type="text/babel" src="app/screens/transcoding.jsx"></script>
+<script type="text/babel" src="app/pages/encoder.jsx"></script>
+<script type="text/babel" src="app/screens/logs.jsx"></script>
+<script type="text/babel" src="app/pages/logs-tabs.jsx"></script>
+<script type="text/babel" src="app/screens/settings.jsx"></script>
+<script type="text/babel" src="app/pages/settings-tabs.jsx"></script>
+<script type="text/babel" src="app/screens/subscription.jsx"></script>
+<script type="text/babel" src="app/pages/billing.jsx"></script>
+<script type="text/babel" src="app/pages/manage-sub.jsx"></script>
+<script type="text/babel" src="app/pages/profile.jsx"></script>
+<script type="text/babel" src="app/pages/notifications.jsx"></script>
+<script type="text/babel" src="app/pages/help.jsx"></script>
+<script type="text/babel" src="app/app.jsx"></script>
+</body>
+</html>

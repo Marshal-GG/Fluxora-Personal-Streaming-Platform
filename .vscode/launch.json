@@ -63,6 +63,22 @@
             "request": "launch",
             "type": "dart",
             "flutterMode": "release"
+        },
+        // ─── Demo (design prototype) ──────────────────────────────
+        {
+            "name": "Demo (design prototype)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "http.server",
+            "args": ["8765"],
+            "cwd": "${workspaceFolder}/docs/11_design/desktop_prototype",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "serverReadyAction": {
+                "pattern": "Serving HTTP on .* port (\\d+)",
+                "uriFormat": "http://localhost:%s/Fluxora%%20Desktop.html",
+                "action": "openExternally"
+            }
         }
     ],
     "compounds": [

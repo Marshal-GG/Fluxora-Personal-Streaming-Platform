@@ -320,3 +320,60 @@ None — no API, schema, or architecture changes made.
 - [x] Did NOT run any `git commit` / `git push` for unauthorized changes (the commits made this session were explicitly OK'd by the user)
 - [x] Saved a memory record so the `Co-Authored-By` footer never appears in this repo's commit messages again
 ---
+
+## [2026-05-01] — Desktop Redesign: Prototype Bundle + Translation Plan
+**Agent:** Claude (Sonnet 4.6)
+**Phase:** Phase 5 (Advanced Modules) — UI redesign track
+**Status:** Planning complete; implementation not started
+
+### What Was Done
+- **Renamed brand assets** in `docs/11_design/ref images/` from `ChatGPT Image …png` and `ref_1..8.png` to descriptive names (`logo_icon_dark.png`, `logo_wordmark_dark.png`, `brand_banner_horizontal.png`, `brand_banner_vertical.png`, `desktop_dashboard_overview.png`, `desktop_library_management.png`, `desktop_clients_connected_devices.png`, `desktop_groups_management.png`, `desktop_logs_viewer.png`, `desktop_settings_general_network.png`, `desktop_settings_general_system_info.png`, `desktop_subscription_pricing_tiers.png`).
+- **Imported the Claude Design bundle** (`https://api.anthropic.com/v1/design/h/E2MQ76TyE4v1LYfcVXXmow`) into `docs/11_design/desktop_prototype/` — 1 entry HTML + 26 JSX files + 2 brand PNG assets. Loads via Babel-standalone, no build step. Skipped the bundle's `uploads/` folder (duplicates of `docs/11_design/ref images/`).
+- **Added `Demo (design prototype)` launch config** to `.vscode/launch.json` — runs Python `http.server` on port 8765 from the prototype dir and auto-opens the browser via `serverReadyAction`.
+- **Wrote the translation plan** at `docs/11_design/desktop_redesign_plan.md` — covers tokens, primitives, app shell, screen-by-screen order, cross-cutting concerns, "no-UI-errors" enforcement rules, milestones, and a detailed §7 enumerating all backend work the redesign depends on (groups, profile, notifications, system stats stream, restart/stop endpoints, transcoding status, structured logs, extended settings, orders pagination + Polar portal URL, plus required Python deps).
+- Plan locks in five owner decisions: direct replacement (no legacy), real backend data only (no mocks), Cmd+K nav-only, no tweaks panel, native window chrome on every platform.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Renamed × 11 | `docs/11_design/ref images/*` |
+| Created | `docs/11_design/desktop_prototype/Fluxora Desktop.html` |
+| Created | `docs/11_design/desktop_prototype/app/**` (28 files) |
+| Modified | `.vscode/launch.json` (added Demo config) |
+| Modified | `.gitignore` (added `.tmp_design_fetch/`) |
+| Created | `docs/11_design/desktop_redesign_plan.md` |
+| Modified | `docs/00_overview/README.md` (added Quick Link to redesign plan) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Docs Updated
+- `docs/00_overview/README.md` — added "Desktop Redesign Plan" Quick Link.
+- `docs/11_design/desktop_redesign_plan.md` — new doc; the single source of truth for the redesign.
+
+The full doc-update protocol per CLAUDE.md §3 (data models, API contracts, schema, frontend/backend architecture, DESIGN.md, CLAUDE.md) is **deferred to the implementation PRs** — the plan documents which docs each milestone must touch, see plan §10. Updating those docs now would describe state that doesn't exist yet.
+
+### Decisions Made
+- **Plan lives in `docs/11_design/`** rather than `docs/10_planning/` — it is design-driven and references the prototype bundle in the same folder. Quick-link in `docs/00_overview/README.md` makes it discoverable.
+- **No legacy carry-over.** Redesign replaces existing screens directly; no `/v2/*` parallel routes or feature flags. Cuts complexity at the cost of not having an A/B compare during implementation; mitigated by keeping the prototype open in the browser via the new launch config.
+- **Backend ships before UI** for any screen needing data the server doesn't yet expose. `apps/desktop/` Cubits are extended; no `mock_*_repository.dart` files in the Flutter app.
+- **Tweaks panel removed** entirely — accent customization is a design-tool affordance, not a product feature. Brand violet (`#A855F7`) is fixed.
+- **Native window chrome** on all platforms — drops the prototype's custom title bar with traffic-light buttons. Reduces platform-specific code paths.
+- **Did not delete the locked `.tmp_design_fetch/` empty folder** — Windows file watcher held a handle. Added to `.gitignore` so it won't pollute git status; owner can remove manually after closing relevant IDE handles.
+
+### Blockers / Open Issues
+- `.tmp_design_fetch/fluxora/project/` is empty but locked on disk. Cosmetic only — git ignores it.
+- `psutil` not yet a server dep; needed for §7.6 system stats. Adds in M0.
+- GPU-utilization probes (NVIDIA/Intel/AMD) for §7.8 are best-effort; plan acknowledges they may return `null` per vendor/driver.
+
+### Next Agent Should
+1. Review `docs/11_design/desktop_redesign_plan.md` end-to-end and confirm scope before starting M0.
+2. Begin **M0 — Backend prerequisites** (plan §7 + §9). Suggested first PR: `psutil` dep + §7.6 `/api/v1/info/stats` endpoint + WS `stats` event — unblocks the entire shell (sidebar System Status + status bar) and the Dashboard sparklines.
+3. After M0 lands, kick off **M1 — Foundation** (tokens + primitives) in `packages/fluxora_core/` and `apps/desktop/lib/shared/widgets/`. Build widgetbook stories before any screen.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran during this session.
+- [x] No agent branding in any file.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No exceptions swallowed.
+- [x] No secrets / hardcoded paths added.
+- [x] No new dependencies pinned without version-check note (the plan flags `psutil` for backend without pinning a number — the implementing agent must look up the current latest per CLAUDE.md Rule #12).
+---
