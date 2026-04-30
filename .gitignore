@@ -19,6 +19,16 @@ venv/
 !.vscode/launch.json
 build/
 
+# Native build caches (per-machine, non-deterministic)
+.gradle/
+**/android/.gradle/
+**/linux/flutter/ephemeral/
+**/macos/Flutter/ephemeral/
+**/ios/Flutter/ephemeral/
+
+# Local scratch / experimentation — never committed
+scratch/
+
 # OS
 .DS_Store
 Thumbs.db
