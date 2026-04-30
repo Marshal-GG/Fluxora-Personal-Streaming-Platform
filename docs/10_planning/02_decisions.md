@@ -95,6 +95,15 @@
 
 ---
 
+### ADR-012 — `validate_token_or_local` Auth Mode for Files and Library Endpoints
+- **Date:** 2026-05-01
+- **Status:** Accepted
+- **Context:** The desktop control panel runs on the same machine as the server (`localhost:8080`). It needs to browse files and libraries without going through the mobile client pairing flow. However, mobile clients still need bearer token validation when accessing these endpoints remotely.
+- **Decision:** Add a `validate_token_or_local` FastAPI dependency to `routers/deps.py`. If the request originates from a loopback address (`127.0.0.1` or `::1`), auth is skipped and `None` is returned. Otherwise, the standard `validate_token` logic runs.
+- **Consequences:** Desktop control panel gets seamless access. Mobile clients are unaffected (they always send a token). Tests that previously asserted `401` on unauthenticated `/files` and `/library` requests are updated to assert `200` with a note that localhost access is intentionally auth-free.
+
+---
+
 ### ADR-011 — DB-Driven Tier Concurrency Limits
 - **Date:** 2026-04-28
 - **Status:** Accepted

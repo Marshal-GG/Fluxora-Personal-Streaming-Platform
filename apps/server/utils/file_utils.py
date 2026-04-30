@@ -1,1 +1,1 @@
-﻿# MIME detection, path helpers, file size formatting
+# MIME detection, path helpers, file size formatting

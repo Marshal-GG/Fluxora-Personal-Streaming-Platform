@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-04-29 (migrations 004-008; TMDB, resume, license_key, tier alignment, Polar orders)
+> **Status:** Active - Updated 2026-05-01 (migrations 004-010; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings)
 
 ---
 
@@ -78,12 +78,16 @@ CREATE TABLE user_settings (
     subscription_tier        TEXT NOT NULL DEFAULT 'free'
                              CHECK(subscription_tier IN ('free','plus','pro','ultimate')),
     tmdb_api_key             TEXT,
-    license_key              TEXT       -- migration 006: user's paid-plan license key
+    license_key              TEXT,      -- migration 006: user's paid-plan license key
+    transcoding_encoder      TEXT NOT NULL DEFAULT 'libx264',   -- migration 010
+    transcoding_preset       TEXT NOT NULL DEFAULT 'veryfast',  -- migration 010
+    transcoding_crf          INTEGER NOT NULL DEFAULT 23        -- migration 010
 );
 
 -- Polar paid-order idempotency table
 CREATE TABLE polar_orders (
     order_id       TEXT PRIMARY KEY,
+    customer_email TEXT,             -- migration 009: for owner lookup
     tier           TEXT NOT NULL,
     license_key    TEXT NOT NULL,
     processed_at   TEXT NOT NULL
@@ -124,3 +128,5 @@ CREATE TABLE polar_orders (
 | `006_settings_license.sql` | Adds `license_key TEXT` to `user_settings` |
 | `007_align_tier_limits.sql` | Corrects `max_concurrent_streams` to match actual tier limits (`free=1, plus=3, pro=10, ultimate=9999`) on the existing row |
 | `008_polar_orders.sql` | Creates `polar_orders` to make Polar paid-order license issuance idempotent without storing customer email |
+| `009_order_customer_email.sql` | Adds `customer_email` to `polar_orders` table for manual owner lookup. |
+| `010_transcoding_settings.sql` | Adds `transcoding_encoder`, `transcoding_preset`, `transcoding_crf` to `user_settings`; defaults: `libx264`, `veryfast`, `23`. |

@@ -1,1 +1,1 @@
-﻿# TMDB REST API wrapper
+# TMDB REST API wrapper

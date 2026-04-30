@@ -339,7 +339,7 @@ Border radius: cards=12px, buttons=8px, badges=9999px
 | 2 | Full library management, TMDB metadata, playback resume, Desktop Control Panel | ✅ Complete |
 | 3 | WebRTC internet streaming, smart-path LAN bypass, transport badge, ICE degradation | ✅ Complete |
 | 4 | Tier enforcement, license key, upgrade UI, payment provider integration | ✅ Complete (Polar webhook + product config docs + UI alignment done) |
-| 5 | Hardware transcoding, advanced client management | 🔲 Planned |
+| 5 | Hardware transcoding, advanced desktop modules (Library/Activity/Logs/Licenses), player settings sheet | 🔵 In Progress |
 | 6 | AI recommendations, public release | 🔲 Planned |
 
 Full roadmap: `docs/10_planning/01_roadmap.md`
@@ -352,13 +352,14 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 |------|--------|-----------|
 | FFmpeg | Must be installed separately by the user; PyInstaller cannot bundle it | Startup check with friendly error message and download link |
 | mDNS on Android 12+ | Android silently drops multicast packets without `WifiManager.MulticastLock` | Implemented: `MainActivity.kt` exposes `MethodChannel('dev.marshalx.fluxora/multicast')` — `ConnectCubit.startDiscovery()` acquires the lock before scanning, releases on close; manual IP entry remains as fallback |
-| `flutter_webrtc` | v0.10.x uses removed v1 Flutter plugin API (`PluginRegistry.Registrar`) — fails to compile on AGP 8+ | Use v1.x+ when adding in Phase 3; do not add earlier |
+| `flutter_webrtc` | v0.10.x uses removed v1 Flutter plugin API (`PluginRegistry.Registrar`) — fails to compile on AGP 8+ | v1.4.1 integrated and working (Phase 3 ✅); do not downgrade |
 | SQLite concurrency | WAL mode helps but high client counts can still lock | Connection pool limit; queue writes; plan PostgreSQL migration path for Pro |
 | HLS temp files | FFmpeg writes to `/tmp` — can fill up on long sessions | Enforce cleanup on stream close AND on server startup (orphan cleanup) |
 | PyInstaller + FFmpeg | FFmpeg subprocess path must use the bundled binary path, not `PATH` | Resolve FFmpeg path via `sys._MEIPASS` in frozen builds |
 | Token storage (Flutter) | `shared_preferences` is not encrypted | Use `flutter_secure_storage` for the bearer token |
 | Path traversal | File-serving routes could expose files outside the library root | Always canonicalize and prefix-check before serving |
 | Bash / Git Commits | Backticks inside double-quoted commit messages execute as bash commands, causing pathspec errors | Use single quotes (`'`) instead of double quotes to wrap commit messages containing backticks |
+| Dart 3.8 null-aware map syntax | `{'key': ?value}` looks like a Dart syntax error to older analyzers or IDEs | Valid in SDK `>=3.8.0` (desktop `pubspec.yaml` uses `sdk: '>=3.8.0'`); `flutter analyze` confirms no issues |
 | Pytest & CI | `pytest` exits with code 5 if no tests are found, breaking CI pipelines | Always include at least one placeholder test (e.g. `def test_placeholder(): pass`) |
 | Git Pull / Merge | Running `git pull` with diverged branches creates an unwanted `Merge branch 'main' of...` commit in the history | Always use `git pull --rebase` to pull remote changes without creating an automated merge commit |
 
@@ -379,27 +380,32 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 ## Current Status
 
-> **As of April 2026 — Phases 1–4 complete (Monetization + Polar webhook + product docs).**
+> **As of May 2026 — Phases 1–4 complete, Phase 5 in progress (hardware encoding + advanced desktop modules).**
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
-- All documentation written and in sync with code
-- `apps/server` — **Phases 1–4 core complete** (102 passing tests; ruff + black clean):
-  - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured logging
-  - Routers: info, auth, files, library, stream, ws, signal, settings, webhook ✅
-  - Services: auth, library, discovery, ffmpeg, webrtc, settings, tmdb, license, webhook ✅
-  - Migrations 001–008 applied on startup ✅
-  - Tier enforcement: `PATCH /settings` → tier → `max_concurrent_streams` in DB; stream router reads from DB; 429 on excess ✅
-  - License key: `license_service.py` — HMAC-SHA256 signed keys (`FLUXORA-<TIER>-<EXPIRY>-<SIG>`); `_enrich_license()` injects `license_status` + `license_tier` into every settings response; advisory mode when secret absent ✅
-  - Polar webhook: `POST /api/v1/webhook/polar` verifies Standard Webhooks headers before JSON parsing, processes paid orders idempotently, and stores generated keys without logging PII ✅
+- All documentation in sync with code
+- `apps/server` — **Phases 1–5 partially complete** (108 passing tests; ruff + black clean):
+  - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured logging, rotating log file
+  - Routers: info (+ logs), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, webhook ✅
+  - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook ✅
+  - Migrations 001–010 applied on startup ✅
+  - Hardware encoding: `ffmpeg_service.py` reads `transcoding_encoder/preset/crf` from DB; supports libx264, h264_nvenc, h264_qsv, h264_vaapi ✅
+  - Orders: `GET /api/v1/orders` (localhost) exposes Polar order + license key for manual customer delivery ✅
+  - `validate_token_or_local` dependency — files/library endpoints accessible from localhost without bearer token ✅
 - `apps/mobile` — **Phases 1–4 UI complete** (14 passing tests):
   - `features/connect` — mDNS + manual IP + `MulticastLock` ✅
   - `features/auth` — full pairing flow ✅
   - `features/library` — library grid + TMDB poster thumbnails ✅
-  - `features/player` — `media_kit` HLS; `NetworkPathDetector`; WebRTC 8 s timeout → HLS fallback; `_TransportBadge`; resume; `PlayerTierLimit` → `_TierLimitView` → `UpgradeScreen` ✅
-  - `features/upgrade` — `UpgradeScreen` tier comparison cards + activation guide (points to Desktop Control Panel) ✅
-- `apps/desktop` — **Phases 1-4 complete** (23 passing tests):
+  - `features/player` — `media_kit` HLS; `NetworkPathDetector`; WebRTC 8 s timeout → HLS fallback; `_TransportBadge`; resume; `PlayerTierLimit` → `_TierLimitView` → `UpgradeScreen`; `_SettingsSheet` (speed/audio/subtitle) ✅
+  - `features/upgrade` — `UpgradeScreen` tier comparison cards + activation guide ✅
+- `apps/desktop` — **Phases 1–5 in progress** (34 passing tests; Dart SDK `>=3.8.0`):
   - Dashboard screen (server info + client stats) ✅
   - Clients screen (approve/reject/filter) ✅
-  - Settings screen (server URL, server name, tier selector, license key, stream-limit badge) ✅
+  - Library screen (create/scan/upload/filter libraries) ✅
+  - Licenses screen (Polar orders + copyable license keys) ✅
+  - Activity screen (active stream sessions monitor) ✅
+  - Logs screen (live server log viewer) ✅
+  - Settings screen (URL, server name, tier, license key, transcoding encoder/preset/CRF) ✅
+  - Transcoding screen (scaffold only; settings managed via Settings screen) 🔵
 
-**Next:** Phase 5 — Advanced Features (Hardware Encoding, AI Organization, Desktop feature modules like `activity/`, `logs/`, `transcoding/`).
+**Next:** Complete `TranscodingScreen` cubit, add hardware encoding startup validation, E2E encryption planning.

@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-04-29 (settings license fields + Polar webhook)
+> **Status:** Active - Updated 2026-05-01 (new endpoints: orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only)
 
 ---
 
@@ -24,12 +24,19 @@
 
 ## Authentication
 
-All endpoints (except `/info`, `/auth/*`, and signed payment webhooks) require:
+Most endpoints require a bearer token issued after client pairing:
 ```
 Authorization: Bearer {auth_token}
 ```
 
-Token is issued after successful client pairing.
+**Auth modes:**
+
+| Mode | Dependency | Used by |
+|------|-----------|---------|
+| Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints |
+| Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library` — desktop control panel needs no token |
+| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/clients`, `/settings`, `/orders`, `/stream/sessions` |
+| No auth | — | `/info`, `/info/logs`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
 
 ---
 
@@ -48,6 +55,20 @@ Token is issued after successful client pairing.
   "tier": "plus"
 }
 ```
+
+---
+
+### `GET /api/v1/info/logs`
+**Description:** Return the last 1000 lines of the server log file (`~/.fluxora/logs/server.log`).  
+**Auth:** None required.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{ "logs": "<last 1000 log lines as a single string>" }
+```
+
+> Returns `{"logs": ""}` if the log file does not exist yet.
 
 ---
 
@@ -161,7 +182,7 @@ Token is issued after successful client pairing.
 
 ### `GET /api/v1/files`
 **Description:** List indexed media files. Optionally filter by library.  
-**Auth:** Bearer token required.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
 **Query Params:**
@@ -198,7 +219,7 @@ Token is issued after successful client pairing.
 
 ### `GET /api/v1/files/{file_id}`
 **Description:** Get a single indexed media file by ID.  
-**Auth:** Bearer token required.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
 **Response:** Same schema as list item above.  
@@ -206,9 +227,35 @@ Token is issued after successful client pairing.
 
 ---
 
+### `POST /api/v1/files/upload`
+**Description:** Upload a file directly to a library. Multipart form — file saved to the library's first `root_path`. TMDB enrichment runs automatically if a TMDB key is configured.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Request:** `multipart/form-data`
+| Field | Type | Description |
+|-------|------|-------------|
+| `library_id` | string (UUID) | Target library |
+| `file` | binary | The file to upload |
+
+**Response:** `201 Created` — the indexed `MediaFileResponse` for the uploaded file.  
+**Errors:** `400` invalid library or bad file · `404` library not found · `500` write error
+
+---
+
+### `DELETE /api/v1/files/{file_id}`
+**Description:** Remove a media file record from the index (does not delete the file from disk).  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Response:** `204 No Content`  
+**Errors:** `404` file not found
+
+---
+
 ### `GET /api/v1/library`
 **Description:** List all libraries.  
-**Auth:** Bearer token required.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
 **Response:**
@@ -230,7 +277,7 @@ Token is issued after successful client pairing.
 
 ### `POST /api/v1/library`
 **Description:** Create a new library.  
-**Auth:** Bearer token required.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
 **Request:**
@@ -250,7 +297,7 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 
 ### `GET /api/v1/library/{library_id}`
 **Description:** Get a single library by ID.  
-**Auth:** Bearer token required.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
 **Response:** Same schema as list item.  
@@ -260,7 +307,7 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 
 ### `DELETE /api/v1/library/{library_id}`
 **Description:** Delete a library (does not delete files from disk).  
-**Auth:** Bearer token required.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
 **Response:** `204 No Content`  
@@ -269,8 +316,8 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 ---
 
 ### `POST /api/v1/library/{library_id}/scan`
-**Description:** Walk the library's `root_paths`, index all discovered media files by extension, and update `last_scanned`.  
-**Auth:** Bearer token required.  
+**Description:** Walk the library's `root_paths`, index all discovered media files by extension, enrich metadata via TMDB, and update `last_scanned`.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
 **Response:**
@@ -279,6 +326,29 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 ```
 
 **Errors:** `404` library not found · `500` scan failed (I/O error)
+
+---
+
+### `GET /api/v1/stream/sessions`
+**Description:** List all currently active stream sessions (no `ended_at`). Admin view for the Desktop Control Panel.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+[
+  {
+    "id": "uuid",
+    "file_id": "uuid",
+    "client_id": "uuid",
+    "started_at": "2026-05-01T10:00:00+00:00",
+    "ended_at": null,
+    "connection_type": "lan",
+    "bytes_transferred": 0,
+    "progress_sec": 120.5
+  }
+]
+```
 
 ---
 
@@ -321,9 +391,24 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 
 ---
 
+### `PATCH /api/v1/stream/{session_id}/progress`
+**Description:** Record the client's current playback position. Persists to both `stream_sessions.progress_sec` and `media_files.last_progress_sec` for resume support.  
+**Auth:** Bearer token required (must own the session).  
+**Status:** ✅ Implemented
+
+**Request:**
+```json
+{ "progress_sec": 342.5 }
+```
+
+**Response:** `204 No Content`  
+**Errors:** `403` not your session · `404` session not found
+
+---
+
 ### `DELETE /api/v1/stream/{session_id}`
 **Description:** Stop a stream session, kill the FFmpeg process, and delete HLS segments.  
-**Auth:** Bearer token required (must own the session).  
+**Auth:** Bearer token required (must own the session); localhost callers can stop any session.  
 **Status:** ✅ Implemented
 
 **Response:** `204 No Content`  
@@ -431,7 +516,10 @@ Client connects → sends auth message → server replies auth_ok
   "transcoding_enabled": true,
   "license_key": null,
   "license_status": "missing",
-  "license_tier": "free"
+  "license_tier": "free",
+  "transcoding_encoder": "libx264",
+  "transcoding_preset": "veryfast",
+  "transcoding_crf": 23
 }
 ```
 
@@ -447,10 +535,22 @@ Client connects → sends auth message → server replies auth_ok
 {
   "server_name": "My Fluxora Server",
   "tier": "plus",
-  "license_key": "FLUXORA-PLUS-20270429-A1B2C3D4",
-  "transcoding_enabled": true
+  "license_key": "FLUXORA-PLUS-20270429-CAFE-A1B2C3D4",
+  "transcoding_enabled": true,
+  "transcoding_encoder": "h264_nvenc",
+  "transcoding_preset": "fast",
+  "transcoding_crf": 20
 }
 ```
+
+**Field constraints (Pydantic-enforced — invalid values return 422):**
+
+| Field | Allowed values |
+|-------|----------------|
+| `license_key` | `FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>` — exactly 5 dash-separated segments |
+| `transcoding_encoder` | `libx264` · `h264_nvenc` · `h264_qsv` · `h264_vaapi` |
+| `transcoding_preset` | `ultrafast` · `superfast` · `veryfast` · `faster` · `fast` · `medium` · `slow` · `slower` · `veryslow` |
+| `transcoding_crf` | Integer in `[0, 51]` (0 = lossless, 23 = default, 51 = worst quality) |
 
 **Tier values and stream limits:**
 
@@ -463,6 +563,31 @@ Client connects → sends auth message → server replies auth_ok
 
 **Response:** Same schema as `GET /api/v1/settings`.  
 **Errors:** `422` invalid tier or blank server_name · `403` not from localhost
+
+---
+
+### `GET /api/v1/orders`
+**Description:** List all processed Polar orders with their generated license keys. Intended for the Desktop Control Panel owner screen to forward keys to customers manually.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "orders": [
+    {
+      "order_id": "polar-order-uuid",
+      "customer_email": "user@example.com",
+      "tier": "plus",
+      "license_key": "FLUXORA-PLUS-20270429-ABCD1234-<sig>",
+      "processed_at": "2026-05-01T10:00:00Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+**Errors:** `403` not from localhost
 
 ---
 

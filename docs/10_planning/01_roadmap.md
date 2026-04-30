@@ -1,7 +1,7 @@
 # Project Roadmap & Milestones
 
 > **Category:** Planning  
-> **Status:** Active - Updated 2026-04-29 (Phase 4 complete, M5 Monetization Live)
+> **Status:** Active - Updated 2026-05-01 (Phase 5 started; hardware encoding, desktop monitoring screens, orders view implemented)
 
 ---
 
@@ -70,7 +70,7 @@
 | Feature | Priority | Status | Notes |
 |---------|----------|--------|-------|
 | Subscription tier enforcement | Must | ✅ Done | `user_settings.subscription_tier` + `GET/PATCH /api/v1/settings`; `require_local_caller`; 9 tests ✅ |
-| License key validation | Must | ✅ Done | `license_service.py` — HMAC-SHA256 signed keys (`FLUXORA-<TIER>-<EXPIRY>-<SIG>`); `_enrich_license()` in `settings_service`; format validator on `UpdateSettingsBody`; `license_status` + `license_tier` in API response; 20 tests ✅ |
+| License key validation | Must | ✅ Done | `license_service.py` — HMAC-SHA256 signed keys (`FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>`); `_enrich_license()` in `settings_service`; format validator on `UpdateSettingsBody`; `license_status` + `license_tier` in API response; 22 tests ✅ |
 | Payment provider integration | Should | ✅ Done | Polar webhook endpoint implemented for `order.paid` + signed key issuance; Polar dashboard setup complete |
 | Upgrade prompt UI | Must | ✅ Done | Mobile: `PlayerTierLimit` state + `_TierLimitView` → `UpgradeScreen` (tier cards + activation guide); Desktop: tier selector + stream limit badge in Settings |
 | Free/Plus/Pro/Ultimate tier limits | Must | ✅ Done | Tier change auto-updates `max_concurrent_streams`; stream router reads from DB (not config); migration 007 aligns existing rows |
@@ -88,14 +88,20 @@
 ### Phase 5 — Advanced Features
 > **Goal:** Power user features for Pro/Ultimate tier
 
-| Feature | Priority | Notes |
-|---------|----------|-------|
-| Hardware encoding (NVENC/VAAPI) | Nice-to-have | GPU transcoding for Pro |
-| AI file organization | Nice-to-have | Auto-tag, rename, categorize |
-| End-to-end encryption | Should | E2E for internet streams |
-| Multi-user / family sharing | Nice-to-have | Shared library access |
-| TV/casting support (Chromecast) | Nice-to-have | Future platform |
-| iOS/Android background streaming | Should | Foreground service |
+| Feature | Priority | Status | Notes |
+|---------|----------|--------|-------|
+| Hardware encoding (NVENC/VAAPI) | Nice-to-have | 🔵 In Progress | `ffmpeg_service.py` reads `transcoding_encoder/preset/crf` from DB; supports libx264, h264_nvenc, h264_qsv, h264_vaapi |
+| Desktop Library Management | Must | ✅ Done | `LibraryScreen` — create/scan/upload/filter; `POST /files/upload` endpoint |
+| Desktop Licenses view | Must | ✅ Done | `LicensesScreen` — lists all Polar orders + license keys from `GET /api/v1/orders` |
+| Desktop Activity monitor | Should | ✅ Done | `ActivityScreen` — real-time active stream sessions from `GET /api/v1/stream/sessions` |
+| Desktop Server Logs | Should | ✅ Done | `LogsScreen` — live log viewer from `GET /api/v1/info/logs` |
+| Desktop Transcoding Settings | Should | 🔵 Partial | `TranscodingScreen` scaffold; encoder/preset/CRF configurable via `SettingsScreen` |
+| Progress via REST | Should | ✅ Done | `PATCH /api/v1/stream/{id}/progress` — REST alternative to WebSocket progress updates |
+| AI file organization | Nice-to-have | 🔲 Planned | Auto-tag, rename, categorize |
+| End-to-end encryption | Should | 🔲 Planned | E2E for internet streams |
+| Multi-user / family sharing | Nice-to-have | 🔲 Planned | Shared library access |
+| TV/casting support (Chromecast) | Nice-to-have | 🔲 Planned | Future platform |
+| iOS/Android background streaming | Should | 🔲 Planned | Foreground service |
 
 ---
 
@@ -110,7 +116,8 @@
 | M3.5 — Desktop Control Panel Parity (incl. Settings) | 2 | ✅ Done |
 | M4 — Internet Streaming | 3 | ✅ Done |
 | M5 — Monetization Live | 4 | ✅ Done |
-| M6 — Advanced Features | 5 | ⬜ Future |
+| M5.5 — Advanced Desktop + Hardware Encoding | 5 | 🔵 In Progress |
+| M6 — AI Recommendations & Public Release | 5-6 | ⬜ Future |
 
 ---
 

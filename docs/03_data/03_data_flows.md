@@ -116,7 +116,7 @@
           |
           |---> Read product.metadata.tier
           |---> Check polar_orders for existing order_id
-          |---> Generate FLUXORA-<TIER>-<EXPIRY>-<SIG> key
+          |---> Generate FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG> key (nonce = order_id)
           |---> INSERT polar_orders(order_id, tier, license_key, processed_at)
           |---> Return 200 with issued=true, without echoing the key
 ```

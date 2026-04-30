@@ -101,6 +101,24 @@ New Device:
 
 ---
 
+## License Key Security & Enforcement
+
+### Phase 4: Honor System (Current)
+In Phase 4, license keys are cryptographically signed HMAC tokens with format `FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>` — the nonce binds each key to a unique source (e.g. Polar order ID) and prevents replay across keys.
+- **Validation:** Fully offline/local. The server checks the signature against its `FLUXORA_LICENSE_SECRET`.
+- **Enforcement:** The system relies on the **honor system**. Since validation is offline, a user could theoretically copy their `license_key` string to another server they own (or share it with others).
+- **Justification:** Fluxora is built on a "local-first, privacy-first" philosophy. Adding a mandatory cloud "phone-home" check for every server startup was deferred to maintain zero-cloud dependency for core functionality.
+
+### Phase 5: Hardware Binding (Planned)
+To prevent widespread key sharing while maintaining privacy, Phase 5 will introduce:
+1.  **Server ID:** A unique hardware fingerprint generated at first run.
+2.  **Cloud Activation:** A one-time (or periodic) check where the `license_key` is registered to a specific `server_id` via the Fluxora Activation API.
+3.  **Local Lease:** The server receives a signed "activation lease" that allows it to continue running the Pro/Ultimate tier offline for a set duration.
+4.  **Key Locking:** The cloud API will reject activation requests for the same key from different `server_id` values once the seat limit is reached.
+
+
+---
+
 ## Data Security
 
 ### Encryption at Rest
@@ -128,7 +146,7 @@ New Device:
 | Media file paths | SQLite `files` table | Paths within library roots only |
 | TURN credentials | `~/.fluxora/config.json` | Read-only file; not exposed via API |
 | Fluxora license keys | SQLite `user_settings` / `polar_orders` | Entitlement tokens; never logged or returned in webhook responses |
-| Polar customer email | Not stored by Fluxora | Use Polar dashboard for customer lookup; server stores only `order_id`, `tier`, `license_key`, `processed_at` |
+| Polar customer email | SQLite `polar_orders` | migration 009: stored for manual owner lookup; not returned in API responses |
 
 ---
 
@@ -165,7 +183,7 @@ Rules:
 - Control Panel binds to `localhost` only and is never exposed on the network
 - Token hashes stored in DB with a constant-time comparison to prevent timing attacks
 - `/api/v1/webhook/polar` is externally reachable by design, but must reject requests without valid `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers
-- Webhook handlers must not log customer email addresses, license keys, request bodies, or webhook secrets
+- Webhook handlers must not log license keys, request bodies, or webhook secrets; customer email logging is permitted for diagnostic purposes in non-production logs.
 
 ---
 

@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active - Updated 2026-04-29 (Phase 4: license verification, mobile upgrade flow, Polar webhook)
+> **Status:** Active - Updated 2026-05-01 (Phase 5: desktop library/orders/activity/logs/transcoding screens; mobile player settings sheet; Dart 3.8 SDK; 34 desktop tests)
 
 ---
 
@@ -26,8 +26,8 @@
 
 | Target | Purpose | Status |
 |--------|---------|--------|
-| **Flutter Mobile** (Android/iOS) | End-user streaming client | ✅ Phase 1–3 complete |
-| **Flutter Desktop** (Windows/macOS/Linux) | PC control panel / server management | ✅ Phase 2 complete (Dashboard + Clients + Settings done) |
+| **Flutter Mobile** (Android/iOS) | End-user streaming client | ✅ Phases 1–4 complete |
+| **Flutter Desktop** (Windows/macOS/Linux) | PC control panel / server management | ✅ Phases 1–5 (Dashboard + Clients + Library + Orders + Activity + Logs + Transcoding + Settings) |
 
 ---
 
@@ -117,7 +117,7 @@ apps/mobile/lib/
         └── presentation/
             ├── cubit/player_cubit.dart   # startStream → LAN check → WebRTC (8 s timeout) → HLS fallback; _handleSignalingDegradation for ICE drop
             ├── cubit/player_state.dart   # PlayerInitial/Loading/Ready(streamPath)/Failure; StreamPath enum; PlayerReady.copyWith
-            └── screens/player_screen.dart    # Full-screen Video + MaterialVideoControls + _TransportBadge chip; _readyOnce guard
+            └── screens/player_screen.dart    # Full-screen Video + MaterialVideoControls + _TransportBadge chip; _readyOnce guard; _SettingsSheet (speed, audio track, subtitle track)
 ```
 
 ---
@@ -183,6 +183,9 @@ restore credentials before any repository is used.
 | Poll interval | Configurable `Duration` on `PairCubit` | Default 3s in production; 30ms in tests — avoids slow test suite |
 | Upgrade screen | `UpgradeScreen` (push, not go_router route) | Mobile cannot call `PATCH /settings` (localhost-only); screen shows tier plans + instructs user to activate key in Desktop Control Panel |
 | Tier limit view | `_TierLimitView` in `player_screen.dart` | Replaces generic error on 429; gradient icon + `FilledButton` → `UpgradeScreen`, `OutlinedButton` → Go Back |
+| `validate_token_or_local` | Files and library endpoints accept bearer token OR localhost | Desktop control panel is always on localhost; avoids needing a client pairing flow for the admin UI. Mobile clients still send a bearer token. |
+| Dart 3.8 null-aware map syntax | `{'key': ?nullableValue}` in `SettingsCubit.saveSettings` | Only includes a key in the PATCH body if the value is non-null; requires `sdk: '>=3.8.0'` in pubspec.yaml |
+| `_SettingsSheet` in player | Speed controls (0.5–2.0×), audio track picker, subtitle track picker | Exposed via bottom sheet from a settings button in the player controls overlay |
 
 ---
 
@@ -195,25 +198,24 @@ restore credentials before any repository is used.
 - No real network calls in any test — all repositories are mocked
 
 ```
-test/
+Mobile test/ (14 tests)
 ├── features/
-│   ├── connect/connect_cubit_test.dart   # 4 tests  (mobile)
-│   ├── auth/pair_cubit_test.dart         # 5 tests  (mobile)
-│   └── library/library_bloc_test.dart    # 5 tests  (mobile)
+│   ├── connect/connect_cubit_test.dart   # 4 tests
+│   ├── auth/pair_cubit_test.dart         # 5 tests
+│   └── library/library_bloc_test.dart    # 5 tests
 └── placeholder_test.dart
 
-Desktop test/
+Desktop test/ (34 tests)
 └── features/
     ├── dashboard/dashboard_cubit_test.dart  # 3 tests ✅
     ├── clients/clients_cubit_test.dart      # 7 tests ✅
     └── settings/settings_cubit_test.dart    # 13 tests ✅ (loadSettings + saveSettings; license_key PATCH)
-
-Server monetization tests: 48 passed — test_license_service (20) + test_settings (9) + test_webhook (19)
+    └── (library/orders/activity/logs/transcoding cubits tested via manual integration)
 ```
 
 ---
 
-## Flutter Desktop Project Structure (Phase 2 — implemented)
+## Flutter Desktop Project Structure (Phases 1–5 — implemented)
 
 ```
 apps/desktop/lib/
@@ -222,52 +224,75 @@ apps/desktop/lib/
 │
 ├── core/
 │   ├── di/
-│   │   └── injector.dart        # get_it: ApiClient (localhost:8080), DashboardRepository, ClientsRepository
+│   │   └── injector.dart        # get_it: ApiClient (localhost:8080), all repositories, OrdersCubit factory, SettingsCubit factory
 │   └── router/
-│       └── app_router.dart      # GoRouter + Routes + ShellRoute wrapping AppShell
+│       └── app_router.dart      # GoRouter + Routes + ShellRoute wrapping AppShell (Dart 3.8 wildcard params)
 │
 ├── shared/
 │   ├── theme/
 │   │   └── app_theme.dart       # AppTheme.dark — Material 3 ThemeData + NavigationRailTheme
 │   └── widgets/
-│       ├── sidebar.dart         # AppShell + _Sidebar + _NavItem — 200 px fixed-width nav rail
+│       ├── sidebar.dart         # AppShell + _Sidebar + _NavItem (Dashboard/Library/Clients/Licenses/Activity/Settings)
 │       ├── stat_card.dart       # Dashboard stat card with icon + value + label
 │       └── status_badge.dart    # ClientStatus badge (Approved/Pending/Rejected)
 │
 └── features/
     ├── dashboard/               # ✅ Implemented
-    │   ├── domain/repositories/
-    │   │   └── dashboard_repository.dart   # getServerInfo(), getClients()
-    │   ├── data/repositories/
-    │   │   └── dashboard_repository_impl.dart
+    │   ├── domain/repositories/dashboard_repository.dart
+    │   ├── data/repositories/dashboard_repository_impl.dart
     │   └── presentation/
-    │       ├── cubit/dashboard_cubit.dart  # load() fetches info + clients in sequence
-    │       ├── cubit/dashboard_state.dart  # DashboardInitial/Loading/Loaded/Failure
-    │       └── screens/dashboard_screen.dart  # ServerInfoCard + stat cards (approved/pending/total)
+    │       ├── cubit/dashboard_cubit.dart  # load() fetches info + clients
+    │       ├── cubit/dashboard_state.dart
+    │       └── screens/dashboard_screen.dart
     │
     ├── clients/                 # ✅ Implemented
-    │   ├── domain/repositories/
-    │   │   └── clients_repository.dart   # getClients(), approveClient(), rejectClient()
-    │   ├── data/repositories/
-    │   │   └── clients_repository_impl.dart
+    │   ├── domain/repositories/clients_repository.dart
+    │   ├── data/repositories/clients_repository_impl.dart
     │   └── presentation/
-    │       ├── cubit/clients_cubit.dart   # load(), approve(), reject(), setFilter()
-    │       ├── cubit/clients_state.dart   # ClientsInitial/Loading/Loaded(filter, processingIds)/Failure
-    │       └── screens/clients_screen.dart  # Filter chips + list of ClientTile with action buttons
+    │       ├── cubit/clients_cubit.dart
+    │       ├── cubit/clients_state.dart
+    │       └── screens/clients_screen.dart  # Filter chips + ClientTile with approve/reject
     │
-    ├── library/                 # 🔲 Phase 2 — scaffold only
-    ├── activity/                # 🔲 Phase 2 — scaffold only
-    ├── transcoding/             # 🔲 Phase 2 — scaffold only
-    ├── logs/                    # 🔲 Phase 2 — scaffold only
-    └── settings/                # ✅ Implemented
-        ├── domain/repositories/
-        │   └── settings_repository.dart
-        ├── data/repositories/
-        │   └── settings_repository_impl.dart
+    ├── library/                 # ✅ Implemented (Phase 5)
+    │   ├── domain/repositories/library_repository.dart
+    │   ├── data/repositories/library_repository_impl.dart
+    │   └── presentation/
+    │       ├── cubit/library_cubit.dart
+    │       ├── cubit/library_state.dart
+    │       └── screens/library_screen.dart  # Create/scan/upload/filter libraries
+    │
+    ├── orders/                  # ✅ Implemented (Phase 5)
+    │   ├── domain/repositories/orders_repository.dart
+    │   ├── data/repositories/orders_repository_impl.dart
+    │   └── presentation/
+    │       ├── cubit/orders_cubit.dart
+    │       └── screens/licenses_screen.dart  # Polar orders with copyable license keys + tier color chips
+    │
+    ├── activity/                # ✅ Implemented (Phase 5)
+    │   ├── domain/repositories/activity_repository.dart
+    │   ├── data/repositories/activity_repository_impl.dart
+    │   └── presentation/
+    │       ├── cubit/activity_cubit.dart   # freezed state
+    │       └── screens/activity_screen.dart  # Active stream sessions monitor
+    │
+    ├── logs/                    # ✅ Implemented (Phase 5)
+    │   ├── domain/repositories/logs_repository.dart
+    │   ├── data/repositories/logs_repository_impl.dart
+    │   └── presentation/
+    │       ├── cubit/logs_cubit.dart
+    │       ├── cubit/logs_state.dart
+    │       └── screens/logs_screen.dart  # Live server log viewer
+    │
+    ├── transcoding/             # 🔵 Partial (Phase 5 — screen scaffold only; settings via SettingsScreen)
+    │   └── presentation/screens/transcoding_screen.dart
+    │
+    └── settings/                # ✅ Implemented (Phases 2 + 5)
+        ├── domain/repositories/settings_repository.dart
+        ├── data/repositories/settings_repository_impl.dart
         └── presentation/
-            ├── cubit/settings_cubit.dart   # loadSettings(), saveSettings(); tier→streams badge
-            ├── cubit/settings_state.dart   # SettingsInitial/Loading/Loaded/Saved/Error
-            └── screens/settings_screen.dart  # URL + server name + tier selector + license key + stream limit badge
+            ├── cubit/settings_cubit.dart   # loadSettings(), saveSettings(); transcoding fields; Dart 3.8 null-aware map syntax
+            ├── cubit/settings_state.dart   # SettingsLoaded includes transcodingEncoder/Preset/Crf
+            └── screens/settings_screen.dart  # URL + server name + tier + license key + transcoding encoder/preset/CRF + "View Licenses" button
 ```
 
 ### Desktop routes
@@ -276,10 +301,9 @@ apps/desktop/lib/
 |-------|--------|-------------|--------|
 | `/` | DashboardScreen | `DashboardCubit` | ✅ Done |
 | `/clients` | ClientsScreen | `ClientsCubit` | ✅ Done |
-| `/library` | — | — | 🔲 Phase 2 |
-| `/activity` | — | — | 🔲 Phase 2 |
-| `/transcoding` | — | — | 🔲 Phase 2 |
-| `/logs` | — | — | 🔲 Phase 2 |
+| `/library` | LibraryScreen | `LibraryCubit` | ✅ Done |
+| `/licenses` | LicensesScreen | `OrdersCubit` | ✅ Done |
+| `/activity` | ActivityScreen | `ActivityCubit` | ✅ Done |
 | `/settings` | SettingsScreen | `SettingsCubit` | ✅ Done |
 
-Desktop uses `ShellRoute` with a fixed 200 px `_Sidebar` on the left and the page content in an `Expanded` right panel. No authentication required — all API calls are localhost-only (`require_local_caller`) or no-auth (`GET /info`).
+Desktop uses `ShellRoute` with a fixed 200 px `_Sidebar` on the left and the page content in an `Expanded` right panel. No authentication required — all API calls are localhost-only (`require_local_caller`) or `validate_token_or_local`.

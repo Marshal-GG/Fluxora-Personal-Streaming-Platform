@@ -1,7 +1,7 @@
 # Fluxora
 
 > **"Plex meets Syncthing"** — A hybrid file streaming and syncing system  
-> **Status:** Phases 1-3 complete; Phase 4 (Monetization) in progress | Last Updated: 2026-04-29
+> **Status:** Phases 1-4 complete; Phase 5 (Advanced Features) in progress | Last Updated: 2026-05-01
 
 ---
 
@@ -24,19 +24,20 @@ Fluxora is a self-hosted, cross-platform media streaming system where your **PC 
 
 ## Current Status
 
-**M2 — LAN Streaming MVP is complete.** You can run the server, discover it on your phone, pair, browse your media library, and stream a file — all on LAN with no internet required.
+**Phases 1–4 complete. Phase 5 (Advanced Features) in progress.**
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| FastAPI server | ✅ Done | All routers incl. settings/webhook, mDNS, FFmpeg HLS, WebSocket, WebRTC signaling; 102 tests |
-| `fluxora_core` package | ✅ Done | Entities, ApiClient, SecureStorage, design tokens |
+| FastAPI server | ✅ Done | 108 tests; all routers + services; migrations 001–010; hardware encoding; orders/logs endpoints |
+| `fluxora_core` package | ✅ Done | Entities (PolarOrder, MediaFile w/ resume), ApiClient, SecureStorage, design tokens |
 | Flutter mobile — connect | ✅ Done | mDNS auto-discovery + manual IP; Android MulticastLock |
 | Flutter mobile — auth | ✅ Done | Full pairing flow; token in SecureStorage |
 | Flutter mobile — library | ✅ Done | Library grid + file browser + TMDB poster thumbnails |
-| Flutter mobile — player | ✅ Done | `media_kit` HLS player; WebRTC smart-path; transport badge; resume; tier limit UI |
-| Flutter desktop | ✅ Done | Dashboard + Clients + Settings screens; 23 tests |
+| Flutter mobile — player | ✅ Done | `media_kit` HLS; WebRTC smart-path; transport badge; resume; tier limit UI; settings sheet (speed/audio/subtitle) |
+| Flutter desktop | ✅ Done | Dashboard + Clients + Library + Licenses + Activity + Logs + Settings; 34 tests |
 | Internet streaming | ✅ Done | WebRTC P2P + HLS fallback; LAN bypass; ICE degradation monitoring |
-| Monetization (tier enforcement) | 🔵 In Progress | Tiers + concurrency limits live; license validation + Polar webhook implemented; customer delivery/retrieval flow pending |
+| Monetization | ✅ Done | Tier enforcement; license keys; Polar webhook; desktop license management screen |
+| Hardware encoding | 🔵 In Progress | DB-driven encoder/preset/CRF; UI in Settings; NVENC/QSV/VAAPI supported |
 
 ---
 
@@ -87,8 +88,8 @@ Fluxora/
 | 1 | FastAPI server, mDNS, HLS streaming, Flutter mobile client, HLS player | ✅ Complete |
 | 2 | Desktop control panel, TMDB metadata, playback resume | ✅ Complete |
 | 3 | WebRTC internet streaming, smart-path LAN bypass, transport badge | ✅ Complete |
-| 4 | Tier enforcement, license key, upgrade UI, Polar payment webhook | 🔵 In Progress |
-| 5 | Hardware transcoding, advanced client management | 🔲 Planned |
+| 4 | Tier enforcement, license key, upgrade UI, Polar payment webhook | ✅ Complete |
+| 5 | Hardware transcoding, advanced desktop modules, player enhancements | 🔵 In Progress |
 | 6 | AI recommendations, public release | 🔲 Planned |
 
 ---

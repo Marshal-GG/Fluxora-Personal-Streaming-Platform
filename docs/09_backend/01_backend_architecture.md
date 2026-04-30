@@ -1,7 +1,7 @@
 # Backend Architecture
 
 > **Category:** Backend  
-> **Status:** Active - Updated 2026-04-29 (Phase 4: license verification + Polar webhook implemented)
+> **Status:** Active - Updated 2026-05-01 (Phase 5: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint; legacy 4-part license keys removed; 108 tests)
 
 ---
 
@@ -38,18 +38,21 @@ server/
 │       ├── 005_resume_progress.sql # last_progress_sec on media_files
 │       ├── 006_settings_license.sql # license_key on user_settings
 │       ├── 007_align_tier_limits.sql # corrects max_concurrent_streams per tier
-│       └── 008_polar_orders.sql # paid Polar order idempotency + generated keys
+│       ├── 008_polar_orders.sql # paid Polar order idempotency + generated keys
+│       ├── 009_order_customer_email.sql # adds customer_email to polar_orders
+│       └── 010_transcoding_settings.sql # adds transcoding_encoder/preset/crf to user_settings
 │
 ├── routers/
-│   ├── info.py             # GET /api/v1/info ✅
+│   ├── info.py             # GET /api/v1/info, GET /api/v1/info/logs ✅
 │   ├── auth.py             # /auth/* ✅ (request-pair, status, approve, reject, revoke)
-│   ├── deps.py             # validate_token + require_local_caller FastAPI dependencies ✅
-│   ├── files.py            # GET /api/v1/files, GET /api/v1/files/{id} ✅
-│   ├── library.py          # GET/POST /api/v1/library, GET/DELETE /{id}, POST /{id}/scan ✅
-│   ├── stream.py           # POST /start/{id}, GET/{id}, DELETE/{id} + hls_router ✅
+│   ├── deps.py             # validate_token, validate_token_or_local, require_local_caller FastAPI dependencies ✅
+│   ├── files.py            # GET/POST(upload)/DELETE /api/v1/files; validate_token_or_local ✅
+│   ├── library.py          # GET/POST /api/v1/library, GET/DELETE /{id}, POST /{id}/scan; validate_token_or_local ✅
+│   ├── stream.py           # GET /sessions, POST /start/{id}, PATCH /{id}/progress, GET/{id}, DELETE/{id} + hls_router ✅
 │   ├── ws.py               # WS /status: token auth + ping/pong + progress ✅
 │   ├── signal.py           # WS /signal: SDP offer/answer + ICE relay ✅
 │   ├── settings.py         # GET/PATCH /api/v1/settings; require_local_caller ✅
+│   ├── orders.py           # GET /api/v1/orders; require_local_caller; owner license key retrieval ✅
 │   └── webhook.py          # POST /api/v1/webhook/polar; Standard Webhooks signature ✅
 │
 │   ├── services/
@@ -59,7 +62,7 @@ server/
 │   │   ├── auth_service.py     # HMAC-SHA256 tokens, pairing state machine ✅
 │   │   ├── webrtc_service.py   # aiortc RTCPeerConnection registry; SDP/ICE handling; graceful teardown ✅
 │   │   ├── settings_service.py # GET/PATCH user_settings; tier→max_streams mapping; _enrich_license() ✅
-│   │   ├── license_service.py  # HMAC-SHA256 key gen/validation; FLUXORA-<TIER>-<EXPIRY>-<SIG> format; CLI generator ✅
+│   │   ├── license_service.py  # HMAC-SHA256 key gen/validation; FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG> format; CLI generator ✅
 │   │   ├── webhook_service.py  # Polar signature validation + paid-order license issuance ✅
 │   │   └── tmdb_service.py     # TMDB REST API search; enriches media_files after scan ✅
 │
@@ -68,20 +71,24 @@ server/
 │   │   ├── library.py          # LibraryResponse, CreateLibraryBody ✅
 │   │   ├── client.py           # Client Pydantic schemas ✅
 │   │   ├── stream_session.py   # StreamStartResponse, StreamSessionResponse ✅
-│   │   └── settings.py         # UserSettingsResponse (incl. license_status, license_tier), UpdateSettingsBody ✅
+│   │   ├── settings.py         # UserSettingsResponse (incl. license_status, license_tier, transcoding fields), UpdateSettingsBody ✅
+│   │   └── order.py            # PolarOrderItem, PolarOrderListResponse ✅
 │
 │   └── tests/
 │       ├── conftest.py          # test_db + client fixtures; reset_rate_limits autouse
 │       ├── test_auth.py         # 13 tests — info + pairing flow + localhost restriction + client listing ✅
 │       ├── test_library.py      # 8 tests — library CRUD ✅
-│       ├── test_files.py        # 6 tests — file listing + filtering ✅
+│       ├── test_files.py        # 6 tests — file listing + filtering (validate_token_or_local) ✅
 │       ├── test_stream.py       # 10 tests — stream start/stop/HLS (mocked FFmpeg) ✅
 │       ├── test_ws.py           # 4 tests — WebSocket auth + pong ✅
 │       ├── test_signal.py       # 8 tests — WS signaling auth + SDP/ICE protocol ✅
 │       ├── test_settings.py     # 9 tests — GET/PATCH settings + tier concurrency + 429 enforcement + license_status ✅
-│       ├── test_license_service.py # 20 tests — key validation (happy/expired/bad-sig/advisory/malformed) + generation ✅
+│       ├── test_license_service.py # 22 tests — key validation (happy/expired/bad-sig/advisory/malformed/4-part-rejected) + generation ✅
+│       ├── test_orders.py       # 4 tests — GET /orders localhost restriction + response schema ✅
 │       ├── test_tmdb_service.py # 5 tests — TMDB search (movie/TV/person/network-error/missing-poster) ✅
 │       └── test_webhook.py      # 19 tests — Polar signature, paid orders, router responses ✅
+
+Total: 108 tests passing ✅ (as of 2026-05-01)
 ```
 
 ---
@@ -90,13 +97,14 @@ server/
 
 | Service | Responsibility | Key Functions |
 |---------|---------------|---------------|
-| `ffmpeg_service` ✅ | Spawn FFmpeg, manage HLS output, cleanup segments | `start_stream()`, `stop_stream()`, `cleanup_session_dir()`, `is_running()` |
+| `ffmpeg_service` ✅ | Spawn FFmpeg, manage HLS output, cleanup segments; reads transcoding encoder/preset/CRF from DB; supports software (libx264) and hardware (NVENC/QSV/VAAPI) | `start_stream()`, `stop_stream()`, `cleanup_session_dir()`, `is_running()` |
 | `library_service` ✅ | Library + media file CRUD; TMDB enrichment (Phase 2) | `list_libraries()`, `get_library()`, `create_library()`, `delete_library()`, `list_files()`, `get_file()` |
 | `discovery_service` ✅ | Broadcast `_fluxora._tcp.local.` via mDNS on LAN — uses `AsyncZeroconf` to avoid blocking FastAPI's event loop | `start_discovery()` (async), `stop_discovery()` (async) |
 | `auth_service` ✅ | Token generation (HMAC-SHA256), pairing state machine, token validation | `create_pair_request()`, `approve_client()`, `reject_client()`, `revoke_client()`, `get_trusted_client_by_token()` |
 | `webrtc_service` ✅ | Manage `RTCPeerConnection` registry, ICE/STUN/TURN, graceful teardown | `create_peer_connection()`, `handle_offer()`, `close_connection()` |
-| `license_service` ✅ | HMAC-SHA256 signed key gen/validation; format `FLUXORA-<TIER>-<EXPIRY>-<SIG>`; advisory mode when secret absent | `validate_key()`, `generate_key()`, `LicenseResult` |
+| `license_service` ✅ | HMAC-SHA256 signed key gen/validation; format `FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>`; advisory mode when secret absent | `validate_key()`, `generate_key()`, `LicenseResult` |
 | `webhook_service` ✅ | Verify Polar Standard Webhooks signatures; issue idempotent license keys for paid orders without logging PII | `verify_polar_signature()`, `handle_order_paid()`, `handle_order_created()` |
+| `orders router` ✅ | Owner-only view of all processed Polar orders + generated license keys for manual customer delivery | `GET /api/v1/orders` (localhost) |
 
 ---
 

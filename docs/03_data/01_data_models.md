@@ -1,7 +1,7 @@
 # Data Models
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-04-29 (TMDB fields, resume progress, license keys, Polar orders)
+> **Status:** Active - Updated 2026-05-01 (TMDB fields, resume progress, license keys, Polar orders + customer_email, transcoding settings)
 
 ---
 
@@ -85,7 +85,10 @@
 | max_concurrent_streams | INTEGER | ✅ | Stream limit (auto-set by tier change) |
 | subscription_tier | TEXT | ✅ | Enum: `free`, `plus`, `pro`, `ultimate` |
 | tmdb_api_key | TEXT | ❌ | User's TMDB key |
-| license_key | TEXT | ❌ | Paid-plan license key; format-validated (migration 006) |
+| license_key | TEXT | ❌ | Paid-plan license key; format `FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>`, 5 segments (migration 006) |
+| transcoding_encoder | TEXT | ✅ | FFmpeg video encoder: `libx264`, `h264_nvenc`, `h264_qsv`, `h264_vaapi`; default `libx264` (migration 010) |
+| transcoding_preset | TEXT | ✅ | FFmpeg speed preset: `ultrafast`…`veryslow`; default `veryfast` (migration 010) |
+| transcoding_crf | INTEGER | ✅ | Constant Rate Factor 0–51; lower = better quality; default 23 (migration 010) |
 
 ---
 
@@ -95,6 +98,7 @@
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | order_id | TEXT | ✅ | Polar order ID; primary key and idempotency key |
+| customer_email | TEXT | ❌ | Customer email from Polar payload; stored for manual key delivery (migration 009) |
 | tier | TEXT | ✅ | Fluxora tier decoded from Polar product metadata |
 | license_key | TEXT | ✅ | Generated Fluxora license key; never logged or returned by webhook |
 | processed_at | TEXT | ✅ | UTC timestamp when the order was processed |
@@ -131,4 +135,4 @@ PolarOrder ── independent idempotency table for payment webhooks
 - `UserSettings` is a singleton (only one row, id = 1)
 - `Client.auth_token` stores the HMAC-SHA256 hash of the raw bearer token — never the raw token itself
 - `PolarOrder.order_id` is unique; duplicate webhook deliveries must not issue duplicate license keys
-- `PolarOrder` intentionally does not store customer email or other payment PII
+- `PolarOrder.customer_email` stores only the email provided by Polar for manual key delivery — not used for any automated processing
