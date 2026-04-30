@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
 import 'package:fluxora_core/constants/app_colors.dart';
@@ -54,6 +55,90 @@ class _LibraryView extends StatelessWidget {
             ),
         },
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showAddLibraryDialog(context),
+        icon: const Icon(Icons.add),
+        label: const Text('Add Library'),
+      ),
+    );
+  }
+
+  Future<void> _showAddLibraryDialog(BuildContext context) async {
+    final nameController = TextEditingController();
+    String type = 'movies';
+    final cubit = context.read<LibraryCubit>();
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Add Library'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'Library Name'),
+                  ),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    initialValue: type,
+                    decoration: const InputDecoration(labelText: 'Library Type'),
+                    items: const [
+                      DropdownMenuItem(value: 'movies', child: Text('Movies')),
+                      DropdownMenuItem(value: 'tv', child: Text('TV Shows')),
+                      DropdownMenuItem(value: 'music', child: Text('Music')),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        setState(() => type = val);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                  FilledButton(
+                  onPressed: () async {
+                    if (nameController.text.isEmpty) return;
+                    
+                    final result = await FilePicker.getDirectoryPath();
+                    if (result != null) {
+                      if (context.mounted) {
+                        Navigator.of(context).pop();
+                        try {
+                          await cubit.createLibrary(nameController.text, type, [result]);
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Library created successfully')),
+                            );
+                          }
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Failed to create library: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        }
+                      }
+                    }
+                  },
+                  child: const Text('Select Folder & Create'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -192,6 +277,37 @@ class _LibraryFilterRow extends StatelessWidget {
               shape: const StadiumBorder(),
             ),
           ),
+          if (selectedId != null)
+            ActionChip(
+              avatar: const Icon(Icons.sync, size: 16),
+              label: const Text('Scan Folder'),
+              onPressed: () async {
+                if (context.mounted) {
+                  try {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Scanning folder...')),
+                    );
+                    await context.read<LibraryCubit>().scanLibrary(selectedId!);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Scan complete!')),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Scan failed: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                }
+              },
+              backgroundColor: AppColors.primary.withAlpha(20),
+              shape: const StadiumBorder(),
+            ),
         ],
       ),
     );
@@ -210,7 +326,7 @@ class _FileTable extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.all(16),
       itemCount: files.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 6),
+      separatorBuilder: (_, _) => const SizedBox(height: 6),
       itemBuilder: (context, i) => _FileTile(file: files[i]),
     );
   }

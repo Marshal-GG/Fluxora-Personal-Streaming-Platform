@@ -1,4 +1,3 @@
-import json
 import logging
 
 import aiosqlite
@@ -7,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from config import settings
 from database.db import get_db
 from models.library import CreateLibraryBody, LibraryResponse
-from routers.deps import validate_token
+from routers.deps import validate_token_or_local
 from services import library_service
 
 logger = logging.getLogger(__name__)
@@ -16,14 +15,11 @@ router = APIRouter()
 
 
 def _parse_library(row: dict) -> LibraryResponse:
-    root_paths = row["root_paths"]
-    if isinstance(root_paths, str):
-        root_paths = json.loads(root_paths)
     return LibraryResponse(
         id=row["id"],
         name=row["name"],
         type=row["type"],
-        root_paths=root_paths,
+        root_paths=row["root_paths"],
         last_scanned=row.get("last_scanned"),
         created_at=row["created_at"],
         file_count=row.get("file_count", 0),
@@ -33,7 +29,7 @@ def _parse_library(row: dict) -> LibraryResponse:
 @router.get("", response_model=list[LibraryResponse])
 async def list_libraries(
     db: aiosqlite.Connection = Depends(get_db),
-    _client: aiosqlite.Row = Depends(validate_token),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> list[LibraryResponse]:
     rows = await library_service.list_libraries(db)
     return [_parse_library(r) for r in rows]
@@ -43,7 +39,7 @@ async def list_libraries(
 async def create_library(
     body: CreateLibraryBody,
     db: aiosqlite.Connection = Depends(get_db),
-    _client: aiosqlite.Row = Depends(validate_token),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> LibraryResponse:
     row = await library_service.create_library(
         db, name=body.name, lib_type=body.type, root_paths=body.root_paths
@@ -55,7 +51,7 @@ async def create_library(
 async def get_library(
     library_id: str,
     db: aiosqlite.Connection = Depends(get_db),
-    _client: aiosqlite.Row = Depends(validate_token),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> LibraryResponse:
     row = await library_service.get_library(db, library_id)
     if row is None:
@@ -69,7 +65,7 @@ async def get_library(
 async def delete_library(
     library_id: str,
     db: aiosqlite.Connection = Depends(get_db),
-    _client: aiosqlite.Row = Depends(validate_token),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> None:
     deleted = await library_service.delete_library(db, library_id)
     if not deleted:
@@ -82,7 +78,7 @@ async def delete_library(
 async def scan_library(
     library_id: str,
     db: aiosqlite.Connection = Depends(get_db),
-    _client: aiosqlite.Row = Depends(validate_token),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> dict:
     row = await library_service.get_library(db, library_id)
     if row is None:

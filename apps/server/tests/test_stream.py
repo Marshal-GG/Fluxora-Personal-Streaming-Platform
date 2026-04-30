@@ -4,7 +4,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
+
+from main import app
 
 HMAC_KEY = "test-secret-key-for-unit-tests-only"
 
@@ -58,7 +60,7 @@ def _mock_start_stream(playlist_path: Path):
 async def test_start_stream_requires_auth(client: AsyncClient, test_db):
     file_id = await _insert_file(test_db)
     response = await client.post(f"/api/v1/stream/start/{file_id}")
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -229,10 +231,14 @@ async def test_stop_stream_wrong_client(
         start = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
     session_id = start.json()["session_id"]
 
-    response = await client.delete(
-        f"/api/v1/stream/{session_id}",
-        headers={"Authorization": f"Bearer {other_token}"},
-    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app, client=("192.168.1.100", 50000)),
+        base_url="http://test",
+    ) as lan:
+        response = await lan.delete(
+            f"/api/v1/stream/{session_id}",
+            headers={"Authorization": f"Bearer {other_token}"},
+        )
     assert response.status_code == 403
 
 

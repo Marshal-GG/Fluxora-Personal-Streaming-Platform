@@ -81,7 +81,7 @@ class _LoadedBody extends StatelessWidget {
           child: ListView.separated(
             padding: const EdgeInsets.all(16),
             itemCount: orders.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
             itemBuilder: (context, i) => _OrderTile(order: orders[i]),
           ),
         ),
@@ -219,6 +219,27 @@ class _OrderTileState extends State<_OrderTile> {
                 ),
               ],
             ),
+
+            if (order.customerEmail != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.mail_outline,
+                      size: 14, color: AppColors.textSecondary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      order.customerEmail!,
+                      style: AppTypography.bodySm.copyWith(
+                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ],
 
             const SizedBox(height: 10),
 

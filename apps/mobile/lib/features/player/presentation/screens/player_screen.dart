@@ -4,8 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
+import 'package:media_kit/media_kit.dart' show AudioTrack, SubtitleTrack;
 import 'package:media_kit_video/media_kit_video.dart'
-    show Video, VideoController, MaterialVideoControls;
+    show
+        Video,
+        VideoController,
+        MaterialVideoControls,
+        MaterialVideoControlsTheme,
+        MaterialVideoControlsThemeData,
+        MaterialCustomButton;
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_core/entities/media_file.dart';
@@ -141,46 +148,195 @@ class _VideoView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Center(
-          child: Video(
-            controller: controller,
-            controls: MaterialVideoControls,
+    final themeData = MaterialVideoControlsThemeData(
+      displaySeekBar: true,
+      automaticallyImplySkipNextButton: false,
+      automaticallyImplySkipPreviousButton: false,
+      topButtonBar: [
+        const SizedBox(width: 8),
+        IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          tooltip: 'Back',
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            fileName,
+            style: AppTypography.headingMd.copyWith(color: Colors.white),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
-        // Back button overlay
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
-              style: IconButton.styleFrom(
-                backgroundColor: Colors.black45,
-              ),
-              tooltip: 'Back',
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-          ),
-        ),
-        // Title overlay at top
-        Positioned(
-          top: 0,
-          left: 0,
-          right: 0,
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(56, 8, 16, 0),
-              child: Text(
-                fileName,
-                style: AppTypography.headingMd.copyWith(color: Colors.white),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
-        ),
+        _SettingsButton(controller: controller),
+        const SizedBox(width: 8),
       ],
+    );
+
+    return MaterialVideoControlsTheme(
+      normal: themeData,
+      fullscreen: themeData,
+      child: Center(
+        child: Video(
+          controller: controller,
+          controls: MaterialVideoControls,
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsButton extends StatelessWidget {
+  const _SettingsButton({required this.controller});
+
+  final VideoController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialCustomButton(
+      onPressed: () {
+        showModalBottomSheet<void>(
+          context: context,
+          backgroundColor: AppColors.surface,
+          builder: (context) => _SettingsSheet(controller: controller),
+        );
+      },
+      icon: const Icon(Icons.settings, color: Colors.white),
+    );
+  }
+}
+
+class _SettingsSheet extends StatefulWidget {
+  const _SettingsSheet({required this.controller});
+
+  final VideoController controller;
+
+  @override
+  State<_SettingsSheet> createState() => _SettingsSheetState();
+}
+
+class _SettingsSheetState extends State<_SettingsSheet> {
+  late double _currentRate;
+  late AudioTrack _currentAudioTrack;
+  late SubtitleTrack _currentSubtitleTrack;
+  late List<AudioTrack> _audioTracks;
+  late List<SubtitleTrack> _subtitleTracks;
+
+  static const List<double> _speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+
+  @override
+  void initState() {
+    super.initState();
+    _currentRate = widget.controller.player.state.rate;
+    _currentAudioTrack = widget.controller.player.state.track.audio;
+    _currentSubtitleTrack = widget.controller.player.state.track.subtitle;
+    _audioTracks = widget.controller.player.state.tracks.audio;
+    _subtitleTracks = widget.controller.player.state.tracks.subtitle;
+  }
+
+  void _setRate(double rate) {
+    widget.controller.player.setRate(rate);
+    setState(() => _currentRate = rate);
+    Navigator.of(context).pop();
+  }
+
+  void _setAudioTrack(AudioTrack track) {
+    widget.controller.player.setAudioTrack(track);
+    setState(() => _currentAudioTrack = track);
+    Navigator.of(context).pop();
+  }
+
+  void _setSubtitleTrack(SubtitleTrack track) {
+    widget.controller.player.setSubtitleTrack(track);
+    setState(() => _currentSubtitleTrack = track);
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: DefaultTabController(
+        length: 3,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const TabBar(
+              indicatorColor: AppColors.primary,
+              labelColor: AppColors.primary,
+              unselectedLabelColor: AppColors.textSecondary,
+              tabs: [
+                Tab(text: 'Speed'),
+                Tab(text: 'Audio'),
+                Tab(text: 'Subtitles'),
+              ],
+            ),
+            SizedBox(
+              height: 250,
+              child: TabBarView(
+                children: [
+                  // Playback Speed
+                  ListView.builder(
+                    itemCount: _speeds.length,
+                    itemBuilder: (context, index) {
+                      final speed = _speeds[index];
+                      final isSelected = _currentRate == speed;
+                      return ListTile(
+                        title: Text('${speed}x',
+                            style: AppTypography.bodyMd.copyWith(
+                                color: isSelected
+                                    ? AppColors.primary
+                                    : AppColors.textPrimary)),
+                        trailing: isSelected
+                            ? const Icon(Icons.check, color: AppColors.primary)
+                            : null,
+                        onTap: () => _setRate(speed),
+                      );
+                    },
+                  ),
+                  // Audio Tracks
+                  ListView.builder(
+                    itemCount: _audioTracks.length,
+                    itemBuilder: (context, index) {
+                      final track = _audioTracks[index];
+                      final isSelected = _currentAudioTrack == track;
+                      return ListTile(
+                        title: Text(track.title ?? track.language ?? 'Track $index',
+                            style: AppTypography.bodyMd.copyWith(
+                                color: isSelected
+                                    ? AppColors.primary
+                                    : AppColors.textPrimary)),
+                        trailing: isSelected
+                            ? const Icon(Icons.check, color: AppColors.primary)
+                            : null,
+                        onTap: () => _setAudioTrack(track),
+                      );
+                    },
+                  ),
+                  // Subtitle Tracks
+                  ListView.builder(
+                    itemCount: _subtitleTracks.length,
+                    itemBuilder: (context, index) {
+                      final track = _subtitleTracks[index];
+                      final isSelected = _currentSubtitleTrack == track;
+                      return ListTile(
+                        title: Text(track.title ?? track.language ?? 'Subtitle $index',
+                            style: AppTypography.bodyMd.copyWith(
+                                color: isSelected
+                                    ? AppColors.primary
+                                    : AppColors.textPrimary)),
+                        trailing: isSelected
+                            ? const Icon(Icons.check, color: AppColors.primary)
+                            : null,
+                        onTap: () => _setSubtitleTrack(track),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

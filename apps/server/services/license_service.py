@@ -1,9 +1,10 @@
 """License key generation and validation — self-hosted HMAC-SHA256 approach.
 
-Key format: FLUXORA-<TIER>-<EXPIRY_YYYYMMDD>-<HMAC8>
+Key format: FLUXORA-<TIER>-<EXPIRY_YYYYMMDD>-<NONCE>-<HMAC8>
   - TIER    : FREE | PLUS | PRO | ULTI
   - EXPIRY  : 8-digit date (99991231 = lifetime)
-  - HMAC8   : first 8 hex chars of HMAC-SHA256(secret, "TIER:EXPIRY")
+  - NONCE   : 4-char random hex string (prevents rainbow-table attacks)
+  - HMAC8   : first 8 hex chars of HMAC-SHA256(secret, "TIER:EXPIRY:NONCE")
 
 The server HMAC secret is stored in the .env as FLUXORA_LICENSE_SECRET.
 If absent the service operates in *offline-only* mode: keys are accepted
@@ -13,11 +14,11 @@ Generating a key (admin CLI, run on the server machine):
     python -m services.license_service --tier plus --days 365
 """
 
-from __future__ import annotations
-
+import binascii
 import hashlib
 import hmac
 import logging
+import os
 from datetime import date, timedelta
 
 from config import settings
@@ -68,24 +69,25 @@ def validate_key(key: str | None) -> LicenseResult:
     """Validate a license key string.
 
     Returns a :class:`LicenseResult` with ``valid=True`` if:
-    - The key has the correct structure.
+    - The key has the correct 5-part structure.
     - The HMAC signature matches (when FLUXORA_LICENSE_SECRET is set).
     - The key has not expired.
-
-    If FLUXORA_LICENSE_SECRET is not configured, signature checking is
-    skipped and the method returns ``valid=False`` with
-    ``reason="no_secret"`` so callers know to treat key entry as advisory.
     """
     if not key:
         return LicenseResult(valid=False, reason="empty")
 
     key = key.strip().upper()
     parts = key.split("-")
-    # Expected: FLUXORA - <TIER> - <EXPIRY> - <HMAC8>  → 4 segments
-    if len(parts) != 4 or parts[0] != "FLUXORA":
+
+    # Expected format: FLUXORA - <TIER> - <EXPIRY> - <NONCE> - <SIG>
+    if parts[0] != "FLUXORA":
         return LicenseResult(valid=False, reason="malformed")
 
-    _, tier_code, expiry, sig = parts
+    if len(parts) != 5:
+        return LicenseResult(valid=False, reason="malformed")
+
+    _, tier_code, expiry, nonce, sig = parts
+    payload_parts = [tier_code, expiry, nonce]
 
     if tier_code not in _CODE_TO_TIER:
         return LicenseResult(valid=False, reason="unknown_tier")
@@ -121,7 +123,7 @@ def validate_key(key: str | None) -> LicenseResult:
             reason="no_secret",
         )
 
-    expected = _compute_sig(secret, tier_code, expiry)
+    expected = _compute_sig(secret, payload_parts)
     if not hmac.compare_digest(sig, expected):
         return LicenseResult(valid=False, reason="invalid_signature")
 
@@ -132,12 +134,14 @@ def validate_key(key: str | None) -> LicenseResult:
     )
 
 
-def generate_key(tier: str, days: int | None = None) -> str:
+def generate_key(tier: str, days: int | None = None, nonce: str | None = None) -> str:
     """Generate a signed license key for *tier*.
 
     Args:
         tier:  One of ``free | plus | pro | ultimate``.
         days:  Days until expiry.  ``None`` → lifetime key.
+        nonce: Optional unique string to include in the key and signature.
+               If None, a random 4-char hex string is generated.
 
     Raises:
         ValueError: If the tier is unknown or FLUXORA_LICENSE_SECRET is absent.
@@ -158,8 +162,13 @@ def generate_key(tier: str, days: int | None = None) -> str:
     else:
         expiry = (date.today() + timedelta(days=days)).strftime("%Y%m%d")
 
-    sig = _compute_sig(secret, tier_code, expiry)
-    return f"FLUXORA-{tier_code}-{expiry}-{sig}"
+    if nonce is None:
+        nonce = binascii.hexlify(os.urandom(2)).decode().upper()
+    else:
+        nonce = nonce.strip().upper()
+
+    sig = _compute_sig(secret, [tier_code, expiry, nonce])
+    return f"FLUXORA-{tier_code}-{expiry}-{nonce}-{sig}"
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +176,8 @@ def generate_key(tier: str, days: int | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _compute_sig(secret: str, tier_code: str, expiry: str) -> str:
-    payload = f"{tier_code}:{expiry}".encode()
+def _compute_sig(secret: str, parts: list[str]) -> str:
+    payload = ":".join(parts).encode()
     mac = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
     return mac[:8].upper()
 

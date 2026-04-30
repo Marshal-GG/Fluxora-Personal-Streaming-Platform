@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Database
     fluxora_db_path: str = _default_db_path()
 
+    # Logs
+    fluxora_log_path: str = str(_data_dir() / "fluxora.log")
+
     # HLS
     fluxora_hls_tmp: str = _default_hls_tmp()
 

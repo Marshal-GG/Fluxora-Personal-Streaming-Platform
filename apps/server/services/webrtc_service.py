@@ -187,11 +187,17 @@ async def _add_ice_candidate(pc: RTCPeerConnection, candidate: dict) -> None:
 def _close_existing(client_id: str) -> None:
     session = _sessions.pop(client_id, None)
     if session is not None:
-        # Schedule the close — we don't await here because this helper may be
-        # called from a sync context.
+        # Schedule the close on the running event loop. Callers always run
+        # inside an async context (websocket handler), so a running loop is
+        # guaranteed; if not, we fall back to logging and dropping the close.
         import asyncio
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
+        try:
+            loop = asyncio.get_running_loop()
             loop.create_task(session.pc.close())
+        except RuntimeError:
+            logger.warning(
+                "No running event loop to close peer connection: client=%s",
+                client_id,
+            )
         logger.info("WebRTC peer connection closed: client=%s", client_id)

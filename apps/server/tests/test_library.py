@@ -29,9 +29,11 @@ async def _get_token(client: AsyncClient, monkeypatch) -> str:
 
 
 @pytest.mark.asyncio
-async def test_list_libraries_requires_auth(client: AsyncClient):
+async def test_list_libraries_local_access_without_auth(client: AsyncClient):
+    # library endpoint uses validate_token_or_local — localhost needs no bearer token
     response = await client.get("/api/v1/library")
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 @pytest.mark.asyncio

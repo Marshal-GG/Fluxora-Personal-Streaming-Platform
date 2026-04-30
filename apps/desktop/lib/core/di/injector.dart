@@ -12,6 +12,8 @@ import 'package:fluxora_desktop/features/orders/data/repositories/orders_reposit
 import 'package:fluxora_desktop/features/orders/domain/repositories/orders_repository.dart';
 import 'package:fluxora_desktop/features/orders/presentation/cubit/orders_cubit.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
+import 'package:fluxora_desktop/features/activity/domain/repositories/activity_repository.dart';
+import 'package:fluxora_desktop/features/activity/data/repositories/activity_repository_impl.dart';
 
 final getIt = GetIt.instance;
 
@@ -42,6 +44,10 @@ Future<void> setupInjector() async {
 
   getIt.registerLazySingleton<LibraryRepository>(
     () => LibraryRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+  
+  getIt.registerLazySingleton<ActivityRepository>(
+    () => ActivityRepositoryImpl(apiClient: getIt<ApiClient>()),
   );
 
   // ── Settings cubit ────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@ part 'stream_session.freezed.dart';
 part 'stream_session.g.dart';
 
 @freezed
-class StreamSession with _$StreamSession {
+abstract class StreamSession with _$StreamSession {
   const factory StreamSession({
     required String id,
     required String fileId,

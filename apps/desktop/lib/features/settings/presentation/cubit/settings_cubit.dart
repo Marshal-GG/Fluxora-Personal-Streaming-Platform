@@ -29,6 +29,9 @@ class SettingsCubit extends Cubit<SettingsState> {
       String tier = 'free';
       int maxStreams = 1;
       String? licenseKey;
+      String transcodingEncoder = 'libx264';
+      String transcodingPreset = 'veryfast';
+      int transcodingCrf = 23;
 
       try {
         final data = await _apiClient.get<Map<String, dynamic>>(
@@ -39,6 +42,11 @@ class SettingsCubit extends Cubit<SettingsState> {
         tier = data['subscription_tier'] as String? ?? tier;
         maxStreams = data['max_concurrent_streams'] as int? ?? maxStreams;
         licenseKey = data['license_key'] as String?;
+        transcodingEncoder =
+            data['transcoding_encoder'] as String? ?? transcodingEncoder;
+        transcodingPreset =
+            data['transcoding_preset'] as String? ?? transcodingPreset;
+        transcodingCrf = data['transcoding_crf'] as int? ?? transcodingCrf;
       } catch (e) {
         _log.w('Could not fetch server settings (server may be offline): $e');
       }
@@ -49,6 +57,9 @@ class SettingsCubit extends Cubit<SettingsState> {
         tier: tier,
         maxConcurrentStreams: maxStreams,
         licenseKey: licenseKey,
+        transcodingEncoder: transcodingEncoder,
+        transcodingPreset: transcodingPreset,
+        transcodingCrf: transcodingCrf,
       ));
     } catch (e, st) {
       _log.e('Failed to load settings', error: e, stackTrace: st);
@@ -57,6 +68,9 @@ class SettingsCubit extends Cubit<SettingsState> {
         serverName: 'Fluxora Server',
         tier: 'free',
         maxConcurrentStreams: 1,
+        transcodingEncoder: 'libx264',
+        transcodingPreset: 'veryfast',
+        transcodingCrf: 23,
       ));
     }
   }
@@ -66,6 +80,9 @@ class SettingsCubit extends Cubit<SettingsState> {
     required String serverName,
     required String tier,
     String? licenseKey,
+    String? transcodingEncoder,
+    String? transcodingPreset,
+    int? transcodingCrf,
   }) async {
     final trimmedUrl = serverUrl.trim();
     final trimmedName = serverName.trim();
@@ -99,6 +116,9 @@ class SettingsCubit extends Cubit<SettingsState> {
           'tier': tier,
           if (licenseKey != null && licenseKey.trim().isNotEmpty)
             'license_key': licenseKey.trim(),
+          'transcoding_encoder': ?transcodingEncoder,
+          'transcoding_preset': ?transcodingPreset,
+          'transcoding_crf': ?transcodingCrf,
         },
       );
 

@@ -3,6 +3,7 @@ import logging.config
 import shutil
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -18,37 +19,49 @@ from routers.stream import router as stream_router
 from services.discovery_service import start_discovery, stop_discovery
 from services.ffmpeg_service import _ffmpeg_bin
 
-_LOG_CONFIG_DEV = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "handlers": {
-        "console": {"class": "logging.StreamHandler", "stream": "ext://sys.stdout"},
-    },
-    "root": {"handlers": ["console"], "level": settings.fluxora_log_level},
-}
-
-_LOG_CONFIG_PROD = {
+_LOG_CONFIG_COMMON = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
+        "standard": {"format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s"},
         "json": {
             "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
             "format": "%(asctime)s %(levelname)s %(name)s %(message)s",
-        }
+        },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "json",
+            "formatter": "standard",
             "stream": "ext://sys.stdout",
-        }
+        },
+        "file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "standard",
+            "filename": settings.fluxora_log_path,
+            "maxBytes": 10 * 1024 * 1024,  # 10MB
+            "backupCount": 5,
+            "encoding": "utf-8",
+        },
     },
-    "root": {"handlers": ["console"], "level": settings.fluxora_log_level},
+    "root": {
+        "handlers": ["console", "file"],
+        "level": settings.fluxora_log_level,
+    },
 }
 
 
 def _setup_logging() -> None:
-    logging.config.dictConfig(_LOG_CONFIG_DEV if settings.is_dev else _LOG_CONFIG_PROD)
+    # Ensure log file directory exists
+    log_file = Path(settings.fluxora_log_path)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    config = _LOG_CONFIG_COMMON.copy()
+    if not settings.is_dev:
+        # In prod, use JSON for console
+        config["handlers"]["console"]["formatter"] = "json"
+
+    logging.config.dictConfig(config)
 
 
 logger = logging.getLogger(__name__)

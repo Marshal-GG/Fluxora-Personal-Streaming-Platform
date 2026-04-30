@@ -37,8 +37,8 @@ async def start_discovery(server_name: str, port: int) -> None:
     )
 
     _zeroconf = AsyncZeroconf()
-    await _zeroconf.async_register_service(_service_info)
-    logger.info("mDNS broadcasting '%s' on %s:%d", server_name, ip, port)
+    await _zeroconf.async_register_service(_service_info, allow_name_change=True)
+    logger.info("mDNS broadcasting '%s' on %s:%d", _service_info.name, ip, port)
 
 
 async def stop_discovery() -> None:

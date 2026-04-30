@@ -1,4 +1,22 @@
-from pydantic import BaseModel, field_validator
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+# FFmpeg encoders we support (software + common hardware accelerators).
+TranscodingEncoder = Literal["libx264", "h264_nvenc", "h264_qsv", "h264_vaapi"]
+
+# FFmpeg x264 preset names (also accepted by NVENC/QSV/VAAPI variants).
+TranscodingPreset = Literal[
+    "ultrafast",
+    "superfast",
+    "veryfast",
+    "faster",
+    "fast",
+    "medium",
+    "slow",
+    "slower",
+    "veryslow",
+]
 
 
 class ServerInfoResponse(BaseModel):
@@ -15,6 +33,10 @@ class UserSettingsResponse(BaseModel):
     license_key: str | None = None
     license_status: str = "none"  # none | valid | expired | invalid | no_secret
     license_tier: str | None = None  # tier encoded in the key (if valid/no_secret)
+    # Transcoding
+    transcoding_encoder: str
+    transcoding_preset: str
+    transcoding_crf: int
 
 
 class UpdateSettingsBody(BaseModel):
@@ -22,6 +44,10 @@ class UpdateSettingsBody(BaseModel):
     tier: str | None = None
     license_key: str | None = None
     transcoding_enabled: bool | None = None
+    transcoding_encoder: TranscodingEncoder | None = None
+    transcoding_preset: TranscodingPreset | None = None
+    # FFmpeg CRF range — 0 (lossless) to 51 (worst quality).
+    transcoding_crf: int | None = Field(default=None, ge=0, le=51)
 
     @field_validator("server_name")
     @classmethod
@@ -33,12 +59,16 @@ class UpdateSettingsBody(BaseModel):
     @field_validator("license_key")
     @classmethod
     def license_key_format(cls, v: str | None) -> str | None:
-        """Reject keys that are obviously malformed (wrong prefix / segment count)."""
+        """Reject keys that are obviously malformed (wrong prefix / segment count).
+
+        Accepts both legacy 4-part keys (FLUXORA-TIER-EXPIRY-SIG) and modern
+        5-part keys with a nonce (FLUXORA-TIER-EXPIRY-NONCE-SIG).
+        """
         if v is None:
             return v
         parts = v.strip().upper().split("-")
-        if len(parts) != 4 or parts[0] != "FLUXORA":
+        if len(parts) != 5 or parts[0] != "FLUXORA":
             raise ValueError(
-                "license_key must be in FLUXORA-<TIER>-<EXPIRY>-<SIG> format"
+                "license_key must be in FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG> format"
             )
         return v.strip()

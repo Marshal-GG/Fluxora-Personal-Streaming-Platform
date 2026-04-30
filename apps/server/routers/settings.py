@@ -22,6 +22,9 @@ def _to_response(row: dict) -> UserSettingsResponse:
         license_key=row.get("license_key"),
         license_status=row.get("license_status", "none"),
         license_tier=row.get("license_tier"),
+        transcoding_encoder=row["transcoding_encoder"],
+        transcoding_preset=row["transcoding_preset"],
+        transcoding_crf=row["transcoding_crf"],
     )
 
 
@@ -47,6 +50,9 @@ async def update_settings(
             tier=body.tier,
             license_key=body.license_key,
             transcoding_enabled=body.transcoding_enabled,
+            transcoding_encoder=body.transcoding_encoder,
+            transcoding_preset=body.transcoding_preset,
+            transcoding_crf=body.transcoding_crf,
         )
     except ValueError as exc:
         raise HTTPException(

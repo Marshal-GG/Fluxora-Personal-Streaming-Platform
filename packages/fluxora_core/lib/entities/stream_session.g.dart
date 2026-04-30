@@ -6,20 +6,22 @@ part of 'stream_session.dart';
 // JsonSerializableGenerator
 // **************************************************************************
 
-_$StreamSessionImpl _$$StreamSessionImplFromJson(Map<String, dynamic> json) =>
-    _$StreamSessionImpl(
+_StreamSession _$StreamSessionFromJson(Map<String, dynamic> json) =>
+    _StreamSession(
       id: json['id'] as String,
       fileId: json['file_id'] as String,
       clientId: json['client_id'] as String,
       startedAt: utcDateTimeFromJson(json['started_at'] as String),
       endedAt: utcDateTimeOrNullFromJson(json['ended_at'] as String?),
-      connectionType:
-          $enumDecode(_$ConnectionTypeEnumMap, json['connection_type']),
+      connectionType: $enumDecode(
+        _$ConnectionTypeEnumMap,
+        json['connection_type'],
+      ),
       bytesTransferred: (json['bytes_transferred'] as num?)?.toInt(),
       progressSec: (json['progress_sec'] as num?)?.toDouble(),
     );
 
-Map<String, dynamic> _$$StreamSessionImplToJson(_$StreamSessionImpl instance) =>
+Map<String, dynamic> _$StreamSessionToJson(_StreamSession instance) =>
     <String, dynamic>{
       'id': instance.id,
       'file_id': instance.fileId,

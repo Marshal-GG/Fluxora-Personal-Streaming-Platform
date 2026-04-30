@@ -5,6 +5,7 @@ import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_desktop/core/di/injector.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_state.dart';
+import 'package:go_router/go_router.dart';
 
 const _kTiers = ['free', 'plus', 'pro', 'ultimate'];
 
@@ -191,6 +192,19 @@ class _SettingsViewState extends State<_SettingsView> {
                                   controller: _licenseController,
                                   hintText: 'FLUXORA-XXXX-XXXX-XXXX-XXXX',
                                   monospace: true,
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: TextButton.icon(
+                                  onPressed: () => context.go('/licenses'),
+                                  icon: const Icon(Icons.vpn_key_outlined, size: 16),
+                                  label: const Text('View Issued Licenses'),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: AppColors.primary,
+                                    visualDensity: VisualDensity.compact,
+                                  ),
                                 ),
                               ),
                               if (state is SettingsLoaded) ...[

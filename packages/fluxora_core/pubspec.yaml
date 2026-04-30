@@ -4,7 +4,7 @@ version: 0.1.0
 publish_to: none
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: '>=3.8.0 <4.0.0'
   flutter: '>=3.10.0'
 
 dependencies:
@@ -12,8 +12,8 @@ dependencies:
     sdk: flutter
   dio: ^5.4.0
   flutter_secure_storage: ^9.0.0
-  freezed_annotation: ^2.4.1
-  json_annotation: ^4.9.0
+  freezed_annotation: ^3.0.0
+  json_annotation: ^4.11.0
   logger: ^2.7.0
   connectivity_plus: ^7.1.1
   equatable: ^2.0.8
@@ -22,7 +22,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
-  build_runner: ^2.4.0
-  freezed: ^2.5.2
-  json_serializable: ^6.7.1
+  build_runner: ^2.14.0
+  freezed: ^3.0.0
+  json_serializable: ^6.13.0
   mocktail: ^1.0.5

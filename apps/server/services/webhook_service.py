@@ -219,15 +219,22 @@ async def _process_paid_order(
         )
         return None
 
-    key = _generate_key_for_tier(tier, order_id)
+    customer = event_data.get("customer")
+    if not isinstance(customer, dict):
+        customer = {}
+    email: str = str(customer.get("email", "")).strip()
+
+    # Pass order_id as nonce to guarantee uniqueness and link key to order.
+    key = _generate_key_for_tier(tier, order_id, nonce=order_id)
     if not key:
         return None
 
-    await _record_order(order_id, tier, key, db)
+    await _record_order(order_id, email, tier, key, db)
     logger.info(
-        "Issued license key for %s order %s (tier=%s)",
+        "Issued unique license key for %s order %s (customer=%s, tier=%s)",
         event_name,
         order_id,
+        email,
         tier,
     )
     return key
@@ -244,8 +251,12 @@ def _extract_tier(event_data: dict[str, Any]) -> str | None:
     In the Polar dashboard, add a metadata key ``tier`` to each product
     with the value matching a Fluxora tier name (plus / pro / ultimate).
     """
-    product = event_data.get("product", {})
-    metadata: dict[str, Any] = product.get("metadata", {})
+    product = event_data.get("product")
+    if not isinstance(product, dict):
+        return None
+    metadata = product.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
     raw_tier: str = str(metadata.get("tier", "")).lower().strip()
     return _POLAR_TIER_MAP.get(raw_tier)
 
@@ -254,11 +265,13 @@ def _is_paid_order(event_data: dict[str, Any]) -> bool:
     return bool(event_data.get("paid")) or str(event_data.get("status", "")) == "paid"
 
 
-def _generate_key_for_tier(tier: str, ref_id: str) -> str | None:
+def _generate_key_for_tier(
+    tier: str, ref_id: str, nonce: str | None = None
+) -> str | None:
     """Call license_service.generate_key() and handle errors gracefully."""
     days = _TIER_DAYS.get(tier)
     try:
-        return license_service.generate_key(tier, days)
+        return license_service.generate_key(tier, days, nonce=nonce)
     except ValueError as exc:
         logger.error(
             "Failed to generate license key for tier=%s ref=%s: %s",
@@ -279,15 +292,18 @@ async def _order_already_processed(order_id: str, db: aiosqlite.Connection) -> b
 
 async def _record_order(
     order_id: str,
+    email: str,
     tier: str,
     license_key: str,
     db: aiosqlite.Connection,
 ) -> None:
     await db.execute(
         """
-        INSERT INTO polar_orders (order_id, tier, license_key, processed_at)
-        VALUES (?, ?, ?, datetime('now'))
+        INSERT INTO polar_orders (
+            order_id, customer_email, tier, license_key, processed_at
+        )
+        VALUES (?, ?, ?, ?, datetime('now'))
         """,
-        (order_id, tier, license_key),
+        (order_id, email, tier, license_key),
     )
     await db.commit()

@@ -54,9 +54,11 @@ async def _insert_file(test_db, library_id: str | None = None) -> str:
 
 
 @pytest.mark.asyncio
-async def test_list_files_requires_auth(client: AsyncClient):
+async def test_list_files_local_access_without_auth(client: AsyncClient):
+    # files endpoint uses validate_token_or_local — localhost needs no bearer token
     response = await client.get("/api/v1/files")
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 @pytest.mark.asyncio

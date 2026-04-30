@@ -5,7 +5,7 @@ part 'media_file.freezed.dart';
 part 'media_file.g.dart';
 
 @freezed
-class MediaFile with _$MediaFile {
+abstract class MediaFile with _$MediaFile {
   const factory MediaFile({
     required String id,
     required String path,
@@ -20,7 +20,7 @@ class MediaFile with _$MediaFile {
     String? overview,
     String? posterUrl,
     // Resume playback position
-    @Default(0.0) double resumeSec,
+    @JsonKey(name: 'last_progress_sec') @Default(0.0) double resumeSec,
     @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
     required DateTime createdAt,
     @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)

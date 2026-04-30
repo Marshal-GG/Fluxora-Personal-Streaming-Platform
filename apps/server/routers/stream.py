@@ -6,19 +6,36 @@ from pathlib import Path
 import aiosqlite
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from config import settings
 from database.db import get_db
 from models.stream_session import StreamSessionResponse, StreamStartResponse
-from routers.deps import validate_token
+from routers.deps import LOOPBACK, bearer, require_local_caller, validate_token
 from services import ffmpeg_service, library_service, settings_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
+
+
+# ── GET /api/v1/stream/sessions ─────────────────────────────────────────────
+
+
+@router.get("/sessions", response_model=list[StreamSessionResponse])
+async def list_sessions(
+    db: aiosqlite.Connection = Depends(get_db),
+    _local: None = Depends(require_local_caller),
+) -> list[StreamSessionResponse]:
+    """List all active stream sessions (Admin/Local only)."""
+    async with db.execute(
+        "SELECT * FROM stream_sessions WHERE ended_at IS NULL ORDER BY started_at DESC"
+    ) as cur:
+        rows = await cur.fetchall()
+    return [StreamSessionResponse(**dict(r)) for r in rows]
 
 
 def _playlist_url(request: Request, session_id: str) -> str:
@@ -146,8 +163,9 @@ async def update_progress(
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def stop_stream(
     session_id: str,
+    request: Request,
     db: aiosqlite.Connection = Depends(get_db),
-    client: aiosqlite.Row = Depends(validate_token),
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> None:
     async with db.execute(
         "SELECT id, client_id FROM stream_sessions WHERE id = ? AND ended_at IS NULL",
@@ -159,11 +177,16 @@ async def stop_stream(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
         )
-    if row["client_id"] != client["id"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not your session",
-        )
+
+    host = request.client.host if request.client else "127.0.0.1"
+    if host not in LOOPBACK:
+        # Not a local admin, must be a valid client and own the session
+        client = await validate_token(credentials, db)
+        if row["client_id"] != client["id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not your session",
+            )
 
     await ffmpeg_service.stop_stream(session_id)
     ffmpeg_service.cleanup_session_dir(session_id, settings.hls_tmp_path)
@@ -208,9 +231,27 @@ hls_router = APIRouter()
 async def serve_hls(
     session_id: str,
     filename: str,
-    _client: aiosqlite.Row = Depends(validate_token),
+    db: aiosqlite.Connection = Depends(get_db),
+    client: aiosqlite.Row = Depends(validate_token),
 ) -> FileResponse:
-    # Path traversal guard — filename must not escape the session directory
+    # 1. Verify session ownership to prevent cross-client hijacking
+    async with db.execute(
+        "SELECT client_id FROM stream_sessions WHERE id = ? AND ended_at IS NULL",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+    if row["client_id"] != client["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this session",
+        )
+
+    # 2. Path traversal guard — filename must not escape the session directory
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename"

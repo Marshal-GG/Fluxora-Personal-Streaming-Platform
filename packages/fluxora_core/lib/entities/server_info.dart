@@ -5,7 +5,7 @@ part 'server_info.freezed.dart';
 part 'server_info.g.dart';
 
 @freezed
-class ServerInfo with _$ServerInfo {
+abstract class ServerInfo with _$ServerInfo {
   const factory ServerInfo({
     required String serverName,
     required String version,

@@ -13,6 +13,7 @@ class AppShell extends StatelessWidget {
     (icon: Icons.dashboard_outlined, label: 'Dashboard', route: Routes.dashboard),
     (icon: Icons.devices_outlined, label: 'Clients', route: Routes.clients),
     (icon: Icons.video_library_outlined, label: 'Library', route: Routes.library),
+    (icon: Icons.analytics_outlined, label: 'Activity', route: Routes.activity),
     (icon: Icons.vpn_key_outlined, label: 'Licenses', route: Routes.licenses),
   ];
 

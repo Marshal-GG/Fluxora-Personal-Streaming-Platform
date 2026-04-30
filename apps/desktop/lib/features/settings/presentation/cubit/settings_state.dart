@@ -17,6 +17,9 @@ final class SettingsLoaded extends SettingsState {
     required this.tier,
     required this.maxConcurrentStreams,
     this.licenseKey,
+    required this.transcodingEncoder,
+    required this.transcodingPreset,
+    required this.transcodingCrf,
   });
 
   final String serverUrl;
@@ -24,6 +27,9 @@ final class SettingsLoaded extends SettingsState {
   final String tier;
   final int maxConcurrentStreams;
   final String? licenseKey;
+  final String transcodingEncoder;
+  final String transcodingPreset;
+  final int transcodingCrf;
 }
 
 final class SettingsSaved extends SettingsState {

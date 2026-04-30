@@ -201,7 +201,7 @@ async def test_handle_order_paid_issues_key() -> None:
         key = await handle_order_paid(payload["data"], db)
 
     assert key == "FLUXORA-PLUS-99991231-DEADBEEF"
-    mock_gen.assert_called_once_with("plus", 365)
+    mock_gen.assert_called_once_with("plus", 365, nonce="ord_neworder1")
 
 
 @pytest.mark.asyncio
@@ -254,7 +254,7 @@ async def test_handle_order_created_paid_issues_key() -> None:
         key = await handle_order_created(payload["data"], db)
 
     assert key == "FLUXORA-PRO-99991231-CAFEBABE"
-    mock_gen.assert_called_once_with("pro", 365)
+    mock_gen.assert_called_once_with("pro", 365, nonce="ord_paid_created")
 
 
 @pytest.mark.asyncio

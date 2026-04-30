@@ -34,6 +34,9 @@ async def update_settings(
     tier: str | None = None,
     license_key: str | None = None,
     transcoding_enabled: bool | None = None,
+    transcoding_encoder: str | None = None,
+    transcoding_preset: str | None = None,
+    transcoding_crf: int | None = None,
 ) -> dict:
     """Persist one or more settings fields.
 
@@ -50,6 +53,19 @@ async def update_settings(
         if transcoding_enabled is not None
         else bool(current["transcoding_enabled"])
     )
+    new_encoder = (
+        transcoding_encoder
+        if transcoding_encoder is not None
+        else current["transcoding_encoder"]
+    )
+    new_preset = (
+        transcoding_preset
+        if transcoding_preset is not None
+        else current["transcoding_preset"]
+    )
+    new_crf = (
+        transcoding_crf if transcoding_crf is not None else current["transcoding_crf"]
+    )
 
     if new_tier not in VALID_TIERS:
         valid_tiers = ", ".join(sorted(VALID_TIERS))
@@ -64,10 +80,22 @@ async def update_settings(
             subscription_tier      = ?,
             max_concurrent_streams = ?,
             license_key            = ?,
-            transcoding_enabled    = ?
+            transcoding_enabled    = ?,
+            transcoding_encoder    = ?,
+            transcoding_preset     = ?,
+            transcoding_crf        = ?
         WHERE id = 1
         """,
-        (new_name, new_tier, new_max_streams, new_key, int(new_transcoding)),
+        (
+            new_name,
+            new_tier,
+            new_max_streams,
+            new_key,
+            int(new_transcoding),
+            new_encoder,
+            new_preset,
+            new_crf,
+        ),
     )
     await db.commit()
     logger.info("Settings updated: tier=%s max_streams=%d", new_tier, new_max_streams)
@@ -98,6 +126,9 @@ def _defaults() -> dict:
         "subscription_tier": "free",
         "license_key": None,
         "tmdb_api_key": None,
+        "transcoding_encoder": "libx264",
+        "transcoding_preset": "veryfast",
+        "transcoding_crf": 23,
     }
 
 

@@ -6,7 +6,7 @@ part 'client.freezed.dart';
 part 'client.g.dart';
 
 @freezed
-class Client with _$Client {
+abstract class Client with _$Client {
   const factory Client({
     required String id,
     required String name,

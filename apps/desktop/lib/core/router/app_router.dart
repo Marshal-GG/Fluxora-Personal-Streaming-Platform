@@ -4,6 +4,7 @@ import 'package:fluxora_desktop/features/dashboard/presentation/screens/dashboar
 import 'package:fluxora_desktop/features/clients/presentation/screens/clients_screen.dart';
 import 'package:fluxora_desktop/features/library/presentation/screens/library_screen.dart';
 import 'package:fluxora_desktop/features/orders/presentation/screens/licenses_screen.dart';
+import 'package:fluxora_desktop/features/activity/presentation/screens/activity_screen.dart';
 import 'package:fluxora_desktop/features/settings/presentation/screens/settings_screen.dart';
 import 'package:fluxora_desktop/shared/widgets/sidebar.dart';
 
@@ -14,6 +15,7 @@ class Routes {
   static const String clients = '/clients';
   static const String library = '/library';
   static const String licenses = '/licenses';
+  static const String activity = '/activity';
   static const String settings = '/settings';
 }
 
@@ -26,23 +28,27 @@ final appRouter = GoRouter(
       routes: [
         GoRoute(
           path: Routes.dashboard,
-          builder: (_, __) => const DashboardScreen(),
+          builder: (_, _) => const DashboardScreen(),
         ),
         GoRoute(
           path: Routes.clients,
-          builder: (_, __) => const ClientsScreen(),
+          builder: (_, _) => const ClientsScreen(),
         ),
         GoRoute(
           path: Routes.library,
-          builder: (_, __) => const LibraryScreen(),
+          builder: (_, _) => const LibraryScreen(),
         ),
         GoRoute(
           path: Routes.licenses,
-          builder: (_, __) => const LicensesScreen(),
+          builder: (_, _) => const LicensesScreen(),
+        ),
+        GoRoute(
+          path: Routes.activity,
+          builder: (_, _) => const ActivityScreen(),
         ),
         GoRoute(
           path: Routes.settings,
-          builder: (_, __) => const SettingsScreen(),
+          builder: (_, _) => const SettingsScreen(),
         ),
       ],
     ),

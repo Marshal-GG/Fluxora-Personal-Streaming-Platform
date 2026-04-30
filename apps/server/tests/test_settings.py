@@ -81,10 +81,10 @@ async def test_patch_settings_invalid_tier_returns_422(client: AsyncClient) -> N
 
 @pytest.mark.asyncio
 async def test_patch_settings_stores_license_key(client: AsyncClient) -> None:
-    # Must be FLUXORA-<TIER>-<EXPIRY>-<SIG> (4 segments, correct prefix).
-    # The format validator accepts any 4-segment FLUXORA-... key;
+    # Must be FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG> (5 segments, correct prefix).
+    # The format validator accepts any 5-segment FLUXORA-... key;
     # full signature check happens in license_service, not the model layer.
-    valid_format_key = "FLUXORA-PLUS-99991231-ABCDEF01"
+    valid_format_key = "FLUXORA-PLUS-99991231-CAFE-ABCDEF01"
     res = await client.patch("/api/v1/settings", json={"license_key": valid_format_key})
     assert res.status_code == 200
     assert res.json()["license_key"] == valid_format_key

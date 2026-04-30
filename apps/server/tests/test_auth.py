@@ -96,7 +96,7 @@ async def test_rejection_flow(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_protected_route_requires_token(client: AsyncClient):
     response = await client.delete(f"/api/v1/auth/revoke/{PAIR_BODY['client_id']}")
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 # ── Localhost restriction ────────────────────────────────────────────────────

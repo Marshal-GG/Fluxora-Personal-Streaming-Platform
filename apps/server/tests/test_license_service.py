@@ -10,13 +10,16 @@ import pytest
 
 # We need a known secret for deterministic tests.
 _TEST_SECRET = "testsecretdeadbeefdeadbeefdeadbeef"
+_TEST_NONCE = "CAFE"
 
 
-def _make_key(tier_code: str, expiry: str, secret: str = _TEST_SECRET) -> str:
-    payload = f"{tier_code}:{expiry}".encode()
+def _make_key(
+    tier_code: str, expiry: str, secret: str = _TEST_SECRET, nonce: str = _TEST_NONCE
+) -> str:
+    payload = f"{tier_code}:{expiry}:{nonce}".encode()
     mac = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
     sig = mac[:8].upper()
-    return f"FLUXORA-{tier_code}-{expiry}-{sig}"
+    return f"FLUXORA-{tier_code}-{expiry}-{nonce}-{sig}"
 
 
 # ---------------------------------------------------------------------------
@@ -96,12 +99,18 @@ class TestValidateKeyFailures:
         assert result.reason == "empty"
 
     def test_wrong_prefix(self):
-        result = validate_key("BADKEY-PLUS-99991231-ABCD1234")
+        result = validate_key("BADKEY-PLUS-99991231-CAFE-ABCD1234")
         assert result.valid is False
         assert result.reason == "malformed"
 
     def test_too_few_segments(self):
         result = validate_key("FLUXORA-PLUS-99991231")
+        assert result.valid is False
+        assert result.reason == "malformed"
+
+    def test_four_part_key_rejected(self):
+        # 4-part (legacy) format is no longer accepted
+        result = validate_key("FLUXORA-PLUS-99991231-ABCD1234")
         assert result.valid is False
         assert result.reason == "malformed"
 
@@ -121,7 +130,7 @@ class TestValidateKeyFailures:
 
     def test_bad_signature(self):
         expiry = "99991231"
-        key = f"FLUXORA-PLUS-{expiry}-DEADBEEF"
+        key = f"FLUXORA-PLUS-{expiry}-CAFE-DEADBEEF"
         result = validate_key(key)
         assert result.valid is False
         assert result.reason == "invalid_signature"
@@ -137,7 +146,7 @@ class TestValidateKeyFailures:
         assert result.tier == "plus"  # structure was still decoded
 
     def test_malformed_expiry_non_digits(self):
-        result = validate_key("FLUXORA-PLUS-BADEXPIRY-ABCD1234")
+        result = validate_key("FLUXORA-PLUS-BADEXPIRY-CAFE-ABCD1234")
         assert result.valid is False
         assert result.reason == "malformed_expiry"
 
@@ -160,6 +169,10 @@ class TestGenerateKey:
         result = validate_key(key)
         assert result.valid is True
         assert result.tier == "plus"
+
+    def test_generates_five_part_key(self):
+        key = generate_key("plus")
+        assert len(key.split("-")) == 5
 
     def test_lifetime_key(self):
         key = generate_key("pro", days=None)

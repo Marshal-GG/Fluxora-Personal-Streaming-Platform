@@ -36,7 +36,7 @@ async def list_orders(
     db.row_factory = aiosqlite.Row
     cursor = await db.execute(
         """
-        SELECT order_id, tier, license_key, processed_at
+        SELECT order_id, customer_email, tier, license_key, processed_at
         FROM polar_orders
         ORDER BY processed_at DESC
         """
@@ -45,6 +45,7 @@ async def list_orders(
     items = [
         PolarOrderItem(
             order_id=row["order_id"],
+            customer_email=row["customer_email"],
             tier=row["tier"],
             license_key=row["license_key"],
             processed_at=row["processed_at"],

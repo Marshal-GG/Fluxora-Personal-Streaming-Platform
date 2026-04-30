@@ -36,4 +36,43 @@ class LibraryCubit extends Cubit<LibraryState> {
       selectedLibraryId: libraryId,
     ));
   }
+
+  Future<void> createLibrary(String name, String type, List<String> rootPaths) async {
+    try {
+      await _repository.createLibrary(name: name, type: type, rootPaths: rootPaths);
+      await load();
+    } on ApiException catch (e, st) {
+      _log.e('Create library failed', error: e, stackTrace: st);
+      rethrow;
+    } catch (e, st) {
+      _log.e('Create library failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  Future<void> scanLibrary(String libraryId) async {
+    try {
+      await _repository.scanLibrary(libraryId);
+      await load();
+    } on ApiException catch (e, st) {
+      _log.e('Scan library failed', error: e, stackTrace: st);
+      rethrow;
+    } catch (e, st) {
+      _log.e('Scan library failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  Future<void> uploadFile(String libraryId, String filePath) async {
+    try {
+      await _repository.uploadFileToLibrary(libraryId: libraryId, filePath: filePath);
+      await load(); // Reload to show the new file
+    } on ApiException catch (e, st) {
+      _log.e('Upload file failed', error: e, stackTrace: st);
+      rethrow;
+    } catch (e, st) {
+      _log.e('Upload file failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
 }

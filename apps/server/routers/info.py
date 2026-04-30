@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import aiosqlite
 from fastapi import APIRouter, Depends
@@ -32,3 +33,22 @@ async def get_info(db: aiosqlite.Connection = Depends(get_db)) -> ServerInfoResp
         version=SERVER_VERSION,
         tier=row["subscription_tier"],
     )
+
+
+@router.get("/info/logs")
+async def get_logs() -> dict[str, str]:
+    from config import settings
+
+    log_path = Path(settings.fluxora_log_path)
+    if not log_path.exists():
+        return {"logs": ""}
+
+    # Read last 1000 lines
+    try:
+        with open(log_path, encoding="utf-8") as f:
+            lines = f.readlines()
+            last_lines = lines[-1000:]
+            return {"logs": "".join(last_lines)}
+    except Exception as e:
+        logger.error("Failed to read logs: %s", e)
+        return {"logs": f"Error reading logs: {e}"}
