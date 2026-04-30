@@ -269,3 +269,54 @@ None — no API, schema, or architecture changes made.
 - [x] Did NOT run any `git commit` / `git push` or any git write command
 - [x] Did NOT add any agent name, branding, or AI credit anywhere in code or docs
 ---
+
+---
+## [2026-05-01] — CI Hardening, Ruff Bump, and Commit Hygiene
+**Phase:** Phase 5 (Advanced Features) — Infrastructure
+**Status:** Complete
+
+### What Was Done
+- **Cleanup of accidental commit content (chore: untrack):** the prior two feature commits had silently included gradle build cache (`apps/mobile/android/.gradle/**`), the linux flutter ephemeral plugin symlinks, and `scratch/test_bearer_code.py`. Untracked them via `git rm --cached` and added matching `.gitignore` rules so they cannot creep back in.
+- **CI hardening (`.github/workflows/`):**
+  - `desktop_ci.yml` was using `flutter-actions/setup-flutter@v4` (different action than mobile) with no Flutter version pin. Switched to `subosito/flutter-action@v2` and pinned `flutter-version: 3.32.0` (Dart 3.8.x — required for the null-aware map literal syntax in `apps/desktop/lib/features/settings/presentation/cubit/settings_cubit.dart`).
+  - `mobile_ci.yml` got the same Flutter pin + caching, bumped `actions/checkout@v4 → v5`.
+  - Both Flutter workflows now run `flutter pub get` for `packages/fluxora_core` first so a cold clone resolves the path: dependency cleanly.
+  - Both Flutter workflows now trigger on `pull_request` (parity with `server_ci.yml`).
+- **Ruff bump 0.4.0 → 0.15.12** in `apps/server/pyproject.toml`. Local install was 11 minor versions behind the pin. New ruff also collapsed one implicit string concatenation in `tests/test_signal.py` (`"a" "b"` → `"ab"`). All 108 tests still pass; black and ruff format outputs remain compatible.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Modified | `.gitignore` (added .gradle/, ephemeral/, scratch/) |
+| Untracked | `apps/mobile/android/.gradle/**` |
+| Untracked | `apps/desktop/linux/flutter/ephemeral/.plugin_symlinks/**` |
+| Untracked | `scratch/test_bearer_code.py` |
+| Modified | `.github/workflows/desktop_ci.yml` |
+| Modified | `.github/workflows/mobile_ci.yml` |
+| Modified | `apps/server/pyproject.toml` |
+| Modified | `apps/server/tests/test_signal.py` |
+| Modified | `docs/05_infrastructure/01_infrastructure.md` |
+| Modified | `AGENT_LOG.md` |
+
+### Docs Updated
+- `docs/05_infrastructure/01_infrastructure.md` — corrected the CI table to reflect `subosito/flutter-action@v2` + Flutter pin; documented the ruff version pin; updated the per-workflow descriptions to match what each job actually runs.
+
+### Decisions Made
+- **Pinned Flutter to 3.32.0** rather than tracking the latest stable channel. Dart 3.8 is a hard requirement now (one Cubit uses null-aware map literals); pinning protects against the small but real risk that the action's "stable" channel default lags behind 3.8 on a fresh runner image.
+- **Bumped ruff to the latest (0.15.12)**, exact pin in line with the existing `pytest==`, `black==` style. Considered `>=0.13` ranges but the dev-deps file uses exact pins consistently for reproducibility.
+- **Did NOT rewrite history to remove a `Co-Authored-By: Claude ...` footer** that I (mistakenly) included in commits `b922663` and `f249c96`. CLAUDE.md Hard Prohibition #2 forbids that footer; I caught the mistake on the third attempted commit. Amended the unpushed commit (`f249c96` → `2af6573`). The pushed `b922663` is left as-is — fixing it requires a force-push to `main`, which is outside the scope of what I can do without explicit per-action authorization, and the cosmetic damage is one footer line in one commit. Saved a memory record so this does not happen again.
+
+### Blockers / Open Issues
+- `b922663` on `origin/main` carries a `Co-Authored-By: Claude ...` footer. Owner can choose to rewrite-and-force-push if desired, or leave it.
+- `apps/server/pyproject.toml` still lists `black==24.4.0` while ruff was bumped. Black 25.x is out and may have minor formatter differences; not bumped this round to keep the change scoped.
+- `ruff==0.15.12` is the latest patch — selecting an older minor (0.13/0.14) would also work and might be more conservative for CI reproducibility. Trade-off left to owner.
+
+### Next Agent Should
+1. Decide whether to rewrite `b922663` to drop its `Co-Authored-By` footer (force-push to `main`) or leave it.
+2. Bump `black==24.4.0` → latest 25.x and re-run `python -m black --check .` + `python -m ruff format --check .` to confirm both still agree on formatting.
+3. Carry on with the open Phase 5 work: hardware encoder startup probe, unit tests for the uncovered desktop cubits, and the standalone `TranscodingScreen` cubit.
+
+### Hard Rules Checklist
+- [x] Did NOT run any `git commit` / `git push` for unauthorized changes (the commits made this session were explicitly OK'd by the user)
+- [x] Saved a memory record so the `Co-Authored-By` footer never appears in this repo's commit messages again
+---

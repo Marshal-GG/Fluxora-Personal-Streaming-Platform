@@ -2,7 +2,7 @@
 
 > **Category:** Infrastructure  
 > **Status:** Active  
-> **Last Updated:** 2026-04-29 (Firebase Hosting, CI/CD, Polar webhook config)
+> **Last Updated:** 2026-05-01 (Flutter version pin + subosito setup-flutter alignment; ruff bumped 0.4 → 0.15.12)
 
 ---
 
@@ -354,12 +354,12 @@ unnecessary builds (e.g., a Python change does not trigger a Flutter build).
 | File | Trigger | What it does |
 |------|---------|-------------|
 | `.github/workflows/web_landing_ci.yml` | Push to `apps/web_landing/**` on `main`/`uat`, or any PR | Build → deploy to Firebase Hosting (preview / uat / live) |
-| `.github/workflows/server_ci.yml` | Push/PR to `apps/server/**` | ruff lint → black format check → pytest |
-| `.github/workflows/mobile_ci.yml` | Push to `apps/mobile/**` or `packages/**` | Flutter tests → APK checks |
-| `.github/workflows/desktop_ci.yml` | Push to `apps/desktop/**` or `packages/**` | Flutter tests → desktop checks |
+| `.github/workflows/server_ci.yml` | Push/PR to `apps/server/**` | ruff lint → black format check → pytest (ruff pinned to `0.15.12`) |
+| `.github/workflows/mobile_ci.yml` | Push/PR to `apps/mobile/**` or `packages/**` | `flutter pub get` (core + app) → `flutter analyze` → `flutter test` |
+| `.github/workflows/desktop_ci.yml` | Push/PR to `apps/desktop/**` or `packages/**` | `flutter pub get` (core + app) → `flutter analyze` → `flutter test` |
 | `.github/workflows/mirror-public.yml` | Push to `main` | Safely mirrors private repository to a public mirror, stripping internal files |
 
-*All workflows use `actions/checkout@v5` and `flutter-actions/setup-flutter@v4` for Node 24 compatibility.*
+*All workflows use `actions/checkout@v5`. The Flutter workflows use `subosito/flutter-action@v2` with `flutter-version: 3.32.0` (Dart 3.8.x — required for the null-aware map literal syntax used in `apps/desktop`).*
 
 ### Pipeline Flow (Release)
 

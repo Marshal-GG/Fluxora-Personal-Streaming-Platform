@@ -168,7 +168,7 @@ def test_signal_ice_candidate_accepted(test_db, monkeypatch):
                     ice_msg = {
                         "type": "ice-candidate",
                         "candidate": (
-                            "candidate:1 1 UDP 2130706431 " "192.168.1.1 54321 typ host"
+                            "candidate:1 1 UDP 2130706431 192.168.1.1 54321 typ host"
                         ),
                         "sdpMid": "0",
                         "sdpMLineIndex": 0,
