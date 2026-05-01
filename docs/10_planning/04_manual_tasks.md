@@ -149,6 +149,15 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 - **Doc:** [`runbooks/11_dependabot_triage.md`](../05_infrastructure/runbooks/11_dependabot_triage.md).
 - **Owner:** project owner.
 
+### 🔲 Bump Flutter / Dart SDK to 3.9+ to unblock `json_annotation` 4.11
+
+- **What:** the project is pinned to Dart SDK 3.8.0; `json_annotation 4.11.x` requires SDK `^3.9.0`, so `packages/fluxora_core/pubspec.yaml` and `apps/desktop/pubspec.yaml` are pinned to `json_annotation '>=4.9.0 <4.11.0'` + `json_serializable '>=6.9.0 <6.13.0'` to keep `flutter pub get` working. Dependabot will keep proposing 4.11+ bumps; close them until the SDK floor is raised.
+- **Why:** keeping a hard ceiling lets us merge other dependency PRs without churn, but eventually we want to take Dart 3.9+ improvements (records, patterns refinements) and the latest `json_serializable`.
+- **Prereqs:** bump Flutter version in `.github/workflows/*.yml` (currently pinned per `ci: pin Flutter version, align actions, add pull_request triggers`), bump SDK constraint in all three `pubspec.yaml` files, regenerate `pubspec.lock` files, run mobile + desktop + core test suites locally.
+- **Time:** ~30 min for the bump itself, plus whatever surfaces in `flutter analyze` after the SDK jump.
+- **Trigger:** when Dart 3.9 becomes the stable Flutter floor or a feature blocks on it.
+- **Owner:** project owner.
+
 ### 🔲 Long-term: decide whether to register `fluxora.cloud`
 
 - **What:** if v2 multi-tenant becomes a real plan, register `fluxora.cloud` (or another single-purpose TLD) so per-user subdomains (`<user>.fluxora.cloud`) get free Universal SSL. Alternative: pay $10/mo for Cloudflare ACM on `*.fluxora.marshalx.dev`.

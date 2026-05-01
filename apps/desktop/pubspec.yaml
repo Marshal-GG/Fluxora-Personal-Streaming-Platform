@@ -20,7 +20,7 @@ dependencies:
   equatable: ^2.0.8
   intl: ^0.20.2
   freezed_annotation: ^3.0.0
-  json_annotation: ^4.11.0
+  json_annotation: '>=4.9.0 <4.11.0'
   file_picker: ^11.0.2
   dio: ^5.9.2
 
@@ -32,7 +32,7 @@ dev_dependencies:
   bloc_test: ^10.0.0
   build_runner: ^2.14.0
   freezed: ^3.0.0
-  json_serializable: ^6.13.0
+  json_serializable: '>=6.9.0 <6.13.0'
 
 flutter:
   uses-material-design: true
