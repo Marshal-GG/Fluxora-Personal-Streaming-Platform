@@ -149,17 +149,6 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 - **Doc:** [`runbooks/11_dependabot_triage.md`](../05_infrastructure/runbooks/11_dependabot_triage.md).
 - **Owner:** project owner.
 
-### 🔲 Bump Flutter / Dart SDK to 3.9+ to unblock several dep majors
-
-- **What:** the project is pinned to Dart SDK 3.8.0; multiple dependency majors require SDK `^3.9.0`, so the affected pubspecs hold ceilings to keep `flutter pub get` (and CI) working:
-  - `packages/fluxora_core/pubspec.yaml` and `apps/desktop/pubspec.yaml`: `json_annotation '>=4.10.0 <4.11.0'` + `json_serializable '>=6.9.0 <6.13.0'` (4.11.x and 6.13.x require 3.9+).
-  - `apps/desktop/pubspec.yaml`: `go_router: ^16.0.0` (17.x requires 3.9+).
-  - Dependabot will keep proposing the newer majors; close them until the SDK floor is raised.
-- **Why:** keeping hard ceilings lets us merge other dependency PRs without churn, but eventually we want Dart 3.9+ improvements (records, patterns refinements) and the latest go_router / json_serializable / json_annotation.
-- **Prereqs:** bump Flutter version in `.github/workflows/*.yml` (currently pinned per `ci: pin Flutter version, align actions, add pull_request triggers`), bump SDK constraint in all three `pubspec.yaml` files, regenerate `pubspec.lock` files, run mobile + desktop + core test suites locally, and watch for go_router 17 breaking changes (Router/Navigator API audit).
-- **Time:** ~30 min for the bump itself, plus whatever surfaces in `flutter analyze` after the SDK jump.
-- **Trigger:** when Dart 3.9 becomes the stable Flutter floor or a feature blocks on it.
-- **Owner:** project owner.
 
 ### 🔲 Long-term: decide whether to register `fluxora.cloud`
 
@@ -177,6 +166,7 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 Move items here once done; prune entries older than ~3 months to keep this readable.
 
 - ✅ **Phase 1 of public routing** — Cloudflare Tunnel `fluxora-home` live at `fluxora-api.marshalx.dev` (2026-05-01). See [`../05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) §Phase 1.
+- ✅ **Dart SDK floor bumped 3.8 → 3.9** (2026-05-01). CI Flutter pin moved 3.32.0 → 3.41.3 in `desktop_ci.yml` + `mobile_ci.yml`. All three pubspecs now declare `sdk: '>=3.9.0 <4.0.0'`. Removed previously held ceilings on `json_annotation`, `json_serializable`, `build_runner`, and `go_router` — Dependabot's existing latest pins (`json_annotation ^4.11`, `json_serializable ^6.13`, `build_runner ^2.14`, desktop `go_router ^17.2`) now resolve cleanly.
 
 ---
 

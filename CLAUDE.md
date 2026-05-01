@@ -361,7 +361,7 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 | Token storage (Flutter) | `shared_preferences` is not encrypted | Use `flutter_secure_storage` for the bearer token |
 | Path traversal | File-serving routes could expose files outside the library root | Always canonicalize and prefix-check before serving |
 | Bash / Git Commits | Backticks inside double-quoted commit messages execute as bash commands, causing pathspec errors | Use single quotes (`'`) instead of double quotes to wrap commit messages containing backticks |
-| Dart 3.8 null-aware map syntax | `{'key': ?value}` looks like a Dart syntax error to older analyzers or IDEs | Valid in SDK `>=3.8.0` (desktop `pubspec.yaml` uses `sdk: '>=3.8.0'`); `flutter analyze` confirms no issues |
+| Dart 3.9 null-aware map syntax | `{'key': ?value}` looks like a Dart syntax error to older analyzers or IDEs | Valid in SDK `>=3.8.0`; project floor is now `>=3.9.0` everywhere (CI pins Flutter 3.41.3 / Dart 3.11). `flutter analyze` confirms no issues. |
 | Pytest & CI | `pytest` exits with code 5 if no tests are found, breaking CI pipelines | Always include at least one placeholder test (e.g. `def test_placeholder(): pass`) |
 | Git Pull / Merge | Running `git pull` with diverged branches creates an unwanted `Merge branch 'main' of...` commit in the history | Always use `git pull --rebase` to pull remote changes without creating an automated merge commit |
 
@@ -406,7 +406,7 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
   - `features/player` — `media_kit` HLS; `NetworkPathDetector` (now in core); WebRTC 8 s timeout → HLS fallback; `_TransportBadge`; resume; `PlayerTierLimit` → `_TierLimitView` → `UpgradeScreen`; `_SettingsSheet` (speed/audio/subtitle) ✅
   - `features/upgrade` — `UpgradeScreen` tier comparison cards + activation guide ✅
   - `features/settings` — 🔲 **deferred** — desktop Control Panel is the v1 settings surface; "Remote access" row will land when mobile gains a settings screen
-- `apps/desktop` — **Phases 1–5 in progress** (34 passing tests; Dart SDK `>=3.8.0`):
+- `apps/desktop` — **Phases 1–5 in progress** (34 passing tests; Dart SDK `>=3.9.0`):
   - Dashboard screen (server info + client stats) ✅
   - Clients screen (approve/reject/filter) ✅
   - Library screen (create/scan/upload/filter libraries) ✅
