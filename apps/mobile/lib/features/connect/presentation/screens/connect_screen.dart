@@ -144,7 +144,7 @@ class _ConnectViewState extends State<_ConnectView> {
     final port = int.tryParse(_portController.text.trim()) ?? 8080;
     if (ip.isEmpty) return;
     final server = DiscoveredServer(name: ip, ip: ip, port: port);
-    GetIt.I<ApiClient>().configure(baseUrl: server.url);
+    GetIt.I<ApiClient>().configure(localBaseUrl: server.url);
     context.go(Routes.pairing, extra: server);
   }
 }
@@ -206,7 +206,7 @@ class _ServerTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () {
-        GetIt.I<ApiClient>().configure(baseUrl: server.url);
+        GetIt.I<ApiClient>().configure(localBaseUrl: server.url);
         context.go(Routes.pairing, extra: server);
       },
       child: Container(

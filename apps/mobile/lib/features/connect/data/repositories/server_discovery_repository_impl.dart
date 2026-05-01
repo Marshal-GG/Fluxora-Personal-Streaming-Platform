@@ -59,7 +59,7 @@ class ServerDiscoveryRepositoryImpl implements ServerDiscoveryRepository {
 
   @override
   Future<ServerInfo> verifyServer(String url) async {
-    _apiClient.configure(baseUrl: url);
+    _apiClient.configure(localBaseUrl: url);
     return _apiClient.get<ServerInfo>(
       Endpoints.info,
       fromJson: (data) =>

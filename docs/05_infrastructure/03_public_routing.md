@@ -248,44 +248,56 @@ Result cached for 30s per-instance — `system_stats.collect()` reads the cached
 
 The desktop `SystemStatsCard` (which already consumes `/info/stats`) gets a green/red dot the moment this field flips between `null` and a string — no UI rework needed.
 
-### Phase 3 — Shared core (`packages/fluxora_core`)
+### Phase 3 — Shared core (`packages/fluxora_core`) ✅ Complete
 
-#### 3.1 `ApiClient` accepts dual base URLs
+#### 3.1 `ApiClient` accepts dual base URLs ✅
 
-```dart
-class ApiClient {
-  ApiClient({
-    required this.localBaseUrl,
-    this.remoteBaseUrl,
-    required this.networkPathDetector,
-  });
-
-  final String localBaseUrl;       // e.g. http://192.168.1.10:8080
-  final String? remoteBaseUrl;     // e.g. https://fluxora-api.marshalx.dev
-
-  Future<Uri> _resolveBase() async {
-    final onLan = await networkPathDetector.isLan(localBaseUrl);
-    if (onLan) return Uri.parse(localBaseUrl);
-    final remote = remoteBaseUrl;
-    if (remote == null) throw const NoRemoteConfiguredException();
-    return Uri.parse(remote);
-  }
-}
-```
-
-#### 3.2 `SecureStorage` stores both URLs
+`packages/fluxora_core/lib/network/api_client.dart` now resolves the base URL per request via a `LanCheck` callback (defaults to `NetworkPathDetector.isLan`):
 
 ```dart
-Future<void> savePairing({
-  required String localUrl,
-  required String? remoteUrl,
-  required String authToken,
-});
+final client = ApiClient(
+  localBaseUrl: 'http://192.168.1.10:8080',
+  remoteBaseUrl: 'https://fluxora-api.marshalx.dev',
+  // lanCheck defaults to NetworkPathDetector.isLan
+);
 ```
 
-#### 3.3 `NetworkPathDetector` extension
+Resolution rules (private `_resolveBaseUrl`):
 
-Already exists. Returns `true` when the device is in the same /24 as the configured `localBaseUrl`. No change needed — `ApiClient` does the routing decision.
+| Local | Remote | LAN? | Result |
+|-------|--------|------|--------|
+| set   | set    | yes  | local  |
+| set   | set    | no   | remote |
+| set   | unset  | yes  | local  |
+| set   | unset  | no   | throw `NoRemoteConfiguredException` |
+| unset | set    | —    | remote |
+| unset | unset  | —    | throw `NoRemoteConfiguredException` |
+
+The Dio request interceptor calls `_resolveBaseUrl()` and rewrites `options.baseUrl` per request, so every screen/route benefits transparently. If the resolver throws, each public method (`get/post/put/patch/delete`) unwraps the `NoRemoteConfiguredException` from the `DioException` and rethrows it directly — so callers can `catch (NoRemoteConfiguredException)` cleanly.
+
+`configure(...)` accepts the same dual-URL signature for live updates after pairing. The legacy single `baseUrl` arg is kept on both the constructor and `configure` as `@Deprecated` — calls keep compiling and route through `localBaseUrl`.
+
+Test coverage: `packages/fluxora_core/test/network/api_client_test.dart` — 9 tests covering all six resolution branches, `configure()`, `clearRemoteBaseUrl()`, and the legacy `baseUrl` alias.
+
+#### 3.2 `SecureStorage` stores both URLs ✅
+
+`packages/fluxora_core/lib/storage/secure_storage.dart` adds:
+
+- `saveRemoteUrl(url)` / `getRemoteUrl()` / `deleteRemoteUrl()`
+- `savePairing({ authToken, serverUrl, clientId, remoteUrl? })` — single-call helper that writes all four fields atomically. Passing `remoteUrl: null` deletes any stored remote URL (used when the server has disabled remote access).
+
+The `_keyRemoteUrl` storage key is `'remote_url'`.
+
+#### 3.3 `NetworkPathDetector` moved into core ✅
+
+The detector previously lived under `apps/mobile/lib/features/player/data/services/`; it has been moved to `packages/fluxora_core/lib/network/network_path_detector.dart` so the desktop and any future web client can reuse it. The mobile copy was deleted; the only mobile import (`PlayerCubit`) now imports from `package:fluxora_core/network/network_path_detector.dart`.
+
+The same module exposes a `LanCheck` typedef (`Future<bool> Function(String)`) which `ApiClient` accepts for test injection.
+
+#### 3.4 Injector + legacy callers migrated ✅
+
+- `apps/mobile/lib/core/di/injector.dart` — restores both `serverUrl` and `remoteUrl` from `SecureStorage` on app start and calls `ApiClient.configure(localBaseUrl: …, remoteBaseUrl: …)`.
+- All remaining callers (`auth_repository_impl`, `server_discovery_repository_impl`, `connect_screen`, desktop `injector`/`settings_cubit`/tests) now pass `localBaseUrl:` instead of the deprecated `baseUrl:`. `flutter analyze` is clean across `fluxora_core`, mobile, and desktop.
 
 ### Phase 4 — Mobile client
 

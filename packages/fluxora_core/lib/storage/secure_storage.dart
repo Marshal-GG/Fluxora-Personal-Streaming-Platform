@@ -8,6 +8,7 @@ class SecureStorage {
 
   static const String _keyAuthToken = 'auth_token';
   static const String _keyServerUrl = 'server_url';
+  static const String _keyRemoteUrl = 'remote_url';
   static const String _keyClientId = 'client_id';
 
   static final _log = Logger();
@@ -54,6 +55,52 @@ class SecureStorage {
     } catch (e, st) {
       _log.e('Failed to read server URL', error: e, stackTrace: st);
       rethrow;
+    }
+  }
+
+  Future<void> saveRemoteUrl(String url) async {
+    try {
+      await _storage.write(key: _keyRemoteUrl, value: url);
+    } catch (e, st) {
+      _log.e('Failed to save remote URL', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  Future<String?> getRemoteUrl() async {
+    try {
+      return await _storage.read(key: _keyRemoteUrl);
+    } catch (e, st) {
+      _log.e('Failed to read remote URL', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  Future<void> deleteRemoteUrl() async {
+    try {
+      await _storage.delete(key: _keyRemoteUrl);
+    } catch (e, st) {
+      _log.e('Failed to delete remote URL', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  /// Persists the full pairing payload in one call. Pass `null` for
+  /// [remoteUrl] to clear any previously stored remote URL (e.g. when
+  /// the server has disabled remote access).
+  Future<void> savePairing({
+    required String authToken,
+    required String serverUrl,
+    required String clientId,
+    String? remoteUrl,
+  }) async {
+    await saveAuthToken(authToken);
+    await saveServerUrl(serverUrl);
+    await saveClientId(clientId);
+    if (remoteUrl != null) {
+      await saveRemoteUrl(remoteUrl);
+    } else {
+      await deleteRemoteUrl();
     }
   }
 

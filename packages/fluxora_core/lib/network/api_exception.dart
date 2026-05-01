@@ -60,3 +60,18 @@ class ApiException implements Exception {
   @override
   String toString() => 'ApiException($errorCode, $statusCode): $message';
 }
+
+/// Thrown when [ApiClient] needs to send a request from off-LAN but no
+/// remote URL has been configured for the paired server.
+///
+/// Surfaces as a recoverable error in the UI: typically prompts the user
+/// to reconnect to the LAN where the server lives, or to set up remote
+/// access on the server (Phase 1 of the public-routing plan).
+class NoRemoteConfiguredException implements Exception {
+  const NoRemoteConfiguredException();
+
+  @override
+  String toString() =>
+      'NoRemoteConfiguredException: device is off-LAN and the paired '
+      'server has no remote URL configured';
+}

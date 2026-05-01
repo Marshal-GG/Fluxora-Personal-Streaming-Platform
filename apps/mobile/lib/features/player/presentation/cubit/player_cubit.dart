@@ -6,7 +6,7 @@ import 'package:media_kit/media_kit.dart' show Media, Player;
 import 'package:media_kit_video/media_kit_video.dart' show VideoController;
 import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
-import 'package:fluxora_mobile/features/player/data/services/network_path_detector.dart';
+import 'package:fluxora_core/network/network_path_detector.dart';
 import 'package:fluxora_mobile/features/player/data/services/webrtc_signaling_service.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.dart';

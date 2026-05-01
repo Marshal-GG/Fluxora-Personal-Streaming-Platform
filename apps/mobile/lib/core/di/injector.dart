@@ -24,15 +24,20 @@ Future<void> setupInjector() async {
     SecureStorage(getIt<FlutterSecureStorage>()),
   );
 
-  // Start with empty base URL — configured after server discovery or on restart
-  getIt.registerSingleton<ApiClient>(ApiClient(baseUrl: ''));
+  // Start with no base URL — configured after server discovery or on restart
+  getIt.registerSingleton<ApiClient>(ApiClient());
 
-  // Restore saved server URL and auth token across app restarts
+  // Restore saved URLs and auth token across app restarts
   final storage = getIt<SecureStorage>();
   final serverUrl = await storage.getServerUrl();
+  final remoteUrl = await storage.getRemoteUrl();
   final authToken = await storage.getAuthToken();
-  if (serverUrl != null) {
-    getIt<ApiClient>().configure(baseUrl: serverUrl, bearerToken: authToken);
+  if (serverUrl != null || remoteUrl != null) {
+    getIt<ApiClient>().configure(
+      localBaseUrl: serverUrl,
+      remoteBaseUrl: remoteUrl,
+      bearerToken: authToken,
+    );
   }
 
   getIt.registerLazySingleton<ServerDiscoveryRepository>(

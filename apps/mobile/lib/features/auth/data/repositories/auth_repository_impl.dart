@@ -55,7 +55,7 @@ class AuthRepositoryImpl implements AuthRepository {
     await _secureStorage.saveServerUrl(serverUrl);
     await _secureStorage.saveAuthToken(authToken);
     await _secureStorage.saveClientId(clientId);
-    _apiClient.configure(baseUrl: serverUrl, bearerToken: authToken);
+    _apiClient.configure(localBaseUrl: serverUrl, bearerToken: authToken);
     _log.i('Credentials saved for client $clientId');
   }
 }

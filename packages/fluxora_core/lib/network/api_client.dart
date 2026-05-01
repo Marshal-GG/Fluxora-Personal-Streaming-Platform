@@ -1,12 +1,35 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:logger/logger.dart';
 import 'package:fluxora_core/network/api_exception.dart';
+import 'package:fluxora_core/network/network_path_detector.dart';
 
+/// HTTP client with smart-path routing between a LAN base URL and an
+/// internet-exposed remote base URL (Cloudflare Tunnel).
+///
+/// Resolution happens per-request via [LanCheck]. When the device is on
+/// the same /24 as the server, [localBaseUrl] is used; otherwise
+/// [remoteBaseUrl] is used. If the device is off-LAN and no
+/// [remoteBaseUrl] is configured, the call throws
+/// [NoRemoteConfiguredException].
+///
+/// See `docs/05_infrastructure/03_public_routing.md` Phase 3.
 class ApiClient {
-  ApiClient({required String baseUrl, String? bearerToken}) {
+  /// Dual-base constructor.
+  ApiClient({
+    String? localBaseUrl,
+    String? remoteBaseUrl,
+    @Deprecated('Use localBaseUrl instead') String? baseUrl,
+    String? bearerToken,
+    LanCheck lanCheck = NetworkPathDetector.isLan,
+  })  : _localBaseUrl = localBaseUrl ?? baseUrl,
+        _remoteBaseUrl = remoteBaseUrl,
+        _lanCheck = lanCheck {
     _dio = Dio(
       BaseOptions(
-        baseUrl: baseUrl,
+        // Seed with whichever base is available so Dio has a non-empty
+        // baseUrl until the first request (interceptor will rewrite).
+        baseUrl: (localBaseUrl ?? baseUrl ?? remoteBaseUrl ?? ''),
         connectTimeout: const Duration(seconds: 10),
         receiveTimeout: const Duration(seconds: 30),
         headers: const {'Content-Type': 'application/json'},
@@ -18,14 +41,69 @@ class ApiClient {
 
   late final Dio _dio;
   String? _bearerToken;
+  String? _localBaseUrl;
+  String? _remoteBaseUrl;
+  LanCheck _lanCheck;
 
   static final _log = Logger();
 
-  /// Updates the base URL and auth token — called after server pairing.
-  void configure({required String baseUrl, String? bearerToken}) {
-    _dio.options.baseUrl = baseUrl;
+  String? get localBaseUrl => _localBaseUrl;
+  String? get remoteBaseUrl => _remoteBaseUrl;
+
+  /// Updates base URLs and auth token — called after server pairing.
+  ///
+  /// Accepts the legacy single [baseUrl] argument as an alias for
+  /// [localBaseUrl] so existing callers keep working until migrated.
+  void configure({
+    String? localBaseUrl,
+    String? remoteBaseUrl,
+    @Deprecated('Use localBaseUrl instead') String? baseUrl,
+    String? bearerToken,
+    LanCheck? lanCheck,
+  }) {
+    if (localBaseUrl != null || baseUrl != null) {
+      _localBaseUrl = localBaseUrl ?? baseUrl;
+    }
+    if (remoteBaseUrl != null) {
+      _remoteBaseUrl = remoteBaseUrl;
+    }
+    if (lanCheck != null) {
+      _lanCheck = lanCheck;
+    }
     _bearerToken = bearerToken;
+    _dio.options.baseUrl =
+        _localBaseUrl ?? _remoteBaseUrl ?? _dio.options.baseUrl;
     _setupInterceptors();
+  }
+
+  /// Clears the remote URL — used when the user unpairs or disables
+  /// remote access on the server.
+  void clearRemoteBaseUrl() {
+    _remoteBaseUrl = null;
+  }
+
+  /// Test-only access to the smart-path resolver.
+  @visibleForTesting
+  Future<String> resolveBaseUrlForTest() => _resolveBaseUrl();
+
+  Future<String> _resolveBaseUrl() async {
+    final local = _localBaseUrl;
+    final remote = _remoteBaseUrl;
+
+    if (local == null && remote == null) {
+      throw const NoRemoteConfiguredException();
+    }
+    // No local URL — only path is the remote.
+    if (local == null) return remote!;
+
+    final isLan = await _lanCheck(local);
+    if (isLan) return local;
+
+    // Off-LAN — must have a remote URL configured.
+    if (remote == null) {
+      throw const NoRemoteConfiguredException();
+    }
+    return remote;
   }
 
   void _setupInterceptors() {
@@ -33,7 +111,18 @@ class ApiClient {
       ..clear()
       ..add(
         InterceptorsWrapper(
-          onRequest: (options, handler) {
+          onRequest: (options, handler) async {
+            try {
+              options.baseUrl = await _resolveBaseUrl();
+            } on NoRemoteConfiguredException catch (e) {
+              return handler.reject(
+                DioException(
+                  requestOptions: options,
+                  type: DioExceptionType.unknown,
+                  error: e,
+                ),
+              );
+            }
             if (_bearerToken != null) {
               options.headers['Authorization'] = 'Bearer $_bearerToken';
             }
@@ -51,6 +140,16 @@ class ApiClient {
       );
   }
 
+  /// If [e] wraps a [NoRemoteConfiguredException], rethrow that
+  /// directly so callers can branch on it.
+  Never _rethrow(DioException e) {
+    final inner = e.error;
+    if (inner is NoRemoteConfiguredException) {
+      throw inner;
+    }
+    throw ApiException.fromDioException(e);
+  }
+
   Future<T> get<T>(
     String path, {
     Map<String, dynamic>? queryParameters,
@@ -64,7 +163,7 @@ class ApiClient {
       if (fromJson != null) return fromJson(response.data);
       return response.data as T;
     } on DioException catch (e) {
-      throw ApiException.fromDioException(e);
+      _rethrow(e);
     }
   }
 
@@ -78,7 +177,7 @@ class ApiClient {
       if (fromJson != null) return fromJson(response.data);
       return response.data as T;
     } on DioException catch (e) {
-      throw ApiException.fromDioException(e);
+      _rethrow(e);
     }
   }
 
@@ -92,7 +191,7 @@ class ApiClient {
       if (fromJson != null) return fromJson(response.data);
       return response.data as T;
     } on DioException catch (e) {
-      throw ApiException.fromDioException(e);
+      _rethrow(e);
     }
   }
 
@@ -106,7 +205,7 @@ class ApiClient {
       if (fromJson != null) return fromJson(response.data);
       return response.data as T;
     } on DioException catch (e) {
-      throw ApiException.fromDioException(e);
+      _rethrow(e);
     }
   }
 
@@ -114,7 +213,7 @@ class ApiClient {
     try {
       await _dio.delete<dynamic>(path);
     } on DioException catch (e) {
-      throw ApiException.fromDioException(e);
+      _rethrow(e);
     }
   }
 }

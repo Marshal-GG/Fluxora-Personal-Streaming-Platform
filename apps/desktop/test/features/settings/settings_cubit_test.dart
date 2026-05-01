@@ -55,7 +55,8 @@ void main() {
           )).thenAnswer((_) async => data);
 
   void stubApiConfigure() =>
-      when(() => mockApiClient.configure(baseUrl: any(named: 'baseUrl')))
+      when(() =>
+              mockApiClient.configure(localBaseUrl: any(named: 'localBaseUrl')))
           .thenAnswer((_) {});
 
   void stubApiPatchSuccess() =>
@@ -246,7 +247,8 @@ void main() {
       ],
       verify: (_) {
         verify(() => mockStorage.saveServerUrl(kSavedUrl)).called(1);
-        verify(() => mockApiClient.configure(baseUrl: kSavedUrl)).called(1);
+        verify(() => mockApiClient.configure(localBaseUrl: kSavedUrl))
+            .called(1);
         verify(() => mockApiClient.patch<void>(
               any(),
               body: any(named: 'body'),

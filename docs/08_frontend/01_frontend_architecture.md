@@ -142,7 +142,7 @@ UI Event ──▶ BLoC/Cubit ──▶ Repository (interface) ──▶ ApiClie
 // Singletons — created once
 getIt.registerSingleton<FlutterSecureStorage>(...)
 getIt.registerSingleton<SecureStorage>(...)
-getIt.registerSingleton<ApiClient>(ApiClient(baseUrl: ''))
+getIt.registerSingleton<ApiClient>(ApiClient())  // dual-base; URLs set after restore
 
 // Lazy singletons — created on first use
 getIt.registerLazySingleton<LibraryRepository>(() => LibraryRepositoryImpl(...))
@@ -151,8 +151,7 @@ getIt.registerLazySingleton<LibraryRepository>(() => LibraryRepositoryImpl(...))
 // BLoCs are NOT registered in get_it; created inline via BlocProvider
 ```
 
-On app restart: `setupInjector()` reads `SecureStorage` and calls `ApiClient.configure()` to
-restore credentials before any repository is used.
+On app restart: `setupInjector()` reads `SecureStorage` (both `serverUrl` and `remoteUrl`) and calls `ApiClient.configure(localBaseUrl: …, remoteBaseUrl: …, bearerToken: …)` to restore credentials and routing before any repository is used.
 
 ---
 
@@ -176,7 +175,8 @@ restore credentials before any repository is used.
 | UUID generation | Custom via `dart:math` + `Random.secure()` | Avoids adding `uuid` package for one use |
 | Video player | `media_kit v1.2.6` | `better_player` incompatible with AGP 8+ |
 | WebRTC | `flutter_webrtc ^1.4.1` — Phase 3 ✅ | `WebRtcSignalingService` + `NetworkPathDetector`; LAN detection skips negotiation; 8 s ICE timeout with HLS fallback |
-| Smart path | `NetworkPathDetector.isLan()` | Pure in-process /24 subnet check; no DNS, no ICMP; fails-safe to WAN |
+| Smart path | `NetworkPathDetector.isLan()` (in `fluxora_core`) | Pure in-process /24 subnet check; no DNS, no ICMP; fails-safe to WAN. Used by `ApiClient` for dual-base routing and by `PlayerCubit` for the WebRTC vs HLS decision |
+| Dual-base ApiClient | `ApiClient(localBaseUrl, remoteBaseUrl, lanCheck)` in `fluxora_core` | Per-request resolution: LAN → localBaseUrl, WAN → remoteBaseUrl; throws `NoRemoteConfiguredException` if off-LAN with no remote configured. Phase 3 of public-routing plan |
 | Transport badge | `_TransportBadge` chip | Auto-hides after 5 s; HLS (dark chip) vs WebRTC (deep-purple chip + `cell_tower` icon); re-appears on ICE degradation |
 | ICE degradation | `_handleSignalingDegradation()` in `PlayerCubit` | `SignalingState.failed` post-connection → `copyWith(streamPath: hls)` emitted; signaling closed; player uninterrupted (HLS was always underlying transport) |
 | Resume banner guard | `_readyOnce` in `_PlayerViewState` | Prevents resume banner from re-firing when `PlayerReady` is re-emitted for transport switch |

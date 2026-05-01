@@ -2,26 +2,30 @@ import 'dart:io' show NetworkInterface, InternetAddress, InternetAddressType;
 
 import 'package:logger/logger.dart';
 
-/// Detects whether the saved server URL is on the same local network (LAN)
-/// as the device, or is on the internet (WAN).
+/// Detects whether a server URL is on the same local network (LAN) as the
+/// device, or on the internet (WAN).
 ///
 /// Strategy
 /// ~~~~~~~~
 /// 1. Parse the server URL to extract its host (IPv4 address or hostname).
 /// 2. Enumerate the device's network interfaces to collect all assigned
-///    IPv4 addresses and their prefix lengths.
+///    IPv4 addresses.
 /// 3. If the server host is a private-range IP AND falls within one of the
-///    device's subnets → LAN.  Otherwise → WAN → WebRTC is appropriate.
+///    device's /24 subnets → LAN. Otherwise → WAN.
 ///
-/// Private ranges covered: 10.x.x.x, 172.16-31.x.x, 192.168.x.x, 169.254.x.x
+/// Private ranges covered: 10.x.x.x, 172.16-31.x.x, 192.168.x.x, 169.254.x.x.
+///
+/// Used by [ApiClient] to choose between the LAN and remote (Cloudflare
+/// Tunnel) base URL on each request — see Phase 3 of the public-routing
+/// plan in `docs/05_infrastructure/03_public_routing.md`.
 class NetworkPathDetector {
   static final _log = Logger();
 
   /// Returns `true` if [serverUrl] resolves to a host on the local network.
   ///
-  /// Fast (~< 5 ms) — pure in-process check, no DNS or ICMP.
-  /// Falls back to `false` (treat as WAN) on any parse/IO error so that
-  /// WebRTC negotiation is attempted rather than suppressed.
+  /// Fast (~< 5 ms) — pure in-process check, no DNS or ICMP. Falls back to
+  /// `false` (treat as WAN) on any parse / IO error so that the remote URL
+  /// is attempted rather than the request failing outright.
   static Future<bool> isLan(String serverUrl) async {
     try {
       final host = _extractHost(serverUrl);
@@ -34,13 +38,12 @@ class NetworkPathDetector {
 
       final serverAddr = InternetAddress.tryParse(host);
       if (serverAddr == null) {
-        // Hostname — treat as WAN (mDNS names are handled at discovery time)
+        // Hostname — treat as WAN (mDNS names are handled at discovery time).
         return false;
       }
 
       if (!_isPrivateIpv4(serverAddr)) return false;
 
-      // Check if the server IP falls within any of our local subnets
       final interfaces = await NetworkInterface.list(
         type: InternetAddressType.IPv4,
         includeLinkLocal: true,
@@ -49,7 +52,9 @@ class NetworkPathDetector {
       for (final iface in interfaces) {
         for (final addr in iface.addresses) {
           if (_sameSubnet(addr, serverAddr)) {
-            _log.d('[NetPath] $host is LAN (iface ${iface.name} ${addr.address})');
+            _log.d(
+              '[NetPath] $host is LAN (iface ${iface.name} ${addr.address})',
+            );
             return true;
           }
         }
@@ -58,14 +63,16 @@ class NetworkPathDetector {
       _log.d('[NetPath] $host is WAN (private IP but not on any local subnet)');
       return false;
     } catch (e, st) {
-      _log.w('[NetPath] Detection failed — defaulting to WAN', error: e, stackTrace: st);
+      _log.w(
+        '[NetPath] Detection failed — defaulting to WAN',
+        error: e,
+        stackTrace: st,
+      );
       return false;
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
+  // ── Private helpers ──────────────────────────────────────────────────────
 
   static String? _extractHost(String url) {
     try {
@@ -93,11 +100,14 @@ class NetworkPathDetector {
 
   /// Checks whether [serverAddr] is in the same /24 subnet as [localAddr].
   ///
-  /// We use /24 as a practical default because most home and office routers
-  /// assign addresses in a single /24 block.  A tighter check (using the
-  /// actual prefix length) would require parsing the system routing table
-  /// which is not portable across Android/iOS.
-  static bool _sameSubnet(InternetAddress localAddr, InternetAddress serverAddr) {
+  /// /24 is a practical default because most home and office routers assign
+  /// addresses in a single /24 block. A tighter check using the actual
+  /// prefix length would require parsing the system routing table — not
+  /// portable across Android / iOS / desktop.
+  static bool _sameSubnet(
+    InternetAddress localAddr,
+    InternetAddress serverAddr,
+  ) {
     if (localAddr.type != InternetAddressType.IPv4) return false;
     if (serverAddr.type != InternetAddressType.IPv4) return false;
 
@@ -105,7 +115,12 @@ class NetworkPathDetector {
     final s = serverAddr.rawAddress;
     if (l.length != 4 || s.length != 4) return false;
 
-    // Compare first 3 octets (/24 mask)
     return l[0] == s[0] && l[1] == s[1] && l[2] == s[2];
   }
 }
+
+/// Signature for the LAN-vs-WAN decision used by [ApiClient].
+///
+/// Default implementation is [NetworkPathDetector.isLan]. Tests pass a
+/// mock function to drive the dual-base resolution deterministically.
+typedef LanCheck = Future<bool> Function(String serverUrl);

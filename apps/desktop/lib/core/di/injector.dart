@@ -31,7 +31,7 @@ Future<void> setupInjector() async {
   // ── Network ─────────────────────────────────────────────────────────────────
   // Read the persisted server URL so the first request goes to the right host.
   final savedUrl = await secureStorage.getServerUrl() ?? _defaultServerUrl;
-  getIt.registerSingleton<ApiClient>(ApiClient(baseUrl: savedUrl));
+  getIt.registerSingleton<ApiClient>(ApiClient(localBaseUrl: savedUrl));
 
   // ── Repositories ─────────────────────────────────────────────────────────────
   getIt.registerLazySingleton<DashboardRepository>(

@@ -106,7 +106,7 @@ class SettingsCubit extends Cubit<SettingsState> {
     try {
       // Persist server URL locally.
       await _secureStorage.saveServerUrl(trimmedUrl);
-      _apiClient.configure(baseUrl: trimmedUrl);
+      _apiClient.configure(localBaseUrl: trimmedUrl);
 
       // Push server-side settings to the API.
       await _apiClient.patch<void>(
