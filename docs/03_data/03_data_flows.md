@@ -1,7 +1,7 @@
 # Data Flow Diagrams
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-01 (Polar payment webhook flow added; stream-gate group enforcement flow added)
+> **Status:** Active - Updated 2026-05-02 (Polar payment webhook flow added; stream-gate group enforcement flow added; Notification fan-out flow added; Activity event log flow added)
 
 ---
 
@@ -204,6 +204,113 @@ A client can be in multiple groups. The effective restriction is the
 | `max_rating` | Advisory only in v1 — recorded but not enforced | `media_files` has no rating column; enforcement deferred |
 
 Inactive groups (`status = 'inactive'`) are completely ignored — they contribute no restrictions and their members are treated as if unrestricted.
+
+---
+
+---
+
+## Flow 7 — Notification Fan-out
+
+When any producer service calls `notification_service.create()`, the notification is persisted
+and immediately broadcast to every active WebSocket subscriber:
+
+```
+[Producer service]
+    │
+    │  (e.g. auth_service.create_pair_request,
+    │        license_service.emit_license_expiry_warnings,
+    │        routers/stream.py start_stream FFmpeg-failure block,
+    │        library_service.get_storage_breakdown)
+    │
+    └──▶ notification_service.create(db, type, category, title, message, ...)
+
+[notification_service.create()]
+    │
+    ├──▶ INSERT INTO notifications (...) → row persisted in SQLite
+    │
+    └──▶ Broadcast NotificationResponse to every subscriber's asyncio.Queue
+            │
+            ├── Queue max size: 100 items per subscriber
+            ├── If queue is full → frame DROPPED (slow consumer policy)
+            └── Producer continues without blocking
+
+[WS /api/v1/ws/notifications — one coroutine per connected client]
+    │
+    ├── On connect: call subscribe() → receive a dedicated asyncio.Queue
+    │
+    ├── Drain loop: await queue.get() → send_text({"type":"notification","data":<payload>})
+    │
+    └── On disconnect: call unsubscribe(queue) → queue removed from registry
+
+[Desktop sidebar bell]
+    │
+    └── WS frame received → bell badge increments; panel re-fetches
+        GET /api/v1/notifications?unread=true to populate the list
+```
+
+### Emitter catalogue and de-dupe rules
+
+| Emitter | Trigger | Type | Category | De-dupe |
+|---------|---------|------|----------|---------|
+| `auth_service.create_pair_request` | New device sends pair request | `info` | `client` | None — every new pairing creates a notification |
+| `license_service.emit_license_expiry_warnings` | Server startup, after `init_db` | `error` (expired) / `warning` (≤30 days) | `license` | 1-day cooldown: skipped if a notification with the same type + category was created within the last 24 hours |
+| `routers/stream.py start_stream` (FFmpeg failure) | FFmpeg process fails to start or crashes during a stream session | `error` | `transcode` | None — every failure creates a notification; `related_id` = session UUID |
+| `library_service.get_storage_breakdown` | After computing storage usage, if >90% | `warning` | `storage` | 1-day cooldown: same as license warnings |
+
+All emitters are wrapped in `try/except` with logging only — a notification write failure must never break the underlying flow.
+
+---
+
+---
+
+## Flow 8 — Activity Event Recording
+
+Activity events are written by producer call sites and polled by the desktop
+Activity screen and Dashboard "Recent Activity" widget:
+
+```
+[Producer service / router]
+    │
+    │  (auth_service.create_pair_request   → type="client.pair"
+    │   auth_service.approve_client        → type="client.approve"
+    │   auth_service.reject_client         → type="client.reject"
+    │   routers/stream.py start_stream     → type="stream.start"
+    │   routers/stream.py stop_stream      → type="stream.end"
+    │   library_service.scan_library       → type="library.scan"  [only if added > 0])
+    │
+    └──▶ activity_service.record(db, type, summary, actor_kind?, actor_id?,
+                                  target_kind?, target_id?, payload?)
+         │  (wrapped in try/except — failures are logged but never re-raised)
+         │
+         ├──▶ uuid.uuid4() → event id
+         ├──▶ datetime.now(UTC).isoformat() → created_at
+         ├──▶ json.dumps(payload) if payload else None → payload_json
+         └──▶ INSERT INTO activity_events (...) + await db.commit()
+
+[Desktop Activity Screen / Dashboard widget]
+    │
+    └──▶ GET /api/v1/activity?limit=N&since=<ts>&type=<prefix>
+         │
+         ├── validate_token_or_local → passes for loopback or valid bearer
+         │
+         └──▶ activity_service.list_events(db, limit, since, type_prefix)
+                 │
+                 ├── SELECT * FROM activity_events [WHERE ...] ORDER BY created_at DESC LIMIT ?
+                 ├── For each row: json.loads(payload) if payload else None
+                 │       (invalid JSON → null, warning logged, no exception)
+                 └── Returns list[ActivityEventResponse]
+```
+
+### Producer call sites and payloads
+
+| Call site | type | actor_kind | target_kind | payload fields |
+|-----------|------|-----------|------------|----------------|
+| `auth_service.create_pair_request` | `client.pair` | `client` | `client` | `device_name`, `platform` |
+| `auth_service.approve_client` | `client.approve` | `operator` | `client` | — |
+| `auth_service.reject_client` | `client.reject` | `operator` | `client` | — |
+| `routers/stream.py start_stream` | `stream.start` | `client` | `session` | `file_id`, `connection_type` |
+| `routers/stream.py stop_stream` | `stream.end` | `client` | `session` | — |
+| `library_service.scan_library` (added > 0) | `library.scan` | `system` | `library` | `files_added` |
 
 ---
 

@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-01 (new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints added)
+> **Status:** Active - Updated 2026-05-02 (new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added)
 
 ---
 
@@ -34,7 +34,7 @@ Authorization: Bearer {auth_token}
 | Mode | Dependency | Used by |
 |------|-----------|---------|
 | Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints |
-| Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members` — desktop control panel needs no token |
+| Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity` — desktop control panel needs no token |
 | Localhost only | `require_local_caller` | `/auth/approve`, `/auth/clients`, `/settings`, `/orders`, `/stream/sessions`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
 | No auth | — | `/info`, `/info/logs`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
 
@@ -939,6 +939,156 @@ All fields except `avatar_letter` are nullable and will be `null` if not yet con
 
 **Response:** `ProfileResponse` — same schema as `GET /api/v1/profile`, with updated values.  
 **Errors:** `403` not from localhost · `422` field exceeds max length
+
+---
+
+---
+
+### `GET /api/v1/notifications`
+**Description:** List notifications. Returns the most recent 50 by default; pass `unread=true` to filter to unread-only, `limit=N` to override the page size.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Query params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `unread` | boolean | `false` | If `true`, return only notifications where `read_at IS NULL` |
+| `limit` | integer | `50` | Maximum number of notifications to return |
+
+**Response:**
+```json
+[
+  {
+    "id": "uuid",
+    "type": "warning",
+    "category": "storage",
+    "title": "Storage usage high",
+    "message": "Library storage is above 90% capacity.",
+    "related_kind": null,
+    "related_id": null,
+    "created_at": "2026-05-02T10:00:00Z",
+    "read_at": null,
+    "dismissed_at": null
+  }
+]
+```
+
+---
+
+### `POST /api/v1/notifications/{id}/read`
+**Description:** Mark a single notification as read. Sets `read_at` to the current UTC timestamp. Idempotent — calling twice does not update the timestamp again.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Response:** `200 OK` — the updated `NotificationResponse`.  
+**Errors:** `404` notification not found
+
+---
+
+### `POST /api/v1/notifications/read-all`
+**Description:** Mark all unread notifications as read in a single call.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Response:** `200 OK`
+```json
+{ "updated": 12 }
+```
+
+---
+
+### `DELETE /api/v1/notifications/{id}`
+**Description:** Dismiss (soft-delete) a notification. Sets `dismissed_at` to the current UTC timestamp. Dismissed notifications are excluded from future `GET /notifications` responses.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Response:** `204 No Content`  
+**Errors:** `404` notification not found
+
+---
+
+### `WebSocket /api/v1/ws/notifications`
+**Description:** Live notification stream. The server pushes a frame whenever a new notification is created (by any producer — pairing requests, license expiry, transcode failures, storage warnings). Each connected client gets its own asyncio queue (max 100 items). Slow consumers drop frames rather than blocking producers.  
+**Auth:** Loopback connections skip auth (desktop control panel on the server machine). Non-loopback connections must send the same `{"type":"auth","token":"<bearer>"}` first-message handshake used by `/ws/stats`.  
+**Status:** ✅ Implemented
+
+**Frame format (server → client):**
+```json
+{
+  "type": "notification",
+  "data": {
+    "id": "uuid",
+    "type": "info",
+    "category": "client",
+    "title": "New pair request",
+    "message": "Pixel 8 Pro is requesting to pair.",
+    "related_kind": "client",
+    "related_id": "client-uuid",
+    "created_at": "2026-05-02T10:00:00Z",
+    "read_at": null,
+    "dismissed_at": null
+  }
+}
+```
+
+**Notification producers:**
+
+| Producer | Category | Type | Trigger |
+|----------|----------|------|---------|
+| `auth_service.create_pair_request` | `client` | `info` | New device requests pairing; `related_id` = client UUID |
+| `license_service.emit_license_expiry_warnings` | `license` | `error` (expired) or `warning` (within 30 days) | Called once at server startup after `init_db`; 1-day cooldown de-dupe |
+| `routers/stream.py start_stream` (FFmpeg failure block) | `transcode` | `error` | FFmpeg process fails to start or crashes; `related_id` = session UUID |
+| `library_service.get_storage_breakdown` | `storage` | `warning` | Storage usage exceeds 90%; 1-day cooldown de-dupe |
+
+All emitter call-sites are wrapped in `try/except` with logging — a notification-write failure never breaks the underlying flow.
+
+---
+
+---
+
+### `GET /api/v1/activity`
+**Description:** List activity events (audit log). Returns the most recent events first. Used by the desktop Activity screen and the Dashboard "Recent Activity" widget (`?limit=4`).  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Query params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | integer | `50` | Max number of events; `1..200` — values outside this range return `422` |
+| `since` | string (ISO-8601) | `null` | Return only events strictly after this timestamp |
+| `type` | string | `null` | Event-type prefix filter; e.g. `stream.` matches `stream.start` + `stream.end`; pass the full type for an exact match |
+
+**Response:**
+```json
+[
+  {
+    "id": "uuid",
+    "type": "stream.start",
+    "actor_kind": "client",
+    "actor_id": "client-uuid",
+    "target_kind": "session",
+    "target_id": "session-uuid",
+    "summary": "My Phone started watching movie.mkv",
+    "payload": {"file_id": "file-uuid", "connection_type": "lan"},
+    "created_at": "2026-05-02T10:00:00Z"
+  }
+]
+```
+
+**Event types shipped in v1:**
+
+| Type | Actor kind | Target kind | Trigger |
+|------|-----------|------------|---------|
+| `stream.start` | `client` | `session` | Client starts a stream session |
+| `stream.end` | `client` | `session` | Stream session is stopped |
+| `client.pair` | `client` | `client` | Device sends a pair request |
+| `client.approve` | `operator` | `client` | Operator approves a client |
+| `client.reject` | `operator` | `client` | Operator rejects a client |
+| `library.scan` | `system` | `library` | Library scan adds 1+ files (no-op scans are not recorded) |
+
+All producer call-sites are wrapped in `try/except` with logging — an activity-write failure never breaks the underlying flow.
+
+**Errors:** `422` limit out of bounds · `401` off-loopback caller without token
 
 ---
 

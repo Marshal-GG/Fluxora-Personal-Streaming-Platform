@@ -1,7 +1,7 @@
 # Backend Architecture
 
 > **Category:** Backend  
-> **Status:** Active - Updated 2026-05-01 (Phase 5: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint, live system stats + storage breakdown, info actions, conditional Sentry init, `/healthz` + `remote_url` on `/info`, CF Tunnel real-IP / HLS-block / admin-hardening middlewares for public routing; legacy 4-part license keys removed; Groups CRUD + stream-gate; Profile endpoints; 174 tests)
+> **Status:** Active - Updated 2026-05-02 (Phase 5: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint, live system stats + storage breakdown, info actions, conditional Sentry init, `/healthz` + `remote_url` on `/info`, CF Tunnel real-IP / HLS-block / admin-hardening middlewares for public routing; legacy 4-part license keys removed; Groups CRUD + stream-gate; Profile endpoints; Notifications (REST + WS + in-process pub/sub); Activity event log; 198 tests)
 
 ---
 
@@ -42,7 +42,9 @@ server/
 │       ├── 009_order_customer_email.sql # adds customer_email to polar_orders
 │       ├── 010_transcoding_settings.sql # adds transcoding_encoder/preset/crf to user_settings
 │       ├── 011_groups.sql              # groups, group_members, group_restrictions tables + idx_group_members_client
-│       └── 012_profile_fields.sql      # adds display_name, email, avatar_path, profile_created_at, last_login_at to user_settings
+│       ├── 012_profile_fields.sql      # adds display_name, email, avatar_path, profile_created_at, last_login_at to user_settings
+│       ├── 013_notifications.sql       # notifications table + idx_notifications_unread
+│       └── 014_activity_events.sql     # activity_events table + idx_activity_created + idx_activity_type_created
 │
 ├── routers/
 │   ├── info.py             # GET /api/v1/info, /info/logs, /info/stats; POST /info/restart, /info/stop ✅
@@ -56,8 +58,11 @@ server/
 │   ├── settings.py         # GET/PATCH /api/v1/settings; require_local_caller ✅
 │   ├── orders.py           # GET /api/v1/orders; require_local_caller; owner license key retrieval ✅
 │   ├── groups.py           # GET/POST /api/v1/groups, GET/PATCH/DELETE /{id}, GET/POST /{id}/members, DELETE /{id}/members/{cid}; mixed auth ✅
+│   ├── notifications.py    # GET /api/v1/notifications, POST /{id}/read, POST /read-all, DELETE /{id}; validate_token_or_local ✅
 │   ├── profile.py          # GET/PATCH /api/v1/profile; require_local_caller ✅
+│   ├── activity.py         # GET /api/v1/activity?limit=&since=&type=; validate_token_or_local ✅
 │   └── webhook.py          # POST /api/v1/webhook/polar; Standard Webhooks signature ✅
+│
 │
 │   ├── services/
 │   │   ├── ffmpeg_service.py   # FFmpeg subprocess management, HLS output ✅
@@ -70,8 +75,11 @@ server/
 │   │   ├── webhook_service.py  # Polar signature validation + paid-order license issuance ✅
 │   │   ├── tmdb_service.py     # TMDB REST API search; enriches media_files after scan ✅
 │   │   ├── group_service.py    # Group CRUD, member management, stream-gate (get_effective_restrictions + reason_to_deny) ✅
+│   │   ├── notification_service.py # CRUD (create/list/mark_read/mark_all_read/dismiss) + in-process pub/sub (subscribe/unsubscribe); backs /api/v1/notifications + WS /ws/notifications ✅
+│   │   ├── activity_service.py # record() + list_events(limit, since, type_prefix); backs /api/v1/activity; producer errors swallowed by callers ✅
 │   │   ├── profile_service.py  # get_profile(db) + update_profile(db, ...); avatar_letter computation ✅
 │   │   └── system_stats_service.py # CPU/RAM/network/uptime/IP/internet probe; backs /info/stats + /ws/stats ✅
+│
 │
 │   ├── models/
 │   │   ├── media_file.py       # MediaFileResponse Pydantic schema ✅
@@ -79,9 +87,12 @@ server/
 │   │   ├── client.py           # Client Pydantic schemas ✅
 │   │   ├── stream_session.py   # StreamStartResponse, StreamSessionResponse ✅
 │   │   ├── settings.py         # UserSettingsResponse (incl. license_status, license_tier, transcoding fields), UpdateSettingsBody ✅
+│   │   ├── notification.py     # NotificationResponse, NotificationCreate; NotificationType, NotificationCategory type aliases ✅
+│   │   ├── activity.py         # ActivityEventResponse (id, type, actor_kind?, actor_id?, target_kind?, target_id?, summary, payload?, created_at) ✅
 │   │   ├── order.py            # PolarOrderItem, PolarOrderListResponse ✅
 │   │   ├── profile.py          # ProfileResponse (avatar_letter computed), ProfileUpdate ✅
 │   │   └── group.py            # TimeWindow, GroupRestrictions, GroupResponse, GroupCreate, GroupUpdate, GroupMemberAdd; GroupStatus ✅
+│
 │
 │   └── tests/
 │       ├── conftest.py          # test_db + client fixtures; reset_rate_limits autouse
@@ -100,9 +111,11 @@ server/
 │       ├── test_storage_breakdown.py # 3 tests — empty / aggregation by type / missing-root capacity exclusion ✅
 │       ├── test_info_actions.py # 4 tests — /info/restart + /info/stop localhost (202) and non-localhost (403) ✅
 │       ├── test_groups.py       # 16 tests — CRUD, member management, auth split, stream-gate enforcement ✅
-│       └── test_profile.py      # 9 tests — GET/PATCH profile localhost restriction + response schema + avatar_letter computation ✅
+│       ├── test_notifications.py # 12 tests — REST CRUD, WS auth + fan-out, unread filter, dismiss, read-all ✅
+│       ├── test_profile.py      # 9 tests — GET/PATCH profile localhost restriction + response schema + avatar_letter computation ✅
+│       └── test_activity.py     # 12 tests — service CRUD, payload roundtrip, since/type filters, REST endpoints, pair emitter integration, off-loopback 401 ✅
 
-Total: 174 tests passing ✅ (as of 2026-05-01)
+Total: 198 tests passing ✅ (186 pre-§7.4 + 12 new)
 ```
 
 ---
@@ -121,6 +134,8 @@ Total: 174 tests passing ✅ (as of 2026-05-01)
 | `orders router` ✅ | Owner-only view of all processed Polar orders + generated license keys for manual customer delivery | `GET /api/v1/orders` (localhost) |
 | `system_stats_service` ✅ | psutil-backed live stats — CPU%, RAM, per-interface network rate (loopback excluded), uptime via `Process.create_time()`, LAN IP via UDP-socket trick, cached internet probe to `1.1.1.1:80`. Per-instance state so REST and WS subscribers don't collide. | `SystemStatsService.collect(db)` returns `StatsPayload` |
 | `group_service` ✅ | Client-group CRUD, member management, and stream-gate enforcement. `get_effective_restrictions()` collects all active groups a client belongs to and intersects their restrictions (library allow-list, bandwidth min, time-window AND-combination). `reason_to_deny()` returns a denial string or `None`; called by `routers/stream.py` before the tier-concurrency check. | `list_groups()`, `get_group()`, `create_group()`, `update_group()`, `delete_group()`, `add_member()`, `remove_member()`, `list_members()`, `get_effective_restrictions()`, `reason_to_deny()` |
+| `notification_service` ✅ | Persists notifications to the `notifications` table and fans them out live via an in-process pub/sub bus. `create()` inserts a row and broadcasts to every subscribed asyncio.Queue (max 100 items per queue). Slow consumers drop frames rather than blocking producers. `subscribe()` returns a new queue; `unsubscribe(q)` removes it. CRUD: `list_notifications()`, `mark_read()`, `mark_all_read()`, `dismiss()`. | `create()`, `list_notifications(*, only_unread, limit)`, `mark_read()`, `mark_all_read()`, `dismiss()`, `subscribe()`, `unsubscribe(q)` |
+| `activity_service` ✅ | Appends activity events to the `activity_events` table. `record()` inserts one event row; callers must wrap it in `try/except` so audit failures are non-fatal. `list_events()` returns most-recent-first, optionally filtered by `since` (ISO-8601 timestamp) and `type_prefix` (`LIKE 'prefix%'`). Invalid JSON in `payload` is silently returned as `null`. | `record(db, *, type, summary, actor_kind?, actor_id?, target_kind?, target_id?, payload?)`, `list_events(db, *, limit, since?, type_prefix?)` |
 | `profile_service` ✅ | Reads and writes operator profile metadata from the `user_settings` singleton. Computes `avatar_letter` on every read (not stored). Pass `""` to clear a field; pass `None` to leave it unchanged. | `get_profile(db)` → `ProfileResponse`, `update_profile(db, *, display_name?, email?)` → `ProfileResponse` |
 
 ---

@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-01 (migrations 004-012; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields)
+> **Status:** Active - Updated 2026-05-02 (migrations 004-014; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents)
 
 ---
 
@@ -125,6 +125,45 @@ CREATE TABLE IF NOT EXISTS group_restrictions (
     time_window        TEXT,        -- JSON {start_h, end_h, days:[0..6]}; NULL = always
     max_rating         TEXT         -- e.g. "PG-13"; NULL = none
 );
+
+-- Notifications table (migration 013)
+-- In-app notifications surfaced by the desktop sidebar bell.
+-- type CHECK: 'info'|'warning'|'error'|'success'
+-- category CHECK: 'system'|'client'|'license'|'transcode'|'storage'
+CREATE TABLE IF NOT EXISTS notifications (
+    id            TEXT PRIMARY KEY,    -- UUID
+    type          TEXT NOT NULL CHECK(type IN ('info','warning','error','success')),
+    category      TEXT NOT NULL CHECK(category IN ('system','client','license','transcode','storage')),
+    title         TEXT NOT NULL,
+    message       TEXT NOT NULL,
+    related_kind  TEXT,                -- e.g. 'client', 'session' (nullable)
+    related_id    TEXT,                -- UUID of related entity (nullable)
+    created_at    TEXT NOT NULL,       -- UTC ISO-8601
+    read_at       TEXT,                -- NULL = unread
+    dismissed_at  TEXT                 -- NULL = visible
+);
+
+-- Activity events table (migration 014)
+-- Append-only audit trail fed by producer services (auth, stream, library).
+-- Desktop Activity screen + Dashboard "Recent Activity" widget polls this.
+-- producer errors are swallowed — a missing row must never break the flow.
+CREATE TABLE IF NOT EXISTS activity_events (
+    id          TEXT PRIMARY KEY,            -- UUID
+    type        TEXT NOT NULL,               -- e.g. stream.start, client.pair, file.upload
+    actor_kind  TEXT,                        -- 'client' | 'system' | 'operator' | NULL
+    actor_id    TEXT,                        -- e.g. client_id; NULL for system/operator events
+    target_kind TEXT,                        -- 'session' | 'client' | 'file' | 'library' | NULL
+    target_id   TEXT,                        -- entity id of the target
+    summary     TEXT NOT NULL,               -- short human-readable line for the UI
+    payload     TEXT,                        -- optional JSON for detail
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_created
+    ON activity_events(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_activity_type_created
+    ON activity_events(type, created_at DESC);
 ```
 
 ---
@@ -140,6 +179,9 @@ CREATE TABLE IF NOT EXISTS group_restrictions (
 | `stream_sessions` | `file_id` | B-Tree | File stream history |
 | `stream_sessions` | `ended_at` | B-Tree | Active session queries (WHERE ended_at IS NULL) |
 | `group_members` | `client_id` | B-Tree | Fast lookup of all groups a client belongs to (stream-gate query) |
+| `notifications` | `(read_at, dismissed_at, created_at DESC)` | B-Tree (`idx_notifications_unread`) | Fast unread / visible notification queries |
+| `activity_events` | `created_at DESC` | B-Tree (`idx_activity_created`) | Default most-recent-first list query |
+| `activity_events` | `(type, created_at DESC)` | B-Tree (`idx_activity_type_created`) | Type-prefix filter + ordering |
 
 ---
 
@@ -166,3 +208,5 @@ CREATE TABLE IF NOT EXISTS group_restrictions (
 | `010_transcoding_settings.sql` | Adds `transcoding_encoder`, `transcoding_preset`, `transcoding_crf` to `user_settings`; defaults: `libx264`, `veryfast`, `23`. |
 | `011_groups.sql` | Creates `groups`, `group_members`, `group_restrictions`; adds `idx_group_members_client` index. Enables client-group stream-gate enforcement. |
 | `012_profile_fields.sql` | Adds 5 nullable columns to `user_settings`: `display_name TEXT`, `email TEXT`, `avatar_path TEXT`, `profile_created_at TEXT` (backfilled to migration-apply time for the existing row), `last_login_at TEXT` (reserved for v2; null in v1). |
+| `013_notifications.sql` | Creates `notifications` table (id UUID PK, type/category with CHECK constraints, title, message, related_kind?, related_id?, created_at, read_at?, dismissed_at?); adds `idx_notifications_unread` on `(read_at, dismissed_at, created_at DESC)`. |
+| `014_activity_events.sql` | Creates `activity_events` table (id UUID PK, type, actor_kind?, actor_id?, target_kind?, target_id?, summary, payload JSON?, created_at); adds `idx_activity_created` on `(created_at DESC)` and `idx_activity_type_created` on `(type, created_at DESC)`. |

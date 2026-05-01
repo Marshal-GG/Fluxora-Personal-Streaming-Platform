@@ -1,7 +1,7 @@
 # Data Models
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-01 (TMDB fields, resume progress, license keys, Polar orders + customer_email, transcoding settings, Groups + stream-gate, Profile fields)
+> **Status:** Active - Updated 2026-05-02 (TMDB fields, resume progress, license keys, Polar orders + customer_email, transcoding settings, Groups + stream-gate, Profile fields, Notification entity, ActivityEvent entity)
 
 ---
 
@@ -154,6 +154,49 @@ Composite primary key: `(group_id, client_id)`. A client may belong to multiple 
 
 ---
 
+### Entity: `Notification`
+> An in-app notification persisted in SQLite and fanned out live to WebSocket subscribers
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| id | TEXT (UUID) | ✅ | Primary key |
+| type | TEXT | ✅ | Enum: `info`, `warning`, `error`, `success` — visual severity |
+| category | TEXT | ✅ | Enum: `system`, `client`, `license`, `transcode`, `storage` — logical source |
+| title | TEXT | ✅ | Short notification heading |
+| message | TEXT | ✅ | Full notification body |
+| related_kind | TEXT | ❌ | Type of the related entity, e.g. `"client"`, `"session"` |
+| related_id | TEXT | ❌ | UUID of the related entity |
+| created_at | TEXT | ✅ | UTC ISO-8601 timestamp |
+| read_at | TEXT | ❌ | UTC ISO-8601 timestamp; `null` = unread |
+| dismissed_at | TEXT | ❌ | UTC ISO-8601 timestamp; `null` = visible (not dismissed) |
+
+---
+
+### Entity: `ActivityEvent`
+> Append-only audit trail of notable server actions, feeding the desktop Activity screen and the Dashboard "Recent Activity" widget. Distinct from `Notification` — notifications are user-actionable alerts; activity events are the historical audit log.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| id | TEXT (UUID) | ✅ | Primary key |
+| type | TEXT | ✅ | Event type in `<domain>.<verb>` form: `stream.start`, `stream.end`, `client.pair`, `client.approve`, `client.reject`, `library.scan` |
+| actor_kind | TEXT | ❌ | Who initiated the action: `client`, `system`, `operator`, or `null` |
+| actor_id | TEXT | ❌ | UUID of the actor entity (e.g. client_id); `null` for system/operator events |
+| target_kind | TEXT | ❌ | Type of the affected entity: `session`, `client`, `file`, `library`, or `null` |
+| target_id | TEXT | ❌ | UUID of the target entity |
+| summary | TEXT | ✅ | Short human-readable line for the UI |
+| payload | JSON | ❌ | Optional JSON blob for richer per-type detail; `null` if not set or invalid |
+| created_at | TEXT | ✅ | UTC ISO-8601 timestamp |
+
+Producer call sites (each wrapped in `try/except` — activity write failures are non-fatal):
+- `routers/stream.py start_stream` → `stream.start`
+- `routers/stream.py stop_stream` → `stream.end`
+- `services/auth_service.py create_pair_request` → `client.pair`
+- `services/auth_service.py approve_client` → `client.approve`
+- `services/auth_service.py reject_client` → `client.reject`
+- `services/library_service.py scan_library` (only when `added > 0`) → `library.scan`
+
+---
+
 ## Relationships
 
 ```
@@ -164,6 +207,8 @@ UserSettings ──1:1──▶ (singleton)
 PolarOrder ── independent idempotency table for payment webhooks
 Group ──1:N──▶ GroupMember ──N:1──▶ Client
 Group ──1:0..1──▶ GroupRestrictions
+Notification ── independent event log; no FK constraints
+ActivityEvent ── independent audit log; no FK constraints
 ```
 
 ---
@@ -177,6 +222,8 @@ Group ──1:0..1──▶ GroupRestrictions
 | `Platform` | `android`, `ios`, `windows`, `macos`, `linux` |
 | `SubscriptionTier` | `free`, `plus`, `pro`, `ultimate` |
 | `GroupStatus` | `active`, `inactive` |
+| `NotificationType` | `info`, `warning`, `error`, `success` |
+| `NotificationCategory` | `system`, `client`, `license`, `transcode`, `storage` |
 
 ---
 

@@ -386,11 +386,11 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation in sync with code
-- `apps/server` — **Phases 1–5 partially complete** (174 passing tests; ruff + black clean; public-routing v1 Phases 2–5 complete; Phase 6 hardening operator-driven):
+- `apps/server` — **Phases 1–5 partially complete** (198 passing tests; ruff + black clean; public-routing v1 Phases 2–5 complete; Phase 6 hardening operator-driven):
   - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured logging, rotating log file
-  - Routers: info (+ logs + healthz), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, groups, profile, webhook ✅
-  - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook, system_stats (`_public_address` probe), group_service (CRUD + stream-gate), profile_service ✅
-  - Migrations 001–012 applied on startup ✅
+  - Routers: info (+ logs + healthz), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, groups, notifications, activity, profile, webhook ✅
+  - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook, system_stats (`_public_address` probe), group_service (CRUD + stream-gate), notification_service (CRUD + asyncio pub/sub), activity_service (record + list_events), profile_service ✅
+  - Migrations 001–014 applied on startup ✅
   - Hardware encoding: `ffmpeg_service.py` reads `transcoding_encoder/preset/crf` from DB; supports libx264, h264_nvenc, h264_qsv, h264_vaapi ✅
   - Orders: `GET /api/v1/orders` (localhost) exposes Polar order + license key for manual customer delivery ✅
   - `validate_token_or_local` dependency — files/library endpoints accessible from localhost without bearer token ✅
@@ -425,4 +425,4 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
     - `/showcase` route renders every primitive on `bgRoot` for visual diff against the prototype (outside `ShellRoute`)
     - Both packages pass `flutter analyze` with zero issues
 
-**Next:** redesign M2 (Sidebar + status bar + nav replacement), then M3 Dashboard. Backend M0 leftovers (§7.3 notifications, §7.4 activity-events table, §7.8 transcoding load probe, §7.9 structured logs, §7.10 settings extension, §7.11 orders pagination + Polar portal URL) can run in parallel. Public-routing Phase 6 (TURN, WAF rules, tunnel health alerts, Cloudflare Access) is tracked as operator-driven manual tasks; pick up before announcing the public URL externally.
+**Next:** redesign M2 (Sidebar + status bar + nav replacement), then M3 Dashboard. Backend M0 leftovers (§7.8 transcoding load probe, §7.9 structured logs, §7.10 settings extension, §7.11 orders pagination + Polar portal URL) can run in parallel. Public-routing Phase 6 (TURN, WAF rules, tunnel health alerts, Cloudflare Access) is tracked as operator-driven manual tasks; pick up before announcing the public URL externally.

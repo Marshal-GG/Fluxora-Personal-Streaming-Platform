@@ -1,7 +1,7 @@
 # Component Architecture
 
 > **Category:** Architecture  
-> **Status:** Active — Updated 2026-05-01 (added system stats, license, webhook, and orders services; refreshed desktop screen list; Profile Service added)
+> **Status:** Active — Updated 2026-05-02 (added system stats, license, webhook, and orders services; refreshed desktop screen list; Profile Service added; Notification Service added; Activity Service added)
 
 ---
 
@@ -46,10 +46,24 @@
 │  └──────────────────────────────────────────┘   │
 │                                                  │
 │  ┌──────────────────────────────────────────┐   │
+│  │  Notification Service (in-process        │   │
+│  │  pub/sub + SQLite persistence; fans out  │   │
+│  │  to WS /ws/notifications subscribers)   │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │  Activity Service (append-only audit     │   │
+│  │  log; producer call sites in auth,       │   │
+│  │  stream, library; polled by desktop      │   │
+│  │  Activity screen + Dashboard widget)     │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
 │  │  SQLite DB (metadata, library, sessions, │   │
 │  │  user_settings [+ profile fields],       │   │
 │  │  polar_orders, groups, group_members,    │   │
-│  │  group_restrictions)                     │   │
+│  │  group_restrictions, notifications,      │   │
+│  │  activity_events)                        │   │
 │  └──────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────┘
 
@@ -161,6 +175,16 @@
 - **Responsibility:** Reads and writes operator profile metadata stored in the `user_settings` singleton (`display_name`, `email`, `avatar_path`, `profile_created_at`, `last_login_at`). Computes `avatar_letter` on every read — not stored in the DB. First non-whitespace char of `display_name`, else first char of `email` local-part, else `'F'`. Pass `""` to clear a field; pass `None` to leave it unchanged.
 - **Interfaces:** `GET /api/v1/profile` (localhost-only), `PATCH /api/v1/profile` (localhost-only)
 - **Dependencies:** SQLite `user_settings` table (profile columns added by migration 012)
+
+### Notification Service
+- **Responsibility:** Creates and persists in-app notifications, then broadcasts each new notification to all active WebSocket subscribers via an in-process asyncio pub/sub bus. `create()` inserts the row and fans out to every subscribed queue. `subscribe()` / `unsubscribe()` manage the queue registry. Slow consumers drop frames — the queue is capped at 100 items — so producer paths are never blocked. CRUD: `list_notifications()` (with optional `only_unread` filter), `mark_read()`, `mark_all_read()`, `dismiss()` (soft-delete via `dismissed_at`). Four built-in emitters call `notification_service.create()` asynchronously from their normal flows; each emitter wraps the call in `try/except` so notification failures are non-fatal.
+- **Interfaces:** `GET /api/v1/notifications`, `POST /api/v1/notifications/{id}/read`, `POST /api/v1/notifications/read-all`, `DELETE /api/v1/notifications/{id}` (all `validate_token_or_local`); `WS /api/v1/ws/notifications` (loopback-or-token auth, same pattern as `/ws/stats`)
+- **Dependencies:** SQLite `notifications` table (migration 013); consumed as a producer by `auth_service`, `license_service`, `routers/stream.py`, and `library_service`
+
+### Activity Service
+- **Responsibility:** Append-only audit trail of notable server actions. `record()` inserts one event row into `activity_events`; each producer call site wraps the call in `try/except` so a missing audit row never breaks the underlying flow. `list_events()` returns events most-recent-first, with optional `since` (ISO-8601 cutoff) and `type_prefix` (`LIKE 'prefix%'`) filters. Invalid `payload` JSON is silently coerced to `null` rather than raising. The desktop Activity screen and Dashboard "Recent Activity" widget poll this endpoint.
+- **Interfaces:** `GET /api/v1/activity?limit=&since=&type=` (`validate_token_or_local`; limit 1–200, default 50)
+- **Dependencies:** SQLite `activity_events` table (migration 014); produced by `routers/stream.py` (`stream.start`, `stream.end`), `services/auth_service.py` (`client.pair`, `client.approve`, `client.reject`), and `services/library_service.py` (`library.scan`)
 
 ### Flutter Client — Presentation Layer
 - **Responsibility:** UI screens (Home, Connect, Browser, Player, Settings)

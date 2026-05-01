@@ -88,6 +88,12 @@ New Device:
 | `DELETE /api/v1/groups/{id}/members/{client_id}` | 🔒 Localhost only | Remove member from group — `require_local_caller` |
 | `GET /api/v1/profile` | 🔒 Localhost only | Read operator profile — `require_local_caller` |
 | `PATCH /api/v1/profile` | 🔒 Localhost only | Update operator profile — `require_local_caller` |
+| `GET /api/v1/notifications` | ✅ Bearer token or localhost | List notifications (`validate_token_or_local`) |
+| `POST /api/v1/notifications/{id}/read` | ✅ Bearer token or localhost | Mark notification read (`validate_token_or_local`) |
+| `POST /api/v1/notifications/read-all` | ✅ Bearer token or localhost | Mark all notifications read (`validate_token_or_local`) |
+| `DELETE /api/v1/notifications/{id}` | ✅ Bearer token or localhost | Dismiss notification (`validate_token_or_local`) |
+| `WS /api/v1/ws/notifications` | ✅ Loopback or first-message token | Same auth pattern as `/ws/stats` — loopback callers skip handshake |
+| `GET /api/v1/activity` | ✅ Bearer token or localhost | Activity event log (`validate_token_or_local`); `limit` 1–200 |
 | All Control Panel routes | ✅ Localhost only | Not exposed externally |
 
 ---

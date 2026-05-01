@@ -42,29 +42,37 @@ apps/server/
 │       ├── 004_tmdb_metadata.sql  # title, overview, poster_url
 │       ├── 005_progress.sql    # last_progress_sec
 │       ├── 011_groups.sql      # groups, group_members, group_restrictions
-│       └── 012_profile_fields.sql  # display_name, email, avatar_path, profile_created_at, last_login_at on user_settings
+│       ├── 012_profile_fields.sql  # display_name, email, avatar_path, profile_created_at, last_login_at on user_settings
+│       ├── 013_notifications.sql   # notifications table + idx_notifications_unread
+│       └── 014_activity_events.sql # activity_events table + 2 indexes
 ├── routers/
 │   ├── auth.py
+│   ├── activity.py             # GET /api/v1/activity; validate_token_or_local
 │   ├── files.py
 │   ├── groups.py
 │   ├── library.py
+│   ├── notifications.py        # GET, POST /{id}/read, POST /read-all, DELETE /{id}; WS /ws/notifications
 │   ├── profile.py
 │   ├── stream.py
 │   └── ws.py
 ├── services/
+│   ├── activity_service.py     # record() + list_events(limit, since, type_prefix)
 │   ├── ffmpeg_service.py
 │   ├── group_service.py
 │   ├── library_service.py
 │   ├── discovery_service.py
 │   ├── auth_service.py
+│   ├── notification_service.py # CRUD + asyncio pub/sub fan-out
 │   ├── profile_service.py
 │   ├── tmdb_service.py
 │   └── webrtc_service.py
 ├── models/
+│   ├── activity.py             # ActivityEventResponse
 │   ├── media_file.py           # MediaFileResponse (resume_sec alias)
 │   ├── group.py
 │   ├── library.py
 │   ├── client.py
+│   ├── notification.py         # NotificationResponse, NotificationCreate, type/category enums
 │   ├── profile.py              # ProfileResponse (avatar_letter computed), ProfileUpdate
 │   ├── stream_session.py
 │   └── settings.py
@@ -77,6 +85,8 @@ apps/server/
     ├── test_files.py
     ├── test_groups.py
     ├── test_library.py
+    ├── test_activity.py        # 12 tests — service CRUD, payload roundtrip, since/type filters, REST endpoints, emitter integration, off-loopback 401
+    ├── test_notifications.py   # 12 tests — REST CRUD + WS fan-out + unread filter + dismiss
     ├── test_profile.py         # 9 tests — GET/PATCH profile + avatar_letter computation
     ├── test_stream.py
     └── test_tmdb.py
