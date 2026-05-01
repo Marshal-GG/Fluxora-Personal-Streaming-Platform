@@ -13,7 +13,7 @@ dependencies:
   fluxora_core:
     path: ../../packages/fluxora_core
   flutter_bloc: ^9.1.1
-  go_router: ^17.2.2
+  go_router: ^16.0.0  # 17+ requires Dart SDK ^3.9.0; project floor is 3.8.0
   get_it: ^9.2.1
   logger: ^2.7.0
   flutter_secure_storage: ^9.2.4
