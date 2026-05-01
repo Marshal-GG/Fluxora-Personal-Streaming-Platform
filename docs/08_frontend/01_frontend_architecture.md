@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active - Updated 2026-05-01 (Phase 5: desktop library/orders/activity/logs/transcoding screens; mobile player settings sheet; Dart 3.8 SDK; 34 desktop tests)
+> **Status:** Active - Updated 2026-05-01 (Phase 5: desktop library/orders/activity/logs/transcoding screens; mobile player settings sheet; desktop Remote Access UI on Dashboard + Settings; SDK floor `>=3.9.0` (Flutter 3.41); 38 desktop tests)
 
 ---
 
@@ -184,7 +184,7 @@ On app restart: `setupInjector()` reads `SecureStorage` (both `serverUrl` and `r
 | Upgrade screen | `UpgradeScreen` (push, not go_router route) | Mobile cannot call `PATCH /settings` (localhost-only); screen shows tier plans + instructs user to activate key in Desktop Control Panel |
 | Tier limit view | `_TierLimitView` in `player_screen.dart` | Replaces generic error on 429; gradient icon + `FilledButton` → `UpgradeScreen`, `OutlinedButton` → Go Back |
 | `validate_token_or_local` | Files and library endpoints accept bearer token OR localhost | Desktop control panel is always on localhost; avoids needing a client pairing flow for the admin UI. Mobile clients still send a bearer token. |
-| Dart 3.8 null-aware map syntax | `{'key': ?nullableValue}` in `SettingsCubit.saveSettings` | Only includes a key in the PATCH body if the value is non-null; requires `sdk: '>=3.8.0'` in pubspec.yaml |
+| Dart 3.8+ null-aware map syntax | `{'key': ?nullableValue}` in `SettingsCubit.saveSettings` | Only includes a key in the PATCH body if the value is non-null. Available since Dart 3.8; project floor is `>=3.9.0`. |
 | `_SettingsSheet` in player | Speed controls (0.5–2.0×), audio track picker, subtitle track picker | Exposed via bottom sheet from a settings button in the player controls overlay |
 
 ---
@@ -207,11 +207,11 @@ Mobile test/ (27 tests)
 │   └── player/player_cubit_test.dart             # 8 tests
 └── placeholder_test.dart
 
-Desktop test/ (34 tests)
+Desktop test/ (38 tests)
 └── features/
     ├── dashboard/dashboard_cubit_test.dart  # 3 tests ✅
     ├── clients/clients_cubit_test.dart      # 7 tests ✅
-    └── settings/settings_cubit_test.dart    # 13 tests ✅ (loadSettings + saveSettings; license_key PATCH)
+    └── settings/settings_cubit_test.dart    # 17 tests ✅ (loadSettings + saveSettings + license_key PATCH + Remote Access — `loadSettings` populates `remoteUrl` from `/info`; `checkRemoteAccess` early-return paths)
     └── (library/orders/activity/logs/transcoding cubits tested via manual integration)
 ```
 

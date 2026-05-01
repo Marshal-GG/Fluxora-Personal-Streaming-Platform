@@ -130,7 +130,7 @@
 - **Interfaces:** `GET /api/v1/orders` (localhost-only)
 - **Dependencies:** SQLite `polar_orders` table
 
-### Public Routing (Phases 1–4 complete; Phase 5 desktop UI in progress)
+### Public Routing (v1 single-tenant Phases 1–5 complete; Phase 6 operator-driven)
 - **Responsibility:** Expose the home server at `https://fluxora-api.marshalx.dev` for off-LAN clients via a Cloudflare Tunnel. Control plane only — media bandwidth stays on direct/P2P paths.
 - **Interfaces:** All `/api/v1/...` paths reachable through the tunnel; HLS routes server-side blocked when `CF-Connecting-IP` is present; admin-only endpoints (`require_local_caller` / `validate_token_or_local`) reject any tunneled request.
 - **Implementation:**

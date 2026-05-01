@@ -125,7 +125,7 @@ Each runbook is the **distilled, generic version** of patterns Fluxora actually 
 | 5 — Secrets | [`../../06_security/02_license_key_operations.md`](../../06_security/02_license_key_operations.md) for license keys; [`../05_backup_and_recovery.md`](../05_backup_and_recovery.md) for backup priority |
 | 6 — Webhook testing | [`../02_polar_webhook_deployment.md`](../02_polar_webhook_deployment.md) and [`../../09_backend/02_polar_webhooks.md`](../../09_backend/02_polar_webhooks.md) |
 | 7 — Repo init | The repo itself (this file is what step 7 produces) |
-| 8 — Devcontainer | [`.devcontainer/devcontainer.json`](../../../.devcontainer/devcontainer.json) — Python 3.11 + Flutter 3.32 + Node 22 + FFmpeg + cloudflared, mounts host `~/.fluxora` for secrets |
+| 8 — Devcontainer | [`.devcontainer/devcontainer.json`](../../../.devcontainer/devcontainer.json) — Python 3.11 + Flutter 3.41 + Node 22 + FFmpeg + cloudflared, mounts host `~/.fluxora` for secrets |
 | 9 — Monitoring | Sentry init wired in [`apps/server/main.py`](../../../apps/server/main.py) (`_init_sentry`) — set `SENTRY_DSN` in `.env` to enable. UptimeRobot still requires a manual signup + monitor pointed at `<HOSTNAME>/healthz` once Phase 2 of the routing plan ships |
 | 10 — PyInstaller | `apps/server/fluxora_server.spec` |
 

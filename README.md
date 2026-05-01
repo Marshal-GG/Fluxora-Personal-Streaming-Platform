@@ -34,7 +34,7 @@ Fluxora is a self-hosted, cross-platform media streaming system where your **PC 
 | Flutter mobile — auth | ✅ Done | Full pairing flow; token in SecureStorage; post-pair `/info` fetch persists `remote_url` for off-LAN routing |
 | Flutter mobile — library | ✅ Done | Library grid + file browser + TMDB poster thumbnails |
 | Flutter mobile — player | ✅ Done | `media_kit` HLS; WebRTC smart-path; transport badge; resume; tier limit UI; settings sheet (speed/audio/subtitle) |
-| Flutter desktop | ✅ Done | Dashboard + Clients + Library + Licenses + Activity + Logs + Settings; 34 tests |
+| Flutter desktop | ✅ Done | Dashboard (with Remote-access pill) + Clients + Library + Licenses + Activity + Logs + Settings (with Remote Access section + on-demand `/healthz` probe); 38 tests |
 | Internet streaming | ✅ Done | WebRTC P2P + HLS fallback; LAN bypass; ICE degradation monitoring |
 | Monetization | ✅ Done | Tier enforcement; license keys; Polar webhook; desktop license management screen |
 | Hardware encoding | 🔵 In Progress | DB-driven encoder/preset/CRF; UI in Settings; NVENC/QSV/VAAPI supported |

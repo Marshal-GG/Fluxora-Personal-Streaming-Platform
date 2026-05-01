@@ -375,7 +375,7 @@ Phase 6 is intentionally outside the codebase — every item is a Cloudflare-das
 
 The first three are recommended before the public URL is shared with anyone outside the trusted-paired-clients model. The Cloudflare Access entry is purely defense-in-depth — `require_local_caller` and the Phase 2 `CF-Connecting-IP` rejection on admin endpoints already block tunneled admin traffic at the application layer.
 
-The TURN entry is the only one with non-trivial scope; it's written up as its own manual task because it touches `webrtc_service.py`, the `~/.fluxora/.env` secrets, and a second Cloudflare Tunnel ingress. See also [`runbooks/06_webrtc_and_turn.md`](../05_infrastructure/06_webrtc_and_turn.md) (planned) for the install + auth-credential rotation flow.
+The TURN entry is the only one with non-trivial scope; it's written up as its own manual task because it touches `webrtc_service.py`, the `~/.fluxora/.env` secrets, and a second Cloudflare Tunnel ingress. The coturn install + auth-credential rotation flow is already documented in [`06_webrtc_and_turn.md`](./06_webrtc_and_turn.md) (env-var support is shipped via `WEBRTC_TURN_URL`/`USERNAME`/`PASSWORD`; provisioning is deferred until WAN-failure telemetry shows the demand).
 
 ---
 

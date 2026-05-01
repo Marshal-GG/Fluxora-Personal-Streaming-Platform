@@ -8,7 +8,7 @@
 ## When this is worth doing
 
 - ✅ The "first 30 minutes" setup in your `CONTRIBUTING.md` has more than 5 steps
-- ✅ Your project requires specific tool versions (Python 3.11, Node 22, Flutter 3.32)
+- ✅ Your project requires specific tool versions (Python 3.11, Node 22, Flutter 3.41)
 - ✅ Contributors include people on different OSes (Windows, macOS, Linux)
 - ✅ You want GitHub Codespaces support
 - ✅ You hit "works on my machine" issues during pair debugging
@@ -122,7 +122,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
  && apt-get install -y nodejs
 
 # Flutter
-ARG FLUTTER_VERSION=3.32.0
+ARG FLUTTER_VERSION=3.41.3
 RUN apt-get update && apt-get install -y curl unzip xz-utils libglu1-mesa \
  && curl -L https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz \
     | tar xJ -C /opt \

@@ -7,7 +7,7 @@
 
 FROM mcr.microsoft.com/devcontainers/python:1-3.11
 
-ARG FLUTTER_VERSION=3.32.0
+ARG FLUTTER_VERSION=3.41.3
 ARG NODE_MAJOR=22
 
 # ── System packages ─────────────────────────────────────────────────────────

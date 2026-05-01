@@ -18,8 +18,8 @@
 | System Stats | `psutil` | CPU / RAM / network / uptime probes for `/api/v1/info/stats` |
 | Local Discovery | Zeroconf (mDNS) | Auto-pairing on LAN |
 | Internet Transport | WebRTC | STUN/TURN for NAT traversal |
-| Public Routing | Cloudflare Tunnel | `fluxora-api.marshalx.dev` — Phases 1–4 complete (tunnel `fluxora-home` live; CF middlewares, `/healthz`, `remote_url` on `/info`, dual-base `ApiClient`, mobile pairing persists `remote_url`). Phase 5 desktop UI pending. See [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) |
-| Frontend Framework | Flutter 3.32 (Dart 3.8) | Cross-platform; pinned in CI |
+| Public Routing | Cloudflare Tunnel | `fluxora-api.marshalx.dev` — v1 single-tenant Phases 1–5 complete (tunnel `fluxora-home` live; CF middlewares, `/healthz`, `remote_url` on `/info`, dual-base `ApiClient`, mobile pairing persists `remote_url`, desktop Dashboard pill + Settings Remote Access section). Phase 6 hardening operator-driven. See [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) |
+| Frontend Framework | Flutter 3.41 (Dart 3.11) | Cross-platform; pinned in CI. SDK floor `>=3.9.0` for json_annotation 4.11+, go_router 17+. |
 | State Management | `flutter_bloc` (BLoC/Cubit) | Confirmed at Phase 1 mobile implementation |
 | Metadata API | TMDB API | Movie/TV show metadata |
 | Payment Webhooks | Polar Standard Webhooks | Paid-order license issuance |

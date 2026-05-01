@@ -406,7 +406,7 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
   - `features/player` — `media_kit` HLS; `NetworkPathDetector` (now in core); WebRTC 8 s timeout → HLS fallback; `_TransportBadge`; resume; `PlayerTierLimit` → `_TierLimitView` → `UpgradeScreen`; `_SettingsSheet` (speed/audio/subtitle) ✅
   - `features/upgrade` — `UpgradeScreen` tier comparison cards + activation guide ✅
   - `features/settings` — 🔲 **deferred** — desktop Control Panel is the v1 settings surface; "Remote access" row will land when mobile gains a settings screen
-- `apps/desktop` — **Phases 1–5 in progress** (34 passing tests; Dart SDK `>=3.9.0`):
+- `apps/desktop` — **Phases 1–5 in progress** (38 passing tests; Dart SDK `>=3.9.0`):
   - Dashboard screen (server info + client stats) ✅
   - Clients screen (approve/reject/filter) ✅
   - Library screen (create/scan/upload/filter libraries) ✅

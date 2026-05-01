@@ -9,7 +9,7 @@ This is the "first 30 minutes on a new machine" guide. If you're an AI agent, re
 | Tool | Version | Why |
 |------|---------|-----|
 | Python | 3.11 or 3.12 | Server runtime. 3.13 not yet validated. |
-| Flutter | 3.32.x (stable) | Mobile + desktop apps. Pinned in CI; lower versions fail on Dart 3.8 features. |
+| Flutter | 3.41.3 (stable) | Mobile + desktop apps. Pinned in CI to match the Dart 3.9+ project floor (json_annotation 4.11+, go_router 17+ require it). |
 | FFmpeg | latest stable | HLS transcoding. Server checks for it on startup. |
 | Git | any recent | obviously |
 | (optional) cloudflared | latest | Only if you're testing public routing — see [`docs/05_infrastructure/03_public_routing.md`](./docs/05_infrastructure/03_public_routing.md) |
@@ -23,7 +23,7 @@ This is the "first 30 minutes on a new machine" guide. If you're an AI agent, re
 
 ### Skip the platform setup: use the devcontainer
 
-The repo ships a `.devcontainer/` config with Python 3.11, Flutter 3.32, Node 22, FFmpeg, and cloudflared pre-installed. If you have VS Code with the **Dev Containers** extension (or use **GitHub Codespaces**):
+The repo ships a `.devcontainer/` config with Python 3.11, Flutter 3.41, Node 22, FFmpeg, and cloudflared pre-installed. If you have VS Code with the **Dev Containers** extension (or use **GitHub Codespaces**):
 
 1. Open the repo in VS Code → command palette → **"Dev Containers: Reopen in Container"**
 2. Wait for build (~5 minutes first time, cached after)
@@ -152,7 +152,7 @@ Hit F5, pick the config.
 |-------|-------|-------|-----|
 | Server | `apps/server/tests/` | 149 | `cd apps/server && python -m pytest -v` |
 | Mobile | `apps/mobile/test/` | 27 | `cd apps/mobile && flutter test` |
-| Desktop | `apps/desktop/test/` | 34 | `cd apps/desktop && flutter test` |
+| Desktop | `apps/desktop/test/` | 38 | `cd apps/desktop && flutter test` |
 | `fluxora_core` | `packages/fluxora_core/test/` | 9 | `cd packages/fluxora_core && flutter test` |
 
 All four should be green before opening a PR.
