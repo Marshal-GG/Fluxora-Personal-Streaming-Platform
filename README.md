@@ -28,7 +28,7 @@ Fluxora is a self-hosted, cross-platform media streaming system where your **PC 
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| FastAPI server | ✅ Done | 134 tests; all routers + services; migrations 001–010; hardware encoding; orders/logs/healthz endpoints; live system stats; conditional Sentry init; `remote_url` on /info |
+| FastAPI server | ✅ Done | 149 tests; all routers + services; migrations 001–010; hardware encoding; orders/logs/healthz endpoints; live system stats; conditional Sentry init; `remote_url` on /info; CF Tunnel real-IP middleware + HLS-block + admin-route hardening |
 | `fluxora_core` package | ✅ Done | Entities (PolarOrder, MediaFile w/ resume), ApiClient, SecureStorage, design tokens |
 | Flutter mobile — connect | ✅ Done | mDNS auto-discovery + manual IP; Android MulticastLock |
 | Flutter mobile — auth | ✅ Done | Full pairing flow; token in SecureStorage |

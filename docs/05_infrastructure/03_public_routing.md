@@ -185,7 +185,7 @@ Backup priorities are documented in [`05_backup_and_recovery.md`](./05_backup_an
 
 ### Phase 2 — Server changes (FastAPI)
 
-> **Status (2026-05-01):** 2.0 + 2.5 + 2.6 complete (config additions, `/healthz`, `remote_url` in `/info`). Middlewares 2.1–2.4 + the `public_address` probe (2.7) pending.
+> **Status (2026-05-01):** Phase 2 complete. All seven sub-steps shipped. Total 149 tests including 21 new tests for the routing surface (6 in `test_healthz.py`, 15 in `test_real_ip.py`).
 
 #### 2.0 Config additions (`apps/server/config.py`) ✅ Complete
 
@@ -197,36 +197,36 @@ Three new env-driven settings, all with safe defaults:
 | `FLUXORA_TRUST_CF_HEADERS` | `True` | Read `CF-Connecting-IP` from incoming requests for rate-limiting / real-IP attribution. Disable only if running behind something other than Cloudflare. |
 | `FLUXORA_BLOCK_HLS_OVER_TUNNEL` | `True` | When True, requests with `CF-Connecting-IP` set are 403'd on `/api/v1/hls/*`. Enforces "media plane never traverses the tunnel." Wired by middleware 2.3 below. |
 
-#### 2.1 CORS allow-list (`apps/server/main.py`)
+#### 2.1 CORS allow-list (`apps/server/main.py`) ✅ Complete
 
-Add `https://fluxora-api.marshalx.dev` and `https://fluxora.marshalx.dev` to `CORSMiddleware`. Reject `*` — the public surface is no longer fully self-contained.
+`CORSMiddleware` is the outermost middleware, allow-listing exactly:
+- `https://fluxora.marshalx.dev` (apex marketing site)
+- `https://uat.fluxora.marshalx.dev` (uat marketing site)
+- `https://fluxora-api.marshalx.dev` (this server's own public hostname; needed for browser-side calls from the marketing site)
 
-#### 2.2 Real-IP middleware (`apps/server/utils/real_ip.py` — new)
+`allow_credentials=False`, methods limited to `GET / POST / PATCH / DELETE / OPTIONS`, headers to `Authorization` + `Content-Type`. No wildcards.
 
-When a request arrives via Cloudflare Tunnel, the source IP at FastAPI is loopback (the tunnel daemon). The actual client IP arrives in the `CF-Connecting-IP` header. Without a middleware, `slowapi` rate-limits all WAN traffic as if it were one IP.
+#### 2.2 Real-IP middleware (`apps/server/utils/real_ip.py`) ✅ Complete
 
-The middleware:
-- Reads `CF-Connecting-IP` only when the immediate peer IP is in the Cloudflare IP range list
-- Sets `request.state.real_ip` to either `CF-Connecting-IP` or the immediate peer
-- `slowapi`'s `key_func` reads `request.state.real_ip`
+`RealIPMiddleware` sets `request.state.real_ip` from `CF-Connecting-IP` only when:
+1. `FLUXORA_TRUST_CF_HEADERS` is enabled
+2. The immediate peer IP is in Cloudflare's published range list (prevents LAN clients from spoofing the header to bypass rate-limits)
 
-The Cloudflare IP list lives at `https://www.cloudflare.com/ips-v4` and `ips-v6`. Cache and refresh weekly via a startup task.
+Otherwise the peer's host IP is used directly. `slowapi`'s `Limiter` is now keyed off `request.state.real_ip` via `real_ip_key`, so WAN traffic is rate-limited per actual-client-IP rather than per-tunnel.
 
-#### 2.3 HLS-blocks-on-tunnel middleware
+The Cloudflare IP list is fetched from `https://www.cloudflare.com/ips-v4` + `ips-v6` at startup (`refresh_cf_ranges()` called in the lifespan). A hardcoded fallback list (last refreshed 2026-05-01) protects against startup failure if the CF endpoint is unreachable.
 
-For any path under `/api/v1/hls/`, if `CF-Connecting-IP` is present (i.e. the request arrived via Cloudflare Tunnel), respond with `403 Forbidden — HLS over public tunnel disabled; use WebRTC`. Forces the client to negotiate WebRTC for WAN media.
+#### 2.3 HLS-blocks-on-tunnel middleware ✅ Complete
 
-#### 2.4 Localhost-only hardening
+`HLSBlockOverTunnelMiddleware` 403s any request matching `/api/v1/hls/*` that carries a `CF-Connecting-IP` header (the tunnel signature). Toggleable via `FLUXORA_BLOCK_HLS_OVER_TUNNEL` (default: True). Forces clients to negotiate WebRTC for WAN streaming.
 
-`require_local_caller` already 403s non-loopback callers. The tunnel daemon makes WAN traffic appear loopback. Tighten the dependency: reject any request with a `CF-Connecting-IP` header for these endpoints.
+The 403 body is `{"detail": "HLS over public tunnel is disabled. Use WebRTC for WAN streaming."}`.
 
-```python
-# apps/server/routers/deps.py
-def require_local_caller(request: Request) -> None:
-    if request.headers.get("CF-Connecting-IP"):
-        raise HTTPException(403, "Admin endpoints not available over public tunnel")
-    # ... existing loopback check ...
-```
+#### 2.4 Localhost-only hardening (`apps/server/routers/deps.py`) ✅ Complete
+
+`require_local_caller` now rejects any request with `CF-Connecting-IP` set, in addition to the existing peer-IP-must-be-loopback check. This catches the case where cloudflared forwards a tunneled request via 127.0.0.1 — peer is loopback but the request originated remotely.
+
+`validate_token_or_local` got the same treatment: tunneled requests skip the localhost-shortcut and always go through `validate_token`, so the desktop control panel's loopback-no-token convenience can't be exploited by a remote caller.
 
 #### 2.5 Healthcheck (`apps/server/routers/info.py`) ✅ Complete
 
@@ -240,11 +240,11 @@ def require_local_caller(request: Request) -> None:
 
 Test coverage: 6 tests in `tests/test_healthz.py` covering both endpoints + the response-shape contract.
 
-#### 2.7 System stats: populate `public_address`
+#### 2.7 System stats: populate `public_address` ✅ Complete
 
-The `SystemStatsResponse.public_address` field already exists (currently always `null` per the API contract). This step adds a periodic probe to `https://<remote_url>/api/v1/healthz`; on success, the `system_stats_service.public_address` cache is set to the configured `FLUXORA_PUBLIC_URL`; on failure, cleared back to `null`.
+`SystemStatsService._public_address()` probes `<FLUXORA_PUBLIC_URL>/api/v1/healthz` with a 5s timeout, returns the URL on 200, `None` on any failure (timeout, non-200, network error, missing config).
 
-Probe schedule: every 30s, cached. Don't probe more often — Cloudflare's free tier doesn't want the noise and the desktop UI doesn't need sub-30s updates.
+Result cached for 30s per-instance — `system_stats.collect()` reads the cached value; the probe only fires when the cache is stale. Keeps `/info/stats` fast and stays polite to the Cloudflare edge.
 
 The desktop `SystemStatsCard` (which already consumes `/info/stats`) gets a green/red dot the moment this field flips between `null` and a string — no UI rework needed.
 

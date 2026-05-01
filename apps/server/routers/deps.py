@@ -16,7 +16,18 @@ LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 async def require_local_caller(request: Request) -> None:
-    """Allow only requests originating from the local machine."""
+    """Allow only requests originating from the local machine.
+
+    Tunneled requests appear local at the FastAPI layer because cloudflared
+    forwards via 127.0.0.1, so we additionally reject anything carrying
+    `CF-Connecting-IP` — that header is only set on requests that traversed
+    the public Cloudflare edge.
+    """
+    if request.headers.get("CF-Connecting-IP"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This endpoint is not accessible over the public tunnel",
+        )
     host = request.client.host if request.client else "127.0.0.1"
     if host not in LOOPBACK:
         raise HTTPException(
@@ -54,7 +65,15 @@ async def validate_token_or_local(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> aiosqlite.Row | None:
-    """Allow request if it originates from localhost OR has a valid token."""
+    """Allow request if it originates from localhost OR has a valid token.
+
+    Tunneled requests carry `CF-Connecting-IP`. Even though they appear local
+    at the FastAPI layer (cloudflared forwards via loopback), they're not the
+    desktop control panel — they're a remote client. Force token validation
+    in that case so the loopback shortcut doesn't silently auth them.
+    """
+    if request.headers.get("CF-Connecting-IP"):
+        return await validate_token(credentials, db)
     host = request.client.host if request.client else "127.0.0.1"
     if host in LOOPBACK:
         return None

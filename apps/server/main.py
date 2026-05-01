@@ -6,9 +6,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from config import get_data_dir, secure_db_file, settings
 from database.db import close_db, init_db
@@ -18,6 +18,12 @@ from routers.stream import hls_router
 from routers.stream import router as stream_router
 from services.discovery_service import start_discovery, stop_discovery
 from services.ffmpeg_service import _ffmpeg_bin
+from utils.real_ip import (
+    HLSBlockOverTunnelMiddleware,
+    RealIPMiddleware,
+    real_ip_key,
+    refresh_cf_ranges,
+)
 
 _LOG_CONFIG_COMMON = {
     "version": 1,
@@ -186,6 +192,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 9. Start mDNS broadcast
     await start_discovery(settings.fluxora_server_name, settings.fluxora_port)
 
+    # 10. Refresh Cloudflare IP range list for the real-IP middleware
+    await refresh_cf_ranges()
+
     logger.info(
         "Fluxora Server starting on %s:%s",
         settings.fluxora_host,
@@ -200,7 +209,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Fluxora Server stopped")
 
 
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=real_ip_key)
 
 app = FastAPI(
     title="Fluxora Server",
@@ -211,6 +220,25 @@ app = FastAPI(
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Middleware order: app.add_middleware adds OUTSIDE the existing stack, so
+# the LAST one added runs FIRST on the request. We want:
+#   request -> CORS -> HLSBlock -> RealIP -> route handler
+# i.e. add RealIP first (innermost), then HLSBlock, then CORS (outermost).
+app.add_middleware(RealIPMiddleware)
+app.add_middleware(HLSBlockOverTunnelMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://fluxora.marshalx.dev",
+        "https://uat.fluxora.marshalx.dev",
+        "https://fluxora-api.marshalx.dev",
+    ],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    max_age=600,
+)
 
 app.include_router(info.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])

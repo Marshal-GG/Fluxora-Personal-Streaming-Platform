@@ -14,7 +14,10 @@ import time
 from typing import TypedDict
 
 import aiosqlite
+import httpx
 import psutil
+
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,8 @@ _INTERNET_PROBE_HOST = "1.1.1.1"
 _INTERNET_PROBE_PORT = 80
 _INTERNET_PROBE_TIMEOUT_SEC = 1.5
 _INTERNET_PROBE_TTL_SEC = 30.0
+_PUBLIC_PROBE_TIMEOUT_SEC = 5.0
+_PUBLIC_PROBE_TTL_SEC = 30.0
 
 
 class StatsPayload(TypedDict):
@@ -56,6 +61,7 @@ class SystemStatsService:
     def __init__(self) -> None:
         self._last_net: _NetSample | None = None
         self._cached_internet: tuple[bool, float] | None = None  # (result, ts)
+        self._cached_public: tuple[str | None, float] | None = None  # (url, ts)
 
     async def collect(self, db: aiosqlite.Connection) -> StatsPayload:
         cpu = psutil.cpu_percent(interval=None)  # non-blocking; uses last interval
@@ -63,11 +69,12 @@ class SystemStatsService:
         net_in, net_out = self._network_rate_mbps()
         active = await self._active_stream_count(db)
         internet = await self._internet_connected()
+        public = await self._public_address()
 
         return {
             "uptime_seconds": int(time.time() - _PROCESS.create_time()),
             "lan_ip": self._lan_ip(),
-            "public_address": None,  # filled in by a dedicated PR — needs STUN
+            "public_address": public,
             "internet_connected": internet,
             "cpu_percent": round(cpu, 1),
             "ram_percent": round(vm.percent, 1),
@@ -174,6 +181,37 @@ class SystemStatsService:
             return True
         except (TimeoutError, OSError):
             return False
+
+    async def _public_address(self) -> str | None:
+        """Probe the configured ``FLUXORA_PUBLIC_URL`` for reachability.
+
+        Returns the URL when ``GET /api/v1/healthz`` is reachable through it,
+        ``None`` otherwise (or when no public URL is configured at all).
+        Result is cached for `_PUBLIC_PROBE_TTL_SEC` to keep stats-collection
+        cheap and to stay polite to Cloudflare's edge.
+        """
+        public = settings.fluxora_public_url
+        if not public:
+            return None
+
+        now = time.monotonic()
+        if self._cached_public is not None:
+            cached_url, ts = self._cached_public
+            if now - ts < _PUBLIC_PROBE_TTL_SEC:
+                return cached_url
+
+        url = public.rstrip("/") + "/api/v1/healthz"
+        result: str | None = None
+        try:
+            async with httpx.AsyncClient(timeout=_PUBLIC_PROBE_TIMEOUT_SEC) as client:
+                response = await client.get(url)
+            if response.status_code == 200:
+                result = public
+        except (httpx.RequestError, httpx.HTTPStatusError):
+            result = None
+
+        self._cached_public = (result, now)
+        return result
 
 
 system_stats = SystemStatsService()

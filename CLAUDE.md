@@ -386,7 +386,7 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation in sync with code
-- `apps/server` — **Phases 1–5 partially complete** (134 passing tests; ruff + black clean):
+- `apps/server` — **Phases 1–5 partially complete** (149 passing tests; ruff + black clean; public-routing Phase 2 server-side complete):
   - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured logging, rotating log file
   - Routers: info (+ logs), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, webhook ✅
   - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook ✅
