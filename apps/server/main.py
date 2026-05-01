@@ -19,6 +19,7 @@ from routers import (
     groups,
     info,
     library,
+    logs,
     notifications,
     orders,
     profile,
@@ -58,7 +59,7 @@ _LOG_CONFIG_COMMON = {
         },
         "file": {
             "class": "logging.handlers.RotatingFileHandler",
-            "formatter": "standard",
+            "formatter": "json",
             "filename": settings.fluxora_log_path,
             "maxBytes": 10 * 1024 * 1024,  # 10MB
             "backupCount": 5,
@@ -83,6 +84,14 @@ def _setup_logging() -> None:
         config["handlers"]["console"]["formatter"] = "json"
 
     logging.config.dictConfig(config)
+
+    # Attach the WS broadcast handler so the live-log tab gets every record.
+    # Imported lazily to avoid a circular import at module load.
+    from services.log_service import BroadcastHandler
+
+    bh = BroadcastHandler()
+    bh.setLevel(logging.INFO)
+    logging.getLogger().addHandler(bh)
 
 
 logger = logging.getLogger(__name__)
@@ -289,3 +298,4 @@ app.include_router(activity.router, prefix="/api/v1/activity", tags=["activity"]
 app.include_router(
     transcoding.router, prefix="/api/v1/transcoding", tags=["transcoding"]
 )
+app.include_router(logs.router, prefix="/api/v1/logs", tags=["logs"])

@@ -9,7 +9,7 @@ from fastapi.websockets import WebSocketState
 from config import settings
 from database.db import get_db
 from routers.deps import LOOPBACK
-from services import notification_service
+from services import log_service, notification_service
 from services.auth_service import get_trusted_client_by_token
 from services.system_stats_service import SystemStatsService
 
@@ -257,5 +257,49 @@ async def ws_notifications(websocket: WebSocket):
         logger.error("WS notifications error", exc_info=True)
     finally:
         notification_service.unsubscribe(q)
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            await websocket.close()
+
+
+@router.websocket("/logs")
+async def ws_logs(websocket: WebSocket):
+    """Live log tail — desktop Logs screen 'Live' tab.
+
+    Auth: localhost connections accept immediately. Non-localhost
+    connections must complete the same auth handshake as ``/status`` —
+    although in practice the Logs screen is desktop-only, so this path
+    is just a defensive fallback.
+
+    Frame format:
+        {"type": "log", "data": {"ts", "level", "source", "message"}}
+    """
+    await websocket.accept()
+    is_local = _is_local_websocket(websocket)
+    db = await get_db()
+
+    if not is_local:
+        client = await _authenticate(websocket, db)
+        if client is None:
+            return
+        await websocket.send_text(
+            json.dumps({"type": "auth_ok", "client_id": client["id"]})
+        )
+        logger.info("WS logs connected: client=%s", client["id"])
+    else:
+        logger.info("WS logs connected: localhost")
+
+    q = log_service.subscribe()
+    try:
+        while True:
+            if websocket.client_state == WebSocketState.DISCONNECTED:
+                break
+            payload = await q.get()
+            await websocket.send_text(json.dumps(payload))
+    except WebSocketDisconnect:
+        logger.info("WS logs disconnected")
+    except Exception:
+        logger.error("WS logs error", exc_info=True)
+    finally:
+        log_service.unsubscribe(q)
         if websocket.client_state != WebSocketState.DISCONNECTED:
             await websocket.close()
