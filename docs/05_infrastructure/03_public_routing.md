@@ -463,7 +463,6 @@ When implementation begins, the following docs will need to be updated:
 - `docs/10_planning/02_decisions.md` — ADR-013: "Public routing via Cloudflare Tunnel + media-plane direct/P2P"
 - `docs/08_frontend/01_frontend_architecture.md` — `ApiClient` dual-base-URL pattern; mobile pairing flow
 - `docs/00_overview/README.md` — add link to this doc
-- `CLAUDE.md` — Tech Stack table gains "Cloudflare Tunnel"; Known Risks adds tunnel-down failure mode
 
 ---
 

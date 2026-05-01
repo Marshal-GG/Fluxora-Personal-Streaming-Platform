@@ -86,7 +86,6 @@ Cosmetic field renames or single-endpoint redesigns do not justify a v2.
 - **Both versions run in parallel** under their own prefixes (`/api/v1/...` and `/api/v2/...`). Same FastAPI app, same database; routers are separate Python modules.
 - **v1 stays supported for at least 6 months** after v2 ships. During this window, every v1 endpoint must keep its behaviour exactly as documented before v2.
 - **Clients are migrated tier-by-tier**: desktop control panel first (we ship updates fastest), then mobile, then any third-party integrations.
-- **Sunset announcement**: when the 6-month window ends, post the v1-removal date in `AGENT_LOG.md`, the desktop release notes, and as a `Deprecation: <date>` HTTP response header on every v1 endpoint. After the sunset date, v1 returns `410 Gone` for two more weeks before being removed entirely.
 
 ### What v2 changes do NOT do
 

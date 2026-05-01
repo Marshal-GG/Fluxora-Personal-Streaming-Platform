@@ -102,13 +102,11 @@ cd <repo>
 ## Documentation
 
 - [Architecture](docs/...)
-- [Contributing](CONTRIBUTING.md)
 - [License](LICENSE)
 ```
 
 Keep the README **brief** — it's the front door, not the manual. Link to deeper docs.
 
-### `CONTRIBUTING.md`
 
 If you'll have any contributors at all (including future-you on a fresh machine):
 
@@ -119,7 +117,6 @@ If you'll have any contributors at all (including future-you on a fresh machine)
 - Branch model (link to [`04_branch_and_pr_workflow.md`](./04_branch_and_pr_workflow.md))
 - Commit message format (next section)
 
-Fluxora's `CONTRIBUTING.md` is a real example.
 
 ---
 
@@ -276,7 +273,6 @@ Then `pre-commit install`. Hooks run before each commit; stop typos and accident
 
 When you've done all this, document it in the repo so future-you doesn't have to remember:
 
-- [ ] `CONTRIBUTING.md` covers required tooling, run commands, conventions
 - [ ] `README.md` links to the runbooks you used (this directory)
 - [ ] Add an entry to your project's design log / decisions doc explaining what you chose and why
 
@@ -288,7 +284,6 @@ When you've done all this, document it in the repo so future-you doesn't have to
 - [ ] LICENSE chosen
 - [ ] `.gitignore` includes secrets, OS, editor, build outputs
 - [ ] `README.md` skeleton written
-- [ ] `CONTRIBUTING.md` written
 - [ ] Commit convention chosen + documented
 - [ ] Branch protection on `main` (PR required, 1 approval, status checks)
 - [ ] CI: lint/test workflow

@@ -120,7 +120,6 @@ Each runbook is the **distilled, generic version** of patterns Fluxora actually 
 | 1 — Cloudflare Tunnel | [`../03_public_routing.md`](../03_public_routing.md) |
 | 2 — Firebase Hosting | [`../01_infrastructure.md`](../01_infrastructure.md) sections on web landing |
 | 3 — CI/CD | [`../01_infrastructure.md`](../01_infrastructure.md) sections on workflows + the actual `.github/workflows/` files |
-| 4 — Branch + PR | [`../../../CONTRIBUTING.md`](../../../CONTRIBUTING.md) commit conventions + `.github/workflows/` deploy gates |
 | 5 — Secrets | [`../../06_security/02_license_key_operations.md`](../../06_security/02_license_key_operations.md) for license keys; [`../05_backup_and_recovery.md`](../05_backup_and_recovery.md) for backup priority |
 | 6 — Webhook testing | [`../02_polar_webhook_deployment.md`](../02_polar_webhook_deployment.md) and [`../../09_backend/02_polar_webhooks.md`](../../09_backend/02_polar_webhooks.md) |
 | 7 — Repo init | The repo itself (this file is what step 7 produces) |
