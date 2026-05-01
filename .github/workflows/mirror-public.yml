@@ -61,8 +61,16 @@ jobs:
           git add -A
 
       - name: Commit clean state
+        env:
+          # Pass the message via env so the workflow doesn't break when the
+          # message body contains quotes, parens, backticks, or other shell
+          # metacharacters. Reading from stdin via `git commit -F -` is the
+          # safest way to handle multiline content.
+          COMMIT_MSG: ${{ steps.msg.outputs.message }}
         run: |
-          git diff --cached --quiet || git commit -m "${{ steps.msg.outputs.message }}"
+          if ! git diff --cached --quiet; then
+            printf '%s\n' "$COMMIT_MSG" | git commit -F -
+          fi
 
       - name: Push to public repo
         run: |

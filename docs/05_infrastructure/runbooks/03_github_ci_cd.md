@@ -448,8 +448,16 @@ jobs:
           git add -A
 
       - name: Commit clean state
+        env:
+          # Pass the message via env + stdin so the step doesn't break when the
+          # commit body contains quotes, parens, or other shell metacharacters.
+          # Direct ${{ }} substitution into `git commit -m "..."` will splice
+          # inner quotes through and break the outer string.
+          COMMIT_MSG: ${{ steps.msg.outputs.message }}
         run: |
-          git diff --cached --quiet || git commit -m "${{ steps.msg.outputs.message }}"
+          if ! git diff --cached --quiet; then
+            printf '%s\n' "$COMMIT_MSG" | git commit -F -
+          fi
 
       - name: Push to public repo
         run: |
