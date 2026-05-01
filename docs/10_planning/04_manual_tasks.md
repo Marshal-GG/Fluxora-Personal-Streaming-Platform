@@ -150,6 +150,45 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 - **Owner:** project owner.
 
 
+### 🔲 Stand up self-hosted TURN at `turn.fluxora.marshalx.dev`
+
+- **What:** install `coturn` on the home PC (or a small VPS), expose it through a second Cloudflare Tunnel ingress on `turn.fluxora.marshalx.dev`, point `webrtc_service` STUN/TURN config at it. Replaces the free public STUN-only fallback with an authenticated TURN relay for clients behind symmetric NATs (mobile carriers, double-NAT home routers).
+- **Why:** WebRTC currently falls back to HLS over the tunnel when ICE fails — that's correct but slow. A self-hosted TURN relay carries the failed-P2P path without burning Cloudflare bandwidth (TURN traffic is UDP/TCP-relay, not HTTP, so it doesn't go through the existing tunnel). Mobile users on cellular networks routinely hit symmetric NAT.
+- **Prereqs:** TURN credentials secret added to `~/.fluxora/.env` (e.g. `FLUXORA_TURN_SECRET`); `webrtc_service.py` `_ICE_SERVERS` list updated to include the new TURN URL with `username` + `credential`; client `flutter_webrtc` config likewise; firewall opens UDP 3478 + TCP 5349 (TLS) on the home PC. Plan + costs in [`../05_infrastructure/06_webrtc_and_turn.md`](../05_infrastructure/06_webrtc_and_turn.md).
+- **Time:** ~2 hours for the install + tunnel ingress; another 1-2 hours for client wiring + smoke tests on cellular.
+- **Trigger:** when at least one user reports WebRTC failures from cellular / restrictive networks. Not urgent for solo / LAN-mostly deployments.
+- **Owner:** project owner.
+
+### 🔲 Cloudflare WAF custom rules for the public tunnel hostname
+
+- **What:** in the Cloudflare dashboard for `marshalx.dev`, add WAF custom rules scoped to `(http.host eq "fluxora-api.marshalx.dev")`:
+  1. Block requests with empty / missing `User-Agent` header.
+  2. Block requests with bodies > 25 MB (Fluxora's largest legitimate request is a small JSON; uploads happen on LAN).
+  3. Rate-limit `/api/v1/auth/request-pair` to 30 requests / IP / hour at the edge (server-side `slowapi` already does 5/min, the edge rule is defense in depth).
+- **Why:** the tunnel exposes the FastAPI server to the public internet. Server-side already rate-limits and validates input, but cheap edge rules drop the most common scanner / bot junk before it reaches `cloudflared`.
+- **Prereqs:** Cloudflare account, dashboard access to the `marshalx.dev` zone.
+- **Time:** ~15 min to author + smoke-test the three rules.
+- **Trigger:** before announcing the public URL externally / accepting non-trusted clients.
+- **Owner:** project owner.
+
+### 🔲 Cloudflare tunnel health alerts
+
+- **What:** in the Cloudflare Zero Trust dashboard → Networks → Tunnels → `fluxora-home`, enable health notifications: email when the tunnel goes "Inactive" (cloudflared daemon stops sending heartbeats) for > 5 min.
+- **Why:** the public URL silently 502s when the tunnel is down — paired clients off-LAN fail with no diagnostic. An email alert is the cheapest possible signal that the home PC needs attention.
+- **Prereqs:** Cloudflare Zero Trust enabled on the account (free for personal use).
+- **Time:** ~5 min.
+- **Trigger:** before announcing the public URL externally.
+- **Owner:** project owner.
+
+### 🔲 Cloudflare Access on admin paths (defense in depth)
+
+- **What:** in Cloudflare Zero Trust → Access → Applications, add a self-hosted application matching `fluxora-api.marshalx.dev/api/v1/auth/approve*` + `/auth/reject*` + `/auth/revoke*` + `/auth/clients` + `/orders*` + `/settings*` + `/info/restart` + `/info/stop`, gated by an Access policy of "email matches owner". Anything matching the policy gets a one-click email-OTP login at the edge before the request reaches FastAPI.
+- **Why:** these endpoints are already localhost-only (`require_local_caller` rejects any tunneled request, and the Phase 2 server middleware double-checks via `CF-Connecting-IP`). Adding Cloudflare Access in front is defense-in-depth — if a future bug ever weakens the server-side localhost gate, the edge still requires owner identity.
+- **Prereqs:** Cloudflare Zero Trust account, owner email registered.
+- **Time:** ~20 min.
+- **Trigger:** optional. Skip unless the threat model expands to assume potential server-side bypasses.
+- **Owner:** project owner.
+
 ### 🔲 Long-term: decide whether to register `fluxora.cloud`
 
 - **What:** if v2 multi-tenant becomes a real plan, register `fluxora.cloud` (or another single-purpose TLD) so per-user subdomains (`<user>.fluxora.cloud`) get free Universal SSL. Alternative: pay $10/mo for Cloudflare ACM on `*.fluxora.marshalx.dev`.

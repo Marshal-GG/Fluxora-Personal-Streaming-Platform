@@ -1,8 +1,8 @@
 # Public API Routing — `fluxora-api.marshalx.dev`
 
 > **Category:** Infrastructure
-> **Status:** Phases 1–5 **COMPLETE** (2026-05-01) — desktop Dashboard Remote-access pill + Settings Remote Access section live; mobile Settings UI deferred (mobile has no Settings feature yet, by design); v1 v2 multi-tenant track scoped below.
-> **Last Updated:** 2026-05-01 (rev 5 — Phase 5 shipped: desktop Dashboard pill + Settings section with on-demand `/healthz` reachability probe; SDK floor bumped 3.8 → 3.9)
+> **Status:** v1 single-tenant routing **COMPLETE** (2026-05-01) — Phases 1–5 shipped end-to-end. Phase 6 hardening is operator-driven and tracked in `docs/10_planning/04_manual_tasks.md`. Mobile Settings UI deferred (mobile has no Settings feature yet, by design). v2 multi-tenant track scoped below.
+> **Last Updated:** 2026-05-01 (rev 6 — Phase 6 closed out as operator-driven manual-task entries; v1 routing now end-to-end shippable)
 
 ---
 
@@ -362,12 +362,20 @@ Test coverage: 4 new tests in `settings_cubit_test.dart` covering `loadSettings`
 
 Out of scope for v1 per the original plan. Operators run the steps in `runbooks/01_cloudflare_tunnel.md` manually for now. Triggered from the Remote Access section's hint text which links to the runbook.
 
-### Phase 6 — Optional hardening
+### Phase 6 — Optional hardening (operator-driven)
 
-- **Cloudflare Access** in front of admin paths (`/api/v1/auth/approve`, `/api/v1/auth/clients`, etc.) — though those are localhost-only and unreachable over the tunnel anyway.
-- **WAF custom rules** — drop obvious junk (no `User-Agent`, oversized headers, etc.).
-- **Tunnel health alerts** — Cloudflare can email when the tunnel goes down.
-- **Self-hosted TURN** at `turn.fluxora.marshalx.dev` via a second tunnel ingress for reliable WebRTC fallback on symmetric NATs.
+Phase 6 is intentionally outside the codebase — every item is a Cloudflare-dashboard configuration or a separate piece of infrastructure (TURN). They've been written up as standalone entries in [`docs/10_planning/04_manual_tasks.md`](../10_planning/04_manual_tasks.md) so the owner can pick them up on their own cadence:
+
+| Item | Manual-tasks entry | Time | When to do it |
+|------|-------------------|------|---------------|
+| Self-hosted TURN at `turn.fluxora.marshalx.dev` | "Stand up self-hosted TURN" | ~3-4h | When the first cellular / symmetric-NAT user reports WebRTC failures. |
+| Cloudflare WAF custom rules | "Cloudflare WAF custom rules for the public tunnel hostname" | ~15m | Before announcing the public URL externally. |
+| Tunnel health alerts | "Cloudflare tunnel health alerts" | ~5m | Before announcing the public URL externally. |
+| Cloudflare Access on admin paths | "Cloudflare Access on admin paths (defense in depth)" | ~20m | Optional — server-side already rejects tunneled admin calls; this is belt-and-suspenders. |
+
+The first three are recommended before the public URL is shared with anyone outside the trusted-paired-clients model. The Cloudflare Access entry is purely defense-in-depth — `require_local_caller` and the Phase 2 `CF-Connecting-IP` rejection on admin endpoints already block tunneled admin traffic at the application layer.
+
+The TURN entry is the only one with non-trivial scope; it's written up as its own manual task because it touches `webrtc_service.py`, the `~/.fluxora/.env` secrets, and a second Cloudflare Tunnel ingress. See also [`runbooks/06_webrtc_and_turn.md`](../05_infrastructure/06_webrtc_and_turn.md) (planned) for the install + auth-credential rotation flow.
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **Category:** Infrastructure
 > **Status:** Active — v1 routing live as of 2026-05-01
-> **Last Updated:** 2026-05-01 (Phases 1–4 of public routing complete — tunnel live; server CF middlewares + admin hardening + `/healthz` + `remote_url` on `/info`; dual-base `ApiClient` in `fluxora_core`; mobile pairing persists `remote_url`)
+> **Last Updated:** 2026-05-01 (v1 single-tenant routing Phases 1–5 complete — tunnel live; server CF middlewares + admin hardening + `/healthz` + `remote_url` on `/info`; dual-base `ApiClient` in `fluxora_core`; mobile pairing persists `remote_url`; desktop Dashboard pill + Settings Remote Access section with on-demand probe. Phase 6 hardening tracked as operator-driven manual tasks.)
 
 This doc is the canonical inventory of every domain and subdomain Fluxora uses or plans to use, what each is for, what infrastructure backs it, and what state it is in. Cross-link this whenever a new public-facing surface is introduced.
 

@@ -386,7 +386,7 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation in sync with code
-- `apps/server` — **Phases 1–5 partially complete** (170 passing tests; ruff + black clean; public-routing Phases 2–4 complete):
+- `apps/server` — **Phases 1–5 partially complete** (170 passing tests; ruff + black clean; public-routing v1 Phases 2–5 complete; Phase 6 hardening operator-driven):
   - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured logging, rotating log file
   - Routers: info (+ logs + healthz), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, webhook ✅
   - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook, system_stats (`_public_address` probe) ✅
@@ -415,6 +415,6 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
   - Logs screen (live server log viewer) ✅
   - Settings screen (URL, server name, tier, license key, transcoding encoder/preset/CRF) ✅
   - Transcoding screen (scaffold only; settings managed via Settings screen) 🔵
-  - Remote-access UI on Dashboard / Settings 🔲 (Phase 5 of public-routing plan)
+  - Remote-access UI on Dashboard / Settings ✅ (Dashboard pill driven by `serverInfo.remoteUrl`; Settings Remote Access section with on-demand `/healthz` reachability probe)
 
-**Next:** Phase 5 of public routing (desktop `SystemStatsCard` → `public_address` indicator, Settings → Remote access section). Then complete `TranscodingScreen` cubit, hardware encoding startup validation, E2E encryption planning.
+**Next:** Complete `TranscodingScreen` cubit, hardware encoding startup validation, E2E encryption planning. Public-routing Phase 6 (TURN, WAF rules, tunnel health alerts, Cloudflare Access) is tracked as operator-driven manual tasks; pick up before announcing the public URL externally.
