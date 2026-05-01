@@ -166,6 +166,11 @@ class _SettingsViewState extends State<_SettingsView> {
                             ],
                           ),
                           const SizedBox(height: 24),
+                          // ── Remote access ──────────────────────────────
+                          if (state is SettingsLoaded)
+                            _RemoteAccessSection(state: state),
+                          if (state is SettingsLoaded)
+                            const SizedBox(height: 24),
                           // ── Subscription ───────────────────────────────
                           _SectionCard(
                             title: 'Subscription',
@@ -346,6 +351,113 @@ class _TierSelector extends StatelessWidget {
         onChanged: (v) {
           if (v != null) onChanged(v);
         },
+      ),
+    );
+  }
+}
+
+// ── Remote access section ────────────────────────────────────────────────────
+
+class _RemoteAccessSection extends StatelessWidget {
+  const _RemoteAccessSection({required this.state});
+
+  final SettingsLoaded state;
+
+  @override
+  Widget build(BuildContext context) {
+    final remoteUrl = state.remoteUrl;
+    final configured = remoteUrl != null && remoteUrl.isNotEmpty;
+    return _SectionCard(
+      title: 'Remote Access',
+      children: [
+        _SettingRow(
+          label: 'Public URL',
+          hint: configured
+              ? 'Off-LAN clients reach this server through Cloudflare Tunnel.'
+              : 'Set FLUXORA_PUBLIC_URL on the server to enable off-LAN access.\nSee the Cloudflare Tunnel runbook for setup.',
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.surfaceRaised),
+            ),
+            child: Text(
+              configured ? remoteUrl : 'Not configured',
+              style: AppTypography.bodyMd.copyWith(
+                color: configured
+                    ? AppColors.textPrimary
+                    : AppColors.textMuted,
+                fontFamily: configured ? 'monospace' : null,
+              ),
+            ),
+          ),
+        ),
+        if (configured) ...[
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _ReachabilityBadge(status: state.remoteAccessStatus),
+              const SizedBox(width: 12),
+              TextButton.icon(
+                onPressed:
+                    state.remoteAccessStatus == RemoteAccessStatus.checking
+                        ? null
+                        : () =>
+                            context.read<SettingsCubit>().checkRemoteAccess(),
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Check now'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ReachabilityBadge extends StatelessWidget {
+  const _ReachabilityBadge({required this.status});
+
+  final RemoteAccessStatus? status;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color, icon) = switch (status) {
+      RemoteAccessStatus.reachable =>
+        ('Tunnel reachable', AppColors.success, Icons.check_circle),
+      RemoteAccessStatus.unreachable =>
+        ('Tunnel unreachable', AppColors.error, Icons.error_outline),
+      RemoteAccessStatus.checking =>
+        ('Checking…', AppColors.textMuted, Icons.hourglass_empty),
+      null => ('Not checked yet', AppColors.textMuted, Icons.help_outline),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withAlpha(30),
+        borderRadius: BorderRadius.circular(9999),
+        border: Border.all(color: color.withAlpha(80)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }

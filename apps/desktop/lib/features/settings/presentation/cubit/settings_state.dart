@@ -10,6 +10,9 @@ final class SettingsLoading extends SettingsState {
   const SettingsLoading();
 }
 
+/// Reachability of the configured remote URL. `null` = not yet probed.
+enum RemoteAccessStatus { reachable, unreachable, checking }
+
 final class SettingsLoaded extends SettingsState {
   const SettingsLoaded({
     required this.serverUrl,
@@ -20,6 +23,8 @@ final class SettingsLoaded extends SettingsState {
     required this.transcodingEncoder,
     required this.transcodingPreset,
     required this.transcodingCrf,
+    this.remoteUrl,
+    this.remoteAccessStatus,
   });
 
   final String serverUrl;
@@ -30,6 +35,35 @@ final class SettingsLoaded extends SettingsState {
   final String transcodingEncoder;
   final String transcodingPreset;
   final int transcodingCrf;
+
+  /// The server's configured public URL (Cloudflare Tunnel), read from
+  /// `GET /api/v1/info`. `null` when the server has no `FLUXORA_PUBLIC_URL`
+  /// set. Distinct from [serverUrl] which is the local LAN URL.
+  final String? remoteUrl;
+
+  /// Status of the most recent reachability probe against [remoteUrl] +
+  /// `/api/v1/healthz`. `null` if no probe has run yet.
+  final RemoteAccessStatus? remoteAccessStatus;
+
+  SettingsLoaded copyWith({
+    String? Function()? remoteUrl,
+    RemoteAccessStatus? Function()? remoteAccessStatus,
+  }) {
+    return SettingsLoaded(
+      serverUrl: serverUrl,
+      serverName: serverName,
+      tier: tier,
+      maxConcurrentStreams: maxConcurrentStreams,
+      licenseKey: licenseKey,
+      transcodingEncoder: transcodingEncoder,
+      transcodingPreset: transcodingPreset,
+      transcodingCrf: transcodingCrf,
+      remoteUrl: remoteUrl != null ? remoteUrl() : this.remoteUrl,
+      remoteAccessStatus: remoteAccessStatus != null
+          ? remoteAccessStatus()
+          : this.remoteAccessStatus,
+    );
+  }
 }
 
 final class SettingsSaved extends SettingsState {

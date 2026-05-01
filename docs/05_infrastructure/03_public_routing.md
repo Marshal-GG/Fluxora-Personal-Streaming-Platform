@@ -1,8 +1,8 @@
 # Public API Routing — `fluxora-api.marshalx.dev`
 
 > **Category:** Infrastructure
-> **Status:** Phases 1–4 **COMPLETE** (2026-05-01); Phase 5 desktop UI + mobile Settings UI pending. v2 multi-tenant track scoped below.
-> **Last Updated:** 2026-05-01 (rev 4 — Phases 2–4 shipped: CF middlewares + admin hardening + `/healthz` + `remote_url` on `/info`; dual-base `ApiClient` in `fluxora_core`; mobile pairing persists `remote_url` post-pair)
+> **Status:** Phases 1–5 **COMPLETE** (2026-05-01) — desktop Dashboard Remote-access pill + Settings Remote Access section live; mobile Settings UI deferred (mobile has no Settings feature yet, by design); v1 v2 multi-tenant track scoped below.
+> **Last Updated:** 2026-05-01 (rev 5 — Phase 5 shipped: desktop Dashboard pill + Settings section with on-demand `/healthz` reachability probe; SDK floor bumped 3.8 → 3.9)
 
 ---
 
@@ -334,14 +334,33 @@ The plan called for a "Remote access" row showing whether `fluxora-api.marshalx.
 
 Tracked as a follow-up: when mobile gains a Settings screen (theme / language / unpair / etc.), the Remote-access row and a `_apiClient.get(Endpoints.healthz)` probe wire in trivially. `Endpoints.healthz` is already exported from `fluxora_core` for that use.
 
-### Phase 5 — Desktop control panel
+### Phase 5 — Desktop control panel ✅ Complete (configured-state UI; live `public_address` indicator deferred)
 
-1. **`SystemStatsCard`** on Dashboard: show `public_address` field with a green/red indicator.
-2. **Settings → Remote access section**:
-   - Display the configured remote URL (read-only initially).
-   - Status: tunnel reachable? cloudflared service running?
-   - Button: "Open Cloudflare Tunnel setup guide" → links to `docs/05_infrastructure/03_public_routing.md`.
-3. **Future**: in-app wizard that runs the `cloudflared` install/login/config commands. Out of scope for v1.
+#### 5.1 Dashboard: Remote-access pill ✅
+
+`apps/desktop/lib/features/dashboard/presentation/screens/dashboard_screen.dart::_ServerInfoCard` now renders two pills next to the server name: the existing `Online` pill plus a new `Remote: on` / `Remote: off` pill driven by `serverInfo.remoteUrl` (the field added to the `ServerInfo` entity in Phase 4). Tooltip on hover spells out the configured URL or explains why off-LAN access is unavailable. Pulled out into a reusable `_StatusPill` so future status indicators don't duplicate the styling.
+
+The originally-planned "live `public_address` reachability" indicator (driven by `system_stats_service._public_address()` via `GET /info/stats`) is deferred — desktop doesn't yet consume `/info/stats` directly. The "configured" signal already gives the operator a clear go/no-go; live reachability is more useful in the Settings probe (5.2).
+
+#### 5.2 Settings: Remote Access section ✅
+
+`apps/desktop/lib/features/settings/presentation/screens/settings_screen.dart` gains a `Remote Access` `_SectionCard` between `Server Connection` and `Subscription`. It surfaces:
+
+- **Public URL** — read-only display of `serverInfo.remoteUrl` from `/info`. Monospaced when configured; `Not configured` placeholder + link to the Cloudflare Tunnel runbook when not.
+- **Reachability badge** — shows one of `Not checked yet` / `Checking…` / `Tunnel reachable` / `Tunnel unreachable` based on a one-shot probe.
+- **Check now** button — fires the probe.
+
+The probe lives in `SettingsCubit.checkRemoteAccess()` and bypasses the dual-base `ApiClient` deliberately: the desktop runs on the same /24 as the server, so the LAN check would always pick `localBaseUrl` and miss the point. Instead a fresh `Dio` is constructed with the remote URL as `baseUrl` and a 5s connect/receive timeout, then `GET /api/v1/healthz` is fired. 200 → reachable; anything else → unreachable. Errors are logged but never surface as exceptions — the UI just shows the red badge.
+
+`SettingsLoaded` state added optional `remoteUrl` and `remoteAccessStatus` fields plus a `copyWith` so the cubit can update reachability without re-fetching settings. The probe is on-demand only (no background polling) to avoid hammering the Cloudflare edge.
+
+`SettingsCubit.loadSettings()` now also fetches `/info` after the existing `/settings` call to populate `remoteUrl`. The `/info` call is wrapped in try/catch — failure is silent and the section renders as "Not configured".
+
+Test coverage: 4 new tests in `settings_cubit_test.dart` covering `loadSettings` populating `remoteUrl`, tolerating `/info` failure, and `checkRemoteAccess` early-returning when no state / no remote URL is configured. Desktop suite goes 34 → 38.
+
+#### 5.3 In-app cloudflared install wizard 🔲
+
+Out of scope for v1 per the original plan. Operators run the steps in `runbooks/01_cloudflare_tunnel.md` manually for now. Triggered from the Remote Access section's hint text which links to the runbook.
 
 ### Phase 6 — Optional hardening
 

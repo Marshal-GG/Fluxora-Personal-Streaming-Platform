@@ -1,8 +1,11 @@
 import 'package:bloc_test/bloc_test.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:fluxora_core/entities/enums.dart';
+import 'package:fluxora_core/entities/server_info.dart';
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/network/api_exception.dart';
+import 'package:fluxora_core/network/endpoints.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_state.dart';
@@ -174,6 +177,113 @@ void main() {
             .having((s) => s.serverUrl, 'serverUrl', kDefaultUrl)
             .having((s) => s.tier, 'tier', 'free')
             .having((s) => s.maxConcurrentStreams, 'maxConcurrentStreams', 1),
+      ],
+    );
+  });
+
+  // ── Remote access ──────────────────────────────────────────────────────────
+
+  group('SettingsCubit remote access', () {
+    setUpAll(() {
+      registerFallbackValue(
+        const ServerInfo(
+          serverName: 'fallback',
+          version: '0.0.0',
+          tier: SubscriptionTier.free,
+        ),
+      );
+    });
+
+    blocTest<SettingsCubit, SettingsState>(
+      'loadSettings populates remoteUrl from /info',
+      build: () {
+        stubStorageEmpty();
+        stubApiGetSettings({
+          'server_name': 'My Server',
+          'subscription_tier': 'free',
+          'max_concurrent_streams': 1,
+        });
+        when(() => mockApiClient.get<ServerInfo>(
+              Endpoints.info,
+              fromJson: any(named: 'fromJson'),
+            )).thenAnswer((_) async => const ServerInfo(
+              serverName: 'My Server',
+              version: '0.1.0',
+              tier: SubscriptionTier.free,
+              remoteUrl: 'https://fluxora-api.example.dev',
+            ));
+        return buildCubit();
+      },
+      act: (cubit) => cubit.loadSettings(),
+      expect: () => [
+        isA<SettingsLoading>(),
+        isA<SettingsLoaded>()
+            .having((s) => s.remoteUrl, 'remoteUrl',
+                'https://fluxora-api.example.dev')
+            .having((s) => s.remoteAccessStatus, 'remoteAccessStatus', isNull),
+      ],
+    );
+
+    blocTest<SettingsCubit, SettingsState>(
+      'loadSettings tolerates /info failure (remoteUrl stays null)',
+      build: () {
+        stubStorageEmpty();
+        stubApiGetSettings({
+          'server_name': 'My Server',
+          'subscription_tier': 'free',
+          'max_concurrent_streams': 1,
+        });
+        when(() => mockApiClient.get<ServerInfo>(
+              Endpoints.info,
+              fromJson: any(named: 'fromJson'),
+            )).thenThrow(const ApiException(
+          message: 'offline',
+          errorCode: 'CONNECTION_ERROR',
+        ));
+        return buildCubit();
+      },
+      act: (cubit) => cubit.loadSettings(),
+      expect: () => [
+        isA<SettingsLoading>(),
+        isA<SettingsLoaded>()
+            .having((s) => s.remoteUrl, 'remoteUrl', isNull),
+      ],
+    );
+
+    blocTest<SettingsCubit, SettingsState>(
+      'checkRemoteAccess is a no-op before loadSettings has run',
+      build: buildCubit,
+      act: (cubit) => cubit.checkRemoteAccess(),
+      expect: () => <SettingsState>[],
+    );
+
+    blocTest<SettingsCubit, SettingsState>(
+      'checkRemoteAccess is a no-op when remoteUrl is null',
+      build: () {
+        stubStorageEmpty();
+        stubApiGetSettings({
+          'server_name': 'My Server',
+          'subscription_tier': 'free',
+          'max_concurrent_streams': 1,
+        });
+        when(() => mockApiClient.get<ServerInfo>(
+              Endpoints.info,
+              fromJson: any(named: 'fromJson'),
+            )).thenAnswer((_) async => const ServerInfo(
+              serverName: 'My Server',
+              version: '0.1.0',
+              tier: SubscriptionTier.free,
+              // remoteUrl omitted
+            ));
+        return buildCubit();
+      },
+      act: (cubit) async {
+        await cubit.loadSettings();
+        await cubit.checkRemoteAccess();
+      },
+      expect: () => [
+        isA<SettingsLoading>(),
+        isA<SettingsLoaded>().having((s) => s.remoteUrl, 'remoteUrl', isNull),
       ],
     );
   });

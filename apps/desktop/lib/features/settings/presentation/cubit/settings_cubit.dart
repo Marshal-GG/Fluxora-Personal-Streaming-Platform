@@ -1,4 +1,6 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:fluxora_core/entities/server_info.dart';
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/network/endpoints.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
@@ -51,6 +53,20 @@ class SettingsCubit extends Cubit<SettingsState> {
         _log.w('Could not fetch server settings (server may be offline): $e');
       }
 
+      // Best-effort: fetch /info for remote_url so the Remote Access
+      // section knows what to probe. Failures are silent — the section
+      // just shows "not configured" if /info couldn't be reached.
+      String? remoteUrl;
+      try {
+        final info = await _apiClient.get<ServerInfo>(
+          Endpoints.info,
+          fromJson: (data) => ServerInfo.fromJson(data as Map<String, dynamic>),
+        );
+        remoteUrl = info.remoteUrl;
+      } catch (e) {
+        _log.w('Could not fetch /info for remote_url: $e');
+      }
+
       emit(SettingsLoaded(
         serverUrl: savedUrl,
         serverName: serverName,
@@ -60,6 +76,7 @@ class SettingsCubit extends Cubit<SettingsState> {
         transcodingEncoder: transcodingEncoder,
         transcodingPreset: transcodingPreset,
         transcodingCrf: transcodingCrf,
+        remoteUrl: remoteUrl,
       ));
     } catch (e, st) {
       _log.e('Failed to load settings', error: e, stackTrace: st);
@@ -72,6 +89,42 @@ class SettingsCubit extends Cubit<SettingsState> {
         transcodingPreset: 'veryfast',
         transcodingCrf: 23,
       ));
+    }
+  }
+
+  /// Probes `<remoteUrl>/api/v1/healthz` directly (bypassing ApiClient's
+  /// LAN/WAN smart-path resolver) to confirm the Cloudflare Tunnel is
+  /// reachable from the desktop's network.
+  Future<void> checkRemoteAccess() async {
+    final current = state;
+    if (current is! SettingsLoaded) return;
+    final url = current.remoteUrl;
+    if (url == null || url.isEmpty) return;
+
+    emit(current.copyWith(
+      remoteAccessStatus: () => RemoteAccessStatus.checking,
+    ));
+
+    final probe = Dio(BaseOptions(
+      baseUrl: url,
+      connectTimeout: const Duration(seconds: 5),
+      receiveTimeout: const Duration(seconds: 5),
+    ));
+
+    try {
+      final response = await probe.get<dynamic>(Endpoints.healthz);
+      final ok = response.statusCode == 200;
+      emit(current.copyWith(
+        remoteAccessStatus: () =>
+            ok ? RemoteAccessStatus.reachable : RemoteAccessStatus.unreachable,
+      ));
+    } catch (e) {
+      _log.w('Remote access probe failed for $url: $e');
+      emit(current.copyWith(
+        remoteAccessStatus: () => RemoteAccessStatus.unreachable,
+      ));
+    } finally {
+      probe.close(force: true);
     }
   }
 
