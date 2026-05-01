@@ -130,8 +130,8 @@
 - **Interfaces:** `GET /api/v1/orders` (localhost-only)
 - **Dependencies:** SQLite `polar_orders` table
 
-### Public Routing (planned)
-- **Responsibility:** Expose the home server at `https://api.fluxora.marshalx.dev` for off-LAN clients via a Cloudflare Tunnel. Control plane only — media bandwidth stays on direct/P2P paths.
+### Public Routing (Phase 1 ops complete; code wiring pending)
+- **Responsibility:** Expose the home server at `https://fluxora-api.marshalx.dev` for off-LAN clients via a Cloudflare Tunnel. Control plane only — media bandwidth stays on direct/P2P paths.
 - **Interfaces:** All `/api/v1/...` paths reachable through the tunnel; HLS routes server-side blocked when `CF-Connecting-IP` is present.
 - **Dependencies:** `cloudflared` daemon (system-installed), `FLUXORA_PUBLIC_URL` env var
 - **Plan:** [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) (v1 single-tenant + v2 multi-tenant track)
@@ -163,7 +163,7 @@
 | From | To | Protocol | Pattern |
 |------|----|----------|---------|
 | Flutter Client (LAN) | FastAPI Server | HTTP REST + HLS | Request/Response, streaming |
-| Flutter Client (WAN — planned) | `api.fluxora.marshalx.dev` → home server | HTTPS via Cloudflare Tunnel | Control plane only — media stays P2P |
+| Flutter Client (WAN — planned) | `fluxora-api.marshalx.dev` → home server | HTTPS via Cloudflare Tunnel | Control plane only — media stays P2P |
 | Flutter Client | STUN Server | UDP | WebRTC ICE |
 | Flutter Client | TURN Server | UDP/TCP | WebRTC relay (optional, see runbook) |
 | Flutter Client ↔ Flutter Client / Server (P2P) | Direct or via TURN | WebRTC SCTP/data channels | Internet streaming |

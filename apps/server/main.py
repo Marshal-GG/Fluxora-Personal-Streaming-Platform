@@ -108,9 +108,49 @@ def _check_ffmpeg() -> None:
         )
 
 
+def _init_sentry() -> None:
+    """Initialise Sentry only if SENTRY_DSN is configured.
+
+    No-DSN deployments (default) skip the import + init entirely so the
+    sentry-sdk has zero runtime overhead when unused. Field-level filters
+    drop expected HTTP exceptions to keep the issues feed signal/noise sane.
+    """
+    if not settings.sentry_dsn:
+        return
+
+    import sentry_sdk
+
+    def _before_send(event: dict, hint: dict) -> dict | None:
+        exc_info = hint.get("exc_info") if hint else None
+        if exc_info:
+            exc_type = exc_info[0]
+            # Drop expected framework exceptions so the issues feed only shows
+            # things that need investigation. HTTPException covers our own 4xx
+            # raises; RequestValidationError covers Pydantic-rejected inputs.
+            for noisy in ("HTTPException", "RequestValidationError"):
+                if exc_type and exc_type.__name__ == noisy:
+                    return None
+        return event
+
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        environment=settings.fluxora_env,
+        release=f"fluxora-server@{app.version}" if "app" in globals() else None,
+        traces_sample_rate=settings.sentry_traces_sample_rate,
+        send_default_pii=False,
+        before_send=_before_send,
+    )
+    logger.info(
+        "Sentry initialised (env=%s, traces=%s)",
+        settings.fluxora_env,
+        settings.sentry_traces_sample_rate,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _setup_logging()
+    _init_sentry()
 
     # 1. Fail fast if required secrets are missing
     if not settings.token_hmac_key:

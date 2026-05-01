@@ -140,7 +140,7 @@ Annoying for ~5 minutes per client. No data loss.
 
 1. Run `cloudflared tunnel delete <old-id>` to clean up server-side state.
 2. Run `cloudflared tunnel create fluxora-home` to create a new one — gets a new ID and credentials.
-3. Update the Cloudflare DNS CNAME for `api.fluxora.marshalx.dev` to point at the new `<new-id>.cfargotunnel.com`.
+3. Update the Cloudflare DNS CNAME for `fluxora-api.marshalx.dev` to point at the new `<new-id>.cfargotunnel.com`.
 4. Update `~/.cloudflared/config.yml` with the new tunnel ID.
 5. Restart `cloudflared`.
 

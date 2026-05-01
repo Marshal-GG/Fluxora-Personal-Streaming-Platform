@@ -10,7 +10,7 @@
 - **Status:** Accepted
 - **Context:** Mobile and desktop clients need a stable public address for the home Fluxora server when off LAN. Self-hosted servers behind NAT have neither static public IPs nor port-forwarding by default. Routing all traffic — including HLS media — through any cloud proxy would burn bandwidth budgets and contradict Fluxora's local-first principle.
 - **Decision:** Three-plane routing.
-  - **Control plane** (REST + WS): WAN traffic enters via `api.fluxora.marshalx.dev`, served by a Cloudflare Tunnel from the home PC's `cloudflared` daemon. Free, no port-forward, free TLS via Cloudflare. LAN keeps using the discovered local URL.
+  - **Control plane** (REST + WS): WAN traffic enters via `fluxora-api.marshalx.dev`, served by a Cloudflare Tunnel from the home PC's `cloudflared` daemon. Free, no port-forward, free TLS via Cloudflare. LAN keeps using the discovered local URL.
   - **Signaling plane** (WebRTC negotiation WS): same path as control plane.
   - **Media plane** (HLS, WebRTC media): never tunneled. LAN uses direct HLS; WAN uses WebRTC P2P with STUN/TURN. Server middleware blocks `/api/v1/hls/*` requests that arrive via the tunnel (`CF-Connecting-IP` present) to enforce this.
   - Server supplies its own remote URL via `GET /api/v1/info` so the client binary stays domain-agnostic. cloudflared is system-installed (not bundled) via a desktop wizard. v1 is single-tenant; multi-tenant via Cloudflare for SaaS is scoped for v2.

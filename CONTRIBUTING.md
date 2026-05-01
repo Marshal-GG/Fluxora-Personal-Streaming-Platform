@@ -21,6 +21,18 @@ This is the "first 30 minutes on a new machine" guide. If you're an AI agent, re
 - **macOS:** `brew install python@3.11 ffmpeg flutter`.
 - **Linux:** Python 3.11 from your distro; Flutter from the snap or the tarball; FFmpeg from `apt`/`dnf`. The desktop app's `flutter_secure_storage_linux` plugin needs `libsecret-1-dev`.
 
+### Skip the platform setup: use the devcontainer
+
+The repo ships a `.devcontainer/` config with Python 3.11, Flutter 3.32, Node 22, FFmpeg, and cloudflared pre-installed. If you have VS Code with the **Dev Containers** extension (or use **GitHub Codespaces**):
+
+1. Open the repo in VS Code → command palette → **"Dev Containers: Reopen in Container"**
+2. Wait for build (~5 minutes first time, cached after)
+3. Run server / mobile / desktop / web tests directly in the container
+
+Your host's `~/.fluxora/` (where `.env` lives) is bind-mounted into the container at `/home/vscode/.fluxora/`, so secrets work transparently. The Dockerfile is at [`.devcontainer/Dockerfile`](./.devcontainer/Dockerfile); the post-create install script is at [`.devcontainer/post-create.sh`](./.devcontainer/post-create.sh).
+
+> **Mobile / desktop release builds happen on the host or in CI**, not in the container — Android SDK and platform-specific signing tools aren't bundled. Day-to-day Flutter dev (analyze, test, format) works inside the container fine; just don't try to assemble an APK there.
+
 ---
 
 ## First-clone setup

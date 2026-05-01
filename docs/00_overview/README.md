@@ -58,6 +58,7 @@ Python/FastAPI executable on the user's home machine.
 - [Tech Stack](../02_architecture/02_tech_stack.md)
 - [Roadmap](../10_planning/01_roadmap.md)
 - [Architecture Decisions (ADRs)](../10_planning/02_decisions.md)
+- [Manual / External Tasks (TODO)](../10_planning/04_manual_tasks.md) — third-party signups + dashboard work
 - [Desktop Redesign Plan](../11_design/desktop_redesign_plan.md)
 
 ### API & data
@@ -74,6 +75,7 @@ Python/FastAPI executable on the user's home machine.
 - [Domains & Subdomains Inventory](../05_infrastructure/04_domains_and_subdomains.md)
 - [Backup & Disaster Recovery](../05_infrastructure/05_backup_and_recovery.md)
 - [WebRTC & TURN Operations](../05_infrastructure/06_webrtc_and_turn.md)
+- **[Reusable Runbooks](../05_infrastructure/runbooks/)** — project-agnostic playbooks (Cloudflare Tunnel, Firebase Hosting, GitHub CI, Branch/PR workflow)
 
 ### Security
 - [Security Overview](../06_security/01_security.md)

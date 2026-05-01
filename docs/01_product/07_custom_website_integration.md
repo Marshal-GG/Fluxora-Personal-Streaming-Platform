@@ -64,7 +64,7 @@ a `POST /api/v1/webhook/polar` event from Polar. Without this, **no license key 
 - The Fluxora server (`apps/server`) runs **locally on your machine** — it has no fixed public
   domain. You must expose it via a tunnel or VPS to receive webhooks from Polar.
 - The environment variable `POLAR_WEBHOOK_SECRET` must be set in
-  `C:\Users\marsh\AppData\Roaming\Fluxora\.env` to the secret copied from the Polar dashboard.
+  `C:\Users\<USER>\AppData\Roaming\Fluxora\.env` to the secret copied from the Polar dashboard.
 
 **For local development and testing (smee.io tunnel):**
 
@@ -171,5 +171,5 @@ SQLite table on the server. Current delivery path:
 | Post-payment redirect | Polar product settings            | `https://fluxora.marshalx.dev/success`                      |
 | Webhook (dev)         | Polar → Settings → Webhooks       | `https://smee.io/WkO5Z0u3uE5cM0d`                          |
 | Webhook (production)  | Polar → Settings → Webhooks       | `https://your-public-domain.com/api/v1/webhook/polar`       |
-| Webhook secret        | `C:\Users\marsh\AppData\Roaming\Fluxora\.env` | `POLAR_WEBHOOK_SECRET=your_secret_here`         |
+| Webhook secret        | `C:\Users\<USER>\AppData\Roaming\Fluxora\.env` | `POLAR_WEBHOOK_SECRET=your_secret_here`         |
 | Subscription portal   | Footer → `/manage` page           | `https://polar.sh/fluxora/portal`                           |

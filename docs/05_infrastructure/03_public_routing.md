@@ -1,14 +1,14 @@
-# Public API Routing — `api.fluxora.marshalx.dev`
+# Public API Routing — `fluxora-api.marshalx.dev`
 
 > **Category:** Infrastructure
-> **Status:** Proposed — v1 single-tenant; v2 multi-tenant track scoped below
-> **Last Updated:** 2026-05-01 (rev 2 — synced with shipped `/info/stats`, `/info/restart`, `/info/stop`)
+> **Status:** Phase 1 ops **COMPLETE** (2026-05-01); Phase 2-5 code work pending. v2 multi-tenant track scoped below.
+> **Last Updated:** 2026-05-01 (rev 3 — Phase 1 ops complete; hostname pivoted from `api.fluxora.marshalx.dev` to `fluxora-api.marshalx.dev` due to Universal SSL depth limit)
 
 ---
 
 ## Goal
 
-Give every Fluxora client a stable public address for the home server (`api.fluxora.marshalx.dev`) so that:
+Give every Fluxora client a stable public address for the home server (`fluxora-api.marshalx.dev`) so that:
 
 1. **WAN clients** (mobile on cellular, desktop away from home) reach the server through a friendly DNS name instead of a raw home IP.
 2. **NAT, dynamic IPs, and port-forwarding requirements disappear** — no router config required from the user.
@@ -30,10 +30,10 @@ Give every Fluxora client a stable public address for the home server (`api.flux
 ```
                         LAN                       WAN
 ─────────────────────────────────────────────────────────────────────
-Control plane           direct HTTP               api.fluxora.marshalx.dev
+Control plane           direct HTTP               fluxora-api.marshalx.dev
 (small JSON, infrequent)                          (Cloudflare Tunnel)
 
-Signaling plane         direct WS                 wss://api.fluxora.marshalx.dev
+Signaling plane         direct WS                 wss://fluxora-api.marshalx.dev
 (WebRTC negotiation,                              (Cloudflare Tunnel,
  status WS)                                        WS supported)
 
@@ -48,7 +48,7 @@ Routing `.ts` HLS segments through Cloudflare Tunnel works technically but burns
 
 ### Why a subdomain, not a path
 
-`fluxora.marshalx.dev` (apex) is Firebase Hosting (Next.js static export). Firebase requires Cloudflare DNS proxy **off** for cert provisioning. `api.fluxora.marshalx.dev` is a separate record with proxy **on**, pointing to the tunnel — the apex stays untouched.
+`fluxora.marshalx.dev` (apex) is Firebase Hosting (Next.js static export). Firebase requires Cloudflare DNS proxy **off** for cert provisioning. `fluxora-api.marshalx.dev` is a separate record with proxy **on**, pointing to the tunnel — the apex stays untouched.
 
 ---
 
@@ -56,12 +56,12 @@ Routing `.ts` HLS segments through Cloudflare Tunnel works technically but burns
 
 | Tier | Endpoints | LAN behavior | WAN behavior |
 |------|-----------|--------------|--------------|
-| **Control** | `GET /api/v1/info`, `GET /api/v1/info/logs`, `GET /api/v1/info/stats`, `POST /api/v1/auth/request-pair`, `GET /api/v1/auth/status/{id}`, `DELETE /api/v1/auth/revoke/{id}`, `GET /api/v1/library`, `POST /api/v1/library`, `GET/DELETE /api/v1/library/{id}`, `POST /api/v1/library/{id}/scan`, `GET /api/v1/files`, `GET /api/v1/files/{id}`, `POST /api/v1/files/upload`, `DELETE /api/v1/files/{id}` | direct (`http://lan-ip:8080`) | through `https://api.fluxora.marshalx.dev` |
-| **Stream init** | `POST /api/v1/stream/start/{id}`, `PATCH /api/v1/stream/{id}/progress`, `GET /api/v1/stream/{id}` | direct | through `https://api.fluxora.marshalx.dev` |
-| **Signaling** | `WS /api/v1/ws/status`, `WS /api/v1/ws/signal`, `WS /api/v1/ws/stats` | direct (`ws://lan-ip:8080`) | `wss://api.fluxora.marshalx.dev/...` |
+| **Control** | `GET /api/v1/info`, `GET /api/v1/info/logs`, `GET /api/v1/info/stats`, `POST /api/v1/auth/request-pair`, `GET /api/v1/auth/status/{id}`, `DELETE /api/v1/auth/revoke/{id}`, `GET /api/v1/library`, `POST /api/v1/library`, `GET/DELETE /api/v1/library/{id}`, `POST /api/v1/library/{id}/scan`, `GET /api/v1/files`, `GET /api/v1/files/{id}`, `POST /api/v1/files/upload`, `DELETE /api/v1/files/{id}` | direct (`http://lan-ip:8080`) | through `https://fluxora-api.marshalx.dev` |
+| **Stream init** | `POST /api/v1/stream/start/{id}`, `PATCH /api/v1/stream/{id}/progress`, `GET /api/v1/stream/{id}` | direct | through `https://fluxora-api.marshalx.dev` |
+| **Signaling** | `WS /api/v1/ws/status`, `WS /api/v1/ws/signal`, `WS /api/v1/ws/stats` | direct (`ws://lan-ip:8080`) | `wss://fluxora-api.marshalx.dev/...` |
 | **Media (HLS)** | `GET /api/v1/hls/{session}/playlist.m3u8`, `GET /api/v1/hls/{session}/seg*.ts` | direct | **REJECTED** at server middleware — clients must negotiate WebRTC |
 | **Media (WebRTC)** | n/a — peer-to-peer over data channel | direct | direct via STUN/TURN |
-| **Webhook (Polar)** | `POST /api/v1/webhook/polar` | n/a (Polar can't reach LAN) | through `https://api.fluxora.marshalx.dev` (Polar endpoint config) |
+| **Webhook (Polar)** | `POST /api/v1/webhook/polar` | n/a (Polar can't reach LAN) | through `https://fluxora-api.marshalx.dev` (Polar endpoint config) |
 | **Localhost-only admin** | `GET/PATCH /api/v1/settings`, `POST /api/v1/auth/approve/{id}`, `POST /api/v1/auth/reject/{id}`, `GET /api/v1/auth/clients`, `GET /api/v1/orders`, `GET /api/v1/stream/sessions`, `POST /api/v1/info/restart`, `POST /api/v1/info/stop` | direct (loopback only) | **never reached over WAN** — `require_local_caller` 403s remote callers |
 
 > **Note on `/info/stats`:** This endpoint is currently no-auth and exposes uptime, LAN IP, CPU/RAM percentages, network throughput, and active stream count. None of these fields are PII or secret-equivalent — same risk class as `/info`. Acceptable to keep no-auth on WAN. Add an aggressive `slowapi` rate-limit (e.g. `60/minute`) when the routing lands so it can't be used as a free monitoring drain. The `public_address` field within the response is currently always `null` — Phase 2.6 below populates it.
@@ -88,45 +88,106 @@ The remaining server-side work for v1 routing is small: the four middlewares + o
 
 ---
 
-### Phase 1 — Cloudflare Tunnel (operations only, no code)
+### Phase 1 — Cloudflare Tunnel (operations only, no code) ✅ COMPLETE (2026-05-01)
 
-1. **DNS record**
-   - Cloudflare dashboard → DNS → `marshalx.dev` zone → add CNAME
-   - Name: `api.fluxora`, Target: `<tunnel-id>.cfargotunnel.com`, Proxy: **on**
+This is the runbook reproduction of what was actually done. Use it for disaster recovery, fresh-machine setup, or future tenants.
 
-2. **Tunnel daemon on the home PC**
-   ```bash
-   # Windows install
+> **Hostname must be single-level under apex.** Cloudflare's free Universal SSL covers only one level deep (`*.marshalx.dev`). `fluxora-api.marshalx.dev` works (single level, hyphenated); `api.fluxora.marshalx.dev` does NOT (two levels — Cloudflare won't issue a free cert). See [`04_domains_and_subdomains.md`](./04_domains_and_subdomains.md#naming-philosophy).
+
+1. **Install cloudflared** (Windows; pick equivalent for macOS/Linux):
+   ```powershell
    winget install --id Cloudflare.cloudflared
-   cloudflared tunnel login          # browser auth
+   ```
+   Open a fresh terminal afterward (PATH refresh) and verify with `cloudflared --version`.
+
+2. **Authenticate** to your Cloudflare account; pick the `marshalx.dev` zone in the browser:
+   ```powershell
+   cloudflared tunnel login
+   ```
+   Writes `C:\Users\<user>\.cloudflared\cert.pem` — back this up.
+
+3. **Create the tunnel.** Capture the UUID from the output:
+   ```powershell
    cloudflared tunnel create fluxora-home
    ```
+   Writes `C:\Users\<user>\.cloudflared\<UUID>.json` — back this up.
 
-3. **Config file** at `%USERPROFILE%\.cloudflared\config.yml`:
+4. **Create the DNS record** via cloudflared (one-shot; no dashboard needed):
+   ```powershell
+   cloudflared tunnel route dns fluxora-home fluxora-api.marshalx.dev
+   ```
+
+5. **Config file** at `%USERPROFILE%\.cloudflared\config.yml`:
    ```yaml
-   tunnel: <tunnel-id>
-   credentials-file: C:\Users\<user>\.cloudflared\<tunnel-id>.json
+   tunnel: <UUID>
+   credentials-file: C:\Users\<user>\.cloudflared\<UUID>.json
    ingress:
-     - hostname: api.fluxora.marshalx.dev
-       service: http://localhost:8080
+     - hostname: fluxora-api.marshalx.dev
+       service: http://127.0.0.1:8080   # NOT localhost — see pitfall #5 below
      - service: http_status:404
    ```
 
-4. **Install as a service** so the tunnel survives reboots:
-   ```bash
-   cloudflared service install
+6. **Install the Windows service** in an elevated PowerShell:
+   ```powershell
+   cloudflared.exe service install
+   ```
+   This registers the service but does NOT pass `--config`; cloudflared 2025.8.1 then uses its default config-search, which on Windows running as `LocalSystem` proved unreliable — the service crashed within seconds with exit code `1067` even after copying config + credentials + cert into the LocalSystem profile and granting SYSTEM full ACLs. **Workaround that actually works:** override the service's launch command directly via the registry so cloudflared launches with explicit `--config` against the user-level config (which we know works because the foreground run with the same flags succeeded).
+
+   ```powershell
+   # Admin PS — grant SYSTEM read access to your user-level cloudflared dir
+   icacls "$env:USERPROFILE\.cloudflared" /grant "SYSTEM:(OI)(CI)F" /T
+
+   # Override ImagePath: hardcode the launch command (substitute YOUR username + tunnel name)
+   $cmdline = '"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --config "C:\Users\<USER>\.cloudflared\config.yml" run <TUNNEL_NAME>'
+   Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Cloudflared" `
+     -Name "ImagePath" -Value $cmdline -Type ExpandString
+
+   # Restart so the new ImagePath takes effect
+   sc.exe stop Cloudflared 2>$null
+   taskkill /F /IM cloudflared.exe 2>$null
+   sc.exe start Cloudflared
+   sc.exe query Cloudflared    # expect STATE: 4 RUNNING
    ```
 
-5. **Smoke test**:
-   ```bash
-   curl -fsS https://api.fluxora.marshalx.dev/api/v1/info
+   With this in place, the service reads from your user-level `~/.cloudflared/config.yml` directly. Future config edits take effect on the next service restart — no `Copy-Item` to systemprofile required, no dual-config divergence, no install/uninstall dance.
+
+7. **Smoke test:**
+   ```powershell
+   curl.exe -fsS https://fluxora-api.marshalx.dev/api/v1/info
    ```
+   With FastAPI running on `:8080`, returns the same JSON as the local `curl`. Without FastAPI running, returns 502 — also confirms the tunnel itself is reachable.
+
+#### Setup record — what's currently live
+
+| Item | Value |
+|------|-------|
+| Tunnel name | `fluxora-home` |
+| Tunnel ID | `dea185fa-a26b-44eb-859b-f8916b1a3888` |
+| Public hostname | `fluxora-api.marshalx.dev` |
+| CNAME target | `dea185fa-a26b-44eb-859b-f8916b1a3888.cfargotunnel.com` |
+| cloudflared version | `2025.8.1` (winget) |
+| Service name | `Cloudflared` (LocalSystem) |
+| Service ImagePath | `"C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --config "C:\Users\<USER>\.cloudflared\config.yml" run fluxora-home` (registry override — see step 6) |
+| Active config (read by service) | `C:\Users\<USER>\.cloudflared\config.yml` |
+| Stale systemprofile copy | `C:\Windows\System32\config\systemprofile\.cloudflared\` exists but is no longer read; safe to delete or leave |
+
+Backup priorities are documented in [`05_backup_and_recovery.md`](./05_backup_and_recovery.md#scenario-5-lost-cloudflare-tunnel-credentials-idjson).
+
+#### Pitfalls hit during initial setup (so future-you doesn't repeat them)
+
+1. **Deep subdomain TLS failure.** First attempt used `api.fluxora.marshalx.dev`. DNS resolved, tunnel was up, but TLS handshake failed because Cloudflare's Universal SSL doesn't issue certs at that depth on the free plan. Fix: pivoted to `fluxora-api.marshalx.dev` (hyphen, single-level). The dotted form would require Advanced Certificate Manager ($10/mo) or Total TLS (also requires ACM).
+2. **Service config divergence.** Editing `~/.cloudflared/config.yml` AFTER `service install` doesn't take effect — the service reads from the systemprofile copy. Either re-run `service install` (which re-copies) or manually `Copy-Item` + `Restart-Service`.
+3. **PowerShell `curl` alias.** `curl https://...` in PowerShell calls `Invoke-WebRequest`, which has different output. Use `curl.exe` explicitly for the smoke test.
+4. **PATH not refreshed after winget install.** Existing terminals still see the old PATH. Open a new shell (or refresh PATH manually) before running `cloudflared`.
+5. **`localhost` resolves to IPv6 first on Windows.** cloudflared dials `[::1]:8080`, FastAPI binds IPv4 (`127.0.0.1` or `0.0.0.0`), connection refused. Use `http://127.0.0.1:8080` in the ingress (NOT `http://localhost:8080`). The error in foreground logs reads: `dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it`. Telltale.
+6. **`Copy-Item` doesn't auto-create parent directories.** `C:\Windows\System32\config\systemprofile\.cloudflared\` doesn't exist by default — `service install` only creates it if it copies files there, which on 2025.8.1 it doesn't always do. `New-Item -ItemType Directory -Path <dst> -Force` first, then `Copy-Item`.
+7. **Service install snapshot vs. live config.** `cloudflared service install` registers a service that reads from `LocalSystem`'s `.cloudflared\` directory at runtime — but the install command does NOT auto-copy files there on every version. After editing the user-level config, you must mirror it to the systemprofile path AND restart the service. The "single source of truth + symlink" approach (`New-Item -ItemType SymbolicLink ...`) is cleaner if you'll be editing config often.
 
 ### Phase 2 — Server changes (FastAPI)
 
 #### 2.1 CORS allow-list (`apps/server/main.py`)
 
-Add `https://api.fluxora.marshalx.dev` and `https://fluxora.marshalx.dev` to `CORSMiddleware`. Reject `*` — the public surface is no longer fully self-contained.
+Add `https://fluxora-api.marshalx.dev` and `https://fluxora.marshalx.dev` to `CORSMiddleware`. Reject `*` — the public surface is no longer fully self-contained.
 
 #### 2.2 Real-IP middleware (`apps/server/utils/real_ip.py` — new)
 
@@ -163,7 +224,7 @@ Add `GET /api/v1/healthz` returning `{"ok": true}` — used by Cloudflare for tu
 
 #### 2.6 System stats: report public address
 
-The `SystemStatsResponse.public_address` field already exists (currently always `null` per the API contract). The routing implementation populates it: a periodic probe to `https://api.fluxora.marshalx.dev/api/v1/healthz`; on success, the `system_stats_service.public_address` cache is set to the configured `FLUXORA_PUBLIC_URL`; on failure, cleared back to `null`.
+The `SystemStatsResponse.public_address` field already exists (currently always `null` per the API contract). The routing implementation populates it: a periodic probe to `https://fluxora-api.marshalx.dev/api/v1/healthz`; on success, the `system_stats_service.public_address` cache is set to the configured `FLUXORA_PUBLIC_URL`; on failure, cleared back to `null`.
 
 Probe schedule: every 30s, cached. Don't probe more often — Cloudflare's free tier doesn't want the noise and the desktop UI doesn't need sub-30s updates.
 
@@ -182,7 +243,7 @@ class ApiClient {
   });
 
   final String localBaseUrl;       // e.g. http://192.168.1.10:8080
-  final String? remoteBaseUrl;     // e.g. https://api.fluxora.marshalx.dev
+  final String? remoteBaseUrl;     // e.g. https://fluxora-api.marshalx.dev
 
   Future<Uri> _resolveBase() async {
     final onLan = await networkPathDetector.isLan(localBaseUrl);
@@ -210,10 +271,10 @@ Already exists. Returns `true` when the device is in the same /24 as the configu
 
 ### Phase 4 — Mobile client
 
-1. **Pairing screen**: after the LAN pair completes, fetch `GET /api/v1/info` from the server which now returns `{ "remote_url": "https://api.fluxora.marshalx.dev" }` (server reads from its own settings — see 4.4). Save both URLs to `SecureStorage`.
+1. **Pairing screen**: after the LAN pair completes, fetch `GET /api/v1/info` from the server which now returns `{ "remote_url": "https://fluxora-api.marshalx.dev" }` (server reads from its own settings — see 4.4). Save both URLs to `SecureStorage`.
 2. **Library / Files / Stream**: no per-screen changes — `ApiClient` routes automatically.
-3. **WebRTC signaling**: `WebRtcSignalingService` already builds its WS URL from `ApiClient` base. Will pick up `wss://api.fluxora.marshalx.dev/api/v1/ws/signal` on WAN automatically.
-4. **Settings**: add a "Remote access" row showing whether `api.fluxora.marshalx.dev` is reachable (HEAD `/healthz`).
+3. **WebRTC signaling**: `WebRtcSignalingService` already builds its WS URL from `ApiClient` base. Will pick up `wss://fluxora-api.marshalx.dev/api/v1/ws/signal` on WAN automatically.
+4. **Settings**: add a "Remote access" row showing whether `fluxora-api.marshalx.dev` is reachable (HEAD `/healthz`).
 
 ### Phase 5 — Desktop control panel
 
@@ -251,7 +312,7 @@ Persisted in `~/.fluxora/.env` like the rest. The desktop control panel's Settin
   "server_name": "...",
   "version": "...",
   "tier": "...",
-  "remote_url": "https://api.fluxora.marshalx.dev"  // null if not configured
+  "remote_url": "https://fluxora-api.marshalx.dev"  // null if not configured
 }
 ```
 
@@ -263,11 +324,11 @@ Persisted in `~/.fluxora/.env` like the rest. The desktop control panel's Settin
 |---------|-----------|
 | **Bearer token in transit** | HTTPS terminates at Cloudflare edge, then re-encrypts to the tunnel. Cloudflare can technically inspect bodies if WAF is enabled — disable WAF inspection for the tunnel hostname or accept the trust trade-off. |
 | **License keys** | Only sent in `PATCH /api/v1/settings` which is `require_local_caller`. Never traverse the tunnel. |
-| **Polar webhook secret** | Stays in `~/.fluxora/.env`. Polar sends signed payloads to `api.fluxora.marshalx.dev/api/v1/webhook/polar` — signature verification happens server-side, body content is not trusted until verified. |
+| **Polar webhook secret** | Stays in `~/.fluxora/.env`. Polar sends signed payloads to `fluxora-api.marshalx.dev/api/v1/webhook/polar` — signature verification happens server-side, body content is not trusted until verified. |
 | **Header spoofing** | Real-IP middleware refuses to trust `CF-Connecting-IP` unless the immediate peer is in CF's published IP range. A malicious LAN client can't spoof the header. |
 | **Public exposure of `/auth/request-pair`** | Already public (no auth). Pairing requires owner approval via the localhost-only `/auth/approve` — opening `request-pair` to WAN is harmless. |
 | **Public exposure of `/auth/status/{id}`** | Returns the bearer token exactly once on the first approved poll. WAN exposure is OK because the token is single-use-per-poll and only revealed after explicit owner approval. |
-| **Tunnel credentials** | `~/.cloudflared/<id>.json` is a private key — back up like any other secret. Treat compromise as "anyone can MITM your `api.fluxora.marshalx.dev` traffic until you rotate". |
+| **Tunnel credentials** | `~/.cloudflared/<id>.json` is a private key — back up like any other secret. Treat compromise as "anyone can MITM your `fluxora-api.marshalx.dev` traffic until you rotate". |
 | **DDoS amplification** | Cloudflare absorbs the L3/L4 hit. Add aggressive rate-limits on `/auth/request-pair` and `/info/logs` since those don't require auth. |
 
 ---
@@ -277,7 +338,7 @@ Persisted in `~/.fluxora/.env` like the rest. The desktop control panel's Settin
 | # | Decision |
 |---|----------|
 | **D1** | **Server supplies its own remote URL during pairing.** `GET /api/v1/info` gains a `remote_url` field; clients persist both LAN URL and remote URL after pairing. The client binary is domain-agnostic — no Fluxora domain is hardcoded. This makes v2 multi-tenant a non-event for the apps. |
-| **D2** | **Tunnel-down failures fail loudly with a clear error message — no DDNS fallback.** The desktop control panel self-probes `https://api.fluxora.marshalx.dev/api/v1/healthz` on a schedule and surfaces a red status with a "Restart cloudflared service" button. Clients show "Server unreachable via remote URL — try again on Wi-Fi at home." |
+| **D2** | **Tunnel-down failures fail loudly with a clear error message — no DDNS fallback.** The desktop control panel self-probes `https://fluxora-api.marshalx.dev/api/v1/healthz` on a schedule and surfaces a red status with a "Restart cloudflared service" button. Clients show "Server unreachable via remote URL — try again on Wi-Fi at home." |
 | **D3** | **Single-tenant for v1; multi-tenant deferred to v2** — see [v2 — Multi-tenant rollout](#v2--multi-tenant-rollout) below. The v1 architecture (server-supplied URL, license-key nonce as server identity) does not preclude multi-tenant; v2 is an additive build, not a rewrite. |
 | **D4** | **`cloudflared` is system-installed, not bundled.** Desktop wizard runs the platform package manager (`winget` / `brew` / `apt`) and configures the tunnel for the user. Avoids 30 MB installer bloat, licensing redistribution questions, and stale-daemon update lag. |
 
@@ -315,7 +376,7 @@ fluxora.marshalx.dev                 alice.fluxora.marshalx.dev → Alice's tunn
 
 The control plane is a thin Cloudflare Worker (no servers to maintain). The user-data store is Cloudflare D1 (SQLite-as-a-service). Routing is pure DNS via **Cloudflare for SaaS** — Cloudflare auto-provisions certs and forwards `<id>.fluxora.marshalx.dev` to the right tunnel.
 
-### Why path-based (`api.fluxora.marshalx.dev/u/<id>/...`) was rejected
+### Why path-based (`fluxora-api.marshalx.dev/u/<id>/...`) was rejected
 
 A path-based scheme would require **Fluxora-operated gateway infrastructure** (a Worker or VPS that reads the path and forwards to the right tunnel). That's:
 - A failure mode owned by Fluxora ("the service is down" headlines)
@@ -334,7 +395,7 @@ Subdomains push the routing into DNS where Cloudflare handles it for free at the
 | **Cloudflare for SaaS configuration** | Wildcard `*.fluxora.marshalx.dev` configured in CF dashboard. Custom hostnames API for per-user provisioning. | ~2 days |
 | **Desktop signup wizard** | Replaces the v1 manual cloudflared setup with: enter email → control plane registers you → returns a config snippet → desktop drops it into `~/.cloudflared/config.yml` and starts the service. | ~1 week |
 | **Public status page** | Static-ish page on `fluxora.marshalx.dev/status/<id>` showing whether a given server's tunnel is up. Read-only, no auth. | ~2 days |
-| **Migration shim for v1 users** | `api.fluxora.marshalx.dev` keeps working — existing v1 deployments don't need to migrate. New users get `<id>.fluxora.marshalx.dev`. v1 user can opt-in to migrate later via the desktop wizard. | ~3 days |
+| **Migration shim for v1 users** | `fluxora-api.marshalx.dev` keeps working — existing v1 deployments don't need to migrate. New users get `<id>.fluxora.marshalx.dev`. v1 user can opt-in to migrate later via the desktop wizard. | ~3 days |
 | **Polish, error handling, docs** | Tunnel registration retries, rate limits, monitoring, support runbooks. | ~1 week |
 | **Total** | | **~1 month** |
 
@@ -408,7 +469,7 @@ When implementation begins, the following docs will need to be updated:
 
 ## Rollout sequencing
 
-1. **Land Phase 1** in operations (no code change). Verify `curl https://api.fluxora.marshalx.dev/api/v1/info` works.
+1. **Land Phase 1** in operations (no code change). Verify `curl https://fluxora-api.marshalx.dev/api/v1/info` works.
 2. **Land Phase 2** in a feature branch. Deploy + tunnel restart. Verify rate-limit, HLS-block, and admin-block all behave.
 3. **Land Phase 3 + 4** together — `fluxora_core` and mobile in lockstep so the dual-base `ApiClient` doesn't ship without a remote URL to use.
 4. **Land Phase 5** as desktop UI catch-up.

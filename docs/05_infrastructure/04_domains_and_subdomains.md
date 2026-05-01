@@ -1,8 +1,8 @@
 # Domains & Subdomains
 
 > **Category:** Infrastructure
-> **Status:** Active — v1 routing proposed but not yet provisioned
-> **Last Updated:** 2026-05-01
+> **Status:** Active — v1 routing live as of 2026-05-01
+> **Last Updated:** 2026-05-01 (Phase 1 ops complete — `fluxora-api.marshalx.dev` routing through Cloudflare Tunnel `fluxora-home`)
 
 This doc is the canonical inventory of every domain and subdomain Fluxora uses or plans to use, what each is for, what infrastructure backs it, and what state it is in. Cross-link this whenever a new public-facing surface is introduced.
 
@@ -13,10 +13,29 @@ This doc is the canonical inventory of every domain and subdomain Fluxora uses o
 | Decision | Rationale |
 |----------|-----------|
 | Use **`fluxora.marshalx.dev`** as the eTLD+1 | Owner already owns `marshalx.dev` and uses it for personal projects. No need to register a new TLD until there is signal it matters. |
-| Use **subdomains, not paths**, for separating concerns (`api.`, `<user>.`, `turn.`) | DNS routing is free, fast, and out of the request path. Path-based routing requires an owned proxy (more infra, more failure surface — see [`03_public_routing.md`](./03_public_routing.md#why-path-based-routing-is-harder-than-it-sounds)). |
+| **Tunneled hostnames must be single-level subdomains under apex** (`fluxora-api.marshalx.dev`, hyphenated, NOT `api.fluxora.marshalx.dev`) | Cloudflare's free Universal SSL covers the apex (`marshalx.dev`) and exactly **one level** of subdomain (`*.marshalx.dev`). Deep subdomains like `api.fluxora.marshalx.dev` need Advanced Certificate Manager ($10/mo) or Total TLS (which itself requires ACM) to get a cert. Cloudflare Tunnel requires CF proxy ON, which means CF terminates TLS — so we're stuck with Universal SSL's depth limit. Marketing-site subdomains (`uat.fluxora.marshalx.dev`) avoid this because they're served by Firebase, which issues its own cert directly via Let's Encrypt (CF proxy off). |
+| Use **subdomains, not paths**, for separating concerns | DNS routing is free, fast, and out of the request path. Path-based routing requires an owned proxy (more infra, more failure surface — see [`03_public_routing.md`](./03_public_routing.md#why-path-based-routing-is-harder-than-it-sounds)). |
 | Apex (`fluxora.marshalx.dev`) stays the **marketing landing page** | Static, public, low risk. Anything dynamic lives on a subdomain. |
-| Subdomain proxy state controlled per-record | Apex must be **proxy off** (Firebase TLS); `api` and friends must be **proxy on** (Cloudflare Tunnel + DDoS protection). |
-| Reserve a brand-clean fallback (`fluxora.cloud`) | Currently unregistered. If multi-tenant SaaS scales beyond a personal project, registering a dedicated TLD avoids the awkwardness of `<random-id>.fluxora.marshalx.dev`. Decision deferred until v2 ships and load is measured. |
+| Subdomain proxy state controlled per-record | Apex / Firebase-served records must be **proxy off** (Firebase TLS); tunneled records must be **proxy on** (Cloudflare Tunnel + DDoS protection). |
+| Reserve a brand-clean fallback (`fluxora.cloud`) | Currently unregistered. If multi-tenant SaaS scales beyond a personal project, registering a dedicated TLD eliminates the depth limit (`*.fluxora.cloud` is single-level under that apex, all free Universal SSL coverage). Decision deferred until v2 ships and load is measured. |
+
+> **Forbidden patterns (CF proxy ON path):** `api.fluxora.marshalx.dev`, `<user>.fluxora.marshalx.dev`, `staging.fluxora-api.marshalx.dev`, anything with two dots between the hostname and `marshalx.dev`. These exist as DNS records but Cloudflare won't issue a free cert for them, and the TLS handshake fails. If you find yourself wanting one of these patterns, either pivot to hyphen (`fluxora-api-staging.marshalx.dev`) or migrate to a single-level apex like `fluxora.cloud`.
+
+#### Cloudflare's official Universal SSL coverage rule
+
+From [Cloudflare's Total TLS error-messages doc](https://developers.cloudflare.com/ssl/edge-certificates/additional-options/total-tls/error-messages/):
+
+| Hostname | Covered by free Universal SSL? |
+|----------|-------------------------------|
+| `example.com` | ✅ Yes (apex) |
+| `www.example.com` | ✅ Yes (one level) |
+| `docs.example.com` | ✅ Yes (one level) |
+| `dev.docs.example.com` | ❌ No (two levels) |
+| `test.dev.api.example.com` | ❌ No (three levels) |
+
+So for `marshalx.dev`:
+- `marshalx.dev`, `fluxora-api.marshalx.dev`, `fluxora.marshalx.dev` ✅
+- `api.fluxora.marshalx.dev`, `uat.fluxora-api.marshalx.dev` ❌ (would need ACM)
 
 ---
 
@@ -25,22 +44,35 @@ This doc is the canonical inventory of every domain and subdomain Fluxora uses o
 | Hostname | Purpose | Backed by | DNS provider | CF proxy | TLS issuer | Notes |
 |----------|---------|-----------|--------------|----------|------------|-------|
 | `fluxora.marshalx.dev` | Marketing landing page | Firebase Hosting (Next.js static export) | Cloudflare DNS | **OFF** | Let's Encrypt via Firebase | Proxy must be OFF — Firebase performs the TLS handshake directly to provision the cert. Turning proxy on breaks renewal. |
-| `uat.fluxora.marshalx.dev` | UAT / staging landing page | Firebase Hosting (`uat` channel) | Cloudflare DNS | **OFF** | Let's Encrypt via Firebase | Same TLS constraint as apex. 30-day channel TTL, auto-renewed on every push to the `uat` branch. |
+| `uat.fluxora.marshalx.dev` | UAT / staging landing page | Firebase Hosting (`uat` channel) | Cloudflare DNS | **OFF** | Let's Encrypt via Firebase | Same TLS constraint as apex. 30-day channel TTL, auto-renewed on every push to the `uat` branch. Two-level subdomain works here only because Firebase issues the cert directly — wouldn't work behind Cloudflare proxy. |
+| `fluxora-api.marshalx.dev` | Public entry to the home Fluxora server (REST + WS control plane; media never tunneled) | Cloudflare Tunnel `fluxora-home` → home PC `:8080` | Cloudflare DNS | **ON** | Cloudflare Universal SSL | Phase 1 ops complete 2026-05-01. Single-level subdomain (hyphen instead of dot) for Universal SSL coverage. |
 | `*.fluxora-streaming-platform.web.app` | Firebase auto-generated PR-preview channels | Firebase Hosting | Firebase | n/a | Firebase | Temporary URLs created per pull request, deleted when the PR closes. Not user-facing. |
 
 Everything above is documented in [`docs/05_infrastructure/01_infrastructure.md`](./01_infrastructure.md#web-landing-page--firebase-hosting) — this section is the canonical pointer; deployment runbooks live there.
 
 ---
 
-## Proposed — v1 (single-tenant home server tunnel)
+## Phase 1 setup record — what was actually provisioned
 
-Tracked in [`03_public_routing.md`](./03_public_routing.md). Not yet provisioned.
+Captured here for future reference and disaster-recovery rebuilds.
 
-| Hostname | Purpose | Backed by | DNS provider | CF proxy | TLS issuer | State |
-|----------|---------|-----------|--------------|----------|------------|-------|
-| `api.fluxora.marshalx.dev` | Public entry to the home Fluxora server (REST + WS, control plane only — no media bandwidth) | Cloudflare Tunnel → home PC `:8080` | Cloudflare DNS | **ON** | Cloudflare-issued (Universal SSL) | Proposed |
+| Item | Value |
+|------|-------|
+| Tunnel name | `fluxora-home` |
+| Tunnel ID | `dea185fa-a26b-44eb-859b-f8916b1a3888` |
+| Tunnel route hostname | `fluxora-api.marshalx.dev` |
+| CNAME target (auto) | `dea185fa-a26b-44eb-859b-f8916b1a3888.cfargotunnel.com` |
+| Cloudflare proxy | ON (orange cloud) |
+| Origin cert path | `C:\Users\<USER>\.cloudflared\cert.pem` |
+| Tunnel credentials | `C:\Users\<USER>\.cloudflared\dea185fa-a26b-44eb-859b-f8916b1a3888.json` |
+| User config | `C:\Users\<USER>\.cloudflared\config.yml` |
+| Service config (LocalSystem) | `C:\Windows\System32\config\systemprofile\.cloudflared\config.yml` |
+| Tunnel daemon | `cloudflared` 2025.8.1 (winget) |
+| Windows service name | `Cloudflared` |
 
-CNAME target: `<tunnel-id>.cfargotunnel.com` (Cloudflare provides this when the tunnel is created).
+**Backup priority:** `cert.pem` and the per-tunnel credentials JSON are unrecoverable secrets. Both must be in your backup set — losing them means recreating the tunnel and updating the DNS CNAME (the public hostname can stay the same; only the underlying tunnel ID changes).
+
+**Stale DNS to clean up later:** there is also a `api.fluxora.marshalx.dev` CNAME left over from the first attempt (deep subdomain, no cert). Delete it via the Cloudflare DNS dashboard at your convenience — it does no harm but adds noise.
 
 ---
 
@@ -48,16 +80,23 @@ CNAME target: `<tunnel-id>.cfargotunnel.com` (Cloudflare provides this when the 
 
 Tracked in [`03_public_routing.md` § v2 — Multi-tenant rollout](./03_public_routing.md#v2--multi-tenant-rollout). Not yet started.
 
+> **TLS depth requires Cloudflare for SaaS or a brand domain.** v1 sidestepped Universal SSL's one-level limit by using a hyphenated single-level subdomain (`fluxora-api.marshalx.dev`). v2 needs per-user subdomains, which is *inherently* deeper. Two cost-positive paths:
+>
+> - **Path A — Cloudflare for SaaS on `*.fluxora.marshalx.dev`.** Cloudflare for SaaS pairs with custom hostnames and auto-provisions certs at any depth as part of the SaaS plan. Cost: free tier covers up to 100 hostnames; paid above that. Reasonable for a hobby SaaS.
+> - **Path B — Register `fluxora.cloud` (or another single-purpose TLD).** Universal SSL covers `*.fluxora.cloud` for free since each tenant subdomain is single-level under the new apex. Cost: ~$8–25/year for the domain. Cleaner brand, fully free TLS forever, no per-hostname cap.
+
+Path B is preferred if/when the project is committed to multi-tenant. Path A is faster to demo without a domain purchase. The choice doesn't affect client code thanks to D1 (server-supplied remote URL).
+
 | Hostname pattern | Purpose | Backed by | DNS provider | CF proxy | TLS issuer | State |
 |------------------|---------|-----------|--------------|----------|------------|-------|
-| `*.fluxora.marshalx.dev` | Wildcard for per-user subdomains — `alice.fluxora.marshalx.dev`, `bob.fluxora.marshalx.dev`, etc. | Cloudflare for SaaS (Custom Hostnames API) → each user's own tunnel | Cloudflare DNS | **ON** | Cloudflare-issued | Proposed |
-| `register.fluxora.marshalx.dev` *(tentative)* | Control-plane Worker for v2 signup, subdomain provisioning, heartbeat | Cloudflare Workers + D1 | Cloudflare DNS | **ON** | Cloudflare-issued | Proposed — could also live as a path on the apex (`fluxora.marshalx.dev/api/control/...`) if subdomain pollution is a concern |
-| `status.fluxora.marshalx.dev` *(tentative)* | Public per-server tunnel-up/down status page | Cloudflare Workers (read-only D1 query) | Cloudflare DNS | **ON** | Cloudflare-issued | Proposed |
+| `*.fluxora.marshalx.dev` (Path A) **or** `*.fluxora.cloud` (Path B) | Wildcard for per-user subdomains — `alice.fluxora.cloud`, `bob.fluxora.cloud`, etc. | Cloudflare for SaaS (Path A) **or** Cloudflare Tunnel + native Universal SSL (Path B) → each user's own tunnel | Cloudflare DNS | **ON** | Cloudflare-issued | Proposed |
+| `register.fluxora.cloud` *(tentative)* | Control-plane Worker for v2 signup, subdomain provisioning, heartbeat | Cloudflare Workers + D1 | Cloudflare DNS | **ON** | Cloudflare-issued | Proposed — could also live as a path on the apex (`fluxora.cloud/control/...`) if subdomain pollution is a concern |
+| `status.fluxora.cloud` *(tentative)* | Public per-server tunnel-up/down status page | Cloudflare Workers (read-only D1 query) | Cloudflare DNS | **ON** | Cloudflare-issued | Proposed |
 
 ### Per-user subdomain reservation policy
 
-- Default-issued: `<server_id>.fluxora.marshalx.dev` where `<server_id>` is derived from the license-key nonce (already unique).
-- Vanity claim: Pro/Ultimate users can claim a friendly subdomain (e.g. `alice.fluxora.marshalx.dev`) on first registration if available.
+- Default-issued (Path B): `<server_id>.fluxora.cloud` where `<server_id>` is derived from the license-key nonce (already unique).
+- Vanity claim: Pro/Ultimate users can claim a friendly subdomain (e.g. `alice.fluxora.cloud`) on first registration if available.
 - 90 days inactive → tunnel disabled, subdomain reserved for the original owner for another 6 months, then released back to the pool.
 - Reserved words that cannot be issued as user subdomains: `api`, `register`, `status`, `turn`, `www`, `mail`, `admin`, `system`, `staff`, `support`, `help`, `docs`, `blog`, `app`, `cdn`, `static`. Maintain this list in the control-plane Worker config.
 
@@ -72,7 +111,7 @@ Not on the roadmap, but pre-allocated mentally so they aren't claimed by typo'd 
 | `turn.fluxora.marshalx.dev` | Self-hosted TURN server for WebRTC fallback on symmetric NATs | When public STUN starts failing for a meaningful percentage of WAN connections, or when telemetry shows TURN demand. Add as a second `cloudflared` ingress. |
 | `cdn.fluxora.marshalx.dev` | Static asset CDN if the landing page or in-app images get heavy enough to want a separate origin | When the marketing site exceeds Firebase's free tier or asset weight starts harming PageSpeed. Likely just a Cloudflare R2 + Pages combo, no Firebase. |
 | `docs.fluxora.marshalx.dev` | If user-facing docs ever split out from the marketing site | When the public docs surface grows beyond a `/docs` route on the apex. |
-| `webhook.fluxora.marshalx.dev` | If we ever need a payment-webhook endpoint that lives outside the home server (e.g. for hosted multi-tenant) | v2 multi-tenant only — currently Polar webhooks hit the home server directly via `api.fluxora.marshalx.dev/api/v1/webhook/polar`. |
+| `webhook.fluxora.marshalx.dev` | If we ever need a payment-webhook endpoint that lives outside the home server (e.g. for hosted multi-tenant) | v2 multi-tenant only — currently Polar webhooks hit the home server directly via `fluxora-api.marshalx.dev/api/v1/webhook/polar`. |
 
 ---
 
@@ -149,5 +188,5 @@ When adding a new subdomain to this inventory:
 
 - [`03_public_routing.md`](./03_public_routing.md) — full routing plan (v1 + v2), decisions, and rationale for the `api.` and `*.` subdomains
 - [`01_infrastructure.md`](./01_infrastructure.md) — Firebase Hosting setup, custom domain configuration, CI/CD pipelines that touch `fluxora.marshalx.dev` and `uat.fluxora.marshalx.dev`
-- [`02_polar_webhook_deployment.md`](./02_polar_webhook_deployment.md) — Polar webhook endpoint, currently hosted on the home server (will move to `api.fluxora.marshalx.dev/api/v1/webhook/polar` after v1 routing lands)
+- [`02_polar_webhook_deployment.md`](./02_polar_webhook_deployment.md) — Polar webhook endpoint, currently hosted on the home server (will move to `fluxora-api.marshalx.dev/api/v1/webhook/polar` after v1 routing lands)
 - [`docs/06_security/01_security.md`](../06_security/01_security.md) — TLS, header trust boundary, Cloudflare threat model

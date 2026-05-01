@@ -115,6 +115,8 @@ Settings can also be overridden via environment variables (same names, uppercase
 | `FLUXORA_TURN_PASS` | `""` | TURN password (Phase 3) |
 | `FLUXORA_LICENSE_SECRET` | `""` | HMAC secret for signing Fluxora license keys |
 | `POLAR_WEBHOOK_SECRET` | `""` | Polar Standard Webhooks secret for `/api/v1/webhook/polar` |
+| `SENTRY_DSN` | `""` | Sentry DSN; empty disables Sentry init entirely (zero overhead). See `runbooks/09_monitoring_and_observability.md` |
+| `SENTRY_TRACES_SAMPLE_RATE` | `0.0` | Sentry performance-sampling rate (0.0–1.0). Leave at 0 unless investigating perf |
 
 See [`02_polar_webhook_deployment.md`](./02_polar_webhook_deployment.md) for Polar product metadata, event subscription, local testing, and production caveats.
 

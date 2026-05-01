@@ -57,6 +57,7 @@
 > - If you add/complete a roadmap milestone → update `docs/10_planning/01_roadmap.md`
 > - If you add or change a UI component or design token → update `DESIGN.md`
 > - If you add, remove, or modify any `.github/workflows/` file → update `docs/05_infrastructure/01_infrastructure.md`
+> - If you discover, complete, or change a **manual / external operational task** (third-party signups, dashboard config, registry edits, anything that needs a human at a UI) → update `docs/10_planning/04_manual_tasks.md`. Adding a new pending task: append under "Pending" with the standard fields (what / why / prereqs / time / trigger / doc / owner). Completing a task: move it to "Recently completed" with the date. **Do NOT** put code-side TODOs there — those stay as `# TODO:` comments or GitHub issues.
 >
 > **Rule: code and docs must always be in sync. Never leave docs stale.**
 >
@@ -98,6 +99,7 @@ Before writing a single word, run a mental (or literal `grep`) sweep against thi
 | `docs/10_planning/01_roadmap.md` | Any milestone started, completed, or descoped |
 | `docs/10_planning/02_decisions.md` | Any architectural decision locked in |
 | `docs/10_planning/03_open_questions.md` | Any open question answered or added |
+| `docs/10_planning/04_manual_tasks.md` | Any manual / external operational task discovered, completed, cancelled, or changed (third-party signups, dashboard config, etc.). Code-side TODOs stay as `# TODO:` comments / GitHub issues — do NOT put them here |
 | `docs/01_product/06_polar_product_setup.md` | Configuration steps for Polar.sh products changed |
 | `docs/00_overview/README.md` | Status column of any doc changes; new doc added |
 | `DESIGN.md` | Any color, spacing, typography, or component spec changed |
@@ -384,7 +386,7 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation in sync with code
-- `apps/server` — **Phases 1–5 partially complete** (113 passing tests; ruff + black clean):
+- `apps/server` — **Phases 1–5 partially complete** (128 passing tests; ruff + black clean):
   - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured logging, rotating log file
   - Routers: info (+ logs), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, webhook ✅
   - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook ✅

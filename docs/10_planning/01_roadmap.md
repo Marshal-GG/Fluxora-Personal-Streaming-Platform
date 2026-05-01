@@ -100,7 +100,7 @@
 | Live system stats | Should | ✅ Done | `GET /api/v1/info/stats` + `WS /api/v1/ws/stats`; psutil-backed `system_stats_service` (CPU/RAM/network/uptime/active streams) — backs the redesigned dashboard |
 | Storage breakdown | Should | ✅ Done | `GET /api/v1/library/storage-breakdown` — per-type totals + capacity dedup'd by mount point; backs the dashboard donut chart |
 | Server admin actions | Should | ✅ Done | `POST /api/v1/info/restart`, `POST /api/v1/info/stop` — localhost-only graceful shutdown |
-| Public routing (`api.fluxora.marshalx.dev`) | Should | 🔲 Planned | Single-tenant Cloudflare Tunnel design + multi-tenant v2 plan locked in [`05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md); ADR-013 |
+| Public routing (`fluxora-api.marshalx.dev`) | Should | 🔵 In Progress | Phase 1 ops complete 2026-05-01 (tunnel `fluxora-home` live, registry-override workaround documented); Phase 2 server middlewares + 3 dual-base ApiClient + 4 mobile + 5 desktop wizard pending. v2 multi-tenant plan locked. See [`05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md); ADR-013 |
 | AI file organization | Nice-to-have | 🔲 Planned | Auto-tag, rename, categorize |
 | End-to-end encryption | Should | 🔲 Planned | E2E for internet streams |
 | Multi-user / family sharing | Nice-to-have | 🔲 Planned | Shared library access |

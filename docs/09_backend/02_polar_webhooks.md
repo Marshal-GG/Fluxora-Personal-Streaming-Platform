@@ -42,7 +42,7 @@ npx smee-client --url https://smee.io/WkO5Z0u3uE5cM0d --target http://127.0.0.1:
 4. Copy the generated **Webhook Secret**.
 
 ### 4. Configure Local Environment
-1. Open `C:\Users\marsh\AppData\Roaming\Fluxora\.env`
+1. Open `C:\Users\<USER>\AppData\Roaming\Fluxora\.env`
 2. Update the secret:
    ```env
    POLAR_WEBHOOK_SECRET=your_new_secret_here

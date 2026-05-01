@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     # Without this, the /api/v1/webhook/polar endpoint returns 501.
     polar_webhook_secret: str = ""
 
+    # Sentry — paste DSN from sentry.io project settings to enable error
+    # reporting. Empty string disables Sentry entirely (no init, no overhead).
+    # Environment tag groups events by stage in the Sentry UI.
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.0  # set to e.g. 0.1 for 10% perf sampling
+
     @property
     def db_path(self) -> Path:
         return Path(self.fluxora_db_path)

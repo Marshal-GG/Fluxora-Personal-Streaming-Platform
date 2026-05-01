@@ -18,7 +18,7 @@
 | System Stats | `psutil` | CPU / RAM / network / uptime probes for `/api/v1/info/stats` |
 | Local Discovery | Zeroconf (mDNS) | Auto-pairing on LAN |
 | Internet Transport | WebRTC | STUN/TURN for NAT traversal |
-| Public Routing (planned) | Cloudflare Tunnel | `api.fluxora.marshalx.dev` — see [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) |
+| Public Routing | Cloudflare Tunnel | `fluxora-api.marshalx.dev` — Phase 1 ops complete (tunnel `fluxora-home` live); Phase 2–5 server/client wiring pending. See [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) |
 | Frontend Framework | Flutter 3.32 (Dart 3.8) | Cross-platform; pinned in CI |
 | State Management | `flutter_bloc` (BLoC/Cubit) | Confirmed at Phase 1 mobile implementation |
 | Metadata API | TMDB API | Movie/TV show metadata |

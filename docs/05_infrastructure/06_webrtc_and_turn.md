@@ -210,13 +210,13 @@ bps-capacity=8000000
 
 ## Cloudflare Tunnel does NOT relay TURN
 
-This trips people up: you cannot put TURN behind `api.fluxora.marshalx.dev` via Cloudflare Tunnel.
+This trips people up: you cannot put TURN behind `fluxora-api.marshalx.dev` via Cloudflare Tunnel.
 
 Reasons:
 - TURN is primarily UDP. Cloudflare Tunnel is HTTPS/TCP only.
 - Even TURN-over-TCP (port 5349) is fine on raw TCP but Cloudflare Tunnel terminates TLS at the edge and re-encrypts — TURN-over-TLS expects the cert to be the relay's, not Cloudflare's.
 
-So `turn.fluxora.marshalx.dev` is a **separate A record pointing directly at the VPS**, with Cloudflare proxy **OFF** (DNS only). It's not on the same infrastructure as `api.fluxora.marshalx.dev`. This is documented in [`04_domains_and_subdomains.md`](./04_domains_and_subdomains.md).
+So `turn.fluxora.marshalx.dev` is a **separate A record pointing directly at the VPS**, with Cloudflare proxy **OFF** (DNS only). It's not on the same infrastructure as `fluxora-api.marshalx.dev`. This is documented in [`04_domains_and_subdomains.md`](./04_domains_and_subdomains.md).
 
 ---
 

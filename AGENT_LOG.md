@@ -377,3 +377,197 @@ The full doc-update protocol per CLAUDE.md §3 (data models, API contracts, sche
 - [x] No secrets / hardcoded paths added.
 - [x] No new dependencies pinned without version-check note (the plan flags `psutil` for backend without pinning a number — the implementing agent must look up the current latest per CLAUDE.md Rule #12).
 ---
+
+## [2026-05-01] — Phase 1 ops live; reusable runbooks; doc consolidation
+**Phase:** Phase 5 (Advanced Features) — Public routing groundwork
+**Status:** Complete
+
+### What Was Done
+- **Phase 1 of public routing executed end-to-end:** Cloudflare Tunnel `fluxora-home` (UUID `dea185fa-a26b-44eb-859b-f8916b1a3888`) live; CNAME `fluxora-api.marshalx.dev` issued and reachable; `curl https://fluxora-api.marshalx.dev/api/v1/info` returns the home server JSON over the public internet.
+- **Hostname pivot:** switched from `api.fluxora.marshalx.dev` (two-level, Universal SSL doesn't cover) to `fluxora-api.marshalx.dev` (single-level under apex). Universal SSL depth limit documented across affected docs with the official Cloudflare table.
+- **Service-install workaround:** `cloudflared service install` on 2025.8.1 registered the service but it crashed on start (exit code 1067) with the default config-search behavior. Worked around by setting `HKLM:\SYSTEM\CurrentControlSet\Services\Cloudflared` `ImagePath` registry value to launch with explicit `--config <user-config-path>`. Service now reads from `~/.cloudflared/config.yml` directly; no systemprofile copy needed.
+- **Eleven reusable runbooks** added under `docs/05_infrastructure/runbooks/`: domain + Cloudflare zone, Cloudflare Tunnel, Firebase Hosting, GitHub CI/CD, branch + PR workflow, secrets management, webhook testing with smee.io, repo init checklist, devcontainer, monitoring & observability, PyInstaller distribution. ~3,000 lines, project-agnostic with placeholder substitution table and a "what's NOT covered" gap analysis.
+- **Stale-content sweep across the doc tree:** test count `108 → 113` everywhere; hostname `api.fluxora.marshalx.dev → fluxora-api.marshalx.dev` everywhere; tech_stack adds psutil/slowapi/CF Tunnel/Flutter pin; component architecture grew to include License, Webhook, Settings, System Stats, Orders, and Public Routing components (was missing all six); roadmap Phase 5 expanded with system-stats, storage-breakdown, info-actions, public-routing rows; security doc cross-links the new license-key ops runbook; open-questions Q-002 (TURN) marked partially resolved; "Planned" markers for public routing changed to "In Progress" now that Phase 1 is done.
+- **Username scrub:** `marsh` replaced with `<USER>` placeholder across 4 docs that had local-path examples.
+- **CONTRIBUTING.md added** at repo root; excluded from public mirror via `mirror-public.yml` updates (rm + line-strip in markdown).
+- **CI hardened:** `.github/dependabot.yml` (weekly grouped PRs for pip/pub/npm/actions), `.github/workflows/secret_scan.yml` (gitleaks on every push/PR), concurrency groups added to all five workflows (mirror queues; web-landing only cancels non-main), server_ci pip cache, `01_infrastructure.md` "Deferred CI improvements" table tracking what was intentionally not added.
+- **ADR-013** added: Public routing via Cloudflare Tunnel; media-plane direct/P2P; server-supplied remote URL; system-installed cloudflared; single-tenant v1.
+- **Bug-fix sweep on the server**: license-key validator was rejecting all newly-issued 5-part keys; ffmpeg `stderr=PIPE` could fill OS buffer; `stop_stream` had no timeout; `upload_file_to_library` had a path-traversal vector and could silently return `None`; webhook `_extract_tier`/customer extraction crashed on null payload fields; webrtc used deprecated `asyncio.get_event_loop()`. All fixed; 113 tests pass.
+- **Stricter Pydantic validation** for `transcoding_encoder` (Literal), `transcoding_preset` (Literal), `transcoding_crf` (`Field(ge=0, le=51)`).
+- **Legacy 4-part license keys removed** from `license_service.py`; only 5-part `FLUXORA-TIER-EXPIRY-NONCE-SIG` accepted now. Tests adjusted; new tests added for 4-part rejection.
+- **Ruff bumped** 0.4.0 → 0.15.12.
+- **System stats backend shipped:** `system_stats_service`, `GET /info/stats`, `WS /ws/stats`, `GET /library/storage-breakdown`, `POST /info/restart`, `POST /info/stop` — all backing the desktop dashboard redesign.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `.github/dependabot.yml` |
+| Created | `.github/workflows/secret_scan.yml` |
+| Created | `CONTRIBUTING.md` |
+| Created | `apps/server/services/system_stats_service.py` |
+| Created | `apps/server/tests/test_info_actions.py` |
+| Created | `apps/server/tests/test_info_stats.py` |
+| Created | `apps/server/tests/test_storage_breakdown.py` |
+| Created | `docs/01_product/08_tier_features.md` |
+| Created | `docs/03_data/04_migration_guide.md` |
+| Created | `docs/04_api/02_versioning_policy.md` |
+| Created | `docs/05_infrastructure/03_public_routing.md` |
+| Created | `docs/05_infrastructure/04_domains_and_subdomains.md` |
+| Created | `docs/05_infrastructure/05_backup_and_recovery.md` |
+| Created | `docs/05_infrastructure/06_webrtc_and_turn.md` |
+| Created | `docs/06_security/02_license_key_operations.md` |
+| Created | `docs/05_infrastructure/runbooks/00_domain_and_cloudflare_zone.md` |
+| Created | `docs/05_infrastructure/runbooks/01_cloudflare_tunnel.md` |
+| Created | `docs/05_infrastructure/runbooks/02_firebase_static_hosting.md` |
+| Created | `docs/05_infrastructure/runbooks/03_github_ci_cd.md` |
+| Created | `docs/05_infrastructure/runbooks/04_branch_and_pr_workflow.md` |
+| Created | `docs/05_infrastructure/runbooks/05_secrets_management.md` |
+| Created | `docs/05_infrastructure/runbooks/06_webhook_testing_with_smee.md` |
+| Created | `docs/05_infrastructure/runbooks/07_repo_init_checklist.md` |
+| Created | `docs/05_infrastructure/runbooks/08_devcontainer.md` |
+| Created | `docs/05_infrastructure/runbooks/09_monitoring_and_observability.md` |
+| Created | `docs/05_infrastructure/runbooks/10_pyinstaller_distribution.md` |
+| Created | `docs/05_infrastructure/runbooks/README.md` |
+| Modified | `apps/server/models/library.py` |
+| Modified | `apps/server/models/settings.py` |
+| Modified | `apps/server/pyproject.toml` |
+| Modified | `apps/server/routers/info.py` |
+| Modified | `apps/server/routers/library.py` |
+| Modified | `apps/server/routers/ws.py` |
+| Modified | `apps/server/services/library_service.py` |
+| Modified | `apps/server/services/license_service.py` |
+| Modified | `apps/server/services/ffmpeg_service.py` |
+| Modified | `apps/server/services/webhook_service.py` |
+| Modified | `apps/server/services/webrtc_service.py` |
+| Modified | `apps/server/tests/test_license_service.py` |
+| Modified | `apps/server/tests/test_settings.py` |
+| Modified | `apps/server/tests/test_signal.py` |
+| Modified | `.github/workflows/server_ci.yml` |
+| Modified | `.github/workflows/mobile_ci.yml` |
+| Modified | `.github/workflows/desktop_ci.yml` |
+| Modified | `.github/workflows/web_landing_ci.yml` |
+| Modified | `.github/workflows/mirror-public.yml` |
+| Modified | `.gitignore` |
+| Modified | `CLAUDE.md` |
+| Modified | `README.md` |
+| Modified | `docs/00_overview/README.md` |
+| Modified | `docs/01_product/07_custom_website_integration.md` |
+| Modified | `docs/02_architecture/02_tech_stack.md` |
+| Modified | `docs/02_architecture/03_component_architecture.md` |
+| Modified | `docs/03_data/01_data_models.md` |
+| Modified | `docs/03_data/02_database_schema.md` |
+| Modified | `docs/03_data/03_data_flows.md` |
+| Modified | `docs/04_api/01_api_contracts.md` |
+| Modified | `docs/05_infrastructure/01_infrastructure.md` |
+| Modified | `docs/06_security/01_security.md` |
+| Modified | `docs/09_backend/01_backend_architecture.md` |
+| Modified | `docs/09_backend/02_polar_webhooks.md` |
+| Modified | `docs/10_planning/01_roadmap.md` |
+| Modified | `docs/10_planning/02_decisions.md` |
+| Modified | `docs/10_planning/03_open_questions.md` |
+
+### Decisions Made
+- **Hostname pattern: hyphen-not-dot.** `fluxora-api.marshalx.dev` (single-level under apex) chosen over `api.fluxora.marshalx.dev` (two-level) because Cloudflare's free Universal SSL covers only apex + one level. Paying $10/mo for ACM rejected as not worth it for a personal project. Same rule applies to any future tunneled subdomain (`fluxora-api-uat`, `fluxora-turn`, etc.).
+- **cloudflared service ImagePath override.** After hours debugging exit code 1067 with the default `service install` flow, fixed by directly setting the service's `ImagePath` registry key to launch with explicit `--config <user-config-path> tunnel run <tunnel-name>`. Documented in runbook 1 as a "known pitfall + workaround" for cloudflared 2025.8.x on Windows.
+- **Eleven runbooks now constitute a complete project-bootstrap playbook.** Numbered to suggest reading order. README.md adds an explicit "what is NOT covered" section listing 11 deferred topics with trigger conditions for when each should be written.
+- **Skipped paths-ignore on code workflows.** Theoretical saving of doc-only commits triggering code CI; no `.md` files inside `apps/server/` etc. today, so the saving is hypothetical. Documented as deferred.
+
+### Blockers / Open Issues
+- **Phase 2 server code not started.** Routing plan §Phase 2 (`/healthz`, CORS allow-list, real-IP middleware, HLS-block-on-tunnel middleware, `remote_url` in `/info`, `public_address` probe) is the immediate next batch. Estimated ~1 day of work; all isolated to `apps/server/`.
+- **Stale `api.fluxora.marshalx.dev` CNAME** still exists in the Cloudflare DNS dashboard; harmless (no cert) but visually noisy.
+- **Stale systemprofile cloudflared dir** at `C:\Windows\System32\config\systemprofile\.cloudflared\` — no longer read by the service after the ImagePath override. Harmless, can be deleted in an admin shell.
+- **`b922663` commit on origin/main** still has a `Co-Authored-By: Claude ...` footer from an earlier session. Decision deferred: rewrite-and-force-push or leave as-is.
+
+### Next Agent Should
+1. Implement Phase 2 of the public routing plan ([`docs/05_infrastructure/03_public_routing.md`](docs/05_infrastructure/03_public_routing.md) §Phase 2). Smallest reviewable slice: add `FLUXORA_PUBLIC_URL` env var + `GET /api/v1/healthz` endpoint + `remote_url` field on `GET /api/v1/info` response. ~30 lines + 2 tests.
+2. After 2.5 + 2.6, do 2.1–2.4 (CORS, real-IP middleware, HLS-block, localhost-hardening) as a single PR.
+3. Add unit tests for the four uncovered desktop cubits (`LibraryCubit`, `OrdersCubit`, `ActivityCubit`, `LogsCubit`) — still pending from earlier session.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran during this session.
+- [x] No agent / AI branding anywhere in code or docs.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No exceptions swallowed.
+- [x] No secrets / hardcoded paths added.
+- [x] All new third-party deps version-checked (psutil latest at time of pinning).
+---
+
+## [2026-05-01] — Sentry wiring + devcontainer + manual-tasks tracker
+**Phase:** Phase 5 (Advanced Features) — Closing the runbook gaps
+**Status:** Complete
+
+### What Was Done
+- **Sentry error reporting wired** in `apps/server/main.py` via a new `_init_sentry()` helper called from the FastAPI lifespan. Conditional on `SENTRY_DSN` — empty DSN (default) means the SDK isn't even imported, zero overhead. `before_send` filter drops `HTTPException` and `RequestValidationError` events so the issues feed only shows actionable bugs. 8 unit tests cover the conditional init + filter logic.
+- **`sentry-sdk[fastapi]==2.58.0`** added to runtime deps in `pyproject.toml`. Latest version verified before pinning.
+- **`SENTRY_DSN` and `SENTRY_TRACES_SAMPLE_RATE`** added to `config.py` settings + the env-var table in `01_infrastructure.md`.
+- **Devcontainer scaffolding** under `.devcontainer/`:
+  - `devcontainer.json` — VS Code config with Python format/lint rules, Dart/Flutter extensions, port forwarding for `:8080` (server) + `:3000` (web), bind-mount of host `~/.fluxora` into the container so secrets work without copying
+  - `Dockerfile` — multi-language base on `mcr.microsoft.com/devcontainers/python:1-3.11`. Installs FFmpeg, sqlite3 CLI, Node 22, Flutter 3.32.0, cloudflared. Pre-warms Flutter for faster first `pub get`. Skips Android SDK (release builds happen on host or CI)
+  - `post-create.sh` — one-shot install: server `pip install -e ".[dev]"`, all 3 Flutter packages, web_landing `npm ci`, then prints version checks + run commands
+- **`CONTRIBUTING.md` updated** with a "Skip the platform setup: use the devcontainer" section explaining when to use it and the host-mount pattern.
+- **`runbooks/README.md`** — flipped both "(none yet)" entries:
+  - Devcontainer → links to `.devcontainer/devcontainer.json`
+  - Monitoring → links to `_init_sentry` in `main.py` + notes UptimeRobot still needs manual signup
+- **`docs/10_planning/04_manual_tasks.md` created** — new tracker for manual / external operational tasks that need a human at a UI somewhere. 8 pending entries, each with what / why / prereqs / time / trigger / doc / owner. Section for "Recently completed" (Phase 1 routing already moved there) and a "What's NOT in this file" section disambiguating from roadmap / decisions / open-questions / code-side TODOs. Linked from `00_overview/README.md` Quick Links.
+- **Test count**: 113 → 128 reflected in CLAUDE.md, README.md, and 09_backend/01_backend_architecture.md status header.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `.devcontainer/devcontainer.json` |
+| Created | `.devcontainer/Dockerfile` |
+| Created | `.devcontainer/post-create.sh` |
+| Created | `apps/server/tests/test_sentry_init.py` |
+| Created | `docs/10_planning/04_manual_tasks.md` |
+| Modified | `apps/server/pyproject.toml` |
+| Modified | `apps/server/config.py` |
+| Modified | `apps/server/main.py` |
+| Modified | `CONTRIBUTING.md` |
+| Modified | `CLAUDE.md` |
+| Modified | `README.md` |
+| Modified | `docs/00_overview/README.md` |
+| Modified | `docs/05_infrastructure/01_infrastructure.md` |
+| Modified | `docs/05_infrastructure/runbooks/README.md` |
+| Modified | `docs/09_backend/01_backend_architecture.md` |
+
+### Manual-tasks tracker — 8 pending entries
+1. UptimeRobot HTTP monitor for `/healthz` (gated on Phase 2 routing)
+2. Sentry project + DSN paste (code wired; just needs the DSN)
+3. Delete stale `api.fluxora.marshalx.dev` CNAME from Cloudflare DNS
+4. Cleanup stale `C:\Windows\System32\config\systemprofile\.cloudflared\` dir
+5. Bump `cloudflared` when winget catalog catches up
+6. Polar webhook URL cutover smee.io → public (gated on Phase 2 routing)
+7. Set up GitHub `production` + `uat` environments with required reviewers (most likely overlooked — without these, the deploy gate is silently bypassed)
+8. Add `FIREBASE_SERVICE_ACCOUNT_*` and `PUBLIC_REPO_TOKEN` GitHub secrets if not already present
+9. Verify `cloudflared` service auto-starts on PC reboot
+10. Quarterly backup verification drill (recurring; track last-run inline)
+11. Pre-launch: rotate `TOKEN_HMAC_KEY` and `FLUXORA_LICENSE_SECRET`
+12. Long-term: decide whether to register `fluxora.cloud` for v2 multi-tenant
+
+(Entry numbers above are list order — actual statuses in the doc are all 🔲.)
+
+### Decisions Made
+- **Sentry DSN-conditional init pattern.** Skipping `import sentry_sdk` entirely when DSN is empty avoids any startup penalty for the common dev case. The "always init with empty DSN" pattern is more idiomatic but costs ~20–30ms of import time and a stub init for nothing.
+- **Devcontainer bind-mounts host `~/.fluxora` instead of baking secrets into the image.** Secrets can change without rebuilding; image stays committable; identical pattern works for VS Code Dev Containers and GitHub Codespaces with a single config.
+- **Devcontainer skips Android SDK.** Container is for "day-to-day Flutter dev" (analyze + test + format) — assemble/release builds happen on the host or in CI. Saves ~3 GB of image.
+- **`docs/10_planning/04_manual_tasks.md` is the canonical tracker for manual-only tasks.** Code-side TODOs stay as `# TODO:` comments or GitHub issues. Avoids the "two trackers, one source of truth" anti-pattern.
+
+### Blockers / Open Issues
+- Phase 2 of the public routing plan still not started. Multiple manual-task entries (UptimeRobot, Polar URL cutover) are gated on it.
+- Sentry DSN not yet generated — no monitoring in production until that's pasted into `.env`.
+- Devcontainer hasn't been tested end-to-end on a fresh build (the `Dockerfile` is correct on paper but the first `Reopen in Container` will be the real test).
+
+### Next Agent Should
+1. Implement Phase 2 of the public routing plan ([`docs/05_infrastructure/03_public_routing.md`](docs/05_infrastructure/03_public_routing.md) §Phase 2). Smallest reviewable slice: `FLUXORA_PUBLIC_URL` env var + `GET /api/v1/healthz` endpoint + `remote_url` field on `GET /api/v1/info` response. ~30 lines + 2 tests.
+2. After 2.5 + 2.6, add Phase 2.1–2.4 (CORS allow-list, real-IP middleware, HLS-block-on-tunnel, localhost-only hardening) as a single PR.
+3. Test the devcontainer build end-to-end (open repo in VS Code → "Reopen in Container" → verify all 4 components install + run).
+4. Address the "most likely overlooked" tasks from `04_manual_tasks.md`: GitHub environments + secrets (#7 + #8). Without those, the documented deploy gates and CI workflows don't actually function.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran during this session.
+- [x] No agent / AI branding anywhere in code or docs.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No exceptions swallowed.
+- [x] No secrets / hardcoded paths added (Sentry DSN comes from env; devcontainer mounts host `~/.fluxora`).
+- [x] All new third-party deps version-checked (`sentry-sdk==2.58.0` confirmed latest at pin time).
+---
