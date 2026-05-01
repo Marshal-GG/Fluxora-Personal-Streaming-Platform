@@ -185,6 +185,18 @@ Backup priorities are documented in [`05_backup_and_recovery.md`](./05_backup_an
 
 ### Phase 2 — Server changes (FastAPI)
 
+> **Status (2026-05-01):** 2.0 + 2.5 + 2.6 complete (config additions, `/healthz`, `remote_url` in `/info`). Middlewares 2.1–2.4 + the `public_address` probe (2.7) pending.
+
+#### 2.0 Config additions (`apps/server/config.py`) ✅ Complete
+
+Three new env-driven settings, all with safe defaults:
+
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `FLUXORA_PUBLIC_URL` | `""` | Empty disables remote access entirely. `GET /info` returns `remote_url: null`. |
+| `FLUXORA_TRUST_CF_HEADERS` | `True` | Read `CF-Connecting-IP` from incoming requests for rate-limiting / real-IP attribution. Disable only if running behind something other than Cloudflare. |
+| `FLUXORA_BLOCK_HLS_OVER_TUNNEL` | `True` | When True, requests with `CF-Connecting-IP` set are 403'd on `/api/v1/hls/*`. Enforces "media plane never traverses the tunnel." Wired by middleware 2.3 below. |
+
 #### 2.1 CORS allow-list (`apps/server/main.py`)
 
 Add `https://fluxora-api.marshalx.dev` and `https://fluxora.marshalx.dev` to `CORSMiddleware`. Reject `*` — the public surface is no longer fully self-contained.
@@ -216,15 +228,21 @@ def require_local_caller(request: Request) -> None:
     # ... existing loopback check ...
 ```
 
-#### 2.5 Healthcheck (`apps/server/routers/info.py`)
+#### 2.5 Healthcheck (`apps/server/routers/info.py`) ✅ Complete
 
-Add `GET /api/v1/healthz` returning `{"ok": true}` — used by Cloudflare for tunnel uptime checks and by clients for "is remote access reachable?" probes. Lightweight: no DB access, no `system_stats` collection, just a constant body.
+`GET /api/v1/healthz` returns `{"ok": true}` — no DB access, no auth, constant body. Used by Cloudflare Tunnel ingress health checks and by clients deciding whether the public URL is reachable. Excluded from OpenAPI schema (`include_in_schema=False`) since it's not part of the v1 contract.
 
-> **Status:** Not yet implemented. The rest of `/info/*` (`/info`, `/info/logs`, `/info/stats`, `/info/restart`, `/info/stop`) is shipped — this is the only remaining endpoint to add for the routing plan. ~10 lines including the test.
+#### 2.6 `remote_url` in `GET /info` ✅ Complete
 
-#### 2.6 System stats: report public address
+`ServerInfoResponse.remote_url: str | None` is populated from `FLUXORA_PUBLIC_URL`:
+- Empty env var → `null` in the response (clients infer remote access not configured)
+- Set env var → URL string (clients persist it after pairing per [decision D1](#decisions-locked))
 
-The `SystemStatsResponse.public_address` field already exists (currently always `null` per the API contract). The routing implementation populates it: a periodic probe to `https://fluxora-api.marshalx.dev/api/v1/healthz`; on success, the `system_stats_service.public_address` cache is set to the configured `FLUXORA_PUBLIC_URL`; on failure, cleared back to `null`.
+Test coverage: 6 tests in `tests/test_healthz.py` covering both endpoints + the response-shape contract.
+
+#### 2.7 System stats: populate `public_address`
+
+The `SystemStatsResponse.public_address` field already exists (currently always `null` per the API contract). This step adds a periodic probe to `https://<remote_url>/api/v1/healthz`; on success, the `system_stats_service.public_address` cache is set to the configured `FLUXORA_PUBLIC_URL`; on failure, cleared back to `null`.
 
 Probe schedule: every 30s, cached. Don't probe more often — Cloudflare's free tier doesn't want the noise and the desktop UI doesn't need sub-30s updates.
 

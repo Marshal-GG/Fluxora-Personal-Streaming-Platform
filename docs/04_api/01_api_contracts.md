@@ -43,7 +43,7 @@ Authorization: Bearer {auth_token}
 ## Endpoints
 
 ### `GET /api/v1/info`
-**Description:** Returns server identity — used during discovery.  
+**Description:** Returns server identity — used during discovery and to learn the server's public URL after pairing.  
 **Auth:** None required.  
 **Status:** ✅ Implemented
 
@@ -52,9 +52,26 @@ Authorization: Bearer {auth_token}
 {
   "server_name": "My Fluxora Server",
   "version": "1.0.0",
-  "tier": "plus"
+  "tier": "plus",
+  "remote_url": "https://fluxora-api.marshalx.dev"
 }
 ```
+
+`remote_url` is `null` when `FLUXORA_PUBLIC_URL` is unset on the server (no public routing configured). Clients persist it after the first successful pair and use it from off-LAN networks (decision D1 in [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md#decisions-locked)).
+
+---
+
+### `GET /api/v1/healthz`
+**Description:** Lightweight liveness probe. Constant body, no DB hit, no auth. Used by Cloudflare Tunnel for ingress health checks and by clients deciding whether the public URL is reachable.  
+**Auth:** None required.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{ "ok": true }
+```
+
+> Excluded from the OpenAPI schema — not part of the v1 contract; format may evolve. Anything heavier (system stats, license info) belongs at `/info` or `/info/stats`.
 
 ---
 

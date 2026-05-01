@@ -23,6 +23,10 @@ class ServerInfoResponse(BaseModel):
     server_name: str
     version: str
     tier: str
+    # Public URL the server can be reached at off-LAN, when configured.
+    # Null when remote routing isn't set up. Clients persist this after
+    # pairing and use it from off-LAN networks.
+    remote_url: str | None = None
 
 
 class SystemStatsResponse(BaseModel):

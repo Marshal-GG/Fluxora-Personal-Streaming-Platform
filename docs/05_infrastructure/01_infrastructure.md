@@ -117,6 +117,9 @@ Settings can also be overridden via environment variables (same names, uppercase
 | `POLAR_WEBHOOK_SECRET` | `""` | Polar Standard Webhooks secret for `/api/v1/webhook/polar` |
 | `SENTRY_DSN` | `""` | Sentry DSN; empty disables Sentry init entirely (zero overhead). See `runbooks/09_monitoring_and_observability.md` |
 | `SENTRY_TRACES_SAMPLE_RATE` | `0.0` | Sentry performance-sampling rate (0.0–1.0). Leave at 0 unless investigating perf |
+| `FLUXORA_PUBLIC_URL` | `""` | Public URL for off-LAN clients (e.g. `https://fluxora-api.marshalx.dev`). Empty = remote routing disabled; `GET /info` returns `remote_url: null`. See `runbooks/01_cloudflare_tunnel.md` + `03_public_routing.md` |
+| `FLUXORA_TRUST_CF_HEADERS` | `True` | Trust `CF-Connecting-IP` from incoming requests. Wired by the real-IP middleware (Phase 2.2). Disable only if running behind something other than Cloudflare. |
+| `FLUXORA_BLOCK_HLS_OVER_TUNNEL` | `True` | Wired by the HLS-block middleware (Phase 2.3): requests with `CF-Connecting-IP` are 403'd on `/api/v1/hls/*`. Enforces "media plane never traverses the tunnel." |
 
 See [`02_polar_webhook_deployment.md`](./02_polar_webhook_deployment.md) for Polar product metadata, event subscription, local testing, and production caveats.
 

@@ -7,6 +7,7 @@ from pathlib import Path
 import aiosqlite
 from fastapi import APIRouter, Depends, status
 
+from config import settings
 from database.db import get_db
 from models.settings import ServerInfoResponse, SystemStatsResponse
 from routers.deps import require_local_caller
@@ -36,8 +37,21 @@ async def _trigger_shutdown(*, restart: bool) -> None:
     os.kill(os.getpid(), signal.SIGINT)
 
 
+@router.get("/healthz", include_in_schema=False)
+async def healthz() -> dict[str, bool]:
+    """Lightweight liveness probe.
+
+    No DB hit, no auth, constant body. Used by Cloudflare Tunnel ingress
+    health checks and by clients deciding whether the public URL is
+    reachable. Anything heavier belongs in /info or /info/stats.
+    """
+    return {"ok": True}
+
+
 @router.get("/info", response_model=ServerInfoResponse)
 async def get_info(db: aiosqlite.Connection = Depends(get_db)) -> ServerInfoResponse:
+    remote_url = settings.fluxora_public_url or None
+
     async with db.execute(
         "SELECT server_name, subscription_tier FROM user_settings WHERE id = 1"
     ) as cur:
@@ -48,12 +62,14 @@ async def get_info(db: aiosqlite.Connection = Depends(get_db)) -> ServerInfoResp
             server_name="Fluxora Server",
             version=SERVER_VERSION,
             tier="free",
+            remote_url=remote_url,
         )
 
     return ServerInfoResponse(
         server_name=row["server_name"],
         version=SERVER_VERSION,
         tier=row["subscription_tier"],
+        remote_url=remote_url,
     )
 
 

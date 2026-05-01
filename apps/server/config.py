@@ -78,6 +78,20 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     sentry_traces_sample_rate: float = 0.0  # set to e.g. 0.1 for 10% perf sampling
 
+    # Public routing (Cloudflare Tunnel). Empty fluxora_public_url disables
+    # the WAN URL feature entirely — clients only ever see the local URL.
+    # See docs/05_infrastructure/03_public_routing.md.
+    fluxora_public_url: str = ""
+
+    # Trust CF-Connecting-IP for downstream rate-limiting / real-IP. Disable
+    # only if the server is behind something other than a Cloudflare edge.
+    fluxora_trust_cf_headers: bool = True
+
+    # If True, requests with CF-Connecting-IP set are 403'd on /api/v1/hls/*.
+    # Enforces "media plane never traverses the tunnel" — clients must
+    # negotiate WebRTC for WAN streaming.
+    fluxora_block_hls_over_tunnel: bool = True
+
     @property
     def db_path(self) -> Path:
         return Path(self.fluxora_db_path)
