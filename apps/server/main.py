@@ -23,6 +23,7 @@ from routers import (
     orders,
     profile,
     signal,
+    transcoding,
     webhook,
     ws,
 )
@@ -285,3 +286,6 @@ app.include_router(
     notifications.router, prefix="/api/v1/notifications", tags=["notifications"]
 )
 app.include_router(activity.router, prefix="/api/v1/activity", tags=["activity"])
+app.include_router(
+    transcoding.router, prefix="/api/v1/transcoding", tags=["transcoding"]
+)
