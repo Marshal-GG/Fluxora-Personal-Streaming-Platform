@@ -251,7 +251,6 @@ logger.info("Validating with secret %s", secret)
 logger.info("Validated with HMAC key (last 4 chars: %s)", secret[-4:] if secret else "none")
 ```
 
-For Fluxora specifically, the policy is in [`CLAUDE.md` Hard Prohibition #8](../../../CLAUDE.md#hard-prohibitions): "Never log tokens, passwords, or any PII."
 
 ---
 
@@ -264,7 +263,6 @@ Add to a fresh repo before writing any code:
 - [ ] `pre-commit` config installed with gitleaks hook
 - [ ] CI runs `secret_scan.yml` (see runbook 03)
 - [ ] No "real" `.env` is in git history — verify with `git log --all --full-history -- .env`
-- [ ] CONTRIBUTING.md documents where secrets live and how to set them up locally
 
 ---
 

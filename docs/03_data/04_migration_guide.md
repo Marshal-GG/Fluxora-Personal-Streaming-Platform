@@ -207,7 +207,6 @@ After your migration merges, update [`docs/03_data/02_database_schema.md`](./02_
 2. Update the relevant `CREATE TABLE` block in the schema reference if columns/indexes changed.
 3. Update the "Last Updated" frontmatter line.
 
-Do this in the same PR as the migration. CI doesn't enforce it, but the doc-update protocol in CLAUDE.md does.
 
 ---
 

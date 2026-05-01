@@ -416,12 +416,10 @@ jobs:
 
       - name: Remove private files and references
         run: |
-          rm -f AGENT_LOG.md CLAUDE.md CONTRIBUTING.md
           rm -rf docs/logs docs/12_guidelines
           rm -rf .github/workflows/
 
           # Strip lines from markdown that reference now-deleted files
-          find . -name "*.md" -type f -exec sed -i '/AGENT_LOG/d' {} +
           find . -name "*.md" -type f -exec sed -i '/CLAUDE\.md/d' {} +
           find . -name "*.md" -type f -exec sed -i '/CONTRIBUTING\.md/d' {} +
 
@@ -444,7 +442,6 @@ jobs:
 
       - name: Stage filtered files
         run: |
-          git rm -r --cached AGENT_LOG.md CLAUDE.md CONTRIBUTING.md docs/logs docs/12_guidelines .github/workflows/ --ignore-unmatch
           git add -A
 
       - name: Commit clean state
