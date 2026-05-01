@@ -13,6 +13,7 @@ from slowapi.errors import RateLimitExceeded
 from config import get_data_dir, secure_db_file, settings
 from database.db import close_db, init_db
 from routers import (
+    activity,
     auth,
     files,
     groups,
@@ -283,3 +284,4 @@ app.include_router(profile.router, prefix="/api/v1/profile", tags=["profile"])
 app.include_router(
     notifications.router, prefix="/api/v1/notifications", tags=["notifications"]
 )
+app.include_router(activity.router, prefix="/api/v1/activity", tags=["activity"])

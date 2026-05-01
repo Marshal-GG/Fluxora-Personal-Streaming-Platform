@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import aiosqlite
 
-from services import notification_service
+from services import activity_service, notification_service
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,20 @@ async def create_pair_request(
     except Exception:
         logger.warning("Failed to emit pairing notification", exc_info=True)
 
+    try:
+        await activity_service.record(
+            db,
+            type="client.pair",
+            summary=f"{device_name} ({platform}) requested pairing",
+            actor_kind="client",
+            actor_id=client_id,
+            target_kind="client",
+            target_id=client_id,
+            payload={"device_name": device_name, "platform": platform},
+        )
+    except Exception:
+        logger.warning("Failed to record client.pair activity event", exc_info=True)
+
 
 async def get_client(db: aiosqlite.Connection, client_id: str) -> aiosqlite.Row | None:
     async with db.execute("SELECT * FROM clients WHERE id = ?", (client_id,)) as cur:
@@ -86,6 +100,19 @@ async def approve_client(
     )
     await db.commit()
     logger.info("Client approved: %s", client_id)
+
+    try:
+        await activity_service.record(
+            db,
+            type="client.approve",
+            summary=f"Client {client_id} approved",
+            actor_kind="operator",
+            target_kind="client",
+            target_id=client_id,
+        )
+    except Exception:
+        logger.warning("Failed to record client.approve activity event", exc_info=True)
+
     return raw_token
 
 
@@ -96,6 +123,18 @@ async def reject_client(db: aiosqlite.Connection, client_id: str) -> None:
     )
     await db.commit()
     logger.info("Client rejected: %s", client_id)
+
+    try:
+        await activity_service.record(
+            db,
+            type="client.reject",
+            summary=f"Client {client_id} rejected",
+            actor_kind="operator",
+            target_kind="client",
+            target_id=client_id,
+        )
+    except Exception:
+        logger.warning("Failed to record client.reject activity event", exc_info=True)
 
 
 async def revoke_client(db: aiosqlite.Connection, client_id: str) -> None:

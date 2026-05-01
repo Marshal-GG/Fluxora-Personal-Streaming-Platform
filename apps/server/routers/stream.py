@@ -15,6 +15,7 @@ from database.db import get_db
 from models.stream_session import StreamSessionResponse, StreamStartResponse
 from routers.deps import LOOPBACK, bearer, require_local_caller, validate_token
 from services import (
+    activity_service,
     ffmpeg_service,
     group_service,
     library_service,
@@ -133,6 +134,20 @@ async def start_stream(
     )
     await db.commit()
 
+    try:
+        await activity_service.record(
+            db,
+            type="stream.start",
+            summary=f"{client['name']} started watching {file_row['name']}",
+            actor_kind="client",
+            actor_id=client["id"],
+            target_kind="session",
+            target_id=session_id,
+            payload={"file_id": file_id, "connection_type": "lan"},
+        )
+    except Exception:
+        logger.warning("Failed to record stream.start activity event", exc_info=True)
+
     return StreamStartResponse(
         session_id=session_id,
         file_id=file_id,
@@ -224,6 +239,19 @@ async def stop_stream(
         (now, session_id),
     )
     await db.commit()
+
+    try:
+        await activity_service.record(
+            db,
+            type="stream.end",
+            summary="Session ended",
+            actor_kind="client",
+            actor_id=row["client_id"],
+            target_kind="session",
+            target_id=session_id,
+        )
+    except Exception:
+        logger.warning("Failed to record stream.end activity event", exc_info=True)
 
 
 # ── GET /api/v1/stream/{session_id} ─────────────────────────────────────────

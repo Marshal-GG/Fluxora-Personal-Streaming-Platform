@@ -326,6 +326,24 @@ async def scan_library(
     await db.commit()
     logger.info("Scan complete: library=%s added=%d", library_id, added)
 
+    if added > 0:
+        try:
+            from services import activity_service
+
+            await activity_service.record(
+                db,
+                type="library.scan",
+                summary=f"Library scan added {added} file(s)",
+                actor_kind="system",
+                target_kind="library",
+                target_id=library_id,
+                payload={"files_added": added},
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record library.scan activity event", exc_info=True
+            )
+
     # ── TMDB enrichment (best-effort) ──────────────────────────────────────
     if tmdb_api_key and new_file_ids:
         await _enrich_with_tmdb(db, new_file_ids, tmdb_api_key)
