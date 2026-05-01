@@ -55,6 +55,29 @@ class UserSettingsResponse(BaseModel):
     transcoding_encoder: str
     transcoding_preset: str
     transcoding_crf: int
+    # General
+    language: str = "en"
+    auto_start_on_boot: bool = False
+    auto_restart_on_crash: bool = True
+    minimize_to_system_tray: bool = True
+    theme_accent: str | None = None
+    default_library_view: str = "grid"
+    scan_libraries_on_startup: bool = True
+    generate_thumbnails: bool = True
+    # Network
+    preferred_mode: str = "auto"
+    enable_mdns: bool = True
+    enable_webrtc: bool = True
+    relay_server_url: str | None = None
+    # Streaming
+    default_quality: str = "auto"
+    ai_segment_duration_seconds: int = 4
+    # Security
+    enable_pairing_required: bool = True
+    session_timeout_minutes: int = 60
+    # Advanced
+    enable_log_export: bool = True
+    custom_server_url: str | None = None
 
 
 class UpdateSettingsBody(BaseModel):
@@ -66,6 +89,29 @@ class UpdateSettingsBody(BaseModel):
     transcoding_preset: TranscodingPreset | None = None
     # FFmpeg CRF range — 0 (lossless) to 51 (worst quality).
     transcoding_crf: int | None = Field(default=None, ge=0, le=51)
+    # General
+    language: str | None = None
+    auto_start_on_boot: bool | None = None
+    auto_restart_on_crash: bool | None = None
+    minimize_to_system_tray: bool | None = None
+    theme_accent: str | None = None
+    default_library_view: Literal["grid", "list"] | None = None
+    scan_libraries_on_startup: bool | None = None
+    generate_thumbnails: bool | None = None
+    # Network
+    preferred_mode: Literal["auto", "lan", "webrtc"] | None = None
+    enable_mdns: bool | None = None
+    enable_webrtc: bool | None = None
+    relay_server_url: str | None = None
+    # Streaming
+    default_quality: Literal["auto", "4k", "1080p", "720p", "480p"] | None = None
+    ai_segment_duration_seconds: int | None = Field(default=None, ge=1, le=30)
+    # Security
+    enable_pairing_required: bool | None = None
+    session_timeout_minutes: int | None = Field(default=None, ge=1, le=1440)
+    # Advanced
+    enable_log_export: bool | None = None
+    custom_server_url: str | None = None
 
     @field_validator("server_name")
     @classmethod
