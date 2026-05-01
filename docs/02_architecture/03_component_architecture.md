@@ -130,10 +130,14 @@
 - **Interfaces:** `GET /api/v1/orders` (localhost-only)
 - **Dependencies:** SQLite `polar_orders` table
 
-### Public Routing (Phase 1 ops complete; code wiring pending)
+### Public Routing (Phases 1–4 complete; Phase 5 desktop UI in progress)
 - **Responsibility:** Expose the home server at `https://fluxora-api.marshalx.dev` for off-LAN clients via a Cloudflare Tunnel. Control plane only — media bandwidth stays on direct/P2P paths.
-- **Interfaces:** All `/api/v1/...` paths reachable through the tunnel; HLS routes server-side blocked when `CF-Connecting-IP` is present.
-- **Dependencies:** `cloudflared` daemon (system-installed), `FLUXORA_PUBLIC_URL` env var
+- **Interfaces:** All `/api/v1/...` paths reachable through the tunnel; HLS routes server-side blocked when `CF-Connecting-IP` is present; admin-only endpoints (`require_local_caller` / `validate_token_or_local`) reject any tunneled request.
+- **Implementation:**
+  - **Server:** `RealIPMiddleware` (rewrites `request.client.host` from `CF-Connecting-IP` against the published Cloudflare IP ranges), `HLSBlockOverTunnelMiddleware`, `_public_address()` probe in `system_stats_service`, `/healthz` endpoint, `remote_url` field on `/info`.
+  - **Shared core:** `ApiClient` resolves between `localBaseUrl` and `remoteBaseUrl` per request via `NetworkPathDetector` (in `fluxora_core`); `SecureStorage.savePairing()` persists both URLs atomically.
+  - **Mobile:** Pairing flow re-fetches `/info` post-pair to read `remote_url` and configures the dual-base ApiClient. Failure is non-fatal.
+- **Dependencies:** `cloudflared` daemon (system-installed), `FLUXORA_PUBLIC_URL` / `FLUXORA_TRUST_CF_HEADERS` / `FLUXORA_BLOCK_HLS_OVER_TUNNEL` env vars.
 - **Plan:** [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) (v1 single-tenant + v2 multi-tenant track)
 
 ### Flutter Client — Presentation Layer
@@ -163,7 +167,7 @@
 | From | To | Protocol | Pattern |
 |------|----|----------|---------|
 | Flutter Client (LAN) | FastAPI Server | HTTP REST + HLS | Request/Response, streaming |
-| Flutter Client (WAN — planned) | `fluxora-api.marshalx.dev` → home server | HTTPS via Cloudflare Tunnel | Control plane only — media stays P2P |
+| Flutter Client (WAN) | `fluxora-api.marshalx.dev` → home server | HTTPS via Cloudflare Tunnel | Control plane only — media stays P2P; `ApiClient` switches base URLs per request |
 | Flutter Client | STUN Server | UDP | WebRTC ICE |
 | Flutter Client | TURN Server | UDP/TCP | WebRTC relay (optional, see runbook) |
 | Flutter Client ↔ Flutter Client / Server (P2P) | Direct or via TURN | WebRTC SCTP/data channels | Internet streaming |
@@ -174,4 +178,4 @@
 | FastAPI Server | Zeroconf | UDP multicast | LAN broadcast |
 | Polar.sh | FastAPI Server `/webhook/polar` | HTTPS POST + Standard Webhooks signature | Inbound webhook |
 | PC Control Panel | FastAPI Server | HTTP + WS (loopback) | Request/Response, live stats |
-| FastAPI Server | Cloudflare edge (planned) | Outbound WSS | Tunnel registration via `cloudflared` daemon |
+| FastAPI Server | Cloudflare edge | Outbound WSS | Tunnel registration via `cloudflared` daemon (live as `fluxora-home`) |

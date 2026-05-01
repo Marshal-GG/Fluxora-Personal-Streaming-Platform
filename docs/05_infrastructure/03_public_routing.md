@@ -1,8 +1,8 @@
 # Public API Routing — `fluxora-api.marshalx.dev`
 
 > **Category:** Infrastructure
-> **Status:** Phase 1 ops **COMPLETE** (2026-05-01); Phase 2-5 code work pending. v2 multi-tenant track scoped below.
-> **Last Updated:** 2026-05-01 (rev 3 — Phase 1 ops complete; hostname pivoted from `api.fluxora.marshalx.dev` to `fluxora-api.marshalx.dev` due to Universal SSL depth limit)
+> **Status:** Phases 1–4 **COMPLETE** (2026-05-01); Phase 5 desktop UI + mobile Settings UI pending. v2 multi-tenant track scoped below.
+> **Last Updated:** 2026-05-01 (rev 4 — Phases 2–4 shipped: CF middlewares + admin hardening + `/healthz` + `remote_url` on `/info`; dual-base `ApiClient` in `fluxora_core`; mobile pairing persists `remote_url` post-pair)
 
 ---
 

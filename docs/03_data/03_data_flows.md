@@ -95,8 +95,18 @@
     └──▶ Updates clients.is_trusted = true
     └──▶ Returns auth_token to Flutter Client
     
-[Flutter Client] ──▶ Stores token securely ──▶ All future requests include token
+[Flutter Client] ──▶ GET /info (re-fetched post-pair to read remote_url)
+    │
+    └──▶ Stores auth_token + serverUrl + clientId + remoteUrl atomically
+         via SecureStorage.savePairing()
+    └──▶ Configures ApiClient with localBaseUrl + remoteBaseUrl;
+         all future requests are routed via NetworkPathDetector
+         (LAN → local, WAN → remote)
 ```
+
+The post-pair `/info` fetch is wrapped in a try/catch — if it fails the
+client persists with `remoteUrl = null` and operates LAN-direct. See
+`docs/05_infrastructure/03_public_routing.md` Phase 4.
 
 ---
 

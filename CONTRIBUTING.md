@@ -150,10 +150,10 @@ Hit F5, pick the config.
 
 | Suite | Where | Count | Run |
 |-------|-------|-------|-----|
-| Server | `apps/server/tests/` | 113 | `cd apps/server && python -m pytest -v` |
-| Mobile | `apps/mobile/test/` | 14 | `cd apps/mobile && flutter test` |
+| Server | `apps/server/tests/` | 149 | `cd apps/server && python -m pytest -v` |
+| Mobile | `apps/mobile/test/` | 27 | `cd apps/mobile && flutter test` |
 | Desktop | `apps/desktop/test/` | 34 | `cd apps/desktop && flutter test` |
-| `fluxora_core` | `packages/fluxora_core/test/` | (varies) | `cd packages/fluxora_core && flutter test` |
+| `fluxora_core` | `packages/fluxora_core/test/` | 9 | `cd packages/fluxora_core && flutter test` |
 
 All four should be green before opening a PR.
 

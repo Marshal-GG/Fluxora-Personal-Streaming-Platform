@@ -626,3 +626,209 @@ The full doc-update protocol per CLAUDE.md §3 (data models, API contracts, sche
 - [x] No secrets / hardcoded paths added.
 - [x] All new third-party deps tested locally before recommending merge.
 ---
+
+## [2026-05-01] — Public routing Phase 2 (server) + Phase 3 (fluxora_core dual-base)
+**Phase:** Phase 5 (Advanced Features) — Public routing rollout
+**Status:** Phases 2 + 3 of `docs/05_infrastructure/03_public_routing.md` complete; Phase 4 (mobile pairing-flow rewire) is next.
+
+### What Was Done
+
+**Phase 2 — server-side public routing** (already pushed in `757329c` + `b9fb567`):
+- `apps/server/config.py` — added `fluxora_public_url`, `fluxora_trust_cf_headers`, `fluxora_block_hls_over_tunnel`.
+- `apps/server/routers/info.py` — new `GET /healthz` endpoint (lightweight liveness probe for the CF tunnel and the system-stats `_public_address` probe); existing `/info` now returns `remote_url`.
+- `apps/server/utils/real_ip.py` — `RealIPMiddleware` (rewrites `request.client.host` from `CF-Connecting-IP` when the source is in Cloudflare's published IPv4/IPv6 ranges; refreshes the range list at startup, falls back to a hardcoded list when the fetch fails) + `HLSBlockOverTunnelMiddleware` (403s `/api/v1/stream/.../hls/...` requests that arrive with `CF-Connecting-IP`, since long-lived HLS over the free tunnel would burn the bandwidth budget) + `real_ip_key` for slowapi rate limiting.
+- `apps/server/main.py` — wired the two middlewares in the right order (RealIP first so HLSBlock and slowapi see the rewritten host), seeded a strict CORS allow-list, swapped slowapi to `real_ip_key`, refreshes CF ranges on startup.
+- `apps/server/routers/deps.py` — `require_local_caller` and `validate_token_or_local` now reject any request that arrived via the tunnel (presence of `CF-Connecting-IP`), so admin endpoints stay localhost-only even after the middleware rewrites the source IP.
+- `apps/server/services/system_stats_service.py` — new `_public_address()` probe that hits `<FLUXORA_PUBLIC_URL>/api/v1/healthz` with a 5s timeout and 30s cache; returns the URL on 200, `None` otherwise. Backs the `public_address` field that the desktop Dashboard already consumes.
+- Tests: `tests/test_healthz.py` (6) + `tests/test_real_ip.py` (15). Server suite remains green.
+
+**Phase 3 — fluxora_core dual-base ApiClient** (this session's working-tree changes):
+- `packages/fluxora_core/lib/network/network_path_detector.dart` — moved from `apps/mobile/lib/features/player/data/services/`. Same `/24`-subnet detection logic; added a `LanCheck` typedef for test injection.
+- `packages/fluxora_core/lib/network/api_exception.dart` — added `NoRemoteConfiguredException` (thrown when the device is off-LAN and no remote URL is configured).
+- `packages/fluxora_core/lib/network/api_client.dart` — refactored to dual-base:
+  - Constructor: `ApiClient({localBaseUrl, remoteBaseUrl, lanCheck = NetworkPathDetector.isLan, bearerToken})`. The legacy `baseUrl:` arg is kept as `@Deprecated` and aliases `localBaseUrl`.
+  - Per-request Dio interceptor calls `_resolveBaseUrl()` which picks local vs remote via `LanCheck`, and rewrites `options.baseUrl` before the request leaves. Throws `NoRemoteConfiguredException` if off-LAN with no remote (or if neither URL is set).
+  - Each public method (`get/post/put/patch/delete`) catches `DioException` and unwraps `NoRemoteConfiguredException` so callers can branch on it directly instead of digging through `e.error`.
+  - `configure()` accepts the same dual-URL signature for live updates after pairing.
+  - `@visibleForTesting resolveBaseUrlForTest()` exposes the resolver for unit tests without leaking the underlying Dio instance.
+- `packages/fluxora_core/lib/storage/secure_storage.dart` — added `saveRemoteUrl/getRemoteUrl/deleteRemoteUrl` and a `savePairing({ authToken, serverUrl, clientId, remoteUrl? })` helper that writes all four fields atomically (passing `remoteUrl: null` deletes any stored remote URL).
+- `packages/fluxora_core/lib/fluxora_core.dart` — barrel exports `network/network_path_detector.dart`.
+- `packages/fluxora_core/test/network/api_client_test.dart` — 9 tests covering all six resolution branches, `configure()` re-routing, `clearRemoteBaseUrl()`, the legacy-`baseUrl` alias.
+- `apps/mobile/lib/core/di/injector.dart` — restores both `serverUrl` and `remoteUrl` from `SecureStorage` and configures the dual-base ApiClient on app start.
+- `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart` — import switched to `package:fluxora_core/network/network_path_detector.dart`.
+- All other callers (`auth_repository_impl`, `server_discovery_repository_impl`, `connect_screen`, desktop `injector` / `settings_cubit` / its tests) migrated from `baseUrl:` to `localBaseUrl:`.
+
+**SDK / dep coupling fix** (surfaced via the Phase 3 `flutter pub get`):
+- `packages/fluxora_core/pubspec.yaml` and `apps/desktop/pubspec.yaml` — `json_annotation` pinned to `>=4.9.0 <4.11.0` and `json_serializable` to `>=6.9.0 <6.13.0`. `json_annotation 4.11.x` requires Dart SDK ^3.9.0; the project is on 3.8.0. Without the upper bound, `flutter pub get` fails on both packages. `04_manual_tasks.md` now tracks this so future Dependabot 4.11+ bumps get closed until we raise the SDK floor.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `apps/server/utils/real_ip.py` |
+| Created | `apps/server/tests/test_healthz.py` |
+| Created | `apps/server/tests/test_real_ip.py` |
+| Modified | `apps/server/config.py`, `main.py`, `routers/info.py`, `routers/deps.py`, `services/system_stats_service.py`, `models/settings.py` |
+| Created | `packages/fluxora_core/lib/network/network_path_detector.dart` (moved from mobile) |
+| Modified | `packages/fluxora_core/lib/network/api_client.dart` (dual-base refactor) |
+| Modified | `packages/fluxora_core/lib/network/api_exception.dart` (added `NoRemoteConfiguredException`) |
+| Modified | `packages/fluxora_core/lib/storage/secure_storage.dart` (`saveRemoteUrl`, `savePairing`) |
+| Modified | `packages/fluxora_core/lib/fluxora_core.dart` (export) |
+| Modified | `packages/fluxora_core/pubspec.yaml`, `apps/desktop/pubspec.yaml` (json_annotation/json_serializable pins) |
+| Created | `packages/fluxora_core/test/network/api_client_test.dart` (9 tests) |
+| Deleted | `apps/mobile/lib/features/player/data/services/network_path_detector.dart` |
+| Modified | `apps/mobile/lib/core/di/injector.dart` (dual-URL restore) |
+| Modified | `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart` (import) |
+| Modified | `apps/mobile/lib/features/auth/data/repositories/auth_repository_impl.dart`, `apps/mobile/lib/features/connect/data/repositories/server_discovery_repository_impl.dart`, `apps/mobile/lib/features/connect/presentation/screens/connect_screen.dart` (`baseUrl:` → `localBaseUrl:`) |
+| Modified | `apps/desktop/lib/core/di/injector.dart`, `apps/desktop/lib/features/settings/presentation/cubit/settings_cubit.dart`, `apps/desktop/test/features/settings/settings_cubit_test.dart` (`baseUrl:` → `localBaseUrl:`) |
+| Modified | `docs/05_infrastructure/03_public_routing.md` (Phase 3 section rewritten with the as-built API + resolution table + test coverage) |
+| Modified | `docs/08_frontend/01_frontend_architecture.md` (dual-base ApiClient, `NetworkPathDetector` lives in core) |
+| Modified | `docs/10_planning/04_manual_tasks.md` (added Dart-SDK-floor bump task) |
+
+### Commits Pushed (this session)
+- `757329c` — phase 2 slice 1 (config, /healthz, remote_url on /info).
+- `b9fb567` — phase 2 slice 2 (CF tunnel middlewares, admin hardening, public_address probe).
+- Phase 3 working-tree changes are **uncommitted** — staging + commit message decision is on the user.
+
+### Validation
+- `flutter analyze` — clean on `packages/fluxora_core`, `apps/mobile`, `apps/desktop`.
+- `flutter test` — `fluxora_core` 9 tests pass (new), `apps/mobile` 24 pass, `apps/desktop` 34 pass.
+- Server tests already green from Phase 2 commits.
+- `pubspec.lock` files updated for `fluxora_core` + `apps/desktop` after the json_annotation downgrade. `apps/mobile` pub-get also re-ran cleanly.
+
+### Decisions Made
+- **Backward-compat `baseUrl:` shim.** Kept the deprecated single-URL constructor + `configure(baseUrl:)` arg so the desktop and mobile callers compile during the migration and the change ships as a non-breaking API addition. All in-repo callers have been migrated; the deprecation flags any future regressions.
+- **`NetworkPathDetector` belongs in `fluxora_core`, not in mobile.** It was originally placed under `apps/mobile/lib/features/player/data/services/`, but the `ApiClient` smart-path needs the same logic on every platform that talks to the server, including desktop. Moving it once now is cheaper than copy-pasting later.
+- **Throw on off-LAN-without-remote.** Earlier draft fell back to local when remote was absent; the failure mode there is a silent timeout against an unreachable LAN host. Throwing `NoRemoteConfiguredException` lets the UI surface a "you need to be on the LAN, or set up remote access" prompt — which is what Phase 4 will wire.
+- **SDK-floor pin over forced 3.9 bump.** Pinning `json_annotation` / `json_serializable` upper bounds is uglier than bumping Flutter, but a Dart-SDK bump is its own change with its own risk surface — flagged in the manual-tasks tracker for a separate, deliberate rollout.
+
+### Blockers / Open Issues
+- **Phase 4 not started.** The `remote_url` field exists on `/info` (server) and `ApiClient` knows how to use it (core), but the mobile pairing flow (`AuthRepositoryImpl.saveCredentials` and the connect screen) doesn't yet read `remote_url` from the server's `/info` response and persist it via `SecureStorage.savePairing`. Until Phase 4 lands, dual-base is purely additive — paired clients keep using LAN-direct.
+- **Dependabot will keep proposing `json_annotation 4.11+`.** Tracked in `04_manual_tasks.md`. Close those PRs until the Dart SDK floor moves to 3.9+.
+- **Manual cross-pubspec bump for `flutter_secure_storage 10`** (PR #18 from the previous triage) still pending — same blind-spot pattern as the json_annotation pin.
+
+### Next Agent Should
+1. Decide on Phase 3 commit boundary with the user (one slice covering the dual-base ApiClient + the json_annotation pin, or two — pin on its own, refactor + tests + docs together). Stage and draft the commit text only; do **not** push without per-action authorization.
+2. Implement Phase 4 of the public routing plan: `apps/mobile/lib/features/auth/data/repositories/auth_repository_impl.dart` should fetch `/info` after pairing and call `SecureStorage.savePairing(..., remoteUrl: info.remoteUrl)`. The desktop `Settings → Server` screen should expose the same field for manual editing.
+3. Process the remaining mergeable Dependabot PRs per `04_manual_tasks.md` § "Process the Dependabot PR queue" once Phase 3 is in.
+4. Push the queued `dependabot.yml` Actions-major ignore-rule (still in working tree from the previous session) before closing PRs #2/#3/#5/#6/#7.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran without explicit per-action OK (Phase 2 was authorized; Phase 3 is uncommitted pending user direction).
+- [x] No agent / AI branding anywhere in code or docs.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No exceptions swallowed.
+- [x] No secrets / hardcoded paths added (CF tunnel URL configurable via `FLUXORA_PUBLIC_URL`; nothing hardcoded in core or mobile).
+- [x] All new third-party deps reviewed (none added — only re-pinned existing `json_annotation` / `json_serializable` ranges).
+---
+
+## [2026-05-01] — Public routing Phase 4 (mobile pairing); CI fix; full doc audit
+**Phase:** Phase 5 (Advanced Features) — Public routing rollout
+**Status:** Phase 4 of `docs/05_infrastructure/03_public_routing.md` complete. Phase 5 (desktop Remote-access UI + mobile Settings UI) is next. Cross-doc audit run; 12 docs synced to as-built.
+
+### What Was Done
+
+**Phase 3 commit split** (followed up from prior entry):
+- `511c53b` — `build(deps): pin json_annotation <4.11 and json_serializable <6.13` (just the ceilings + manual-tasks entry).
+- `c46017d` — `feat(core): dual-base ApiClient with smart LAN/WAN routing` (16 files, +396 / -80, including the rename of `network_path_detector.dart` from `apps/mobile/...` to `packages/fluxora_core/lib/network/`).
+
+**Phase 4 — mobile pairing flow persists `remote_url`** (`07e9d0f`):
+- `packages/fluxora_core/lib/entities/server_info.dart` — added `String? remoteUrl`. Auto-mapped to `remote_url` JSON via the `field_rename: snake` in `build.yaml`. Regenerated `*.freezed.dart` + `*.g.dart` via `dart run build_runner build --delete-conflicting-outputs`.
+- `packages/fluxora_core/lib/network/endpoints.dart` — added `Endpoints.healthz` so a future Settings screen can probe reachability.
+- `packages/fluxora_core/lib/network/api_client.dart` — tightened `configure()` semantics: previously it always overwrote `_bearerToken` even when not passed, so the connect-screen's pre-auth `configure(localBaseUrl: …)` would silently wipe a saved token if it ever ran post-pair. Now `configure()` only updates fields that are explicitly non-null; added `clearBearerToken()` for the rare cases that need to clear. This was a latent bug; never observed in production but caught while writing the Phase 4 saveCredentials refactor.
+- `apps/mobile/lib/features/auth/data/repositories/auth_repository_impl.dart::saveCredentials` — now configures the ApiClient with `localBaseUrl + bearerToken`, fetches `GET /api/v1/info`, reads `info.remoteUrl`, persists everything via `SecureStorage.savePairing(...)`, and reconfigures the ApiClient with the remote URL when present. The `/info` fetch is wrapped in a try/catch so a paired client without remote access keeps working LAN-direct. `PairCubit` and the `AuthRepository` interface stay unchanged — the new logic hides behind the existing `saveCredentials` signature.
+- Tests: 3 new in `apps/mobile/test/features/auth/auth_repository_impl_test.dart` covering happy path, server-without-remote, and `/info` failure. Mobile suite goes 24 → 27. flutter analyze stays clean across core / mobile / desktop.
+- Mobile Settings "Remote access" row from the Phase 4 plan was **deferred**. Mobile has no Settings feature folder by design (CLAUDE.md current status: connect / auth / library / player / upgrade only — desktop is the v1 settings surface). Building a full Settings screen + cubit + repo + router entry just for one row is out of scope. Documented in the routing-plan doc; `Endpoints.healthz` is exported so it wires in trivially when the screen is built.
+- Phase 4 also tightened the `json_annotation` lower bound from `>=4.9.0` → `>=4.10.0` in core + desktop pubspecs after `json_serializable` warned at build_runner time about the prior floor.
+
+**CI fix — `go_router` SDK floor** (`3e4a5c7`):
+- CI's `flutter pub get` started failing with `go_router 17.x requires Dart SDK ^3.9.0`. The desktop pubspec was pinned at `^17.2.2`, which the local lockfile had resolved to `17.2.2` (somehow — the local Dart toolchain may report differently than CI's pinned Flutter version). Dropped the desktop pin to `^16.0.0`; resolved cleanly to `16.3.0`. Desktop router code uses only `ShellRoute` / `GoRoute` APIs that exist in 16.x; `flutter analyze` + 34-test suite stay clean.
+- Folded into the existing manual-tasks SDK-floor-bump entry alongside the `json_annotation` / `json_serializable` ceilings — all three drop together when the Dart 3.9 floor is taken.
+
+**Cross-doc audit** (uncommitted as of this entry — same chunk pending):
+- Walked the CLAUDE.md Documentation Update Protocol Step 1 list. 12 files updated to reflect Phases 2–4 of public routing as shipped:
+  - `README.md`, `CLAUDE.md`, `CONTRIBUTING.md` — current-status blocks, test counts (server 149, mobile 27, desktop 34, core 9).
+  - `docs/02_architecture/02_tech_stack.md` — Public Routing row updated from "Phase 1 ops complete; Phase 2–5 pending" to "Phases 1–4 complete; Phase 5 desktop UI pending".
+  - `docs/02_architecture/03_component_architecture.md` — Public Routing component lists Phase 2/3/4 implementation. Communication-patterns table: WAN client and Cloudflare-edge rows no longer "planned".
+  - `docs/03_data/03_data_flows.md` — Flow 4 (pairing) now shows the post-pair `/info` fetch + `savePairing` + dual-base configure.
+  - `docs/03_data/04_migration_guide.md` — test count `113` → `149` (the `113` was a stale carry-over from before the Phase-2-server-side commits).
+  - `docs/05_infrastructure/03_public_routing.md` — header rev 3 → rev 4; status changed to "Phases 1–4 complete".
+  - `docs/05_infrastructure/04_domains_and_subdomains.md` — header + tunnel-row note updated.
+  - `docs/06_security/01_security.md` — **new** "Cloudflare Tunnel Threat Model" section covering the three implications: real-IP middleware (only trusts `CF-Connecting-IP` from CF ranges), admin endpoints reject tunneled requests, HLS plane never traverses the tunnel.
+  - `docs/08_frontend/01_frontend_architecture.md` — mobile test breakdown updated (added auth_repository_impl_test, total 27).
+  - `docs/10_planning/01_roadmap.md` — public-routing row reflects Phases 1–4 complete.
+
+### Files Created / Modified
+
+**Phase 4 (committed in `07e9d0f`):**
+
+| Action | Path |
+|--------|------|
+| Modified | `packages/fluxora_core/lib/entities/server_info.dart` (added `remoteUrl`) |
+| Modified | `packages/fluxora_core/lib/entities/server_info.freezed.dart`, `server_info.g.dart` (regenerated) |
+| Modified | `packages/fluxora_core/lib/network/api_client.dart` (`configure()` non-null guard + `clearBearerToken`) |
+| Modified | `packages/fluxora_core/lib/network/endpoints.dart` (`Endpoints.healthz`) |
+| Modified | `packages/fluxora_core/pubspec.yaml`, `apps/desktop/pubspec.yaml` (json_annotation lower bound) |
+| Modified | `apps/mobile/lib/features/auth/data/repositories/auth_repository_impl.dart` (saveCredentials refactor) |
+| Created | `apps/mobile/test/features/auth/auth_repository_impl_test.dart` (3 tests) |
+| Modified | `docs/05_infrastructure/03_public_routing.md` (Phase 4 section as-built) |
+
+**CI fix (committed in `3e4a5c7`):**
+
+| Action | Path |
+|--------|------|
+| Modified | `apps/desktop/pubspec.yaml`, `apps/desktop/pubspec.lock` (go_router 17 → 16) |
+| Modified | `docs/10_planning/04_manual_tasks.md` (folded go_router into SDK-floor entry) |
+
+**Doc audit (uncommitted at time of writing — bundled with this AGENT_LOG entry per user direction):**
+
+| Action | Path |
+|--------|------|
+| Modified | `README.md`, `CLAUDE.md`, `CONTRIBUTING.md` |
+| Modified | `docs/02_architecture/02_tech_stack.md` |
+| Modified | `docs/02_architecture/03_component_architecture.md` |
+| Modified | `docs/03_data/03_data_flows.md` |
+| Modified | `docs/03_data/04_migration_guide.md` |
+| Modified | `docs/05_infrastructure/03_public_routing.md` (header rev 4 + Phase 4 fully rewritten) |
+| Modified | `docs/05_infrastructure/04_domains_and_subdomains.md` |
+| Modified | `docs/06_security/01_security.md` (new CF tunnel threat-model section) |
+| Modified | `docs/08_frontend/01_frontend_architecture.md` |
+| Modified | `docs/10_planning/01_roadmap.md` |
+
+### Commits Pushed (this session's tail)
+- `511c53b` — pin json_annotation / json_serializable ceilings.
+- `c46017d` — dual-base ApiClient (Phase 3).
+- `07e9d0f` — mobile pairing persists `remote_url` (Phase 4).
+- `3e4a5c7` — pin `go_router < 17` to fix CI.
+
+### Validation
+- `flutter analyze` — clean on `packages/fluxora_core`, `apps/mobile`, `apps/desktop`.
+- `flutter test` — `fluxora_core` 9 ✅, `apps/mobile` 27 ✅ (was 24), `apps/desktop` 34 ✅.
+- Server tests untouched this session — still 149 ✅ from Phase 2 baseline.
+
+### Decisions Made
+- **Phase 3 split into two commits.** The pin fix (slice 1) lands first because it's a CI prerequisite for the dual-base refactor in slice 2 — the lockfile from slice 2 needs the pinned ranges to be in place. The user asked to split after I drafted a single combined message; doing so produces a clean bisect trail (a future bisect through the pin commit alone would build, just on slightly older Dio/etc).
+- **Mobile Settings UI deferred.** Phase 4 step 4 ("Remote access row showing healthz reachability") would need a brand-new feature folder, route, cubit, and repo for one indicator. The desktop control panel is the canonical settings surface in v1 (CLAUDE.md). `Endpoints.healthz` is exported so the wiring is one-line when a Settings screen does land.
+- **`configure()` non-null guard.** The original behavior was "passing `null` clears", which is convenient but hides a sharp edge: any pre-auth `configure(localBaseUrl: …)` call (which doesn't pass a token) wipes a saved token. Switched to "only update what's passed" + explicit `clearBearerToken()` / `clearRemoteBaseUrl()`. Behavior change to a public method, but no in-repo caller relied on the old clearing semantics.
+- **`go_router` ceiling, not Flutter floor bump.** Bumping Flutter to ship Dart 3.9 is a separate change with its own risk surface (lints / breaking changes / lockfile churn across all three apps). Holding the ceiling lets us merge other Dependabot PRs without churn while we plan the floor move.
+
+### Blockers / Open Issues
+- **Phase 5 of public routing not started.** Desktop `SystemStatsCard` should pick up the `public_address` field with a green/red indicator, and Settings should grow a "Remote access" section showing the configured tunnel URL + tunnel-reachable status. Backend already exposes `public_address` on `/info/stats`.
+- **Mobile Settings feature does not exist.** Tracked above. No urgency — the deferred row only matters if/when mobile gains a Settings feature for other reasons.
+- **Dart SDK 3.9 floor bump pending.** Tracked in `04_manual_tasks.md`. Affects `json_annotation 4.11+`, `json_serializable 6.13+`, and `go_router 17+` simultaneously.
+- **`AGENT_LOG.md`** — this entry is written but the file is being committed alongside the doc-audit chunk per user direction. Each prior session left the log uncommitted; this is the first one bundling it with the work.
+
+### Next Agent Should
+1. Implement Phase 5 of the public routing plan: surface `public_address` on the desktop `Dashboard` (`SystemStatsCard`) with a green/red indicator; add a "Remote access" section to the desktop `SettingsScreen` showing the configured tunnel URL + reachability + a link to the runbook.
+2. Process the remaining mergeable Dependabot PRs per `04_manual_tasks.md` § "Process the Dependabot PR queue".
+3. Push the queued `dependabot.yml` Actions-major ignore-rule (still in working tree from an earlier session) before closing PRs #2 / #3 / #5 / #6 / #7.
+4. Plan the Dart 3.9 floor bump as a single coordinated PR — bumps all three pubspecs + Flutter version in `.github/workflows/*.yml`, drops the `json_annotation` / `json_serializable` / `go_router` ceilings, regenerates lockfiles, runs all four test suites locally.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran without explicit per-action OK (each commit was a separate "comit" / "do it" authorization).
+- [x] No agent / AI branding anywhere in code or commit messages.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No exceptions swallowed (the `/info` fetch fallback in `saveCredentials` logs the error and continues with `remoteUrl: null`).
+- [x] No secrets / hardcoded paths added.
+- [x] All new third-party deps reviewed (none added — pin adjustments only).
+---

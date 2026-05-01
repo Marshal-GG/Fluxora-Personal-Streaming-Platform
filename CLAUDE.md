@@ -386,20 +386,26 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation in sync with code
-- `apps/server` — **Phases 1–5 partially complete** (149 passing tests; ruff + black clean; public-routing Phase 2 server-side complete):
+- `apps/server` — **Phases 1–5 partially complete** (170 passing tests; ruff + black clean; public-routing Phases 2–4 complete):
   - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured logging, rotating log file
-  - Routers: info (+ logs), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, webhook ✅
-  - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook ✅
+  - Routers: info (+ logs + healthz), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, webhook ✅
+  - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook, system_stats (`_public_address` probe) ✅
   - Migrations 001–010 applied on startup ✅
   - Hardware encoding: `ffmpeg_service.py` reads `transcoding_encoder/preset/crf` from DB; supports libx264, h264_nvenc, h264_qsv, h264_vaapi ✅
   - Orders: `GET /api/v1/orders` (localhost) exposes Polar order + license key for manual customer delivery ✅
   - `validate_token_or_local` dependency — files/library endpoints accessible from localhost without bearer token ✅
-- `apps/mobile` — **Phases 1–4 UI complete** (14 passing tests):
+  - Public routing: `RealIPMiddleware` (CF-Connecting-IP rewrite against published Cloudflare ranges), `HLSBlockOverTunnelMiddleware`, `/healthz`, `remote_url` field on `/info`, admin endpoints reject tunneled requests ✅
+- `packages/fluxora_core` — **Phase 3 dual-base routing complete** (9 passing tests):
+  - Entities: PolarOrder, MediaFile (resume), ServerInfo (with `remoteUrl`), Library, Client, StreamSession ✅
+  - Network: dual-base `ApiClient` (per-request `LanCheck` resolves between `localBaseUrl` and `remoteBaseUrl`, throws `NoRemoteConfiguredException` off-LAN with no remote), `NetworkPathDetector`, `Endpoints.healthz` ✅
+  - Storage: `SecureStorage` with `saveRemoteUrl/getRemoteUrl/savePairing` ✅
+- `apps/mobile` — **Phases 1–4 UI complete** (27 passing tests):
   - `features/connect` — mDNS + manual IP + `MulticastLock` ✅
-  - `features/auth` — full pairing flow ✅
+  - `features/auth` — full pairing flow + post-pair `/info` fetch persists `remote_url` for off-LAN routing ✅
   - `features/library` — library grid + TMDB poster thumbnails ✅
-  - `features/player` — `media_kit` HLS; `NetworkPathDetector`; WebRTC 8 s timeout → HLS fallback; `_TransportBadge`; resume; `PlayerTierLimit` → `_TierLimitView` → `UpgradeScreen`; `_SettingsSheet` (speed/audio/subtitle) ✅
+  - `features/player` — `media_kit` HLS; `NetworkPathDetector` (now in core); WebRTC 8 s timeout → HLS fallback; `_TransportBadge`; resume; `PlayerTierLimit` → `_TierLimitView` → `UpgradeScreen`; `_SettingsSheet` (speed/audio/subtitle) ✅
   - `features/upgrade` — `UpgradeScreen` tier comparison cards + activation guide ✅
+  - `features/settings` — 🔲 **deferred** — desktop Control Panel is the v1 settings surface; "Remote access" row will land when mobile gains a settings screen
 - `apps/desktop` — **Phases 1–5 in progress** (34 passing tests; Dart SDK `>=3.8.0`):
   - Dashboard screen (server info + client stats) ✅
   - Clients screen (approve/reject/filter) ✅
@@ -409,5 +415,6 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
   - Logs screen (live server log viewer) ✅
   - Settings screen (URL, server name, tier, license key, transcoding encoder/preset/CRF) ✅
   - Transcoding screen (scaffold only; settings managed via Settings screen) 🔵
+  - Remote-access UI on Dashboard / Settings 🔲 (Phase 5 of public-routing plan)
 
-**Next:** Complete `TranscodingScreen` cubit, add hardware encoding startup validation, E2E encryption planning.
+**Next:** Phase 5 of public routing (desktop `SystemStatsCard` → `public_address` indicator, Settings → Remote access section). Then complete `TranscodingScreen` cubit, hardware encoding startup validation, E2E encryption planning.

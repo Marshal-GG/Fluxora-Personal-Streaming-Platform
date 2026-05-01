@@ -180,7 +180,7 @@ For settings/data changes: assert the row count or expected values in a fresh DB
 python -m pytest -q
 ```
 
-All 113 tests must still pass. If a previously-passing test breaks, your migration changed something the rest of the code relied on.
+The full server test suite (149 tests as of 2026-05-01) must still pass. If a previously-passing test breaks, your migration changed something the rest of the code relied on.
 
 ---
 

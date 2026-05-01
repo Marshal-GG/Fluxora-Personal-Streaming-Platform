@@ -198,11 +198,13 @@ On app restart: `setupInjector()` reads `SecureStorage` (both `serverUrl` and `r
 - No real network calls in any test — all repositories are mocked
 
 ```
-Mobile test/ (14 tests)
+Mobile test/ (27 tests)
 ├── features/
-│   ├── connect/connect_cubit_test.dart   # 4 tests
-│   ├── auth/pair_cubit_test.dart         # 5 tests
-│   └── library/library_bloc_test.dart    # 5 tests
+│   ├── connect/connect_cubit_test.dart           # 5 tests
+│   ├── auth/pair_cubit_test.dart                 # 5 tests
+│   ├── auth/auth_repository_impl_test.dart       # 3 tests (post-pair /info fetch + remote_url persistence)
+│   ├── library/library_bloc_test.dart            # 6 tests
+│   └── player/player_cubit_test.dart             # 8 tests
 └── placeholder_test.dart
 
 Desktop test/ (34 tests)

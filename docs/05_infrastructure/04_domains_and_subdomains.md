@@ -2,7 +2,7 @@
 
 > **Category:** Infrastructure
 > **Status:** Active — v1 routing live as of 2026-05-01
-> **Last Updated:** 2026-05-01 (Phase 1 ops complete — `fluxora-api.marshalx.dev` routing through Cloudflare Tunnel `fluxora-home`)
+> **Last Updated:** 2026-05-01 (Phases 1–4 of public routing complete — tunnel live; server CF middlewares + admin hardening + `/healthz` + `remote_url` on `/info`; dual-base `ApiClient` in `fluxora_core`; mobile pairing persists `remote_url`)
 
 This doc is the canonical inventory of every domain and subdomain Fluxora uses or plans to use, what each is for, what infrastructure backs it, and what state it is in. Cross-link this whenever a new public-facing surface is introduced.
 
@@ -45,7 +45,7 @@ So for `marshalx.dev`:
 |----------|---------|-----------|--------------|----------|------------|-------|
 | `fluxora.marshalx.dev` | Marketing landing page | Firebase Hosting (Next.js static export) | Cloudflare DNS | **OFF** | Let's Encrypt via Firebase | Proxy must be OFF — Firebase performs the TLS handshake directly to provision the cert. Turning proxy on breaks renewal. |
 | `uat.fluxora.marshalx.dev` | UAT / staging landing page | Firebase Hosting (`uat` channel) | Cloudflare DNS | **OFF** | Let's Encrypt via Firebase | Same TLS constraint as apex. 30-day channel TTL, auto-renewed on every push to the `uat` branch. Two-level subdomain works here only because Firebase issues the cert directly — wouldn't work behind Cloudflare proxy. |
-| `fluxora-api.marshalx.dev` | Public entry to the home Fluxora server (REST + WS control plane; media never tunneled) | Cloudflare Tunnel `fluxora-home` → home PC `:8080` | Cloudflare DNS | **ON** | Cloudflare Universal SSL | Phase 1 ops complete 2026-05-01. Single-level subdomain (hyphen instead of dot) for Universal SSL coverage. |
+| `fluxora-api.marshalx.dev` | Public entry to the home Fluxora server (REST + WS control plane; media never tunneled) | Cloudflare Tunnel `fluxora-home` → home PC `:8080` | Cloudflare DNS | **ON** | Cloudflare Universal SSL | Phases 1–4 complete 2026-05-01 (tunnel live + server CF middlewares + admin hardening + dual-base `ApiClient` + mobile pairing persists `remote_url`). Single-level subdomain (hyphen instead of dot) for Universal SSL coverage. |
 | `*.fluxora-streaming-platform.web.app` | Firebase auto-generated PR-preview channels | Firebase Hosting | Firebase | n/a | Firebase | Temporary URLs created per pull request, deleted when the PR closes. Not user-facing. |
 
 Everything above is documented in [`docs/05_infrastructure/01_infrastructure.md`](./01_infrastructure.md#web-landing-page--firebase-hosting) — this section is the canonical pointer; deployment runbooks live there.

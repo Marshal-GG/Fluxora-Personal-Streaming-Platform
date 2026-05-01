@@ -2,7 +2,7 @@
 
 > **Category:** Security  
 > **Status:** Active  
-> **Last Updated:** 2026-04-29
+> **Last Updated:** 2026-05-01 (added Cloudflare Tunnel threat model + admin-route hardening)
 
 ---
 
@@ -185,6 +185,25 @@ Rules:
 - Token hashes stored in DB with a constant-time comparison to prevent timing attacks
 - `/api/v1/webhook/polar` is externally reachable by design, but must reject requests without valid `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers
 - Webhook handlers must not log license keys, request bodies, or webhook secrets; customer email logging is permitted for diagnostic purposes in non-production logs.
+
+---
+
+## Cloudflare Tunnel Threat Model
+
+The home server may be exposed at `https://fluxora-api.marshalx.dev` via a Cloudflare Tunnel (`cloudflared` outbound WSS). The tunnel terminates TLS at Cloudflare and re-originates the request to the local server. Three implications:
+
+1. **`request.client.host` is the tunnel daemon (`127.0.0.1`), not the real caller.** Anything that uses the source IP for security or rate-limiting must read it from `CF-Connecting-IP` instead — but only when the request arrived from a known Cloudflare edge IP. `RealIPMiddleware` (`apps/server/utils/real_ip.py`) does this:
+   - On startup it fetches Cloudflare's published IPv4 + IPv6 ranges (with a hardcoded fallback baked in for offline boots).
+   - On each request, if the immediate caller is in that range AND `FLUXORA_TRUST_CF_HEADERS=true`, it rewrites `request.client.host` from `CF-Connecting-IP`.
+   - If the immediate caller is *not* a Cloudflare IP, the header is ignored — preventing arbitrary clients from spoofing their source by setting `CF-Connecting-IP` themselves.
+
+2. **Admin endpoints stay localhost-only even after the rewrite.** `require_local_caller` (and `validate_token_or_local`) reject any request whose original headers contain `CF-Connecting-IP`, regardless of the rewritten `request.client.host`. So `POST /auth/approve`, `POST /auth/reject`, `POST /auth/revoke`, `GET /orders`, `PATCH /settings`, `POST /info/restart`, `POST /info/stop`, etc. are unreachable through the tunnel.
+
+3. **Media plane never traverses the tunnel.** `HLSBlockOverTunnelMiddleware` 403s any `/api/v1/hls/*` request that arrives with `CF-Connecting-IP`. Long-lived HLS sessions over the free tunnel would burn Cloudflare's bandwidth quota and degrade non-media routes; clients are expected to use direct LAN or WebRTC P2P/TURN for media.
+
+The tunnel is opt-in per server: it activates only when `FLUXORA_PUBLIC_URL` is set. With the var unset, `GET /info` returns `remote_url: null` and clients operate LAN-direct only — the rest of the tunnel-related security stays harmless because the middlewares short-circuit when the headers aren't present.
+
+See [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) for the full plan, [`docs/05_infrastructure/runbooks/01_cloudflare_tunnel.md`](../05_infrastructure/runbooks/01_cloudflare_tunnel.md) for tunnel ops, and [`docs/10_planning/02_decisions.md`](../10_planning/02_decisions.md#adr-013-public-routing-via-cloudflare-tunnel) for the architectural rationale.
 
 ---
 
