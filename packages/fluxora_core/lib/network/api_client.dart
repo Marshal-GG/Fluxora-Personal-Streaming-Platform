@@ -52,6 +52,10 @@ class ApiClient {
 
   /// Updates base URLs and auth token — called after server pairing.
   ///
+  /// Only the named arguments that are provided (non-null) are applied;
+  /// the rest are preserved. To clear the bearer token use
+  /// [clearBearerToken]; to clear the remote URL use [clearRemoteBaseUrl].
+  ///
   /// Accepts the legacy single [baseUrl] argument as an alias for
   /// [localBaseUrl] so existing callers keep working until migrated.
   void configure({
@@ -70,7 +74,9 @@ class ApiClient {
     if (lanCheck != null) {
       _lanCheck = lanCheck;
     }
-    _bearerToken = bearerToken;
+    if (bearerToken != null) {
+      _bearerToken = bearerToken;
+    }
     _dio.options.baseUrl =
         _localBaseUrl ?? _remoteBaseUrl ?? _dio.options.baseUrl;
     _setupInterceptors();
@@ -80,6 +86,12 @@ class ApiClient {
   /// remote access on the server.
   void clearRemoteBaseUrl() {
     _remoteBaseUrl = null;
+  }
+
+  /// Clears the bearer token — used on logout / unpair.
+  void clearBearerToken() {
+    _bearerToken = null;
+    _setupInterceptors();
   }
 
   /// Test-only access to the smart-path resolver.

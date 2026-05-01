@@ -6,6 +6,7 @@ class Endpoints {
   // Info
   static const String info = '$_base/info';
   static const String logs = '$_base/info/logs';
+  static const String healthz = '$_base/healthz';
 
   // Auth
   static const String requestPair = '$_base/auth/request-pair';

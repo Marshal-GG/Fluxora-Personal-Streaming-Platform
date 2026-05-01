@@ -15,7 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$ServerInfo {
 
- String get serverName; String get version; SubscriptionTier get tier;
+ String get serverName; String get version; SubscriptionTier get tier; String? get remoteUrl;
 /// Create a copy of ServerInfo
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +28,16 @@ $ServerInfoCopyWith<ServerInfo> get copyWith => _$ServerInfoCopyWithImpl<ServerI
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is ServerInfo&&(identical(other.serverName, serverName) || other.serverName == serverName)&&(identical(other.version, version) || other.version == version)&&(identical(other.tier, tier) || other.tier == tier));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is ServerInfo&&(identical(other.serverName, serverName) || other.serverName == serverName)&&(identical(other.version, version) || other.version == version)&&(identical(other.tier, tier) || other.tier == tier)&&(identical(other.remoteUrl, remoteUrl) || other.remoteUrl == remoteUrl));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,serverName,version,tier);
+int get hashCode => Object.hash(runtimeType,serverName,version,tier,remoteUrl);
 
 @override
 String toString() {
-  return 'ServerInfo(serverName: $serverName, version: $version, tier: $tier)';
+  return 'ServerInfo(serverName: $serverName, version: $version, tier: $tier, remoteUrl: $remoteUrl)';
 }
 
 
@@ -48,7 +48,7 @@ abstract mixin class $ServerInfoCopyWith<$Res>  {
   factory $ServerInfoCopyWith(ServerInfo value, $Res Function(ServerInfo) _then) = _$ServerInfoCopyWithImpl;
 @useResult
 $Res call({
- String serverName, String version, SubscriptionTier tier
+ String serverName, String version, SubscriptionTier tier, String? remoteUrl
 });
 
 
@@ -65,12 +65,13 @@ class _$ServerInfoCopyWithImpl<$Res>
 
 /// Create a copy of ServerInfo
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? serverName = null,Object? version = null,Object? tier = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? serverName = null,Object? version = null,Object? tier = null,Object? remoteUrl = freezed,}) {
   return _then(_self.copyWith(
 serverName: null == serverName ? _self.serverName : serverName // ignore: cast_nullable_to_non_nullable
 as String,version: null == version ? _self.version : version // ignore: cast_nullable_to_non_nullable
 as String,tier: null == tier ? _self.tier : tier // ignore: cast_nullable_to_non_nullable
-as SubscriptionTier,
+as SubscriptionTier,remoteUrl: freezed == remoteUrl ? _self.remoteUrl : remoteUrl // ignore: cast_nullable_to_non_nullable
+as String?,
   ));
 }
 
@@ -155,10 +156,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String serverName,  String version,  SubscriptionTier tier)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String serverName,  String version,  SubscriptionTier tier,  String? remoteUrl)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _ServerInfo() when $default != null:
-return $default(_that.serverName,_that.version,_that.tier);case _:
+return $default(_that.serverName,_that.version,_that.tier,_that.remoteUrl);case _:
   return orElse();
 
 }
@@ -176,10 +177,10 @@ return $default(_that.serverName,_that.version,_that.tier);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String serverName,  String version,  SubscriptionTier tier)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String serverName,  String version,  SubscriptionTier tier,  String? remoteUrl)  $default,) {final _that = this;
 switch (_that) {
 case _ServerInfo():
-return $default(_that.serverName,_that.version,_that.tier);case _:
+return $default(_that.serverName,_that.version,_that.tier,_that.remoteUrl);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -196,10 +197,10 @@ return $default(_that.serverName,_that.version,_that.tier);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String serverName,  String version,  SubscriptionTier tier)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String serverName,  String version,  SubscriptionTier tier,  String? remoteUrl)?  $default,) {final _that = this;
 switch (_that) {
 case _ServerInfo() when $default != null:
-return $default(_that.serverName,_that.version,_that.tier);case _:
+return $default(_that.serverName,_that.version,_that.tier,_that.remoteUrl);case _:
   return null;
 
 }
@@ -211,12 +212,13 @@ return $default(_that.serverName,_that.version,_that.tier);case _:
 @JsonSerializable()
 
 class _ServerInfo implements ServerInfo {
-  const _ServerInfo({required this.serverName, required this.version, required this.tier});
+  const _ServerInfo({required this.serverName, required this.version, required this.tier, this.remoteUrl});
   factory _ServerInfo.fromJson(Map<String, dynamic> json) => _$ServerInfoFromJson(json);
 
 @override final  String serverName;
 @override final  String version;
 @override final  SubscriptionTier tier;
+@override final  String? remoteUrl;
 
 /// Create a copy of ServerInfo
 /// with the given fields replaced by the non-null parameter values.
@@ -231,16 +233,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _ServerInfo&&(identical(other.serverName, serverName) || other.serverName == serverName)&&(identical(other.version, version) || other.version == version)&&(identical(other.tier, tier) || other.tier == tier));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _ServerInfo&&(identical(other.serverName, serverName) || other.serverName == serverName)&&(identical(other.version, version) || other.version == version)&&(identical(other.tier, tier) || other.tier == tier)&&(identical(other.remoteUrl, remoteUrl) || other.remoteUrl == remoteUrl));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,serverName,version,tier);
+int get hashCode => Object.hash(runtimeType,serverName,version,tier,remoteUrl);
 
 @override
 String toString() {
-  return 'ServerInfo(serverName: $serverName, version: $version, tier: $tier)';
+  return 'ServerInfo(serverName: $serverName, version: $version, tier: $tier, remoteUrl: $remoteUrl)';
 }
 
 
@@ -251,7 +253,7 @@ abstract mixin class _$ServerInfoCopyWith<$Res> implements $ServerInfoCopyWith<$
   factory _$ServerInfoCopyWith(_ServerInfo value, $Res Function(_ServerInfo) _then) = __$ServerInfoCopyWithImpl;
 @override @useResult
 $Res call({
- String serverName, String version, SubscriptionTier tier
+ String serverName, String version, SubscriptionTier tier, String? remoteUrl
 });
 
 
@@ -268,12 +270,13 @@ class __$ServerInfoCopyWithImpl<$Res>
 
 /// Create a copy of ServerInfo
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? serverName = null,Object? version = null,Object? tier = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? serverName = null,Object? version = null,Object? tier = null,Object? remoteUrl = freezed,}) {
   return _then(_ServerInfo(
 serverName: null == serverName ? _self.serverName : serverName // ignore: cast_nullable_to_non_nullable
 as String,version: null == version ? _self.version : version // ignore: cast_nullable_to_non_nullable
 as String,tier: null == tier ? _self.tier : tier // ignore: cast_nullable_to_non_nullable
-as SubscriptionTier,
+as SubscriptionTier,remoteUrl: freezed == remoteUrl ? _self.remoteUrl : remoteUrl // ignore: cast_nullable_to_non_nullable
+as String?,
   ));
 }
 

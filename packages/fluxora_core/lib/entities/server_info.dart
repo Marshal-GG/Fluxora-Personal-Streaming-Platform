@@ -10,6 +10,7 @@ abstract class ServerInfo with _$ServerInfo {
     required String serverName,
     required String version,
     required SubscriptionTier tier,
+    String? remoteUrl,
   }) = _ServerInfo;
 
   factory ServerInfo.fromJson(Map<String, dynamic> json) =>

@@ -299,12 +299,40 @@ The same module exposes a `LanCheck` typedef (`Future<bool> Function(String)`) w
 - `apps/mobile/lib/core/di/injector.dart` — restores both `serverUrl` and `remoteUrl` from `SecureStorage` on app start and calls `ApiClient.configure(localBaseUrl: …, remoteBaseUrl: …)`.
 - All remaining callers (`auth_repository_impl`, `server_discovery_repository_impl`, `connect_screen`, desktop `injector`/`settings_cubit`/tests) now pass `localBaseUrl:` instead of the deprecated `baseUrl:`. `flutter analyze` is clean across `fluxora_core`, mobile, and desktop.
 
-### Phase 4 — Mobile client
+### Phase 4 — Mobile client ✅ Complete (data path); Settings UI deferred
 
-1. **Pairing screen**: after the LAN pair completes, fetch `GET /api/v1/info` from the server which now returns `{ "remote_url": "https://fluxora-api.marshalx.dev" }` (server reads from its own settings — see 4.4). Save both URLs to `SecureStorage`.
-2. **Library / Files / Stream**: no per-screen changes — `ApiClient` routes automatically.
-3. **WebRTC signaling**: `WebRtcSignalingService` already builds its WS URL from `ApiClient` base. Will pick up `wss://fluxora-api.marshalx.dev/api/v1/ws/signal` on WAN automatically.
-4. **Settings**: add a "Remote access" row showing whether `fluxora-api.marshalx.dev` is reachable (HEAD `/healthz`).
+#### 4.1 `ServerInfo` entity gains `remoteUrl` ✅
+
+`packages/fluxora_core/lib/entities/server_info.dart` adds `String? remoteUrl` (auto-mapped to the JSON `remote_url` via `field_rename: snake` in `build.yaml`). Generated `*.freezed.dart` / `*.g.dart` rebuilt via `dart run build_runner build --delete-conflicting-outputs`.
+
+#### 4.2 Pairing flow persists `remote_url` ✅
+
+`apps/mobile/lib/features/auth/data/repositories/auth_repository_impl.dart::saveCredentials` now:
+
+1. Configures `ApiClient` with `localBaseUrl + bearerToken` (so the next call uses the freshly paired server).
+2. Calls `GET /api/v1/info` and reads `info.remoteUrl`. The fetch is wrapped in a try/catch — failure is logged but non-fatal so a paired client without remote access keeps working LAN-direct.
+3. Persists everything atomically through `SecureStorage.savePairing(authToken, serverUrl, clientId, remoteUrl)`.
+4. If a remote URL came back, calls `_apiClient.configure(remoteBaseUrl: …)` so subsequent off-LAN requests route through the tunnel.
+
+`PairCubit` and the `AuthRepository` interface are unchanged — the new behavior is hidden behind the existing `saveCredentials` signature.
+
+`ApiClient.configure()` was tightened during this slice: previously it always overwrote `_bearerToken` (even when not passed), which meant the connect-screen's pre-auth `configure(localBaseUrl: …)` would wipe a saved token if it ever ran post-pair. It now only updates the fields that are non-null, with explicit `clearBearerToken()` and `clearRemoteBaseUrl()` for the rare cases that need to clear.
+
+Test coverage: `apps/mobile/test/features/auth/auth_repository_impl_test.dart` (3 tests) covering happy path, no-remote server, and `/info` failure.
+
+#### 4.3 Library / Files / Stream — no changes ✅
+
+`ApiClient` does the routing per request. None of the per-screen repositories needed touches.
+
+#### 4.4 WebRTC signaling — no changes ✅
+
+`WebRtcSignalingService` builds its WS URL from `ApiClient`'s resolved base; it will pick up `wss://fluxora-api.marshalx.dev/api/v1/ws/signal` automatically when off-LAN.
+
+#### 4.5 Mobile Settings — deferred 🔲
+
+The plan called for a "Remote access" row showing whether `fluxora-api.marshalx.dev` is reachable via `HEAD /api/v1/healthz`. The mobile app currently has **no** Settings feature folder — by design, the Desktop Control Panel is the canonical v1 settings surface (see `CLAUDE.md` Current Status: mobile features are connect / auth / library / player / upgrade only). Building a full settings screen + cubit + repo + router entry just for one row is out of scope for this slice.
+
+Tracked as a follow-up: when mobile gains a Settings screen (theme / language / unpair / etc.), the Remote-access row and a `_apiClient.get(Endpoints.healthz)` probe wire in trivially. `Endpoints.healthz` is already exported from `fluxora_core` for that use.
 
 ### Phase 5 — Desktop control panel
 

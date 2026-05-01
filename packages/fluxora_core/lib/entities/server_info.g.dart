@@ -10,6 +10,7 @@ _ServerInfo _$ServerInfoFromJson(Map<String, dynamic> json) => _ServerInfo(
   serverName: json['server_name'] as String,
   version: json['version'] as String,
   tier: $enumDecode(_$SubscriptionTierEnumMap, json['tier']),
+  remoteUrl: json['remote_url'] as String?,
 );
 
 Map<String, dynamic> _$ServerInfoToJson(_ServerInfo instance) =>
@@ -17,6 +18,7 @@ Map<String, dynamic> _$ServerInfoToJson(_ServerInfo instance) =>
       'server_name': instance.serverName,
       'version': instance.version,
       'tier': _$SubscriptionTierEnumMap[instance.tier]!,
+      'remote_url': instance.remoteUrl,
     };
 
 const _$SubscriptionTierEnumMap = {

@@ -13,7 +13,7 @@ dependencies:
   dio: ^5.4.0
   flutter_secure_storage: ^9.0.0
   freezed_annotation: ^3.0.0
-  json_annotation: '>=4.9.0 <4.11.0'
+  json_annotation: '>=4.10.0 <4.11.0'
   logger: ^2.7.0
   connectivity_plus: ^7.1.1
   equatable: ^2.0.8
