@@ -1,7 +1,7 @@
 # System Architecture Overview
 
 > **Category:** Architecture  
-> **Status:** Active - Updated 2026-04-29 (Polar webhook integration added)
+> **Status:** Active - Updated 2026-05-01 (Client Groups capability added)
 
 ---
 
@@ -58,6 +58,7 @@
 | PC Control Panel | Desktop server management UI | Flutter Desktop |
 | TMDB Integration | Metadata fetching for media libraries | TMDB REST API |
 | Polar Webhook | Paid-order license key issuance | Standard Webhooks + HMAC-SHA256 |
+| Client Groups | Bundle paired clients into groups; apply shared library-access and time-window restrictions | SQLite (`groups`, `group_members`, `group_restrictions`); enforced at stream-gate |
 
 ---
 

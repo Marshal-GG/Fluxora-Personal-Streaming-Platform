@@ -12,7 +12,7 @@ from slowapi.errors import RateLimitExceeded
 
 from config import get_data_dir, secure_db_file, settings
 from database.db import close_db, init_db
-from routers import auth, files, info, library, orders, signal, webhook, ws
+from routers import auth, files, groups, info, library, orders, signal, webhook, ws
 from routers import settings as settings_router
 from routers.stream import hls_router
 from routers.stream import router as stream_router
@@ -244,6 +244,7 @@ app.include_router(info.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(files.router, prefix="/api/v1/files", tags=["files"])
 app.include_router(library.router, prefix="/api/v1/library", tags=["library"])
+app.include_router(groups.router, prefix="/api/v1/groups", tags=["groups"])
 app.include_router(stream_router, prefix="/api/v1/stream", tags=["stream"])
 app.include_router(hls_router, prefix="/api/v1/hls", tags=["hls"])
 app.include_router(ws.router, prefix="/api/v1/ws", tags=["ws"])

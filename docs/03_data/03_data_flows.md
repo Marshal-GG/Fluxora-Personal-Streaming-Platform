@@ -1,7 +1,7 @@
 # Data Flow Diagrams
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-04-29 (Polar payment webhook flow added)
+> **Status:** Active - Updated 2026-05-01 (Polar payment webhook flow added; stream-gate group enforcement flow added)
 
 ---
 
@@ -138,6 +138,75 @@ Notes:
 
 ---
 
+---
+
+## Flow 6 — Stream-Gate Group Enforcement
+
+When a client requests `POST /api/v1/stream/start/{file_id}`, the stream router
+performs a group-restriction check before the existing tier-concurrency check:
+
+```
+[Flutter Client]
+    │
+    └──▶ POST /api/v1/stream/start/{file_id}
+
+[FastAPI Server — routers/stream.py]
+    │
+    ├──▶ Validate bearer token → resolve client_id
+    ├──▶ Fetch media_file row → get library_id
+    │
+    ├──▶ group_service.get_effective_restrictions(client_id)
+    │       │
+    │       └──▶ Query: JOIN group_members → groups → group_restrictions
+    │                   WHERE g.status = 'active' AND m.client_id = ?
+    │
+    │           Combine across all matching rows:
+    │             allowed_libraries  → set intersection (most restrictive)
+    │             bandwidth_cap_mbps → minimum (most restrictive)
+    │             time_windows       → collected as a list (AND-combined)
+    │             max_rating         → last non-null value (advisory)
+    │
+    │           Returns: EffectiveRestrictions(
+    │             allowed_libraries: frozenset | None,
+    │             bandwidth_cap_mbps: int | None,
+    │             time_windows: tuple[dict, ...],
+    │             max_rating: str | None
+    │           )
+    │
+    ├──▶ group_service.reason_to_deny(restrictions, library_id=file.library_id)
+    │       │
+    │       ├── If allowed_libraries is not None AND library_id not in set
+    │       │       → return "Library not allowed for this client's group(s)"
+    │       │
+    │       ├── For each time_window in time_windows:
+    │       │       if current server-local time is NOT inside the window
+    │       │           → return "Outside the allowed streaming time window"
+    │       │
+    │       └── Return None  ← stream is allowed to proceed
+    │
+    ├── reason_to_deny returns a string → 403 Forbidden with the reason string
+    │
+    └── reason_to_deny returns None
+            │
+            └──▶ [Existing tier-concurrency check → FFmpeg spawn → session creation]
+```
+
+### Multi-group intersection semantics
+
+A client can be in multiple groups. The effective restriction is the
+**most restrictive** combination across every active group:
+
+| Field | Combine rule | Example |
+|-------|-------------|---------|
+| `allowed_libraries` | Set intersection — library must be in *every* group's allow-list | Group A allows `[lib-1, lib-2]`; Group B allows `[lib-2, lib-3]` → effective = `{lib-2}` |
+| `bandwidth_cap_mbps` | Minimum — lowest cap wins | Group A caps at 20 Mbps; Group B caps at 10 Mbps → effective = 10 Mbps |
+| `time_windows` | AND-combined — stream must satisfy *every* group's window | Group A: 15:00–21:00; Group B: 08:00–22:00 → must be within both windows simultaneously |
+| `max_rating` | Advisory only in v1 — recorded but not enforced | `media_files` has no rating column; enforcement deferred |
+
+Inactive groups (`status = 'inactive'`) are completely ignored — they contribute no restrictions and their members are treated as if unrestricted.
+
+---
+
 ## Event Flows
 
 | Event | Trigger | Action |
@@ -148,3 +217,4 @@ Notes:
 | `library.scan_complete` | Scan finishes | Update `last_scanned`; notify panel |
 | `client.pair_request` | New client connects | Notify control panel for approval |
 | `license.issued` | Polar paid order webhook | Store idempotent license issuance row in `polar_orders` |
+| `stream.denied` | Client in a restricted group attempts to stream outside policy | Return `403` with reason string; no session or FFmpeg process created |

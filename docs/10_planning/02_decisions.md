@@ -1,7 +1,7 @@
 # Architecture Decision Records (ADR)
 
 > **Category:** Planning  
-> **Status:** Active — Sourced from Planning Session (2026-04-27); ADR-013 added 2026-05-01
+> **Status:** Active — Sourced from Planning Session (2026-04-27); ADR-013 added 2026-05-01; ADR-014/015 added 2026-05-01
 
 ---
 
@@ -19,6 +19,24 @@
   - Cloudflare can technically inspect request bodies via WAF, but Fluxora disables WAF inspection for the tunnel hostname; bearer tokens and license keys are never logged regardless.
   - Tunnel is a single point of failure — if Cloudflare is down, WAN access fails. Acceptable for v1; multi-region or DDNS fallback considered and rejected (would re-introduce port-forwarding requirement, defeating the purpose).
   - Full plan: [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md). Domain inventory: [`docs/05_infrastructure/04_domains_and_subdomains.md`](../05_infrastructure/04_domains_and_subdomains.md).
+
+---
+
+### ADR-015 — Multi-Group Restrictions Combine via Intersection (Most-Restrictive Wins)
+- **Date:** 2026-05-01
+- **Status:** Accepted
+- **Context:** A client can belong to multiple groups simultaneously (e.g., "Family" and "Kids"), each with its own restriction set. A policy must be chosen for how overlapping restrictions combine.
+- **Decision:** `group_service.get_effective_restrictions(client_id)` computes the intersection of all active groups' `allowed_libraries` lists (only libraries present in every group are permitted) and the narrowest overlapping `time_window` (latest start, earliest end). For `bandwidth_cap_mbps` and `max_rating`, the lowest value wins. A client with no group membership has no restrictions applied.
+- **Consequences:** The strictest applicable rule always prevails, which is the safe default for parental controls and bandwidth management. Operators must be aware that adding a client to a more-permissive group does not loosen restrictions if a stricter group already applies.
+
+---
+
+### ADR-014 — Group Restrictions Enforced at Stream-Gate, Not in Transport Layer
+- **Date:** 2026-05-01
+- **Status:** Accepted
+- **Context:** Client group restrictions (library allowlist, time window) could be enforced at the network/transport layer (e.g., middleware) or at the application layer within the stream-start handler.
+- **Decision:** Enforcement is a hook inside `routers/stream.py:start_stream`. Before spawning FFmpeg, the handler calls `group_service.get_effective_restrictions(client_id)` followed by `reason_to_deny(file, restrictions)` and returns HTTP 403 with a reason string if denied. `bandwidth_cap_mbps` and `max_rating` are recorded on the session row but are advisory in v1 — not actively enforced in the transport layer yet.
+- **Consequences:** The restriction logic is co-located with the stream lifecycle, making it easy to test in isolation and extend. Middleware-level enforcement (e.g., rate-limiting by cap) can be layered on top in a later phase without changing the gate logic.
 
 ---
 

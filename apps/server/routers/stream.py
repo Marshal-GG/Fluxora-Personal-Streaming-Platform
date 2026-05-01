@@ -14,7 +14,7 @@ from config import settings
 from database.db import get_db
 from models.stream_session import StreamSessionResponse, StreamStartResponse
 from routers.deps import LOOPBACK, bearer, require_local_caller, validate_token
-from services import ffmpeg_service, library_service, settings_service
+from services import ffmpeg_service, group_service, library_service, settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,15 @@ async def start_stream(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
         )
+
+    # Enforce group restrictions (allowed libraries / time window).
+    # Bandwidth cap and max-rating are advisory in v1.
+    restrictions = await group_service.get_effective_restrictions(db, client["id"])
+    deny_reason = group_service.reason_to_deny(
+        restrictions, library_id=file_row.get("library_id")
+    )
+    if deny_reason:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=deny_reason)
 
     # Enforce tier-aware stream concurrency limit (reads from user_settings DB row)
     max_streams = await settings_service.get_max_concurrent_streams(db)
