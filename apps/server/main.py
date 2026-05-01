@@ -30,6 +30,7 @@ from routers.stream import hls_router
 from routers.stream import router as stream_router
 from services.discovery_service import start_discovery, stop_discovery
 from services.ffmpeg_service import _ffmpeg_bin
+from services.license_service import emit_license_expiry_warnings
 from utils.real_ip import (
     HLSBlockOverTunnelMiddleware,
     RealIPMiddleware,
@@ -200,6 +201,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 8. Warn if FFmpeg is missing
     _check_ffmpeg()
+
+    # 8a. Emit license expiry warning if the stored key is near/past expiry
+    try:
+        from database.db import get_db as _get_db
+
+        _db = await _get_db()
+        async with _db.execute(
+            "SELECT license_key FROM user_settings WHERE id = 1"
+        ) as _cur:
+            _row = await _cur.fetchone()
+        _license_key: str | None = _row["license_key"] if _row else None
+        await emit_license_expiry_warnings(_db, _license_key)
+    except Exception:
+        logger.warning("License expiry check failed", exc_info=True)
 
     # 9. Start mDNS broadcast
     await start_discovery(settings.fluxora_server_name, settings.fluxora_port)

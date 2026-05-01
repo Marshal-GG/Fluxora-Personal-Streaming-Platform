@@ -14,7 +14,13 @@ from config import settings
 from database.db import get_db
 from models.stream_session import StreamSessionResponse, StreamStartResponse
 from routers.deps import LOOPBACK, bearer, require_local_caller, validate_token
-from services import ffmpeg_service, group_service, library_service, settings_service
+from services import (
+    ffmpeg_service,
+    group_service,
+    library_service,
+    notification_service,
+    settings_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +106,18 @@ async def start_stream(
         ) from exc
     except Exception:
         logger.error("FFmpeg failed to start: session=%s", session_id, exc_info=True)
+        try:
+            await notification_service.create(
+                db,
+                type="error",
+                category="transcode",
+                title="Transcode failed",
+                message=f"Could not start playback for {file_row['name']}.",
+                related_kind="session",
+                related_id=session_id,
+            )
+        except Exception:
+            logger.warning("Failed to emit transcode notification", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Transcoding service unavailable",

@@ -86,6 +86,35 @@ async def get_storage_breakdown(db: aiosqlite.Connection) -> dict:
                 logger.warning("Could not stat library root %s: %s", raw, exc)
                 continue
 
+    if capacity_bytes > 0 and total_bytes / capacity_bytes > 0.9:
+        percent = round(total_bytes / capacity_bytes * 100, 1)
+        try:
+            from services import notification_service
+
+            async with db.execute(
+                """
+                SELECT id FROM notifications
+                 WHERE category = 'storage'
+                   AND related_id = 'primary'
+                   AND created_at > datetime('now', '-1 day')
+                   AND dismissed_at IS NULL
+                 LIMIT 1
+                """
+            ) as _cur:
+                _existing = await _cur.fetchone()
+            if _existing is None:
+                await notification_service.create(
+                    db,
+                    type="warning",
+                    category="storage",
+                    title="Storage almost full",
+                    message=f"{percent}% of your library disk is used.",
+                    related_kind="storage",
+                    related_id="primary",
+                )
+        except Exception:
+            logger.warning("Failed to emit storage notification", exc_info=True)
+
     return {
         "total_bytes": total_bytes,
         "capacity_bytes": capacity_bytes,

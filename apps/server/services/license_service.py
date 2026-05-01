@@ -21,6 +21,8 @@ import logging
 import os
 from datetime import date, timedelta
 
+import aiosqlite
+
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -132,6 +134,88 @@ def validate_key(key: str | None) -> LicenseResult:
         tier=_CODE_TO_TIER[tier_code],
         expires=expiry,
     )
+
+
+async def emit_license_expiry_warnings(
+    db: aiosqlite.Connection, key: str | None
+) -> None:
+    """Emit a notification if the configured key is expired or expiring within 30 days.
+
+    Idempotent: skips if a matching notification was already created in the last day.
+    """
+    from services import notification_service
+
+    result = validate_key(key)
+
+    if result.valid is False and result.reason == "expired":
+        related_id = key or "unknown"
+        async with db.execute(
+            """
+            SELECT id FROM notifications
+             WHERE category = 'license'
+               AND related_id = ?
+               AND created_at > datetime('now', '-1 day')
+               AND dismissed_at IS NULL
+             LIMIT 1
+            """,
+            (related_id,),
+        ) as cur:
+            if await cur.fetchone() is not None:
+                return
+        try:
+            await notification_service.create(
+                db,
+                type="error",
+                category="license",
+                title="License expired",
+                message="Renew to keep your tier active.",
+                related_kind="license",
+                related_id=related_id,
+            )
+        except Exception:
+            logger.warning("Failed to emit license expiry notification", exc_info=True)
+        return
+
+    if result.valid is True and result.expires and result.expires != LIFETIME_DATE:
+        try:
+            exp_date = date(
+                int(result.expires[:4]),
+                int(result.expires[4:6]),
+                int(result.expires[6:8]),
+            )
+        except (ValueError, TypeError):
+            return
+
+        days_left = (exp_date - date.today()).days
+        if days_left <= 30:
+            related_id = key or "unknown"
+            async with db.execute(
+                """
+                SELECT id FROM notifications
+                 WHERE category = 'license'
+                   AND related_id = ?
+                   AND created_at > datetime('now', '-1 day')
+                   AND dismissed_at IS NULL
+                 LIMIT 1
+                """,
+                (related_id,),
+            ) as cur:
+                if await cur.fetchone() is not None:
+                    return
+            try:
+                await notification_service.create(
+                    db,
+                    type="warning",
+                    category="license",
+                    title="License expires soon",
+                    message=f"Your license expires on {result.expires}.",
+                    related_kind="license",
+                    related_id=related_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to emit license expiry warning notification", exc_info=True
+                )
 
 
 def generate_key(tier: str, days: int | None = None, nonce: str | None = None) -> str:

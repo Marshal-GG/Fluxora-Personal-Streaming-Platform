@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 
 import aiosqlite
 
+from services import notification_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,6 +49,18 @@ async def create_pair_request(
     logger.info(
         "Pair request from %s (%s) — client_id=%s", device_name, platform, client_id
     )
+    try:
+        await notification_service.create(
+            db,
+            type="info",
+            category="client",
+            title="New pairing request",
+            message=f"{device_name} ({platform}) wants to pair.",
+            related_kind="client",
+            related_id=client_id,
+        )
+    except Exception:
+        logger.warning("Failed to emit pairing notification", exc_info=True)
 
 
 async def get_client(db: aiosqlite.Connection, client_id: str) -> aiosqlite.Row | None:
