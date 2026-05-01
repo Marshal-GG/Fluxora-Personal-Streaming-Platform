@@ -127,42 +127,72 @@ class _ServerInfoCard extends StatelessWidget {
                 ],
               ),
             ),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppColors.success.withAlpha(30),
-                borderRadius: BorderRadius.circular(9999),
-                border: Border.all(
-                  color: AppColors.success.withAlpha(80),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 7,
-                    height: 7,
-                    decoration: const BoxDecoration(
-                      color: AppColors.success,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  const Text(
-                    'Online',
-                    style: TextStyle(
-                      color: AppColors.success,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
+            const _StatusPill(
+              label: 'Online',
+              color: AppColors.success,
             ),
+            const SizedBox(width: 8),
+            _RemoteAccessPill(remoteUrl: info.remoteUrl),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withAlpha(30),
+        borderRadius: BorderRadius.circular(9999),
+        border: Border.all(color: color.withAlpha(80)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RemoteAccessPill extends StatelessWidget {
+  const _RemoteAccessPill({required this.remoteUrl});
+
+  final String? remoteUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final configured = remoteUrl != null && remoteUrl!.isNotEmpty;
+    final color = configured ? AppColors.accent : AppColors.textMuted;
+    final label = configured ? 'Remote: on' : 'Remote: off';
+    return Tooltip(
+      message: configured
+          ? 'Off-LAN clients can reach this server at $remoteUrl'
+          : 'No FLUXORA_PUBLIC_URL configured — off-LAN clients cannot reach this server',
+      child: _StatusPill(label: label, color: color),
     );
   }
 }
