@@ -135,6 +135,20 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 - **Trigger:** before announcing the project publicly / accepting first real paying customer.
 - **Owner:** project owner.
 
+### 🔲 Process the Dependabot PR queue (19 PRs from first run)
+
+- **What:** triage and merge per the plan in [`runbooks/11_dependabot_triage.md`](../05_infrastructure/runbooks/11_dependabot_triage.md).
+  - **Round 1 — instant wins (10 PRs):** #4, #8, #9, #10, #11, #14, #15, #16, #17, #19. All passed local tests against current `main`. Merge from GitHub UI one at a time, watching CI between each.
+  - **Round 2 — paired (2 PRs):** #12 (`pytest-asyncio 1.3`) **then** #13 (`pytest 9`). #13 alone fails install because of pytest-asyncio constraint; #12 first unblocks #13.
+  - **Round 3 — needs prep, already done (1 PR):** #20 (`flutter_lints` 6 in core). Prep commit `9549645` is on `main` (removed `library fluxora_core;` declaration that flutter_lints 6 flags). Click "Update branch" on the PR, then merge.
+  - **Close — coupled blocker (1 PR):** #18 (`flutter_secure_storage 10` in core). Bumping it in `packages/fluxora_core` alone breaks `apps/mobile` and `apps/desktop`, both of which separately pin `^9.x`. Needs a manual cross-pubspec PR — open one when ready.
+  - **Close — Action majors (5 PRs):** #2, #3, #5, #6, #7. The pending `dependabot.yml` ignore-rule edit prevents these from being re-opened.
+- **Why:** outstanding PR queue noise; CI signals dilute; merge confidence decays the longer they sit.
+- **Prereqs:** push the `dependabot.yml` ignore-rule for Actions majors before closing #2/#3/#5/#6/#7 (otherwise they'll re-open on next Dependabot run).
+- **Time:** ~30 min total (~1 min per merge × 13 merges + ~5 min for paired/prep dance).
+- **Doc:** [`runbooks/11_dependabot_triage.md`](../05_infrastructure/runbooks/11_dependabot_triage.md).
+- **Owner:** project owner.
+
 ### 🔲 Long-term: decide whether to register `fluxora.cloud`
 
 - **What:** if v2 multi-tenant becomes a real plan, register `fluxora.cloud` (or another single-purpose TLD) so per-user subdomains (`<user>.fluxora.cloud`) get free Universal SSL. Alternative: pay $10/mo for Cloudflare ACM on `*.fluxora.marshalx.dev`.

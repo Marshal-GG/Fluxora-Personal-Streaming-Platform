@@ -571,3 +571,58 @@ The full doc-update protocol per CLAUDE.md §3 (data models, API contracts, sche
 - [x] No secrets / hardcoded paths added (Sentry DSN comes from env; devcontainer mounts host `~/.fluxora`).
 - [x] All new third-party deps version-checked (`sentry-sdk==2.58.0` confirmed latest at pin time).
 ---
+
+## [2026-05-01] — Mirror workflow fix; Dependabot first-run triage
+**Phase:** Phase 5 (Advanced Features) — Maintenance / dep hygiene
+**Status:** Complete
+
+### What Was Done
+- **Mirror-public workflow bug fix.** The `Commit clean state` step in `mirror-public.yml` interpolated `${{ steps.msg.outputs.message }}` directly into `git commit -m "..."`, which broke when the commit body contained literal quotes — bash split the rest of the message into pathspecs. Symptom seen on the `625393e` mirror run (the message had `"tunneled hostnames must be single-level"` literal quotes inside). Fix: pass the message via env var + `printf '%s\n' "$COMMIT_MSG" | git commit -F -`. Same fix applied to the example in `runbooks/03_github_ci_cd.md` so future projects don't inherit the bug. Landed as commit `814894f`.
+- **Dependabot first-run triage.** 19 PRs opened (first time bot fired against this repo after the new `dependabot.yml`). Triaged each by checking the branch's pubspec/pyproject locally + running tests / analyze / build:
+  - **10 safe to merge (Tier 1+2)**: python-runtime group (FastAPI 0.111→0.136 + 6 others), black 24→26, flutter_lints 4→6 (mobile), get_it 7→9 (mobile), go_router 13→17 (mobile), core dart-deps group, desktop dart-deps group, typescript 5→6 (web), @types/node 22→25 (web), eslint 9→10 (web).
+  - **1 paired-only**: pytest 9 fails install resolution against current pytest-asyncio 0.23 → must merge with pytest-asyncio 1.3 in same window.
+  - **1 needs prep first**: flutter_lints 6 in `packages/fluxora_core` flags `unnecessary_library_name` on the redundant `library fluxora_core;` declaration in the barrel file. Removed the declaration in commit `9549645` and pushed to `main`; PR #20 can now be merged.
+  - **1 blocked**: flutter_secure_storage 9→10 in core breaks `apps/mobile` and `apps/desktop` (both separately pin `^9.x`). Close PR; open a manual cross-pubspec bump when ready.
+  - **5 Actions majors**: pure version bumps; closing per the pre-edited `dependabot.yml` ignore rule for `actions/* version-update:semver-major` (not yet committed — pending).
+- **New runbook 11**: `docs/05_infrastructure/runbooks/11_dependabot_triage.md`, ~200 lines. Generic process for handling a flood of bot PRs — tier classification, three coupling traps (cross-package pin coordination, paired major bumps, new-lint warnings), test methodology, merge order rules, when to bail. Captures the lessons from this triage so future Dependabot floods (Fluxora's or another project's) take 30 min not 3 hours.
+- **`docs/10_planning/04_manual_tasks.md` updated**: new "Process the Dependabot PR queue" entry detailing the round-by-round merge plan.
+- **`runbooks/README.md`** index updated to include runbook 11.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `docs/05_infrastructure/runbooks/11_dependabot_triage.md` |
+| Modified | `.github/workflows/mirror-public.yml` (env-var + stdin fix) |
+| Modified | `docs/05_infrastructure/runbooks/03_github_ci_cd.md` (same fix in example) |
+| Modified | `packages/fluxora_core/lib/fluxora_core.dart` (removed `library fluxora_core;`) |
+| Modified | `docs/05_infrastructure/runbooks/README.md` (added runbook 11) |
+| Modified | `docs/10_planning/04_manual_tasks.md` (added Dependabot triage entry) |
+
+### Commits Pushed (this session)
+- `814894f` — mirror workflow env-var + stdin fix
+- `9549645` — `library fluxora_core;` removal (PR #20 prep)
+
+### Decisions Made
+- **Mirror-workflow secret-substitution pattern.** `git commit -F -` over `git commit -m "..."` for any message that flows through `${{ steps.*.outputs.* }}`. Stdin reading is byte-faithful; arg substitution is shell-parsed. Documented in runbook 03 so future projects copy the right pattern.
+- **Cross-package pin coordination is a Dependabot blind spot.** When the same dep appears in multiple `pubspec.yaml` / `pyproject.toml` files at coordinated versions, Dependabot's per-file PR doesn't catch the coupling. The runbook 11 "Coupling traps" section now flags this; do a `grep` across all manifests before merging any major bump.
+- **Action majors are net-negative for solo projects.** Five action-major-bump PRs in this batch; closing all of them. Dependabot now configured (locally — pending push) to ignore `version-update:semver-major` for `actions/*`.
+- **PR #20 fix-on-prep.** Could have merged the bump and fixed the lint warning afterward, but `flutter analyze` is in CI for the package — would have left `main` red until the fix landed. Cleaner to land the fix first.
+
+### Blockers / Open Issues
+- **`dependabot.yml` ignore-rule for Actions majors not yet committed.** Until pushed, closing PRs #2/#3/#5/#6/#7 will trigger re-open on next Dependabot run. Either commit the ignore rule first or accept that closing them is temporary.
+- **PR #18 (flutter_secure_storage 10)** is closed in plan but the cross-pubspec bump itself still needs to happen eventually. Tracked in `04_manual_tasks.md`.
+- **Mirror workflow not yet validated** against the env-var fix end-to-end. Next push to `main` will be the first run with the fix in place.
+
+### Next Agent Should
+1. Merge the 13 mergeable Dependabot PRs per the plan in `04_manual_tasks.md` § "Process the Dependabot PR queue". Wait for CI green between each.
+2. Commit + push the queued `dependabot.yml` ignore-rule for Actions majors (pending in working tree). Then close PRs #2/#3/#5/#6/#7 from the GitHub UI.
+3. Implement Phase 2 of the public routing plan (`/healthz`, CORS, real-IP middleware, `remote_url` in `/info`) — still the immediate code work after dep hygiene is done.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran without explicit per-action OK (`814894f`, `9549645` were both authorized).
+- [x] No agent / AI branding anywhere in code or docs.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No exceptions swallowed.
+- [x] No secrets / hardcoded paths added.
+- [x] All new third-party deps tested locally before recommending merge.
+---

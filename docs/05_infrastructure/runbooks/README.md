@@ -29,8 +29,9 @@ Numbered roughly in the order you'd hit them when starting a new project from sc
 | **8** | [Devcontainer / consistent local dev](./08_devcontainer.md) | `.devcontainer/` so contributors get an identical dev env in seconds. Powers GitHub Codespaces too |
 | **9** | [Monitoring & observability](./09_monitoring_and_observability.md) | Minimum-viable uptime checks (UptimeRobot), error reporting (Sentry), structured logging |
 | **10** | [PyInstaller standalone-binary distribution](./10_pyinstaller_distribution.md) | Bundle a Python app into per-OS executables for end-users who don't have Python |
+| **11** | [Dependabot PR triage](./11_dependabot_triage.md) | Working through 10–30 dependency-bump PRs that arrive after a long gap. Tier classification, coupling traps, merge order |
 
-The runbooks reference each other where relevant. Greenfield order is roughly 0 → 7 → 5 → (1 or 2) → 3 → 4 → 6 → 8 → 9 → 10 depending on what your project actually needs.
+The runbooks reference each other where relevant. Greenfield order is roughly 0 → 7 → 5 → (1 or 2) → 3 → 4 → 6 → 8 → 9 → 10 depending on what your project actually needs. Runbook 11 kicks in any time after CI is wired (3) and Dependabot is configured (also 3).
 
 ---
 
