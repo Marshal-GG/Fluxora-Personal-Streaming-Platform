@@ -25,6 +25,20 @@ class ServerInfoResponse(BaseModel):
     tier: str
 
 
+class SystemStatsResponse(BaseModel):
+    uptime_seconds: int
+    lan_ip: str | None
+    public_address: str | None
+    internet_connected: bool
+    cpu_percent: float
+    ram_percent: float
+    ram_used_bytes: int
+    ram_total_bytes: int
+    network_in_mbps: float
+    network_out_mbps: float
+    active_streams: int
+
+
 class UserSettingsResponse(BaseModel):
     server_name: str
     subscription_tier: str

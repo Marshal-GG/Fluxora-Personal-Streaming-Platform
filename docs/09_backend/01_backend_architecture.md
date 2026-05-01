@@ -1,7 +1,7 @@
 # Backend Architecture
 
 > **Category:** Backend  
-> **Status:** Active - Updated 2026-05-01 (Phase 5: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint; legacy 4-part license keys removed; 108 tests)
+> **Status:** Active - Updated 2026-05-01 (Phase 5: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint, live system stats + storage breakdown, info actions; legacy 4-part license keys removed; 113 tests)
 
 ---
 
@@ -43,13 +43,13 @@ server/
 │       └── 010_transcoding_settings.sql # adds transcoding_encoder/preset/crf to user_settings
 │
 ├── routers/
-│   ├── info.py             # GET /api/v1/info, GET /api/v1/info/logs ✅
+│   ├── info.py             # GET /api/v1/info, /info/logs, /info/stats; POST /info/restart, /info/stop ✅
 │   ├── auth.py             # /auth/* ✅ (request-pair, status, approve, reject, revoke)
 │   ├── deps.py             # validate_token, validate_token_or_local, require_local_caller FastAPI dependencies ✅
 │   ├── files.py            # GET/POST(upload)/DELETE /api/v1/files; validate_token_or_local ✅
-│   ├── library.py          # GET/POST /api/v1/library, GET/DELETE /{id}, POST /{id}/scan; validate_token_or_local ✅
+│   ├── library.py          # GET/POST /api/v1/library, GET/DELETE /{id}, POST /{id}/scan, GET /storage-breakdown; validate_token_or_local ✅
 │   ├── stream.py           # GET /sessions, POST /start/{id}, PATCH /{id}/progress, GET/{id}, DELETE/{id} + hls_router ✅
-│   ├── ws.py               # WS /status: token auth + ping/pong + progress ✅
+│   ├── ws.py               # WS /status (token auth + ping/pong + progress), WS /stats (live system stats) ✅
 │   ├── signal.py           # WS /signal: SDP offer/answer + ICE relay ✅
 │   ├── settings.py         # GET/PATCH /api/v1/settings; require_local_caller ✅
 │   ├── orders.py           # GET /api/v1/orders; require_local_caller; owner license key retrieval ✅
@@ -64,7 +64,8 @@ server/
 │   │   ├── settings_service.py # GET/PATCH user_settings; tier→max_streams mapping; _enrich_license() ✅
 │   │   ├── license_service.py  # HMAC-SHA256 key gen/validation; FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG> format; CLI generator ✅
 │   │   ├── webhook_service.py  # Polar signature validation + paid-order license issuance ✅
-│   │   └── tmdb_service.py     # TMDB REST API search; enriches media_files after scan ✅
+│   │   ├── tmdb_service.py     # TMDB REST API search; enriches media_files after scan ✅
+│   │   └── system_stats_service.py # CPU/RAM/network/uptime/IP/internet probe; backs /info/stats + /ws/stats ✅
 │
 │   ├── models/
 │   │   ├── media_file.py       # MediaFileResponse Pydantic schema ✅
@@ -86,9 +87,12 @@ server/
 │       ├── test_license_service.py # 22 tests — key validation (happy/expired/bad-sig/advisory/malformed/4-part-rejected) + generation ✅
 │       ├── test_orders.py       # 4 tests — GET /orders localhost restriction + response schema ✅
 │       ├── test_tmdb_service.py # 5 tests — TMDB search (movie/TV/person/network-error/missing-poster) ✅
-│       └── test_webhook.py      # 19 tests — Polar signature, paid orders, router responses ✅
+│       ├── test_webhook.py      # 19 tests — Polar signature, paid orders, router responses ✅
+│       ├── test_info_stats.py   # 5 tests — REST /info/stats shape + active streams + WS /stats localhost & non-localhost auth ✅
+│       ├── test_storage_breakdown.py # 3 tests — empty / aggregation by type / missing-root capacity exclusion ✅
+│       └── test_info_actions.py # 4 tests — /info/restart + /info/stop localhost (202) and non-localhost (403) ✅
 
-Total: 108 tests passing ✅ (as of 2026-05-01)
+Total: 120 tests passing ✅ (as of 2026-05-01)
 ```
 
 ---
@@ -98,13 +102,14 @@ Total: 108 tests passing ✅ (as of 2026-05-01)
 | Service | Responsibility | Key Functions |
 |---------|---------------|---------------|
 | `ffmpeg_service` ✅ | Spawn FFmpeg, manage HLS output, cleanup segments; reads transcoding encoder/preset/CRF from DB; supports software (libx264) and hardware (NVENC/QSV/VAAPI) | `start_stream()`, `stop_stream()`, `cleanup_session_dir()`, `is_running()` |
-| `library_service` ✅ | Library + media file CRUD; TMDB enrichment (Phase 2) | `list_libraries()`, `get_library()`, `create_library()`, `delete_library()`, `list_files()`, `get_file()` |
+| `library_service` ✅ | Library + media file CRUD; TMDB enrichment (Phase 2); storage breakdown (Dashboard donut) | `list_libraries()`, `get_library()`, `create_library()`, `delete_library()`, `list_files()`, `get_file()`, `get_storage_breakdown()` |
 | `discovery_service` ✅ | Broadcast `_fluxora._tcp.local.` via mDNS on LAN — uses `AsyncZeroconf` to avoid blocking FastAPI's event loop | `start_discovery()` (async), `stop_discovery()` (async) |
 | `auth_service` ✅ | Token generation (HMAC-SHA256), pairing state machine, token validation | `create_pair_request()`, `approve_client()`, `reject_client()`, `revoke_client()`, `get_trusted_client_by_token()` |
 | `webrtc_service` ✅ | Manage `RTCPeerConnection` registry, ICE/STUN/TURN, graceful teardown | `create_peer_connection()`, `handle_offer()`, `close_connection()` |
 | `license_service` ✅ | HMAC-SHA256 signed key gen/validation; format `FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>`; advisory mode when secret absent | `validate_key()`, `generate_key()`, `LicenseResult` |
 | `webhook_service` ✅ | Verify Polar Standard Webhooks signatures; issue idempotent license keys for paid orders without logging PII | `verify_polar_signature()`, `handle_order_paid()`, `handle_order_created()` |
 | `orders router` ✅ | Owner-only view of all processed Polar orders + generated license keys for manual customer delivery | `GET /api/v1/orders` (localhost) |
+| `system_stats_service` ✅ | psutil-backed live stats — CPU%, RAM, per-interface network rate (loopback excluded), uptime via `Process.create_time()`, LAN IP via UDP-socket trick, cached internet probe to `1.1.1.1:80`. Per-instance state so REST and WS subscribers don't collide. | `SystemStatsService.collect(db)` returns `StatsPayload` |
 
 ---
 

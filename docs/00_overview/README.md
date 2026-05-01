@@ -51,12 +51,35 @@ Python/FastAPI executable on the user's home machine.
 
 ## Quick Links
 
+### Product & architecture
 - [Vision & Goals](../01_product/01_vision.md)
+- [Tier Feature Matrix](../01_product/08_tier_features.md) — canonical Free/Plus/Pro/Ultimate breakdown
 - [System Architecture](../02_architecture/01_system_overview.md)
 - [Tech Stack](../02_architecture/02_tech_stack.md)
-- [Data Models](../03_data/01_data_models.md)
-- [API Contracts](../04_api/01_api_contracts.md)
 - [Roadmap](../10_planning/01_roadmap.md)
+- [Architecture Decisions (ADRs)](../10_planning/02_decisions.md)
 - [Desktop Redesign Plan](../11_design/desktop_redesign_plan.md)
+
+### API & data
+- [API Contracts](../04_api/01_api_contracts.md)
+- [API Versioning Policy](../04_api/02_versioning_policy.md)
+- [Data Models](../03_data/01_data_models.md)
+- [Database Schema](../03_data/02_database_schema.md)
+- [Migration Writing Guide](../03_data/04_migration_guide.md)
+
+### Infrastructure & operations
+- [Infrastructure & CI/CD](../05_infrastructure/01_infrastructure.md)
+- [Polar Webhook Deployment](../05_infrastructure/02_polar_webhook_deployment.md)
+- [Public Routing Plan (v1 + v2)](../05_infrastructure/03_public_routing.md)
+- [Domains & Subdomains Inventory](../05_infrastructure/04_domains_and_subdomains.md)
+- [Backup & Disaster Recovery](../05_infrastructure/05_backup_and_recovery.md)
+- [WebRTC & TURN Operations](../05_infrastructure/06_webrtc_and_turn.md)
+
+### Security
+- [Security Overview](../06_security/01_security.md)
+- [License Key Operations](../06_security/02_license_key_operations.md)
+
+### Repo
 - [Folder Structure](./folder_structure.md)
+- [Contributing Guide](../../CONTRIBUTING.md)
 - [Agent Work Log](../../AGENT_LOG.md)

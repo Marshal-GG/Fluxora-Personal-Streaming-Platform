@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-01 (new endpoints: orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only)
+> **Status:** Active - Updated 2026-05-01 (new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only)
 
 ---
 
@@ -69,6 +69,60 @@ Authorization: Bearer {auth_token}
 ```
 
 > Returns `{"logs": ""}` if the log file does not exist yet.
+
+---
+
+### `POST /api/v1/info/restart`
+**Description:** Schedule a graceful server restart. Returns immediately; the server signals itself with `SIGINT` ~300 ms later so the response can flush. Auto-relaunch requires a process supervisor (systemd, NSSM, Windows Service) — without one the server simply exits and must be re-started manually.  
+**Auth:** Localhost only.  
+**Status:** ✅ Implemented
+
+**Response:** `202 Accepted`
+```json
+{ "status": "restart_requested" }
+```
+
+---
+
+### `POST /api/v1/info/stop`
+**Description:** Schedule a graceful server shutdown. Same mechanics as `/info/restart` but logged as a shutdown.  
+**Auth:** Localhost only.  
+**Status:** ✅ Implemented
+
+**Response:** `202 Accepted`
+```json
+{ "status": "shutdown_requested" }
+```
+
+---
+
+### `GET /api/v1/info/stats`
+**Description:** Live system stats — CPU, RAM, network throughput, uptime, LAN IP, internet connectivity, active stream count. Backs the redesigned sidebar System Status block, the bottom status bar, and the Dashboard sparklines.  
+**Auth:** None required.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "uptime_seconds": 9912,
+  "lan_ip": "192.168.1.105",
+  "public_address": null,
+  "internet_connected": true,
+  "cpu_percent": 18.4,
+  "ram_percent": 42.1,
+  "ram_used_bytes": 6800000000,
+  "ram_total_bytes": 16000000000,
+  "network_in_mbps": 8.42,
+  "network_out_mbps": 2.10,
+  "active_streams": 1
+}
+```
+
+**Notes:**
+- `public_address` is currently always `null` — STUN-based discovery lands in a separate PR.
+- `network_in_mbps` / `network_out_mbps` are computed as the rate **since the last call**. The first call returns `0.0` for both because there is no baseline yet.
+- Loopback interfaces are excluded from the network rate.
+- `internet_connected` is a TCP probe to `1.1.1.1:80`, cached for 30 seconds to avoid hammering CloudFlare.
 
 ---
 
@@ -295,6 +349,32 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 
 ---
 
+### `GET /api/v1/library/storage-breakdown`
+**Description:** Aggregated storage usage across all libraries — backs the redesigned Dashboard donut. Sums `media_files.size_bytes` grouped by library `type`, plus combined disk capacity of every unique mount point that backs at least one library root.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "total_bytes": 2992000000000,
+  "capacity_bytes": 4400000000000,
+  "by_type": {
+    "movies": 1380000000000,
+    "tv":     980000000000,
+    "music":  340000000000,
+    "files":  292000000000
+  }
+}
+```
+
+**Notes:**
+- Mount-point dedup uses `os.stat().st_dev` so two libraries on the same disk only count toward `capacity_bytes` once.
+- A library whose `root_paths` are inaccessible still counts toward `total_bytes` (its media files), but contributes `0` to `capacity_bytes`.
+- All four `by_type` keys are always present, even when zero.
+
+---
+
 ### `GET /api/v1/library/{library_id}`
 **Description:** Get a single library by ID.  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
@@ -429,6 +509,20 @@ Content-Type: `application/vnd.apple.mpegurl`
 **Auth:** Bearer token required.  
 **Status:** ✅ Implemented  
 Content-Type: `video/MP2T`
+
+---
+
+### `WebSocket /api/v1/ws/stats`
+**Description:** Live system-stats stream — same payload as `GET /api/v1/info/stats`, pushed every 1.1 seconds. Consumed by the desktop control panel's sidebar / status bar / sparklines.  
+**Auth:** Localhost connections (desktop control panel running on the server machine) skip the auth handshake. Non-localhost connections must complete the same `{"type":"auth","token":"<bearer>"}` handshake as `/status`.  
+**Status:** ✅ Implemented
+
+Each connection gets its own network-rate baseline — multiple subscribers do not interfere with each other's rate calculations.
+
+**Frame format:**
+```json
+{ "type": "stats", "data": { /* same shape as /info/stats */ } }
+```
 
 ---
 

@@ -1,7 +1,7 @@
 # Component Architecture
 
 > **Category:** Architecture  
-> **Status:** Active — Updated 2026-04-28
+> **Status:** Active — Updated 2026-05-01 (added system stats, license, webhook, and orders services; refreshed desktop screen list)
 
 ---
 
@@ -12,7 +12,7 @@
 │                                                  │
 │  ┌─────────────┐  ┌─────────────────────────┐   │
 │  │  File API   │  │   Streaming Engine       │   │
-│  │  Browser    │  │   (FFmpeg → HLS)         │   │
+│  │  Browser    │  │   (FFmpeg → HLS, HWA)    │   │
 │  └─────────────┘  └─────────────────────────┘   │
 │                                                  │
 │  ┌─────────────┐  ┌─────────────────────────┐   │
@@ -25,8 +25,19 @@
 │  │  Zeroconf   │  │   (STUN/TURN mgmt)      │   │
 │  └─────────────┘  └─────────────────────────┘   │
 │                                                  │
+│  ┌─────────────┐  ┌─────────────────────────┐   │
+│  │  License    │  │   Polar Webhook         │   │
+│  │  Service    │  │   Receiver              │   │
+│  └─────────────┘  └─────────────────────────┘   │
+│                                                  │
+│  ┌─────────────┐  ┌─────────────────────────┐   │
+│  │  Settings   │  │   System Stats          │   │
+│  │  Service    │  │   (psutil)              │   │
+│  └─────────────┘  └─────────────────────────┘   │
+│                                                  │
 │  ┌──────────────────────────────────────────┐   │
-│  │  SQLite DB (metadata, library, sessions) │   │
+│  │  SQLite DB (metadata, library, sessions, │   │
+│  │  user_settings, polar_orders)            │   │
 │  └──────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────┘
 
@@ -68,9 +79,9 @@
 - **Dependencies:** OS file system, SQLite (for library index)
 
 ### Streaming Engine (FFmpeg → HLS)
-- **Responsibility:** Takes a file path, spawns FFmpeg subprocess, produces HLS segments served over HTTP
-- **Interfaces:** `GET /stream/{file_id}` → returns `.m3u8` playlist URL
-- **Dependencies:** FFmpeg binary, temp segment storage
+- **Responsibility:** Takes a file path, spawns FFmpeg subprocess, produces HLS segments served over HTTP. Reads encoder/preset/CRF from `user_settings` at start time and supports software (libx264) and hardware (NVENC/QSV/VAAPI) acceleration.
+- **Interfaces:** `POST /stream/start/{file_id}` → returns `.m3u8` playlist URL; `DELETE /stream/{session_id}` to stop
+- **Dependencies:** FFmpeg binary, `settings_service`, temp segment storage
 
 ### Library Manager
 - **Responsibility:** Indexes media directories, fetches metadata from TMDB, stores in SQLite
@@ -90,7 +101,40 @@
 ### WebRTC Signaling
 - **Responsibility:** Coordinates offer/answer exchange between client and server for P2P connection setup
 - **Interfaces:** WebSocket `/ws/signal`
-- **Dependencies:** STUN server (external), TURN server (external or self-hosted)
+- **Dependencies:** STUN server (external), TURN server (external or self-hosted — runbook in [`05_infrastructure/06_webrtc_and_turn.md`](../05_infrastructure/06_webrtc_and_turn.md))
+
+### License Service
+- **Responsibility:** Generates and validates 5-part HMAC-SHA256 license keys (`FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>`); enriches every settings response with `license_status` and `license_tier`. Operates in advisory mode if `FLUXORA_LICENSE_SECRET` is unset.
+- **Interfaces:** Internal Python API (`validate_key`, `generate_key`, `LicenseResult`); CLI `python -m services.license_service --tier <plus|pro|ultimate> --days <N>`. No public HTTP surface — keys are read/written via `/settings`.
+- **Dependencies:** `FLUXORA_LICENSE_SECRET` env var
+- **Operations runbook:** [`docs/06_security/02_license_key_operations.md`](../06_security/02_license_key_operations.md)
+
+### Polar Webhook Receiver
+- **Responsibility:** Verifies Polar Standard Webhooks signatures, processes `order.paid` / paid `order.created` events idempotently, and delegates license-key issuance to the License Service. Stores generated keys + customer email in `polar_orders`.
+- **Interfaces:** `POST /api/v1/webhook/polar`
+- **Dependencies:** `POLAR_WEBHOOK_SECRET` env var, `license_service`, SQLite `polar_orders` table
+- **Deployment notes:** [`docs/05_infrastructure/02_polar_webhook_deployment.md`](../05_infrastructure/02_polar_webhook_deployment.md)
+
+### Settings Service
+- **Responsibility:** Read/write `user_settings` row (server name, tier, max concurrent streams, license key, transcoding encoder/preset/CRF). Maps tier changes to stream-concurrency limits.
+- **Interfaces:** `GET /api/v1/settings`, `PATCH /api/v1/settings` (both localhost-only). Internal helpers consumed by `stream` router and `ffmpeg_service`.
+- **Dependencies:** SQLite `user_settings` table, `license_service` (for status enrichment)
+
+### System Stats Service
+- **Responsibility:** Live host metrics (CPU%, RAM, per-interface network rate with loopback excluded, uptime, LAN IP, cached internet probe to `1.1.1.1:80`, active stream count). Per-instance state so REST and WS subscribers don't collide on the network-rate baseline.
+- **Interfaces:** `GET /api/v1/info/stats`, `WS /api/v1/ws/stats`
+- **Dependencies:** `psutil`, SQLite (active stream count from `stream_sessions`)
+
+### Orders / Licenses View
+- **Responsibility:** Owner-only retrieval of issued Polar license keys for manual customer delivery. Reads from `polar_orders`.
+- **Interfaces:** `GET /api/v1/orders` (localhost-only)
+- **Dependencies:** SQLite `polar_orders` table
+
+### Public Routing (planned)
+- **Responsibility:** Expose the home server at `https://api.fluxora.marshalx.dev` for off-LAN clients via a Cloudflare Tunnel. Control plane only — media bandwidth stays on direct/P2P paths.
+- **Interfaces:** All `/api/v1/...` paths reachable through the tunnel; HLS routes server-side blocked when `CF-Connecting-IP` is present.
+- **Dependencies:** `cloudflared` daemon (system-installed), `FLUXORA_PUBLIC_URL` env var
+- **Plan:** [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) (v1 single-tenant + v2 multi-tenant track)
 
 ### Flutter Client — Presentation Layer
 - **Responsibility:** UI screens (Home, Connect, Browser, Player, Settings)
@@ -106,11 +150,11 @@
 - **Sources:** HTTP (Dio), mDNS (Dart Zeroconf), WebRTC (flutter_webrtc)
 
 ### PC Control Panel (Flutter Desktop)
-- **Responsibility:** Server-side dashboard — monitor server health, manage clients (approve/reject/revoke), browse the library with TMDB metadata and resume indicators, configure server connection
-- **Screens implemented:** Dashboard (stats) · Clients (pairing management) · Library (file list + filter chips + resume bar) · Settings (server URL config + About)
-- **Interfaces:** HTTP to FastAPI server; URL configurable at runtime via Settings screen (persisted in `flutter_secure_storage`)
-- **State management:** BLoC (Cubit) with GetIt DI
-- **Routes:** `/` (Dashboard) · `/clients` (Clients) · `/library` (Library) · `/settings` (Settings)
+- **Responsibility:** Server-side dashboard — live system health, client pairing management, library + file upload, transcoding settings, license retrieval (Polar orders), live log viewer, active session monitor.
+- **Screens implemented:** Dashboard (system stats + storage donut + client counts) · Clients (approve/reject/revoke + filter chips) · Library (create/scan/upload/filter) · Licenses (Polar orders + copyable license keys) · Activity (active stream sessions) · Logs (live server log viewer) · Settings (URL, tier, license key, transcoding encoder/preset/CRF). Transcoding screen scaffold pending dedicated cubit.
+- **Interfaces:** Localhost HTTP to FastAPI server (no pairing — `validate_token_or_local` accepts loopback callers); WS `/ws/stats` for live dashboard updates.
+- **State management:** BLoC (Cubit) with GetIt DI; `freezed` v3 for state types.
+- **Routes:** `/` · `/clients` · `/library` · `/licenses` · `/activity` · `/settings` (Logs and Transcoding routes are implemented features but routing wiring depends on the redesign in progress).
 
 ---
 
@@ -118,12 +162,16 @@
 
 | From | To | Protocol | Pattern |
 |------|----|----------|---------|
-| Flutter Client | FastAPI Server (LAN) | HTTP REST | Request/Response |
-| Flutter Client | FastAPI Server (LAN) | HLS over HTTP | Streaming |
+| Flutter Client (LAN) | FastAPI Server | HTTP REST + HLS | Request/Response, streaming |
+| Flutter Client (WAN — planned) | `api.fluxora.marshalx.dev` → home server | HTTPS via Cloudflare Tunnel | Control plane only — media stays P2P |
 | Flutter Client | STUN Server | UDP | WebRTC ICE |
-| Flutter Client | TURN Server | UDP/TCP | WebRTC Relay |
+| Flutter Client | TURN Server | UDP/TCP | WebRTC relay (optional, see runbook) |
+| Flutter Client ↔ Flutter Client / Server (P2P) | Direct or via TURN | WebRTC SCTP/data channels | Internet streaming |
+| Flutter Client ↔ FastAPI Server | WebSocket | `/ws/status`, `/ws/signal`, `/ws/stats` | Bidirectional events |
 | FastAPI Server | FFmpeg | Subprocess pipe | Internal process |
-| FastAPI Server | SQLite | SQLite3 | Query/Write |
-| FastAPI Server | TMDB API | HTTPS REST | Request/Response |
-| FastAPI Server | Zeroconf | UDP multicast | Broadcast |
-| PC Control Panel | FastAPI Server | HTTP REST | Request/Response |
+| FastAPI Server | SQLite | aiosqlite (WAL) | Query/Write |
+| FastAPI Server | TMDB API | HTTPS REST | Request/Response (best-effort enrichment) |
+| FastAPI Server | Zeroconf | UDP multicast | LAN broadcast |
+| Polar.sh | FastAPI Server `/webhook/polar` | HTTPS POST + Standard Webhooks signature | Inbound webhook |
+| PC Control Panel | FastAPI Server | HTTP + WS (loopback) | Request/Response, live stats |
+| FastAPI Server | Cloudflare edge (planned) | Outbound WSS | Tunnel registration via `cloudflared` daemon |

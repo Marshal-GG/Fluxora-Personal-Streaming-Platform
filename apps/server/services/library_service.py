@@ -35,6 +35,64 @@ _MEDIA_EXTENSIONS = {
 }
 
 
+async def get_storage_breakdown(db: aiosqlite.Connection) -> dict:
+    """Aggregated storage usage across all libraries — Dashboard donut.
+
+    Returns counts grouped by library `type` (movies / tv / music / files)
+    plus the combined disk capacity of every unique mount point that backs
+    at least one library root. Mount-point dedup uses `os.stat().st_dev` so
+    two libraries on the same disk only count toward capacity once.
+    """
+    async with db.execute(
+        """
+        SELECT l.type, COALESCE(SUM(m.size_bytes), 0) AS total
+          FROM libraries l
+          LEFT JOIN media_files m ON m.library_id = l.id
+         GROUP BY l.type
+        """
+    ) as cur:
+        type_rows = await cur.fetchall()
+
+    by_type = {"movies": 0, "tv": 0, "music": 0, "files": 0}
+    for row in type_rows:
+        if row["type"] in by_type:
+            by_type[row["type"]] = int(row["total"] or 0)
+
+    total_bytes = sum(by_type.values())
+
+    async with db.execute("SELECT root_paths FROM libraries") as cur:
+        lib_rows = await cur.fetchall()
+
+    seen_devices: set[int] = set()
+    capacity_bytes = 0
+    for lib_row in lib_rows:
+        try:
+            paths = json.loads(lib_row["root_paths"])
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(paths, list):
+            continue
+        for raw in paths:
+            try:
+                p = Path(str(raw))
+                if not p.exists():
+                    continue
+                dev = p.stat().st_dev
+                if dev in seen_devices:
+                    continue
+                seen_devices.add(dev)
+                capacity_bytes += shutil.disk_usage(p).total
+            except OSError as exc:
+                logger.warning("Could not stat library root %s: %s", raw, exc)
+                continue
+
+    return {
+        "total_bytes": total_bytes,
+        "capacity_bytes": capacity_bytes,
+        "by_type": by_type,
+    }
+
+
 async def list_libraries(db: aiosqlite.Connection) -> list[dict]:
     async with db.execute("SELECT * FROM libraries ORDER BY created_at") as cur:
         rows = await cur.fetchall()

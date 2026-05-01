@@ -108,6 +108,7 @@ In Phase 4, license keys are cryptographically signed HMAC tokens with format `F
 - **Validation:** Fully offline/local. The server checks the signature against its `FLUXORA_LICENSE_SECRET`.
 - **Enforcement:** The system relies on the **honor system**. Since validation is offline, a user could theoretically copy their `license_key` string to another server they own (or share it with others).
 - **Justification:** Fluxora is built on a "local-first, privacy-first" philosophy. Adding a mandatory cloud "phone-home" check for every server startup was deferred to maintain zero-cloud dependency for core functionality.
+- **Operations runbook** — issuance via Polar webhook + CLI, secret rotation flow, leak-response checklist, audit queries: see [`02_license_key_operations.md`](./02_license_key_operations.md).
 
 ### Phase 5: Hardware Binding (Planned)
 To prevent widespread key sharing while maintaining privacy, Phase 5 will introduce:

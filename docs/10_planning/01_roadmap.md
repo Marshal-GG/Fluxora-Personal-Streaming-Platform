@@ -1,7 +1,7 @@
 # Project Roadmap & Milestones
 
 > **Category:** Planning  
-> **Status:** Active - Updated 2026-05-01 (Phase 5 started; hardware encoding, desktop monitoring screens, orders view implemented)
+> **Status:** Active - Updated 2026-05-01 (Phase 5 in progress; hardware encoding, desktop monitoring screens, orders view, live system stats, storage breakdown, info admin actions, public routing plan locked)
 
 ---
 
@@ -97,6 +97,10 @@
 | Desktop Server Logs | Should | ✅ Done | `LogsScreen` — live log viewer from `GET /api/v1/info/logs` |
 | Desktop Transcoding Settings | Should | 🔵 Partial | `TranscodingScreen` scaffold; encoder/preset/CRF configurable via `SettingsScreen` |
 | Progress via REST | Should | ✅ Done | `PATCH /api/v1/stream/{id}/progress` — REST alternative to WebSocket progress updates |
+| Live system stats | Should | ✅ Done | `GET /api/v1/info/stats` + `WS /api/v1/ws/stats`; psutil-backed `system_stats_service` (CPU/RAM/network/uptime/active streams) — backs the redesigned dashboard |
+| Storage breakdown | Should | ✅ Done | `GET /api/v1/library/storage-breakdown` — per-type totals + capacity dedup'd by mount point; backs the dashboard donut chart |
+| Server admin actions | Should | ✅ Done | `POST /api/v1/info/restart`, `POST /api/v1/info/stop` — localhost-only graceful shutdown |
+| Public routing (`api.fluxora.marshalx.dev`) | Should | 🔲 Planned | Single-tenant Cloudflare Tunnel design + multi-tenant v2 plan locked in [`05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md); ADR-013 |
 | AI file organization | Nice-to-have | 🔲 Planned | Auto-tag, rename, categorize |
 | End-to-end encryption | Should | 🔲 Planned | E2E for internet streams |
 | Multi-user / family sharing | Nice-to-have | 🔲 Planned | Shared library access |

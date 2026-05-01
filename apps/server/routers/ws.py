@@ -8,7 +8,9 @@ from fastapi.websockets import WebSocketState
 
 from config import settings
 from database.db import get_db
+from routers.deps import LOOPBACK
 from services.auth_service import get_trusted_client_by_token
+from services.system_stats_service import SystemStatsService
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,17 @@ router = APIRouter()
 
 _PING_INTERVAL = 30  # seconds
 _PONG_TIMEOUT = 10  # seconds
+_STATS_INTERVAL_SEC = 1.1
+
+
+def _is_local_websocket(websocket: WebSocket) -> bool:
+    """Whether the WS connection originated from the local machine.
+
+    Extracted as a module-level helper so tests can monkeypatch it; the
+    Starlette test client reports `client.host == "testclient"`.
+    """
+    host = websocket.client.host if websocket.client else ""
+    return host in LOOPBACK
 
 
 async def _authenticate(websocket: WebSocket, db: aiosqlite.Connection):
@@ -149,3 +162,53 @@ async def _ping_loop(websocket: WebSocket, send_ping) -> None:
         if websocket.client_state == WebSocketState.DISCONNECTED:
             break
         await send_ping()
+
+
+@router.websocket("/stats")
+async def ws_stats(websocket: WebSocket):
+    """Live system-stats stream — sidebar / status bar / sparklines.
+
+    Auth: localhost connections (desktop control panel) accept immediately.
+    Non-localhost connections must complete the same `{"type":"auth",
+    "token":"..."}` handshake as `/status` before any stats are sent.
+
+    Each connection gets its own `SystemStatsService` instance so the
+    network-rate baseline is per-connection — multiple subscribers don't
+    fight over the shared rate cache.
+
+    Frame format:
+        {"type": "stats", "data": <StatsPayload>}
+    """
+    await websocket.accept()
+
+    is_local = _is_local_websocket(websocket)
+
+    db = await get_db()
+
+    if not is_local:
+        client = await _authenticate(websocket, db)
+        if client is None:
+            return
+        client_id: str = client["id"]
+        await websocket.send_text(
+            json.dumps({"type": "auth_ok", "client_id": client_id})
+        )
+        logger.info("WS stats connected: client=%s", client_id)
+    else:
+        logger.info("WS stats connected: localhost")
+
+    stats = SystemStatsService()
+    try:
+        while True:
+            if websocket.client_state == WebSocketState.DISCONNECTED:
+                break
+            payload = await stats.collect(db)
+            await websocket.send_text(json.dumps({"type": "stats", "data": payload}))
+            await asyncio.sleep(_STATS_INTERVAL_SEC)
+    except WebSocketDisconnect:
+        logger.info("WS stats disconnected")
+    except Exception:
+        logger.error("WS stats error", exc_info=True)
+    finally:
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            await websocket.close()

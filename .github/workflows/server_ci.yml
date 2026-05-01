@@ -8,6 +8,10 @@ on:
     paths:
       - 'apps/server/**'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -21,6 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: apps/server/pyproject.toml
 
       - name: Install dependencies
         run: pip install -e ".[dev]"

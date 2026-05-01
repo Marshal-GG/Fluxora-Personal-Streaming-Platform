@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  # Mirror is force-push; never cancel an in-flight run mid-sync, just queue.
+  group: mirror-public
+  cancel-in-progress: false
+
 jobs:
   mirror:
     runs-on: ubuntu-latest
@@ -20,6 +25,7 @@ jobs:
           # 1. Delete private files
           rm -f AGENT_LOG.md
           rm -f CLAUDE.md
+          rm -f CONTRIBUTING.md
           rm -rf docs/logs
           rm -rf docs/12_guidelines
 
@@ -29,9 +35,10 @@ jobs:
           # 3. Remove the entire "For AI Agents" section from the root README.md
           sed -i '/## For AI Agents/,$d' README.md 2>/dev/null || true
 
-          # 4. Globally delete any line containing "AGENT_LOG" or "CLAUDE.md" in ALL markdown files
+          # 4. Globally delete any line containing "AGENT_LOG", "CLAUDE.md", or "CONTRIBUTING.md" in ALL markdown files
           find . -name "*.md" -type f -exec sed -i '/AGENT_LOG/d' {} +
           find . -name "*.md" -type f -exec sed -i '/CLAUDE\.md/d' {} +
+          find . -name "*.md" -type f -exec sed -i '/CONTRIBUTING\.md/d' {} +
 
       - name: Configure git
         run: |

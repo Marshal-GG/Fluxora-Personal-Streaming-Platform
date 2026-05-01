@@ -1,17 +1,39 @@
+import asyncio
 import logging
+import os
+import signal
 from pathlib import Path
 
 import aiosqlite
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 
 from database.db import get_db
-from models.settings import ServerInfoResponse
+from models.settings import ServerInfoResponse, SystemStatsResponse
+from routers.deps import require_local_caller
+from services.system_stats_service import system_stats
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 SERVER_VERSION = "0.1.0"
+
+# Delay before sending SIGINT so the HTTP response is flushed first.
+_SHUTDOWN_DELAY_SEC = 0.3
+
+
+async def _trigger_shutdown(*, restart: bool) -> None:
+    """Wait briefly so the response is sent, then signal the process.
+
+    Restart vs stop differs only in the log line — actual auto-restart
+    requires a process supervisor (systemd, NSSM, Windows Service) to
+    relaunch on exit. Both code paths exit cleanly via SIGINT so uvicorn's
+    shutdown handler can run the lifespan teardown.
+    """
+    await asyncio.sleep(_SHUTDOWN_DELAY_SEC)
+    action = "restart" if restart else "shutdown"
+    logger.warning("Server %s requested via API — exiting", action)
+    os.kill(os.getpid(), signal.SIGINT)
 
 
 @router.get("/info", response_model=ServerInfoResponse)
@@ -33,6 +55,42 @@ async def get_info(db: aiosqlite.Connection = Depends(get_db)) -> ServerInfoResp
         version=SERVER_VERSION,
         tier=row["subscription_tier"],
     )
+
+
+@router.get("/info/stats", response_model=SystemStatsResponse)
+async def get_stats(
+    db: aiosqlite.Connection = Depends(get_db),
+) -> SystemStatsResponse:
+    """Live server stats — sidebar System Status, status bar, sparklines.
+
+    First call returns 0.0 for both `network_*_mbps` because no baseline
+    delta exists yet; subsequent calls return the rate since the previous
+    call.
+    """
+    payload = await system_stats.collect(db)
+    return SystemStatsResponse(**payload)
+
+
+@router.post("/info/restart", status_code=status.HTTP_202_ACCEPTED)
+async def restart_server(
+    _: None = Depends(require_local_caller),
+) -> dict[str, str]:
+    """Schedule a graceful server restart. Localhost-only.
+
+    Returns immediately; the actual SIGINT is sent ~300ms later so the
+    response can flush. Auto-relaunch requires a process supervisor.
+    """
+    asyncio.create_task(_trigger_shutdown(restart=True))
+    return {"status": "restart_requested"}
+
+
+@router.post("/info/stop", status_code=status.HTTP_202_ACCEPTED)
+async def stop_server(
+    _: None = Depends(require_local_caller),
+) -> dict[str, str]:
+    """Schedule a graceful server shutdown. Localhost-only."""
+    asyncio.create_task(_trigger_shutdown(restart=False))
+    return {"status": "shutdown_requested"}
 
 
 @router.get("/info/logs")

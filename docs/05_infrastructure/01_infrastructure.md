@@ -354,12 +354,40 @@ unnecessary builds (e.g., a Python change does not trigger a Flutter build).
 | File | Trigger | What it does |
 |------|---------|-------------|
 | `.github/workflows/web_landing_ci.yml` | Push to `apps/web_landing/**` on `main`/`uat`, or any PR | Build → deploy to Firebase Hosting (preview / uat / live) |
-| `.github/workflows/server_ci.yml` | Push/PR to `apps/server/**` | ruff lint → black format check → pytest (ruff pinned to `0.15.12`) |
+| `.github/workflows/server_ci.yml` | Push/PR to `apps/server/**` | ruff lint → black format check → pytest (ruff pinned to `0.15.12`); pip cache via `setup-python` |
 | `.github/workflows/mobile_ci.yml` | Push/PR to `apps/mobile/**` or `packages/**` | `flutter pub get` (core + app) → `flutter analyze` → `flutter test` |
 | `.github/workflows/desktop_ci.yml` | Push/PR to `apps/desktop/**` or `packages/**` | `flutter pub get` (core + app) → `flutter analyze` → `flutter test` |
+| `.github/workflows/secret_scan.yml` | Every push and PR | gitleaks scan over full git history; fails the run on a leaked secret |
 | `.github/workflows/mirror-public.yml` | Push to `main` | Safely mirrors private repository to a public mirror, stripping internal files |
 
-*All workflows use `actions/checkout@v5`. The Flutter workflows use `subosito/flutter-action@v2` with `flutter-version: 3.32.0` (Dart 3.8.x — required for the null-aware map literal syntax used in `apps/desktop`).*
+*All workflows use `actions/checkout@v5`. The Flutter workflows use `subosito/flutter-action@v2` with `flutter-version: 3.32.0` (Dart 3.8.x — required for the null-aware map literal syntax used in `apps/desktop`). All workflows declare a `concurrency` group on `${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: true` so a fast push over a slow CI run replaces the old one (exception: `mirror-public.yml` queues instead of cancelling, since the mirror force-pushes; `web_landing_ci.yml` only cancels on non-`main` to protect production deploys).*
+
+### Dependabot
+
+`.github/dependabot.yml` opens weekly grouped PRs for:
+
+- `pip` deps in `apps/server` (commit prefix `build(server):`)
+- `pub` deps in `apps/mobile`, `apps/desktop`, `packages/fluxora_core` (`build(mobile/desktop/core):`)
+- `npm` deps in `apps/web_landing` (`build(web):`)
+- `github-actions` versions across all workflows (`ci:`)
+
+Minor and patch updates are grouped per ecosystem to avoid one-PR-per-package noise. Major updates still arrive as individual PRs because they're more likely to need attention.
+
+### Deferred CI improvements
+
+Tracked here so the deferral is intentional, not forgotten:
+
+| Item | Why deferred | Trigger to implement |
+|------|--------------|----------------------|
+| **Coverage reporting** (`pytest --cov` + Codecov free tier) | Test count is small enough to eyeball; coverage signal would be noise without explicit goals | When server tests cross ~250 or when a regression slips because of an untested path |
+| **Type checking** (mypy or pyright in `server_ci.yml`) | Codebase has type hints throughout; ruff catches the most common issues. Adding mypy now would create churn without catching real bugs | When a `TypeError` ships to production, or after a refactor that removes a class of types |
+| **Markdown link checker** (e.g. `lycheeverse/lychee-action`) | Doc count is small enough to manually verify cross-links during PR review | When docs cross ~50 files or after a doc reshuffle |
+| **Pre-commit hooks** (`.pre-commit-config.yaml` running ruff/black/flutter-analyze) | CI catches it; solo project so hook adoption is one-person opt-in | When a second contributor joins, or when CI failure rate from format/lint is annoying enough |
+| **Release workflow** (PyInstaller server bundle, Flutter desktop installers, APK/AAB) | No public release cadence yet — building a pipeline before there's a release schedule is premature | When the first public release is scheduled |
+| **Matrix Python versions** (3.11 + 3.12) | Single-version deploy; matrix would catch a tiny class of bugs | When `requires-python` widens, or when shipping wheels |
+| **`paths-ignore: ['**/*.md']` on code workflows** | No `.md` files inside `apps/server/`, `apps/mobile/`, `apps/desktop/` today; the saving is theoretical | When a code workflow runs unnecessarily because of a doc edit inside an app dir |
+| **CodeQL / SARIF security scan** | Useful at organization scale; over-engineered for a personal project | If/when Fluxora grows past a single-owner project |
+| **Stale issue/PR auto-close** | N/A — solo project, no triage queue | If contributors join and the issue queue grows |
 
 ### Pipeline Flow (Release)
 

@@ -12,11 +12,14 @@
 | Backend Language | Python | 3.11+ |
 | Backend Framework | FastAPI | Async, high-performance |
 | ASGI Server | Uvicorn | Production server for FastAPI |
-| Streaming Engine | FFmpeg | HLS transcoding, adaptive bitrate |
-| Database | SQLite | Local metadata + library index |
+| Streaming Engine | FFmpeg | HLS transcoding (libx264 / NVENC / QSV / VAAPI) |
+| Database | SQLite | Local metadata + library index, WAL mode |
+| Rate Limiting | `slowapi` | Per-IP rate limiting on hot endpoints |
+| System Stats | `psutil` | CPU / RAM / network / uptime probes for `/api/v1/info/stats` |
 | Local Discovery | Zeroconf (mDNS) | Auto-pairing on LAN |
 | Internet Transport | WebRTC | STUN/TURN for NAT traversal |
-| Frontend Framework | Flutter | Dart, cross-platform |
+| Public Routing (planned) | Cloudflare Tunnel | `api.fluxora.marshalx.dev` — see [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) |
+| Frontend Framework | Flutter 3.32 (Dart 3.8) | Cross-platform; pinned in CI |
 | State Management | `flutter_bloc` (BLoC/Cubit) | Confirmed at Phase 1 mobile implementation |
 | Metadata API | TMDB API | Movie/TV show metadata |
 | Payment Webhooks | Polar Standard Webhooks | Paid-order license issuance |

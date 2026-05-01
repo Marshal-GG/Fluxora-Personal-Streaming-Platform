@@ -5,7 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from config import settings
 from database.db import get_db
-from models.library import CreateLibraryBody, LibraryResponse
+from models.library import (
+    CreateLibraryBody,
+    LibraryResponse,
+    StorageBreakdownResponse,
+    StorageByType,
+)
 from routers.deps import validate_token_or_local
 from services import library_service
 
@@ -33,6 +38,20 @@ async def list_libraries(
 ) -> list[LibraryResponse]:
     rows = await library_service.list_libraries(db)
     return [_parse_library(r) for r in rows]
+
+
+@router.get("/storage-breakdown", response_model=StorageBreakdownResponse)
+async def get_storage_breakdown(
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> StorageBreakdownResponse:
+    """Aggregated storage usage backing the redesigned Dashboard donut."""
+    payload = await library_service.get_storage_breakdown(db)
+    return StorageBreakdownResponse(
+        total_bytes=payload["total_bytes"],
+        capacity_bytes=payload["capacity_bytes"],
+        by_type=StorageByType(**payload["by_type"]),
+    )
 
 
 @router.post("", response_model=LibraryResponse, status_code=status.HTTP_201_CREATED)

@@ -10,7 +10,7 @@
 | # | Question | Priority | Resolved? |
 |---|----------|---------|-----------|
 | Q-001 | Should state management be BLoC or Riverpod? | Medium | ✅ **Resolved: BLoC** (flutter_bloc v9) |
-| Q-002 | Self-host TURN server vs. use a service (Twilio, Metered.ca)? Cost vs. complexity tradeoff. | High | ❌ |
+| Q-002 | Self-host TURN server vs. use a service (Twilio, Metered.ca)? Cost vs. complexity tradeoff. | High | 🟡 **Partially resolved** — coturn self-host runbook + cost guardrails written ([`05_infrastructure/06_webrtc_and_turn.md`](../05_infrastructure/06_webrtc_and_turn.md)); env-var support shipped (`WEBRTC_TURN_URL/USERNAME/PASSWORD`); deferred provisioning until WAN-failure telemetry shows the demand. |
 | Q-003 | Should HLS segments be stored in temp dir or memory-mapped? Impact on performance with many concurrent streams. | Medium | ❌ |
 | Q-004 | How to handle FFmpeg hardware encoding detection? Check at startup; fall back to software. | Low | ✅ **Resolved: `ffmpeg_service.py` selects encoder/preset/CRF from DB; user selects encoder via Settings; no runtime detection — user is responsible for selecting a supported encoder** |
 | Q-005 | Payment processor for monetization — Stripe? Paddle? In-app purchases (Google/Apple)? | High | ✅ **Resolved: Polar.sh via webhooks** |

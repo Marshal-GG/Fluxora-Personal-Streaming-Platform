@@ -9,6 +9,12 @@ on:
     paths:
       - 'apps/web_landing/**'
 
+concurrency:
+  # Don't cancel deploy-production runs in flight — they're tied to a release;
+  # cancel only build / preview / uat duplicates on the same branch.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   # ── 1. Build ────────────────────────────────────────────────────────────────
   build:

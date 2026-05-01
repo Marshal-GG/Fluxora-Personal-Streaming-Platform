@@ -20,7 +20,8 @@ dependencies = [
     "python-json-logger==4.1.0",
     "keyring==25.7.0",
     "cryptography==47.0.0",
-    "argon2-cffi==25.1.0"
+    "argon2-cffi==25.1.0",
+    "psutil==7.2.2"
 ]
 
 [project.optional-dependencies]

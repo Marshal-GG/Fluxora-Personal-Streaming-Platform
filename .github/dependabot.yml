@@ -1,0 +1,91 @@
+version: 2
+
+# Dependabot configuration. Each ecosystem opens weekly PRs against `main`
+# with version bumps; cap open PR count so a single neglected dep doesn't
+# fill the queue. Group minor + patch updates per ecosystem so we don't get
+# spammed with one PR per package.
+
+updates:
+  # ── Server (Python / pip) ────────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/apps/server"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(server)"
+      include: "scope"
+    groups:
+      python-runtime:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── Flutter packages ─────────────────────────────────────────────────────
+  - package-ecosystem: "pub"
+    directory: "/apps/mobile"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(mobile)"
+      include: "scope"
+    groups:
+      dart-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pub"
+    directory: "/apps/desktop"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(desktop)"
+      include: "scope"
+    groups:
+      dart-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "pub"
+    directory: "/packages/fluxora_core"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(core)"
+      include: "scope"
+    groups:
+      dart-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── Web landing (Next.js / npm) ──────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/apps/web_landing"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build(web)"
+      include: "scope"
+    groups:
+      npm-deps:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── GitHub Actions versions ──────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"

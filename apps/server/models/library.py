@@ -17,3 +17,24 @@ class CreateLibraryBody(BaseModel):
     name: str
     type: Literal["movies", "tv", "music", "files"]
     root_paths: list[str]
+
+
+class StorageByType(BaseModel):
+    movies: int = 0
+    tv: int = 0
+    music: int = 0
+    files: int = 0
+
+
+class StorageBreakdownResponse(BaseModel):
+    """Aggregated storage usage backing the redesigned Dashboard donut.
+
+    `total_bytes` is the sum of `media_files.size_bytes` across all libraries.
+    `capacity_bytes` is the combined disk capacity of every unique mount that
+    backs at least one library root. Returns `0` if no libraries exist or
+    none have an accessible root path.
+    """
+
+    total_bytes: int
+    capacity_bytes: int
+    by_type: StorageByType
