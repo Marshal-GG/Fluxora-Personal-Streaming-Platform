@@ -9,6 +9,7 @@ from fastapi.websockets import WebSocketState
 from config import settings
 from database.db import get_db
 from routers.deps import LOOPBACK
+from services import notification_service
 from services.auth_service import get_trusted_client_by_token
 from services.system_stats_service import SystemStatsService
 
@@ -210,5 +211,51 @@ async def ws_stats(websocket: WebSocket):
     except Exception:
         logger.error("WS stats error", exc_info=True)
     finally:
+        if websocket.client_state != WebSocketState.DISCONNECTED:
+            await websocket.close()
+
+
+@router.websocket("/notifications")
+async def ws_notifications(websocket: WebSocket):
+    """Live notification push stream — desktop sidebar bell.
+
+    Auth: localhost connections (desktop control panel) accept immediately.
+    Non-localhost connections must complete the same ``{"type":"auth",
+    "token":"..."}`` handshake as ``/status`` before any frames are sent.
+
+    Frame format:
+        {"type": "notification", "data": <NotificationPayload>}
+    """
+    await websocket.accept()
+
+    is_local = _is_local_websocket(websocket)
+
+    db = await get_db()
+
+    if not is_local:
+        client = await _authenticate(websocket, db)
+        if client is None:
+            return
+        client_id: str = client["id"]
+        await websocket.send_text(
+            json.dumps({"type": "auth_ok", "client_id": client_id})
+        )
+        logger.info("WS notifications connected: client=%s", client_id)
+    else:
+        logger.info("WS notifications connected: localhost")
+
+    q = notification_service.subscribe()
+    try:
+        while True:
+            if websocket.client_state == WebSocketState.DISCONNECTED:
+                break
+            payload = await q.get()
+            await websocket.send_text(json.dumps(payload))
+    except WebSocketDisconnect:
+        logger.info("WS notifications disconnected")
+    except Exception:
+        logger.error("WS notifications error", exc_info=True)
+    finally:
+        notification_service.unsubscribe(q)
         if websocket.client_state != WebSocketState.DISCONNECTED:
             await websocket.close()

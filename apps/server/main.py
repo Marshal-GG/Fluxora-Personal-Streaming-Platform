@@ -18,6 +18,7 @@ from routers import (
     groups,
     info,
     library,
+    notifications,
     orders,
     profile,
     signal,
@@ -264,3 +265,6 @@ app.include_router(settings_router.router, prefix="/api/v1/settings", tags=["set
 app.include_router(webhook.router, prefix="/api/v1/webhook", tags=["webhook"])
 app.include_router(orders.router, prefix="/api/v1/orders", tags=["orders"])
 app.include_router(profile.router, prefix="/api/v1/profile", tags=["profile"])
+app.include_router(
+    notifications.router, prefix="/api/v1/notifications", tags=["notifications"]
+)
