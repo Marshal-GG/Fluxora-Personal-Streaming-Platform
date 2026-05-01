@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-01 (new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only)
+> **Status:** Active - Updated 2026-05-01 (new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints added)
 
 ---
 
@@ -34,8 +34,8 @@ Authorization: Bearer {auth_token}
 | Mode | Dependency | Used by |
 |------|-----------|---------|
 | Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints |
-| Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library` — desktop control panel needs no token |
-| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/clients`, `/settings`, `/orders`, `/stream/sessions` |
+| Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members` — desktop control panel needs no token |
+| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/clients`, `/settings`, `/orders`, `/stream/sessions`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
 | No auth | — | `/info`, `/info/logs`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
 
 ---
@@ -735,6 +735,210 @@ Client connects → sends auth message → server replies auth_ok
 - Invalid signatures return `403`; signed invalid JSON returns `400`.
 - Duplicate paid orders return `200` with `status: "skipped"` to avoid retry loops.
 - License keys are stored server-side and are not logged or returned in webhook responses.
+
+---
+
+---
+
+### `GET /api/v1/groups`
+**Description:** List all groups with their member counts and restrictions.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Kids",
+    "description": "Children's profiles — PG only",
+    "status": "active",
+    "created_at": "2026-05-01T10:00:00+00:00",
+    "updated_at": "2026-05-01T10:00:00+00:00",
+    "member_count": 2,
+    "restrictions": {
+      "allowed_libraries": ["uuid-library-1"],
+      "bandwidth_cap_mbps": null,
+      "time_window": {"start_h": 15, "end_h": 21, "days": [0,1,2,3,4,5,6]},
+      "max_rating": "PG"
+    }
+  }
+]
+```
+
+---
+
+### `POST /api/v1/groups`
+**Description:** Create a new group. Status defaults to `active`.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Request:**
+```json
+{
+  "name": "Kids",
+  "description": "Optional description",
+  "restrictions": {
+    "allowed_libraries": ["uuid-library-1"],
+    "bandwidth_cap_mbps": null,
+    "time_window": {"start_h": 15, "end_h": 21, "days": [0,1,2,3,4,5,6]},
+    "max_rating": "PG"
+  }
+}
+```
+
+`restrictions` is optional — omit it or pass `null` to create a group with no restrictions. All restriction fields default to `null` (no restriction of that kind).
+
+**Response:** `201 Created` — `GroupResponse` (same schema as list item above).
+
+---
+
+### `GET /api/v1/groups/{id}`
+**Description:** Get a single group by ID.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Response:** `GroupResponse` (same schema as list item).  
+**Errors:** `404` group not found
+
+---
+
+### `PATCH /api/v1/groups/{id}`
+**Description:** Update a group's name, description, status, and/or restrictions. All fields are optional.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Request (all fields optional):**
+```json
+{
+  "name": "Kids (updated)",
+  "description": "New description",
+  "status": "inactive",
+  "restrictions": {
+    "allowed_libraries": null,
+    "bandwidth_cap_mbps": 10,
+    "time_window": null,
+    "max_rating": null
+  }
+}
+```
+
+**Response:** Updated `GroupResponse`.  
+**Errors:** `404` group not found · `403` not from localhost
+
+---
+
+### `DELETE /api/v1/groups/{id}`
+**Description:** Delete a group. `ON DELETE CASCADE` removes its member rows and restrictions row automatically.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Response:** `204 No Content`  
+**Errors:** `404` group not found · `403` not from localhost
+
+---
+
+### `GET /api/v1/groups/{id}/members`
+**Description:** List all members of a group. Each item includes the client fields plus `added_at`.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Pixel 8 Pro",
+    "platform": "android",
+    "last_seen": "2026-05-01T12:00:00",
+    "is_trusted": true,
+    "status": "approved",
+    "added_at": "2026-05-01T10:00:00+00:00"
+  }
+]
+```
+
+**Errors:** `404` group not found
+
+---
+
+### `POST /api/v1/groups/{id}/members`
+**Description:** Add a client to a group. Idempotent — adding an already-present client succeeds silently.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Request:**
+```json
+{ "client_id": "uuid" }
+```
+
+**Response:** `204 No Content`  
+**Errors:** `404` group or client not found · `403` not from localhost
+
+---
+
+### `DELETE /api/v1/groups/{id}/members/{client_id}`
+**Description:** Remove a client from a group.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Response:** `204 No Content`  
+**Errors:** `404` group member not found · `403` not from localhost
+
+---
+
+### `GET /api/v1/profile`
+**Description:** Return the operator profile stored in `user_settings`. Includes the computed `avatar_letter` field (not stored in DB).  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "display_name": "Marshal",
+  "email": "marshalgcom@gmail.com",
+  "avatar_letter": "M",
+  "avatar_path": null,
+  "created_at": "2026-05-01T10:00:00Z",
+  "last_login_at": null
+}
+```
+
+**`avatar_letter` computation (server-side):**
+1. First non-whitespace character of `display_name` (if set)
+2. Else first character of `email` local-part (portion before `@`) if set
+3. Else `'F'` (Fluxora fallback)
+
+All fields except `avatar_letter` are nullable and will be `null` if not yet configured.
+
+**Errors:** `403` not from localhost
+
+---
+
+### `PATCH /api/v1/profile`
+**Description:** Update the operator profile fields. Pass a field to update it; pass `null` to leave it unchanged; pass `""` (empty string) to clear it.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Request (all fields optional):**
+```json
+{
+  "display_name": "Marshal",
+  "email": "marshalgcom@gmail.com"
+}
+```
+
+**Field constraints (Pydantic-enforced — invalid values return 422):**
+
+| Field | Constraint |
+|-------|-----------|
+| `display_name` | Optional string; max length enforced; `""` clears the field; `null` leaves unchanged |
+| `email` | Optional string; max length enforced; `""` clears the field; `null` leaves unchanged |
+
+> **Out of scope (v1):** `POST /api/v1/profile/password` (no operator-password concept in Fluxora's single-owner localhost model) and `POST /api/v1/profile/avatar` (multipart upload deferred until the desktop UI consumes it).
+
+**Response:** `ProfileResponse` — same schema as `GET /api/v1/profile`, with updated values.  
+**Errors:** `403` not from localhost · `422` field exceeds max length
 
 ---
 

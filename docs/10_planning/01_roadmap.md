@@ -90,6 +90,8 @@
 
 | Feature | Priority | Status | Notes |
 |---------|----------|--------|-------|
+| Client Groups (M0 §7.1) | Must | ✅ Done | `groups`/`group_members`/`group_restrictions` tables (migration 011); `routers/groups.py` + `services/group_service.py`; stream-gate hook in `stream.py` enforces library allowlist + time window; 8 endpoints shipped 2026-05-01 |
+| Operator Profile (M0 §7.2) | Must | ✅ Done | `display_name`, `email`, `avatar_path`, `profile_created_at`, `last_login_at` added to `user_settings` (migration 012); `routers/profile.py` + `services/profile_service.py` + `models/profile.py`; `GET/PATCH /api/v1/profile` (localhost-only); `avatar_letter` computed server-side; 9 tests; server suite 165 → 174 |
 | Hardware encoding (NVENC/VAAPI) | Nice-to-have | 🔵 In Progress | `ffmpeg_service.py` reads `transcoding_encoder/preset/crf` from DB; supports libx264, h264_nvenc, h264_qsv, h264_vaapi |
 | Desktop Library Management | Must | ✅ Done | `LibraryScreen` — create/scan/upload/filter; `POST /files/upload` endpoint |
 | Desktop Licenses view | Must | ✅ Done | `LicensesScreen` — lists all Polar orders + license keys from `GET /api/v1/orders` |
@@ -100,6 +102,7 @@
 | Live system stats | Should | ✅ Done | `GET /api/v1/info/stats` + `WS /api/v1/ws/stats`; psutil-backed `system_stats_service` (CPU/RAM/network/uptime/active streams) — backs the redesigned dashboard |
 | Storage breakdown | Should | ✅ Done | `GET /api/v1/library/storage-breakdown` — per-type totals + capacity dedup'd by mount point; backs the dashboard donut chart |
 | Server admin actions | Should | ✅ Done | `POST /api/v1/info/restart`, `POST /api/v1/info/stop` — localhost-only graceful shutdown |
+| Desktop redesign — M1 Foundation | Should | ✅ Done 2026-05-02 | Tokens (`app_colors` v2 / `app_gradients` / `app_spacing` / `app_radii` / `app_shadows` / `app_typography` v2) + 11 primitives in `apps/desktop/lib/shared/widgets/` (`FluxCard`, `SectionLabel`, `StatusDot`, `Pill`, `FluxProgress`, `FluxButton`, `StatTile`, `Sparkline`, `StorageDonut`, `PageHeader`, plus brand visuals `FluxoraMark`/`FluxoraWordmark`/`HeroWaves`/`BrandLoader`/`PulseRing`/`EmptyState`) + `flutter_svg` 2.2.4 dep + 4 animated SMIL SVGs + `/showcase` route. See [`docs/11_design/desktop_redesign_plan.md`](../11_design/desktop_redesign_plan.md) §3 + §9. |
 | Public routing (`fluxora-api.marshalx.dev`) | Should | ✅ Done | v1 single-tenant Phases 1–5 complete 2026-05-01 (tunnel live; server CF middlewares + admin hardening + `/healthz` + `remote_url` on `/info`; `fluxora_core` dual-base `ApiClient` with `NetworkPathDetector`; mobile pairing flow persists `remote_url` post-pair; desktop Dashboard Remote-access pill + Settings Remote Access section with on-demand `/healthz` probe). Phase 6 (TURN, WAF rules, Access on admin paths, tunnel health alerts) tracked as operator-driven manual tasks. v2 multi-tenant plan locked. See [`05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md); ADR-013 |
 | AI file organization | Nice-to-have | 🔲 Planned | Auto-tag, rename, categorize |
 | End-to-end encryption | Should | 🔲 Planned | E2E for internet streams |

@@ -78,6 +78,16 @@ New Device:
 | `WS /api/v1/ws/status` | ✅ First-message token | Token sent as `{"type":"auth","token":"..."}` — not in header |
 | `WS /api/v1/ws/signal` | ✅ Bearer token | WebRTC signaling (Phase 3) |
 | `POST /api/v1/webhook/polar` | 🔒 Polar signature | Public route; verifies Standard Webhooks headers before JSON parsing |
+| `GET /api/v1/groups` | ✅ Bearer token or localhost | List all groups |
+| `POST /api/v1/groups` | 🔒 Localhost only | Create group — `require_local_caller` |
+| `GET /api/v1/groups/{id}` | ✅ Bearer token or localhost | Get single group |
+| `PATCH /api/v1/groups/{id}` | 🔒 Localhost only | Update group — `require_local_caller` |
+| `DELETE /api/v1/groups/{id}` | 🔒 Localhost only | Delete group — `require_local_caller` |
+| `GET /api/v1/groups/{id}/members` | ✅ Bearer token or localhost | List group members |
+| `POST /api/v1/groups/{id}/members` | 🔒 Localhost only | Add member to group — `require_local_caller` |
+| `DELETE /api/v1/groups/{id}/members/{client_id}` | 🔒 Localhost only | Remove member from group — `require_local_caller` |
+| `GET /api/v1/profile` | 🔒 Localhost only | Read operator profile — `require_local_caller` |
+| `PATCH /api/v1/profile` | 🔒 Localhost only | Update operator profile — `require_local_caller` |
 | All Control Panel routes | ✅ Localhost only | Not exposed externally |
 
 ---

@@ -1,7 +1,7 @@
 # Backend Architecture
 
 > **Category:** Backend  
-> **Status:** Active - Updated 2026-05-01 (Phase 5: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint, live system stats + storage breakdown, info actions, conditional Sentry init, `/healthz` + `remote_url` on `/info`, CF Tunnel real-IP / HLS-block / admin-hardening middlewares for public routing; legacy 4-part license keys removed; 149 tests)
+> **Status:** Active - Updated 2026-05-01 (Phase 5: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint, live system stats + storage breakdown, info actions, conditional Sentry init, `/healthz` + `remote_url` on `/info`, CF Tunnel real-IP / HLS-block / admin-hardening middlewares for public routing; legacy 4-part license keys removed; Groups CRUD + stream-gate; Profile endpoints; 174 tests)
 
 ---
 
@@ -40,7 +40,9 @@ server/
 │       ├── 007_align_tier_limits.sql # corrects max_concurrent_streams per tier
 │       ├── 008_polar_orders.sql # paid Polar order idempotency + generated keys
 │       ├── 009_order_customer_email.sql # adds customer_email to polar_orders
-│       └── 010_transcoding_settings.sql # adds transcoding_encoder/preset/crf to user_settings
+│       ├── 010_transcoding_settings.sql # adds transcoding_encoder/preset/crf to user_settings
+│       ├── 011_groups.sql              # groups, group_members, group_restrictions tables + idx_group_members_client
+│       └── 012_profile_fields.sql      # adds display_name, email, avatar_path, profile_created_at, last_login_at to user_settings
 │
 ├── routers/
 │   ├── info.py             # GET /api/v1/info, /info/logs, /info/stats; POST /info/restart, /info/stop ✅
@@ -48,11 +50,13 @@ server/
 │   ├── deps.py             # validate_token, validate_token_or_local, require_local_caller FastAPI dependencies ✅
 │   ├── files.py            # GET/POST(upload)/DELETE /api/v1/files; validate_token_or_local ✅
 │   ├── library.py          # GET/POST /api/v1/library, GET/DELETE /{id}, POST /{id}/scan, GET /storage-breakdown; validate_token_or_local ✅
-│   ├── stream.py           # GET /sessions, POST /start/{id}, PATCH /{id}/progress, GET/{id}, DELETE/{id} + hls_router ✅
+│   ├── stream.py           # GET /sessions, POST /start/{id}, PATCH /{id}/progress, GET/{id}, DELETE/{id} + hls_router; stream-gate hook calls group_service ✅
 │   ├── ws.py               # WS /status (token auth + ping/pong + progress), WS /stats (live system stats) ✅
 │   ├── signal.py           # WS /signal: SDP offer/answer + ICE relay ✅
 │   ├── settings.py         # GET/PATCH /api/v1/settings; require_local_caller ✅
 │   ├── orders.py           # GET /api/v1/orders; require_local_caller; owner license key retrieval ✅
+│   ├── groups.py           # GET/POST /api/v1/groups, GET/PATCH/DELETE /{id}, GET/POST /{id}/members, DELETE /{id}/members/{cid}; mixed auth ✅
+│   ├── profile.py          # GET/PATCH /api/v1/profile; require_local_caller ✅
 │   └── webhook.py          # POST /api/v1/webhook/polar; Standard Webhooks signature ✅
 │
 │   ├── services/
@@ -65,6 +69,8 @@ server/
 │   │   ├── license_service.py  # HMAC-SHA256 key gen/validation; FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG> format; CLI generator ✅
 │   │   ├── webhook_service.py  # Polar signature validation + paid-order license issuance ✅
 │   │   ├── tmdb_service.py     # TMDB REST API search; enriches media_files after scan ✅
+│   │   ├── group_service.py    # Group CRUD, member management, stream-gate (get_effective_restrictions + reason_to_deny) ✅
+│   │   ├── profile_service.py  # get_profile(db) + update_profile(db, ...); avatar_letter computation ✅
 │   │   └── system_stats_service.py # CPU/RAM/network/uptime/IP/internet probe; backs /info/stats + /ws/stats ✅
 │
 │   ├── models/
@@ -73,7 +79,9 @@ server/
 │   │   ├── client.py           # Client Pydantic schemas ✅
 │   │   ├── stream_session.py   # StreamStartResponse, StreamSessionResponse ✅
 │   │   ├── settings.py         # UserSettingsResponse (incl. license_status, license_tier, transcoding fields), UpdateSettingsBody ✅
-│   │   └── order.py            # PolarOrderItem, PolarOrderListResponse ✅
+│   │   ├── order.py            # PolarOrderItem, PolarOrderListResponse ✅
+│   │   ├── profile.py          # ProfileResponse (avatar_letter computed), ProfileUpdate ✅
+│   │   └── group.py            # TimeWindow, GroupRestrictions, GroupResponse, GroupCreate, GroupUpdate, GroupMemberAdd; GroupStatus ✅
 │
 │   └── tests/
 │       ├── conftest.py          # test_db + client fixtures; reset_rate_limits autouse
@@ -90,9 +98,11 @@ server/
 │       ├── test_webhook.py      # 19 tests — Polar signature, paid orders, router responses ✅
 │       ├── test_info_stats.py   # 5 tests — REST /info/stats shape + active streams + WS /stats localhost & non-localhost auth ✅
 │       ├── test_storage_breakdown.py # 3 tests — empty / aggregation by type / missing-root capacity exclusion ✅
-│       └── test_info_actions.py # 4 tests — /info/restart + /info/stop localhost (202) and non-localhost (403) ✅
+│       ├── test_info_actions.py # 4 tests — /info/restart + /info/stop localhost (202) and non-localhost (403) ✅
+│       ├── test_groups.py       # 16 tests — CRUD, member management, auth split, stream-gate enforcement ✅
+│       └── test_profile.py      # 9 tests — GET/PATCH profile localhost restriction + response schema + avatar_letter computation ✅
 
-Total: 120 tests passing ✅ (as of 2026-05-01)
+Total: 174 tests passing ✅ (as of 2026-05-01)
 ```
 
 ---
@@ -110,6 +120,8 @@ Total: 120 tests passing ✅ (as of 2026-05-01)
 | `webhook_service` ✅ | Verify Polar Standard Webhooks signatures; issue idempotent license keys for paid orders without logging PII | `verify_polar_signature()`, `handle_order_paid()`, `handle_order_created()` |
 | `orders router` ✅ | Owner-only view of all processed Polar orders + generated license keys for manual customer delivery | `GET /api/v1/orders` (localhost) |
 | `system_stats_service` ✅ | psutil-backed live stats — CPU%, RAM, per-interface network rate (loopback excluded), uptime via `Process.create_time()`, LAN IP via UDP-socket trick, cached internet probe to `1.1.1.1:80`. Per-instance state so REST and WS subscribers don't collide. | `SystemStatsService.collect(db)` returns `StatsPayload` |
+| `group_service` ✅ | Client-group CRUD, member management, and stream-gate enforcement. `get_effective_restrictions()` collects all active groups a client belongs to and intersects their restrictions (library allow-list, bandwidth min, time-window AND-combination). `reason_to_deny()` returns a denial string or `None`; called by `routers/stream.py` before the tier-concurrency check. | `list_groups()`, `get_group()`, `create_group()`, `update_group()`, `delete_group()`, `add_member()`, `remove_member()`, `list_members()`, `get_effective_restrictions()`, `reason_to_deny()` |
+| `profile_service` ✅ | Reads and writes operator profile metadata from the `user_settings` singleton. Computes `avatar_letter` on every read (not stored). Pass `""` to clear a field; pass `None` to leave it unchanged. | `get_profile(db)` → `ProfileResponse`, `update_profile(db, *, display_name?, email?)` → `ProfileResponse` |
 
 ---
 

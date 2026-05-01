@@ -1,7 +1,7 @@
 # Component Architecture
 
 > **Category:** Architecture  
-> **Status:** Active — Updated 2026-05-01 (added system stats, license, webhook, and orders services; refreshed desktop screen list)
+> **Status:** Active — Updated 2026-05-01 (added system stats, license, webhook, and orders services; refreshed desktop screen list; Profile Service added)
 
 ---
 
@@ -36,8 +36,20 @@
 │  └─────────────┘  └─────────────────────────┘   │
 │                                                  │
 │  ┌──────────────────────────────────────────┐   │
+│  │  Group Service (client groups +          │   │
+│  │  streaming restrictions)                 │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │  Profile Service (operator display name, │   │
+│  │  email, avatar; avatar_letter computed)   │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
 │  │  SQLite DB (metadata, library, sessions, │   │
-│  │  user_settings, polar_orders)            │   │
+│  │  user_settings [+ profile fields],       │   │
+│  │  polar_orders, groups, group_members,    │   │
+│  │  group_restrictions)                     │   │
 │  └──────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────┘
 
@@ -79,9 +91,9 @@
 - **Dependencies:** OS file system, SQLite (for library index)
 
 ### Streaming Engine (FFmpeg → HLS)
-- **Responsibility:** Takes a file path, spawns FFmpeg subprocess, produces HLS segments served over HTTP. Reads encoder/preset/CRF from `user_settings` at start time and supports software (libx264) and hardware (NVENC/QSV/VAAPI) acceleration.
+- **Responsibility:** Takes a file path, spawns FFmpeg subprocess, produces HLS segments served over HTTP. Reads encoder/preset/CRF from `user_settings` at start time and supports software (libx264) and hardware (NVENC/QSV/VAAPI) acceleration. On `POST /stream/start/{file_id}`, calls `group_service.get_effective_restrictions(client_id)` and `reason_to_deny(...)` before starting the session — returns 403 if the file's library is not in the client's allowed libraries or the current time is outside the client's active time window.
 - **Interfaces:** `POST /stream/start/{file_id}` → returns `.m3u8` playlist URL; `DELETE /stream/{session_id}` to stop
-- **Dependencies:** FFmpeg binary, `settings_service`, temp segment storage
+- **Dependencies:** FFmpeg binary, `settings_service`, `group_service`, temp segment storage
 
 ### Library Manager
 - **Responsibility:** Indexes media directories, fetches metadata from TMDB, stores in SQLite
@@ -139,6 +151,16 @@
   - **Mobile:** Pairing flow re-fetches `/info` post-pair to read `remote_url` and configures the dual-base ApiClient. Failure is non-fatal.
 - **Dependencies:** `cloudflared` daemon (system-installed), `FLUXORA_PUBLIC_URL` / `FLUXORA_TRUST_CF_HEADERS` / `FLUXORA_BLOCK_HLS_OVER_TUNNEL` env vars.
 - **Plan:** [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) (v1 single-tenant + v2 multi-tenant track)
+
+### Group Service
+- **Responsibility:** Manages client groups — logical bundles of paired clients that share streaming restrictions. CRUD for groups, membership, and per-group restriction records. Exposes `get_effective_restrictions(client_id)` which aggregates all active groups the client belongs to and returns the most-restrictive intersection (allowed libraries, time window, advisory bandwidth cap and max rating).
+- **Interfaces:** `GET /api/v1/groups`, `POST /api/v1/groups` (localhost-only), `GET/PATCH/DELETE /api/v1/groups/{id}` (mutations localhost-only), `GET /api/v1/groups/{id}/members`, `POST /api/v1/groups/{id}/members` (localhost-only), `DELETE /api/v1/groups/{id}/members/{client_id}` (localhost-only). GETs accept bearer token or loopback auth.
+- **Dependencies:** SQLite (`groups`, `group_members`, `group_restrictions` tables); consumed by `stream` router as a stream-gate hook.
+
+### Profile Service
+- **Responsibility:** Reads and writes operator profile metadata stored in the `user_settings` singleton (`display_name`, `email`, `avatar_path`, `profile_created_at`, `last_login_at`). Computes `avatar_letter` on every read — not stored in the DB. First non-whitespace char of `display_name`, else first char of `email` local-part, else `'F'`. Pass `""` to clear a field; pass `None` to leave it unchanged.
+- **Interfaces:** `GET /api/v1/profile` (localhost-only), `PATCH /api/v1/profile` (localhost-only)
+- **Dependencies:** SQLite `user_settings` table (profile columns added by migration 012)
 
 ### Flutter Client — Presentation Layer
 - **Responsibility:** UI screens (Home, Connect, Browser, Player, Settings)

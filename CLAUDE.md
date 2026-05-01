@@ -386,11 +386,11 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation in sync with code
-- `apps/server` — **Phases 1–5 partially complete** (170 passing tests; ruff + black clean; public-routing v1 Phases 2–5 complete; Phase 6 hardening operator-driven):
+- `apps/server` — **Phases 1–5 partially complete** (174 passing tests; ruff + black clean; public-routing v1 Phases 2–5 complete; Phase 6 hardening operator-driven):
   - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured logging, rotating log file
-  - Routers: info (+ logs + healthz), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, webhook ✅
-  - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook, system_stats (`_public_address` probe) ✅
-  - Migrations 001–010 applied on startup ✅
+  - Routers: info (+ logs + healthz), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, groups, profile, webhook ✅
+  - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook, system_stats (`_public_address` probe), group_service (CRUD + stream-gate), profile_service ✅
+  - Migrations 001–012 applied on startup ✅
   - Hardware encoding: `ffmpeg_service.py` reads `transcoding_encoder/preset/crf` from DB; supports libx264, h264_nvenc, h264_qsv, h264_vaapi ✅
   - Orders: `GET /api/v1/orders` (localhost) exposes Polar order + license key for manual customer delivery ✅
   - `validate_token_or_local` dependency — files/library endpoints accessible from localhost without bearer token ✅
@@ -416,5 +416,13 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
   - Settings screen (URL, server name, tier, license key, transcoding encoder/preset/CRF) ✅
   - Transcoding screen (scaffold only; settings managed via Settings screen) 🔵
   - Remote-access UI on Dashboard / Settings ✅ (Dashboard pill driven by `serverInfo.remoteUrl`; Settings Remote Access section with on-demand `/healthz` reachability probe)
+  - **Desktop redesign — M1 Foundation ✅ Done 2026-05-02** — see [`docs/11_design/desktop_redesign_plan.md`](docs/11_design/desktop_redesign_plan.md):
+    - v2 tokens added to `packages/fluxora_core/lib/constants/`: `app_colors.dart` (v2 section), `app_typography.dart` (v2 section), and new files `app_gradients.dart`, `app_spacing.dart`, `app_radii.dart`, `app_shadows.dart`
+    - 11 redesign primitives in `apps/desktop/lib/shared/widgets/`: `FluxCard`, `SectionLabel`, `StatusDot`, `Pill`, `FluxProgress`, `FluxButton`, `StatTile`, `Sparkline`, `StorageDonut`, `PageHeader` (no Material `ElevatedButton`/`Switch`/`Card`/`LinearProgressIndicator` used)
+    - Brand widgets in `packages/fluxora_core/lib/widgets/`: `FluxoraMark`/`FluxoraWordmark`/`FluxoraLogo` (PNG wrappers), `HeroWaves` / `BrandLoader` / `PulseRing` / `EmptyState` (animated SVG-backed)
+    - Hi-fidelity logo PNGs from `docs/11_design/ref images/` processed (Pillow alpha-from-brightness) and bundled in `packages/fluxora_core/assets/brand/`
+    - `flutter_svg` 2.2.4 dep + 4 animated SMIL SVGs in `packages/fluxora_core/assets/illustrations/` (`hero_waves.svg`, `pulse_ring.svg`, `empty_libraries.svg`, `empty_clients.svg`)
+    - `/showcase` route renders every primitive on `bgRoot` for visual diff against the prototype (outside `ShellRoute`)
+    - Both packages pass `flutter analyze` with zero issues
 
-**Next:** Complete `TranscodingScreen` cubit, hardware encoding startup validation, E2E encryption planning. Public-routing Phase 6 (TURN, WAF rules, tunnel health alerts, Cloudflare Access) is tracked as operator-driven manual tasks; pick up before announcing the public URL externally.
+**Next:** redesign M2 (Sidebar + status bar + nav replacement), then M3 Dashboard. Backend M0 leftovers (§7.3 notifications, §7.4 activity-events table, §7.8 transcoding load probe, §7.9 structured logs, §7.10 settings extension, §7.11 orders pagination + Polar portal URL) can run in parallel. Public-routing Phase 6 (TURN, WAF rules, tunnel health alerts, Cloudflare Access) is tracked as operator-driven manual tasks; pick up before announcing the public URL externally.

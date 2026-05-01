@@ -40,24 +40,32 @@ apps/server/
 │       ├── 002_sessions.sql    # stream_sessions
 │       ├── 003_usage.sql       # usage_events
 │       ├── 004_tmdb_metadata.sql  # title, overview, poster_url
-│       └── 005_progress.sql    # last_progress_sec
+│       ├── 005_progress.sql    # last_progress_sec
+│       ├── 011_groups.sql      # groups, group_members, group_restrictions
+│       └── 012_profile_fields.sql  # display_name, email, avatar_path, profile_created_at, last_login_at on user_settings
 ├── routers/
 │   ├── auth.py
 │   ├── files.py
+│   ├── groups.py
 │   ├── library.py
+│   ├── profile.py
 │   ├── stream.py
 │   └── ws.py
 ├── services/
 │   ├── ffmpeg_service.py
+│   ├── group_service.py
 │   ├── library_service.py
 │   ├── discovery_service.py
 │   ├── auth_service.py
+│   ├── profile_service.py
 │   ├── tmdb_service.py
 │   └── webrtc_service.py
 ├── models/
 │   ├── media_file.py           # MediaFileResponse (resume_sec alias)
+│   ├── group.py
 │   ├── library.py
 │   ├── client.py
+│   ├── profile.py              # ProfileResponse (avatar_letter computed), ProfileUpdate
 │   ├── stream_session.py
 │   └── settings.py
 ├── utils/
@@ -67,9 +75,11 @@ apps/server/
     ├── conftest.py
     ├── test_auth.py
     ├── test_files.py
+    ├── test_groups.py
     ├── test_library.py
+    ├── test_profile.py         # 9 tests — GET/PATCH profile + avatar_letter computation
     ├── test_stream.py
-    └── test_tmdb.py            # 46 tests total
+    └── test_tmdb.py
 ```
 
 ---

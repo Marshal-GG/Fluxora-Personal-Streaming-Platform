@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-01 (migrations 004-010; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings)
+> **Status:** Active - Updated 2026-05-01 (migrations 004-012; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields)
 
 ---
 
@@ -81,7 +81,13 @@ CREATE TABLE user_settings (
     license_key              TEXT,      -- migration 006: user's paid-plan license key
     transcoding_encoder      TEXT NOT NULL DEFAULT 'libx264',   -- migration 010
     transcoding_preset       TEXT NOT NULL DEFAULT 'veryfast',  -- migration 010
-    transcoding_crf          INTEGER NOT NULL DEFAULT 23        -- migration 010
+    transcoding_crf          INTEGER NOT NULL DEFAULT 23,       -- migration 010
+    -- migration 012: operator profile metadata
+    display_name             TEXT,      -- operator display name
+    email                    TEXT,      -- operator email address
+    avatar_path              TEXT,      -- absolute path to local avatar image
+    profile_created_at       TEXT,      -- backfilled to migration-apply time for the existing row
+    last_login_at            TEXT       -- reserved for v2; always NULL in v1
 );
 
 -- Polar paid-order idempotency table
@@ -91,6 +97,33 @@ CREATE TABLE polar_orders (
     tier           TEXT NOT NULL,
     license_key    TEXT NOT NULL,
     processed_at   TEXT NOT NULL
+);
+
+-- Client groups (migration 011)
+-- A client can belong to multiple groups; restrictions are stream-gate enforced.
+CREATE TABLE IF NOT EXISTS groups (
+    id          TEXT PRIMARY KEY,            -- UUID
+    name        TEXT NOT NULL,
+    description TEXT,
+    status      TEXT NOT NULL DEFAULT 'active'
+                CHECK(status IN ('active','inactive')),
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS group_members (
+    group_id  TEXT NOT NULL REFERENCES groups(id)  ON DELETE CASCADE,
+    client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    added_at  TEXT NOT NULL,
+    PRIMARY KEY (group_id, client_id)
+);
+
+CREATE TABLE IF NOT EXISTS group_restrictions (
+    group_id           TEXT PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+    allowed_libraries  TEXT,        -- JSON array of library ids; NULL = all
+    bandwidth_cap_mbps INTEGER,     -- NULL = unlimited
+    time_window        TEXT,        -- JSON {start_h, end_h, days:[0..6]}; NULL = always
+    max_rating         TEXT         -- e.g. "PG-13"; NULL = none
 );
 ```
 
@@ -106,6 +139,7 @@ CREATE TABLE polar_orders (
 | `stream_sessions` | `client_id` | B-Tree | Client history lookup |
 | `stream_sessions` | `file_id` | B-Tree | File stream history |
 | `stream_sessions` | `ended_at` | B-Tree | Active session queries (WHERE ended_at IS NULL) |
+| `group_members` | `client_id` | B-Tree | Fast lookup of all groups a client belongs to (stream-gate query) |
 
 ---
 
@@ -130,3 +164,5 @@ CREATE TABLE polar_orders (
 | `008_polar_orders.sql` | Creates `polar_orders` to make Polar paid-order license issuance idempotent without storing customer email |
 | `009_order_customer_email.sql` | Adds `customer_email` to `polar_orders` table for manual owner lookup. |
 | `010_transcoding_settings.sql` | Adds `transcoding_encoder`, `transcoding_preset`, `transcoding_crf` to `user_settings`; defaults: `libx264`, `veryfast`, `23`. |
+| `011_groups.sql` | Creates `groups`, `group_members`, `group_restrictions`; adds `idx_group_members_client` index. Enables client-group stream-gate enforcement. |
+| `012_profile_fields.sql` | Adds 5 nullable columns to `user_settings`: `display_name TEXT`, `email TEXT`, `avatar_path TEXT`, `profile_created_at TEXT` (backfilled to migration-apply time for the existing row), `last_login_at TEXT` (reserved for v2; null in v1). |
