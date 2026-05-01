@@ -72,8 +72,6 @@ Fluxora/
 │   └── workflows/           # Path-scoped CI (server / mobile / desktop / web)
 ├── firebase.json            # Firebase Hosting + Functions config
 ├── .firebaserc              # Firebase project alias
-├── AGENT_LOG.md             # Append-only log of all agent work sessions
-├── CLAUDE.md                # AI agent onboarding and mandatory rules
 ├── DESIGN.md                # Design system (Google Stitch spec)
 └── README.md
 ```
@@ -121,11 +119,6 @@ flutter run          # connects to a physical device or emulator
 - [API Contracts](docs/04_api/01_api_contracts.md)
 - [Roadmap](docs/10_planning/01_roadmap.md)
 - [Design System](DESIGN.md)
-- [Agent Work Log](AGENT_LOG.md)
 
 ---
 
-## For AI Agents
-
-Read [`CLAUDE.md`](CLAUDE.md) before touching any code.  
-Read [`AGENT_LOG.md`](AGENT_LOG.md) to understand what has been done and what comes next.

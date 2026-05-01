@@ -330,7 +330,6 @@ Test coverage: `apps/mobile/test/features/auth/auth_repository_impl_test.dart` (
 
 #### 4.5 Mobile Settings — deferred 🔲
 
-The plan called for a "Remote access" row showing whether `fluxora-api.marshalx.dev` is reachable via `HEAD /api/v1/healthz`. The mobile app currently has **no** Settings feature folder — by design, the Desktop Control Panel is the canonical v1 settings surface (see `CLAUDE.md` Current Status: mobile features are connect / auth / library / player / upgrade only). Building a full settings screen + cubit + repo + router entry just for one row is out of scope for this slice.
 
 Tracked as a follow-up: when mobile gains a Settings screen (theme / language / unpair / etc.), the Remote-access row and a `_apiClient.get(Endpoints.healthz)` probe wire in trivially. `Endpoints.healthz` is already exported from `fluxora_core` for that use.
 
@@ -521,7 +520,6 @@ When implementation begins, the following docs will need to be updated:
 - `docs/10_planning/02_decisions.md` — ADR-013: "Public routing via Cloudflare Tunnel + media-plane direct/P2P"
 - `docs/08_frontend/01_frontend_architecture.md` — `ApiClient` dual-base-URL pattern; mobile pairing flow
 - `docs/00_overview/README.md` — add link to this doc
-- `CLAUDE.md` — Tech Stack table gains "Cloudflare Tunnel"; Known Risks adds tunnel-down failure mode
 
 ---
 

@@ -210,7 +210,6 @@ If you're getting more than ~1 alert per week and most are no-ops, your alerts a
 3. Check the obvious: tunnel up? Service running? DB writable?
 4. Check Sentry for the trigger error
 5. Roll back if a recent deploy looks suspicious
-6. After: write up what happened in AGENT_LOG.md / your incident log
 ```
 
 Skip step 6 at your peril. Memory rots; an incident you don't document will repeat.

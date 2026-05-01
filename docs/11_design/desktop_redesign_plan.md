@@ -393,7 +393,6 @@ Implementation:
 
 ### 7.7 Dashboard "Quick Access" actions (Restart / Stop server)
 
-**Status:** no endpoints; CLAUDE.md / config.py boot flow exists but not exposed.
 
 **New endpoints — `apps/server/routers/info.py`:**
 | Method | Path | Description | Auth |
@@ -522,7 +521,6 @@ Implementation: Polar SDK exposes a customer-portal URL builder; cache per `cust
 | `psutil` | CPU / RAM / process probe for §7.6 | `apps/server/pyproject.toml` |
 | (consider) `pyinotify` (Linux) / `watchdog` (cross-platform) | Live-log tail for §7.9 | optional; polling is acceptable v1 |
 
-Pin to current latest versions per CLAUDE.md Rule #12 — verify at PR time, do not pin to a number from training data.
 
 ---
 
@@ -567,7 +565,6 @@ These rules are enforced on every screen PR. Each comes from a real Flutter pitf
 - [ ] No `print()` / `debugPrint()`.
 - [ ] No `// TODO` left behind.
 - [ ] Existing tests pass; new screen has at least a smoke test that mounts it.
-- [ ] `AGENT_LOG.md` entry appended; relevant docs updated per CLAUDE.md doc protocol.
 
 ### 8.6 Visual regression harness (recommended)
 Add `golden_toolkit`. Capture a golden PNG of each screen at 1440×900 with a fixed data fixture. Re-run on every PR to catch unintended visual changes. Goldens live in `apps/desktop/test/goldens/`.
@@ -589,7 +586,6 @@ Estimates are for a single dev. Halve with two devs after primitives are merged.
 | **M6 — Logs + Settings** | Logs filtering UI + all 6 Settings tabs | 2 days |
 | **M7 — Subscription + Profile + Notifications + Help** | Subscription + Billing + Manage + Profile + Notifications overlay + Help | 2 days |
 | **M8 — Polish + visual QA** | Cmd+K polish, accessibility pass, golden tests, pixel review against prototype | 1.5 days |
-| **M9 — Cleanup + docs** | Delete legacy screen files, update all docs per §10, update `AGENT_LOG.md` | 0.5 day |
 
 **Total: ~19 working days.** Backend (M0) can run in parallel with M1 once primitives are scoped.
 
@@ -597,7 +593,6 @@ Estimates are for a single dev. Halve with two devs after primitives are merged.
 
 ## 10. Doc-update protocol — files to touch on cutover
 
-Per CLAUDE.md doc protocol §3, after M9:
 
 | File | Update |
 |------|--------|
@@ -613,8 +608,6 @@ Per CLAUDE.md doc protocol §3, after M9:
 | `docs/10_planning/01_roadmap.md` | Phase 5 progress |
 | `docs/10_planning/02_decisions.md` | Decisions §1.1–§1.5 here become ADR entries |
 | `DESIGN.md` | Extend tokens with new colors / spacing / radii / shadows |
-| `CLAUDE.md` | Update "Current Status" + "Phase Roadmap" tables |
-| `AGENT_LOG.md` | Per-session entries throughout |
 
 ---
 
