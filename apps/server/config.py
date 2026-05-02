@@ -72,6 +72,13 @@ class Settings(BaseSettings):
     # Without this, the /api/v1/webhook/polar endpoint returns 501.
     polar_webhook_secret: str = ""
 
+    # Polar.sh customer portal landing URL (e.g.
+    # https://polar.sh/fluxora/portal). The desktop Subscription screen
+    # opens this in a browser so the customer can manage payment / cancel.
+    # Polar authorises the session via magic-link email — no per-customer
+    # token is encoded here. Empty string -> /orders/portal-url returns 404.
+    polar_portal_url: str = ""
+
     # Sentry — paste DSN from sentry.io project settings to enable error
     # reporting. Empty string disables Sentry entirely (no init, no overhead).
     # Environment tag groups events by stage in the Sentry UI.
