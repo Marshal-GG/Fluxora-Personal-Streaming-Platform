@@ -269,48 +269,53 @@ class _TabNavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          margin: const EdgeInsets.only(bottom: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: active
-                ? const Color(0x24A855F7)
-                : Colors.transparent,
-            border: Border.all(
+    return Semantics(
+      button: true,
+      selected: active,
+      label: '$label tab',
+      child: GestureDetector(
+        onTap: onTap,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            margin: const EdgeInsets.only(bottom: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
               color: active
-                  ? const Color(0x4DA855F7)
+                  ? const Color(0x24A855F7)
                   : Colors.transparent,
-            ),
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                size: 14,
+              border: Border.all(
                 color: active
-                    ? AppColors.violetTint
-                    : AppColors.textMutedV2,
+                    ? const Color(0x4DA855F7)
+                    : Colors.transparent,
               ),
-              const SizedBox(width: 10),
-              Text(
-                label,
-                style: TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 12.5,
-                  fontWeight:
-                      active ? FontWeight.w600 : FontWeight.w500,
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  icon,
+                  size: 14,
                   color: active
-                      ? const Color(0xFFE9D5FF)
+                      ? AppColors.violetTint
                       : AppColors.textMutedV2,
                 ),
-              ),
-            ],
+                const SizedBox(width: 10),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 12.5,
+                    fontWeight:
+                        active ? FontWeight.w600 : FontWeight.w500,
+                    color: active
+                        ? const Color(0xFFE9D5FF)
+                        : AppColors.textMutedV2,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -661,14 +666,18 @@ class _SwitchRowState extends State<_SwitchRow> {
               ],
             ),
           ),
-          GestureDetector(
-            onTap: () => setState(() => _on = !_on),
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 38,
-                height: 22,
+          Semantics(
+            button: true,
+            toggled: _on,
+            label: '${widget.label} toggle',
+            child: GestureDetector(
+              onTap: () => setState(() => _on = !_on),
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 38,
+                  height: 22,
                 decoration: BoxDecoration(
                   gradient: _on
                       ? const LinearGradient(
@@ -701,6 +710,7 @@ class _SwitchRowState extends State<_SwitchRow> {
                 ),
               ),
             ),
+          ),
           ),
         ],
       ),

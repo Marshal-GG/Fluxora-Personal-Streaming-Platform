@@ -299,14 +299,18 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: active ? const Color(0x26A855F7) : Colors.transparent,
+    return Semantics(
+      button: true,
+      selected: active,
+      label: '$label filter',
+      child: GestureDetector(
+        onTap: onTap,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: active ? const Color(0x26A855F7) : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
           ),
           child: Text(
@@ -320,6 +324,7 @@ class _FilterChip extends StatelessWidget {
                   : AppColors.textMutedV2,
             ),
           ),
+        ),
         ),
       ),
     );
@@ -391,22 +396,26 @@ class _NotificationRow extends StatelessWidget {
     final isUnread = n.readAt == null;
     final cubit = context.read<NotificationsCubit>();
 
-    return GestureDetector(
-      onTap: () {
-        cubit.markRead(n.id);
-        final route = _routeForKind(n.relatedKind);
-        context.go(route);
-      },
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s20,
-            vertical: 12,
-          ),
-          decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: Color(0x08FFFFFF))),
-          ),
+    return Semantics(
+      button: true,
+      label:
+          '${isUnread ? 'Unread' : 'Read'} ${n.category.name} notification: ${n.title}. ${n.message}',
+      child: GestureDetector(
+        onTap: () {
+          cubit.markRead(n.id);
+          final route = _routeForKind(n.relatedKind);
+          context.go(route);
+        },
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s20,
+              vertical: 12,
+            ),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: Color(0x08FFFFFF))),
+            ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -477,6 +486,7 @@ class _NotificationRow extends StatelessWidget {
               ),
             ],
           ),
+        ),
         ),
       ),
     );

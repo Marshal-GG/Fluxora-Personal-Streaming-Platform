@@ -236,29 +236,35 @@ class _LogsViewState extends State<_LogsView> {
                       // Footer: live indicator + count
                       Padding(
                         padding: const EdgeInsets.only(top: AppSpacing.s8),
-                        child: Row(
-                          children: [
-                            StatusDot(
-                              status: _paused
-                                  ? DotStatus.inactive
-                                  : DotStatus.online,
-                              size: 6,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              _paused ? 'Paused' : 'Live',
-                              style: AppTypography.captionV2.copyWith(
-                                color: _paused
-                                    ? AppColors.textDim
-                                    : AppColors.emerald,
+                        child: Semantics(
+                          label: _paused
+                              ? 'Logs paused, ${_filtered(records).length} entries'
+                              : 'Logs live, ${_filtered(records).length} entries',
+                          container: true,
+                          child: Row(
+                            children: [
+                              StatusDot(
+                                status: _paused
+                                    ? DotStatus.inactive
+                                    : DotStatus.online,
+                                size: 6,
                               ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              '${_filtered(records).length} entries',
-                              style: AppTypography.captionV2,
-                            ),
-                          ],
+                              const SizedBox(width: 6),
+                              Text(
+                                _paused ? 'Paused' : 'Live',
+                                style: AppTypography.captionV2.copyWith(
+                                  color: _paused
+                                      ? AppColors.textDim
+                                      : AppColors.emerald,
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                '${_filtered(records).length} entries',
+                                style: AppTypography.captionV2,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -435,10 +441,15 @@ class _LogRowState extends State<_LogRow> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        behavior: HitTestBehavior.opaque,
-        child: AnimatedContainer(
+      child: Semantics(
+        button: true,
+        label:
+            '${r.level} log at ${r.shortTime} from ${r.source}: ${r.message}',
+        toggled: widget.isExpanded,
+        child: GestureDetector(
+          onTap: widget.onTap,
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedContainer(
           duration: const Duration(milliseconds: 100),
           decoration: BoxDecoration(
             color: widget.isExpanded
@@ -565,6 +576,7 @@ class _LogRowState extends State<_LogRow> {
             ],
           ),
         ),
+        ),
       ),
     );
   }
@@ -655,15 +667,19 @@ class _FilterRail extends StatelessWidget {
                     color: AppColors.textBright,
                   ),
                 ),
-                GestureDetector(
-                  onTap: onReset,
-                  child: const Text(
-                    'Reset',
-                    style: TextStyle(
-                      fontFamily: 'Inter',
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.violet,
+                Semantics(
+                  button: true,
+                  label: 'Reset filters',
+                  child: GestureDetector(
+                    onTap: onReset,
+                    child: const Text(
+                      'Reset',
+                      style: TextStyle(
+                        fontFamily: 'Inter',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.violet,
+                      ),
                     ),
                   ),
                 ),

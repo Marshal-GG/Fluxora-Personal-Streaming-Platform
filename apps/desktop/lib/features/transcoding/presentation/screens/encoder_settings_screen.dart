@@ -312,11 +312,15 @@ class _HardwareAccelCard extends StatelessWidget {
             child: Column(
               children: _knownEncoders.map((enc) {
                 final isPrimary = currentEncoder == enc.id;
-                return GestureDetector(
-                  onTap: () => onEncoderChanged(enc.id),
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: AnimatedContainer(
+                return Semantics(
+                  button: true,
+                  selected: isPrimary,
+                  label: '${enc.name} encoder${isPrimary ? ', selected' : ''}',
+                  child: GestureDetector(
+                    onTap: () => onEncoderChanged(enc.id),
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: AnimatedContainer(
                       duration: const Duration(milliseconds: 150),
                       margin: const EdgeInsets.only(bottom: AppSpacing.s10),
                       padding: const EdgeInsets.all(AppSpacing.s14),
@@ -381,6 +385,7 @@ class _HardwareAccelCard extends StatelessWidget {
                         ],
                       ),
                     ),
+                  ),
                   ),
                 );
               }).toList(),
@@ -495,7 +500,7 @@ class _EncoderDropdown extends StatelessWidget {
   Widget build(BuildContext context) {
     return DropdownButton<String>(
       value: value,
-      dropdownColor: AppColors.surface,
+      dropdownColor: AppColors.bgRoot,
       style: AppTypography.body.copyWith(color: AppColors.textBody),
       underline: const SizedBox.shrink(),
       items: _encoders
@@ -526,11 +531,15 @@ class _PresetSelector extends StatelessWidget {
       spacing: 4,
       children: presets.map((p) {
         final selected = p == value;
-        return GestureDetector(
-          onTap: () => onChanged(p),
-          child: MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: AnimatedContainer(
+        return Semantics(
+          button: true,
+          selected: selected,
+          label: 'Preset $p${selected ? ', selected' : ''}',
+          child: GestureDetector(
+            onTap: () => onChanged(p),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: AnimatedContainer(
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
               decoration: BoxDecoration(
@@ -556,6 +565,7 @@ class _PresetSelector extends StatelessWidget {
                 ),
               ),
             ),
+          ),
           ),
         );
       }).toList(),

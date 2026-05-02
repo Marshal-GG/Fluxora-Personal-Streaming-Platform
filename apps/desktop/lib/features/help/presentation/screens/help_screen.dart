@@ -332,34 +332,39 @@ class _FaqItemState extends State<_FaqItem> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            GestureDetector(
-              onTap: () => setState(() => _open = !_open),
-              child: MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 18,
-                    vertical: 14,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          widget.question,
-                          style: AppTypography.bodySmall.copyWith(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
+            Semantics(
+              button: true,
+              expanded: _open,
+              label: 'FAQ: ${widget.question}',
+              child: GestureDetector(
+                onTap: () => setState(() => _open = !_open),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 14,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            widget.question,
+                            style: AppTypography.bodySmall.copyWith(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
-                      ),
-                      Icon(
-                        _open
-                            ? Icons.keyboard_arrow_up_rounded
-                            : Icons.keyboard_arrow_down_rounded,
-                        size: 16,
-                        color: AppColors.textMutedV2,
-                      ),
-                    ],
+                        Icon(
+                          _open
+                              ? Icons.keyboard_arrow_up_rounded
+                              : Icons.keyboard_arrow_down_rounded,
+                          size: 16,
+                          color: AppColors.textMutedV2,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -475,11 +480,15 @@ class _LinkRowState extends State<_LinkRow> {
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: () {
-          // TODO(M8): open URL via url_launcher once added
-        },
-        child: Container(
+      child: Semantics(
+        button: true,
+        link: true,
+        label: '${widget.title}, opens external link',
+        child: GestureDetector(
+          onTap: () {
+            // TODO(M8): open URL via url_launcher once added
+          },
+          child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
             border: widget.hasDivider
@@ -528,6 +537,7 @@ class _LinkRowState extends State<_LinkRow> {
                 color: AppColors.textFaint,
               ),
             ],
+          ),
           ),
         ),
       ),

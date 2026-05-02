@@ -360,13 +360,17 @@ class _SettingsTabItemState extends State<_SettingsTabItem> {
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(6, 0, 6, 13),
-          decoration: BoxDecoration(
-            border: Border(
+      child: Semantics(
+        button: true,
+        selected: widget.isActive,
+        label: '${widget.label} settings tab',
+        child: GestureDetector(
+          onTap: widget.onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(6, 0, 6, 13),
+            decoration: BoxDecoration(
+              border: Border(
               bottom: BorderSide(
                 color: widget.isActive
                     ? AppColors.violet
@@ -394,6 +398,7 @@ class _SettingsTabItemState extends State<_SettingsTabItem> {
               ),
             ],
           ),
+        ),
         ),
       ),
     );

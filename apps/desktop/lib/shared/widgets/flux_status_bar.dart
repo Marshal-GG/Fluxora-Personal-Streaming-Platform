@@ -235,26 +235,31 @@ class _MetricChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Icon(icon, size: 12, color: AppColors.textMutedV2),
-        const SizedBox(width: AppSpacing.s6),
-        Text(
-          label,
-          style: AppTypography.eyebrow.copyWith(
-            fontSize: 9,
-            color: AppColors.textDim,
-            letterSpacing: 1.0,
+    return Semantics(
+      container: true,
+      label: '$label $value',
+      excludeSemantics: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(icon, size: 12, color: AppColors.textMutedV2),
+          const SizedBox(width: AppSpacing.s6),
+          Text(
+            label,
+            style: AppTypography.eyebrow.copyWith(
+              fontSize: 9,
+              color: AppColors.textDim,
+              letterSpacing: 1.0,
+            ),
           ),
-        ),
-        const SizedBox(width: AppSpacing.s4),
-        Text(
-          value,
-          style: AppTypography.monoMicro.copyWith(color: valueColor),
-        ),
-      ],
+          const SizedBox(width: AppSpacing.s4),
+          Text(
+            value,
+            style: AppTypography.monoMicro.copyWith(color: valueColor),
+          ),
+        ],
+      ),
     );
   }
 }
