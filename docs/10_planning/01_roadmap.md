@@ -170,8 +170,6 @@ Fluxora/
 ├── docs/                    # All project documentation
 ├── scripts/                 # Build + release automation
 ├── .github/workflows/       # Path-scoped CI (server / mobile / desktop)
-├── AGENT_LOG.md             # Append-only agent session log
-├── CLAUDE.md                # AI agent rules and context
 ├── DESIGN.md                # Design system (Google Stitch spec)
 └── README.md
 ```

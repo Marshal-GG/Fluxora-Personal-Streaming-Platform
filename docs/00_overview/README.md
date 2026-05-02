@@ -41,8 +41,6 @@ Python/FastAPI executable on the user's home machine.
 
 | File | Purpose |
 |------|---------|
-| [`CLAUDE.md`](../../CLAUDE.md) | AI agent onboarding guide and mandatory rules |
-| [`AGENT_LOG.md`](../../AGENT_LOG.md) | Append-only log of all agent work sessions |
 | [`DESIGN.md`](../../DESIGN.md) | Design system — Google Stitch spec format |
 | [`README.md`](../../README.md) | Project introduction and structure |
 | [`.gitignore`](../../.gitignore) | Git ignore rules for Python + Flutter + OS artifacts |
@@ -85,5 +83,3 @@ Python/FastAPI executable on the user's home machine.
 
 ### Repo
 - [Folder Structure](./folder_structure.md)
-- [Contributing Guide](../../CONTRIBUTING.md)
-- [Agent Work Log](../../AGENT_LOG.md)
