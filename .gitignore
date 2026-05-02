@@ -50,6 +50,9 @@ apps/web_landing/.next/
 apps/web_landing/out/
 apps/web_landing/node_modules/
 
+# TypeScript incremental build cache (never committed)
+*.tsbuildinfo
+
 # Firebase
 functions/node_modules/
 functions/lib/
