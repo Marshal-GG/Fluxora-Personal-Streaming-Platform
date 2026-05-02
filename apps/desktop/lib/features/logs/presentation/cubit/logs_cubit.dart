@@ -12,8 +12,8 @@ class LogsCubit extends Cubit<LogsState> {
   Future<void> load() async {
     emit(LogsLoading());
     try {
-      final logs = await _repository.getLogs();
-      emit(LogsLoaded(logs: logs));
+      final records = await _repository.getLogs();
+      emit(LogsLoaded(records: records));
     } catch (e) {
       emit(LogsFailure(message: e.toString()));
     }

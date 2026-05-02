@@ -1,5 +1,6 @@
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/network/endpoints.dart';
+import 'package:fluxora_desktop/features/logs/domain/log_record.dart';
 import 'package:fluxora_desktop/features/logs/domain/repositories/logs_repository.dart';
 
 class LogsRepositoryImpl implements LogsRepository {
@@ -8,20 +9,15 @@ class LogsRepositoryImpl implements LogsRepository {
   final ApiClient _apiClient;
 
   @override
-  Future<String> getLogs() => _apiClient.get(
+  Future<List<LogRecord>> getLogs() => _apiClient.get(
         Endpoints.logs,
         queryParameters: const {'limit': 1000},
         fromJson: (json) {
           final items = (json['items'] as List).cast<Map<String, dynamic>>();
-          // Most-recent-last so the screen's reverse:true scroll keeps
-          // the newest entry at the bottom.
-          return items.reversed.map((rec) {
-            final ts = rec['ts'] ?? '';
-            final level = (rec['level'] ?? '').toString().toUpperCase();
-            final source = rec['source'] ?? '';
-            final message = rec['message'] ?? '';
-            return '$ts [$level] $source: $message';
-          }).join('\n');
+          // Most-recent-last: the screen auto-scrolls to the bottom.
+          return items.reversed
+              .map(LogRecord.fromJson)
+              .toList(growable: false);
         },
       );
 }

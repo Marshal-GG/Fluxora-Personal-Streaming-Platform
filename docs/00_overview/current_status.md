@@ -69,7 +69,8 @@
 | **Desktop redesign M5 Activity** (replaced legacy screen; `PageHeader` + search + 4 stat tiles + Live Activity card + Filter sidebar; `RecentActivityCubit` extended with `loadAll`/`pause`/`resume`) | ✅ done 2026-05-02 |
 | **Desktop redesign M5 Transcoding** (4 stat tiles + Active Sessions card; `TranscodingCubit` polls 2 s; joins legacy `ActivityCubit` for stream sessions) | ✅ done 2026-05-02 |
 | **Desktop redesign M5 Encoder Settings** (sub-page at `/transcoding/encoder`; hardware encoder selector + preset chips + CRF slider + live stats sidebar; reuses `SettingsCubit`) | ✅ done 2026-05-02 |
-| Desktop redesign M6+ (Logs / Settings / Subscription / Profile / Notifications) | 🔲 not started |
+| **Desktop redesign M6 Logs + Settings** (Logs: structured rows + level/source/since filters + 4 tabs + auto-scroll + pause/resume; Settings: 6-tab side-rail layout — General / Network / Streaming / Security / Advanced / About — wires all 18 §7.10 extended fields; 4 new form primitives: `FluxTextField`, `FluxSelect`, `FluxSwitch`, `FluxSlider`; `LogRecord` domain entity) | ✅ done 2026-05-02 |
+| Desktop redesign M7+ (Subscription / Profile / Notifications / Help) | 🔲 not started |
 
 ---
 

@@ -69,9 +69,16 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 - **Activity screen** (`apps/desktop/lib/features/activity/presentation/screens/activity_screen.dart`) — fully replaced: `PageHeader` + search, 4 `StatTile`s derived from real event counts (no fabricated deltas), 2-col layout with Live Activity card + Filter sidebar. Polling via extended `RecentActivityCubit` (added `loadAll`, `pause`, `resume`, `isPaused`). Legacy `ActivityCubit` + repository preserved for Transcoding screen.
 - **DI** — `GroupsRepository` + `TranscodingRepository` registered in `injector.dart`.
 
-### M6–M9 *(not started)*
+### M6 — Logs + Settings *(✅ Done 2026-05-02)*
 
-Pending M5 visual review against prototype.
+- **Logs feature** (`apps/desktop/lib/features/logs/`): repository extended to expose structured `List<LogRecord>` alongside the legacy text-blob (new `getStructuredLogs(limit)` method); cubit gains pause/resume + structured-state path; new `LogRecord` domain class at `lib/features/logs/domain/log_record.dart`. Replaced screen renders structured rows: timestamp (mono) + level pill + source + message, with `FluxTabBar` (All / Errors / Warnings / Info), Source + Time-Range dropdowns, Live indicator + entry count, expandable rows with copy-to-clipboard, auto-scroll to bottom while live.
+- **Settings feature** (`apps/desktop/lib/features/settings/`): screen rewrite uses 220 px side-rail nav + scrollable content area. Six tabs (General / Network / Streaming / Security / Advanced / About) each rendering a stack of `FluxCard`s grouping related settings. Reuses existing `SettingsCubit` + `saveSettings(...)` for all 18 §7.10 extended fields plus tier-1 fields. Local dirty-tracking map enables Save button only when changes exist; on save, diff is sent and the dirty map clears.
+- **New form primitives** in `apps/desktop/lib/shared/widgets/`: `FluxTextField`, `FluxSelect`, `FluxSwitch`, `FluxSlider` — thin Material wrappers with violet-glass styling, drop-in replacements for the corresponding Material widgets.
+- About tab: server version + uptime + LAN IP from SystemStats / serverInfo; GitHub repo / Documentation / Report Issue buttons; Credits.
+
+### M7–M9 *(not started)*
+
+Pending M6 visual review against prototype.
 
 ---
 
@@ -704,3 +711,4 @@ Per CLAUDE.md doc protocol §3, after M9:
 | 2026-05-02 | Claude (session) | M0 §7.5/§7.6/§7.7 shipped (storage breakdown, system stats REST + WS, restart/stop). M1 Foundation shipped (tokens, 11 primitives, brand visuals, 4 animated SVGs, `/showcase` route, `flutter_svg` dep, hi-fi logos). §7.1 Groups + §7.2 Profile shipped by parallel agent. Recreated F-mark SVG removed per owner direction — brand mark stays the original PNG. |
 | 2026-05-02 | Claude (session) | M3 Dashboard shipped. New entities `ActivityEvent` + `LibraryStorageBreakdown`/`StorageByType` in core. New features `storage/` + `recent_activity/` in desktop. `DashboardScreen` fully rewritten to pixel-match prototype: 4 stat tiles, Server Info card, Quick Access card, Recent Activity card, Storage Overview card. `DashboardRepository` extended with `restartServer`/`stopServer`. `Endpoints.activity` constant added. |
 | 2026-05-02 | Claude (session) | M5 shipped: Groups screen, Activity screen (replaced), Transcoding screen, Encoder Settings sub-page. New entities: `Group`/`GroupRestrictions`/`TimeWindow`/`GroupStatus` and `TranscodingStatus`/`EncoderLoad`/`ActiveTranscodeSession`. New features: `groups/` + `transcoding/`. `RecentActivityCubit` extended with `loadAll`/`pause`/`resume`. `Routes.encoderSettings` added. DI updated. |
+| 2026-05-02 | Claude (session) | M6 shipped: Logs screen (structured rows + 4 tabs + level/source/since filters + auto-scroll while live + pause/resume + click-to-expand) and Settings screen (6-tab side-rail layout — General / Network / Streaming / Security / Advanced / About — wires all 18 §7.10 extended fields plus tier-1 fields). New form primitives: `FluxTextField`, `FluxSelect`, `FluxSwitch`, `FluxSlider`. New `LogRecord` domain entity. |

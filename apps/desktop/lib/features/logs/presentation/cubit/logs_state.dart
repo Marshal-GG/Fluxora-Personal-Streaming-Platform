@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:fluxora_desktop/features/logs/domain/log_record.dart';
 
 sealed class LogsState extends Equatable {
   const LogsState();
@@ -12,11 +13,11 @@ class LogsInitial extends LogsState {}
 class LogsLoading extends LogsState {}
 
 class LogsLoaded extends LogsState {
-  const LogsLoaded({required this.logs});
-  final String logs;
+  const LogsLoaded({required this.records});
+  final List<LogRecord> records;
 
   @override
-  List<Object?> get props => [logs];
+  List<Object?> get props => [records];
 }
 
 class LogsFailure extends LogsState {
