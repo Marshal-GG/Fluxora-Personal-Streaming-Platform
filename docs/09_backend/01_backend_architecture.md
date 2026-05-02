@@ -125,7 +125,7 @@ server/
 │       ├── test_logs.py         # 15 tests — JSON-line parse, level/source/since/until/q filters, pagination, WS fan-out, localhost + token auth ✅
 │       └── test_settings_extended.py # 16 tests — PATCH + GET for all 18 new settings fields, Pydantic constraint enforcement ✅
 
-Total: 244 tests passing ✅ (198 pre-§7.8 + 6 §7.8 + 15 §7.9 + 16 §7.10 + 5 §7.11 + 4 auth-gate / activity emitter extension)
+Total: 247 tests passing ✅ (198 pre-§7.8 + 6 §7.8 + 15 §7.9 + 16 §7.10 + 5 §7.11 + 7 auth-gate / activity emitter extensions)
 ```
 
 ---
