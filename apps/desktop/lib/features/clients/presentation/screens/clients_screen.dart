@@ -227,12 +227,16 @@ class _ClientsViewState extends State<_ClientsView> {
   Widget _buildFilterRow(BuildContext context) {
     return Row(
       children: [
-        // Search input
-        SizedBox(
-          width: 280,
-          child: _SearchInput(
-            controller: _searchController,
-            onChanged: (v) => setState(() => _searchQuery = v),
+        // Search input — Expanded so it shrinks when the detail panel is
+        // open and the available width tightens, instead of pushing the
+        // dropdowns off the right edge.
+        Expanded(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 280),
+            child: _SearchInput(
+              controller: _searchController,
+              onChanged: (v) => setState(() => _searchQuery = v),
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s10),
@@ -263,7 +267,7 @@ class _ClientsViewState extends State<_ClientsView> {
           onSelected: (v) => setState(() => _sortBy = v),
         ),
 
-        const Spacer(),
+        const SizedBox(width: AppSpacing.s10),
 
         // Refresh button
         Tooltip(

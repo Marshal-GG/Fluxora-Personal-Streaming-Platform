@@ -18,6 +18,8 @@ import 'package:fluxora_desktop/features/dashboard/data/repositories/dashboard_r
 import 'package:fluxora_desktop/features/dashboard/domain/repositories/dashboard_repository.dart';
 import 'package:fluxora_desktop/features/library/data/repositories/library_repository_impl.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
+import 'package:fluxora_desktop/features/logs/data/repositories/logs_repository_impl.dart';
+import 'package:fluxora_desktop/features/logs/domain/repositories/logs_repository.dart';
 import 'package:fluxora_desktop/features/orders/data/repositories/orders_repository_impl.dart';
 import 'package:fluxora_desktop/features/orders/domain/repositories/orders_repository.dart';
 import 'package:fluxora_desktop/features/orders/presentation/cubit/orders_cubit.dart';
@@ -63,6 +65,10 @@ Future<void> setupInjector() async {
     () => LibraryRepositoryImpl(apiClient: getIt<ApiClient>()),
   );
   
+  getIt.registerLazySingleton<LogsRepository>(
+    () => LogsRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+
   getIt.registerLazySingleton<ActivityRepository>(
     () => ActivityRepositoryImpl(apiClient: getIt<ApiClient>()),
   );

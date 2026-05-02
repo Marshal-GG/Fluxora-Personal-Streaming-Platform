@@ -1012,6 +1012,10 @@ class _LibraryDetailPanel extends StatelessWidget {
               style: AppTypography.h2.copyWith(color: AppColors.textBright),
             ),
             const SizedBox(height: AppSpacing.s10),
+            // TODO: per-library file count + size require adding `fileCount`
+            // and `sizeBytes` to the Library entity in fluxora_core
+            // (server already returns `file_count` from /api/v1/library);
+            // requires a build_runner regen. Tracked for next sprint.
             const _DetailRow(label: 'Total Files', value: '—', isLast: false),
             const _DetailRow(label: 'Total Size', value: '—', isLast: false),
             _DetailRow(

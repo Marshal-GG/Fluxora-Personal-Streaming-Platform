@@ -88,14 +88,18 @@ class StatTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Label
+                // Label — allowed to wrap to 2 lines so that compact
+                // 4-up layouts (esp. when a detail panel is open and per-
+                // tile width drops to ~140 px) don't truncate "Total
+                // Libraries", "Connected Clients", etc.
                 Text(
                   label,
                   style: AppTypography.bodySmall.copyWith(
                     color: AppColors.textMutedV2,
                     fontWeight: FontWeight.w500,
+                    height: 1.2,
                   ),
-                  maxLines: 1,
+                  maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 2),

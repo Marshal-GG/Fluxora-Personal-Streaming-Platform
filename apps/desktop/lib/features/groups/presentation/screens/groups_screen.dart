@@ -246,7 +246,7 @@ class _GroupsLoaded extends StatelessWidget {
                                 style: AppTypography.eyebrow,
                               ),
                             ),
-                            SizedBox(width: 32),
+                            SizedBox(width: 44),
                           ],
                         ),
                       ),
@@ -453,7 +453,7 @@ class _GroupRowState extends State<_GroupRow> {
               ),
               // Actions
               SizedBox(
-                width: 32,
+                width: 44,
                 child: Tooltip(
                   message: 'Delete group',
                   child: FluxButton(

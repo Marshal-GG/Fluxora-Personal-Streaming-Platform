@@ -83,8 +83,8 @@ class _ProfileViewState extends State<_ProfileView> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               PageHeader(
-                title: 'Account',
-                subtitle: 'Manage your profile, security and preferences',
+                title: 'Profile',
+                subtitle: 'Operator account details',
                 actions: dirty || saving
                     ? FluxButton(
                         variant: FluxButtonVariant.primary,

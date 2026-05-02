@@ -365,7 +365,6 @@ class _SettingsTabItemState extends State<_SettingsTabItem> {
         behavior: HitTestBehavior.opaque,
         child: Container(
           padding: const EdgeInsets.fromLTRB(6, 0, 6, 13),
-          margin: const EdgeInsets.only(bottom: -1),
           decoration: BoxDecoration(
             border: Border(
               bottom: BorderSide(
