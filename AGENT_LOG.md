@@ -583,3 +583,88 @@ This session ran after the M0 backend close-out. M0 itself (§7.1–§7.11) ship
 - [x] No new third-party deps (none added; one MCP removed).
 - [x] No backwards-compat hacks left behind — legacy paths and Dart shim deleted outright per "new product" directive.
 ---
+
+---
+## [2026-05-02] — README marketing redesign + canonical /assets/ folder
+**Phase:** Phase 5 — brand consolidation (no functional code changes)
+**Status:** Complete
+
+### What Was Done
+
+1. **README rewritten in marketing structure** (omni_bridge-inspired). Centred animated hero banner with embedded wordmark v2, for-the-badge badges row, quick-link nav, then each section opens with `<h3 align="center">` + small SVG icon + violet→cyan divider. Sections: Why · Tech Stack (with `go-skill-icons.vercel.app`) · Features (2-col table) · Quick Start (`<details>` collapsibles per app) · Pricing · Status (phase chip row) · Docs · License → `capsule-render.vercel.app` footer wave. Single README serves both private and public mirror.
+
+2. **Built animated SVG hero banner.** 1200×320 viewBox, 12 SMIL animations: dark-violet→black bg gradient, 3 floating gradient orbs (violet/cyan/pink, slow drift), dot-grid texture (radial-mask faded), 3 flowing wave lines (stroke-dashoffset drift), pulsing live-indicator dot, animated violet→cyan halo behind the wordmark. **Wordmark v2 embedded as base64 PNG** (1000×174 RGBA, alpha-channel preserved) inside the SVG — required because GitHub's image proxy strips external `<image href>` requests. Total file: 211 KB (mostly the base64).
+
+3. **Created violet/cyan section icons** (7 SVGs, 22×22, all animated): `icon-why` (lightning bolt), `icon-stack` (3 layered tiles), `icon-features` (rising bars), `icon-quick-start` (terminal + blinking cursor), `icon-tiers` (price tag), `icon-roadmap` (milestone with ripple), `icon-docs` (folded doc). Each uses Fluxora's `#A855F7` violet and `#22D3EE` cyan accents — no teal anywhere. Adapted from omni_bridge structural patterns, recoloured throughout.
+
+4. **Created violet→cyan section divider** (`section-divider.svg`, 900×3) that sits under each `<h3>` — small static gradient line, fades at both edges.
+
+5. **Established canonical `/assets/` folder at repo root.** Brand was previously scattered across `docs/11_design/ref images/brand/` (originals), `packages/fluxora_core/assets/brand/` (Flutter runtime), `apps/web_landing/public/brand/` (Next.js runtime). New layout:
+   ```
+   /assets/
+   ├── README.md              ← layout + duplication rationale + sync flow
+   ├── brand/                 ← masters (kebab-case names)
+   │   └── README.md          ← brand colors + do/don't + clear-space
+   ├── banners/               ← README hero + dividers
+   ├── icons/                 ← 7 animated section icons
+   └── screenshots/           ← empty, ready for marketing screenshots post-M3
+   ```
+   Brand masters **renamed to kebab-case** to match runtime copies' naming (`logo-icon.png`, `logo-wordmark-h.png`, `logo-wordmark-stacked.png`, `logo-wordmark-h-v1.png`, `brand-banner-h.png`, `brand-banner-v.png`, `brand-identity-sheet.png`). Originals at `docs/11_design/ref images/brand/` **preserved unchanged** — they remain frozen reference (per user direction "don't remove ref images from docs").
+
+6. **Documented duplication.** `assets/README.md` explains why three locations exist (Flutter `pubspec.yaml` and Next.js `public/` can't share files across packages without a build step we haven't introduced) and which is canonical (the masters). `assets/brand/README.md` codifies the brand color tokens, do/don't usage rules, clear-space rules, and the alpha-from-brightness processing pipeline.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `README.md` (full marketing rewrite; 14 image paths repointed `docs/11_design/banners/` → `assets/{banners,icons}/`) |
+| Created | `assets/README.md` |
+| Created | `assets/brand/README.md` |
+| Created | `assets/brand/{logo-icon,logo-wordmark-h,logo-wordmark-h-v1,logo-wordmark-stacked,brand-banner-h,brand-banner-v,brand-identity-sheet}.png` (copied from `docs/11_design/ref images/brand/` and renamed) |
+| Created | `assets/banners/readme_hero.svg` (211 KB, base64 wordmark embedded) |
+| Created | `assets/banners/divider.svg` |
+| Created | `assets/banners/section-divider.svg` |
+| Created | `assets/banners/wordmark-h.png` (1000×174 sized derivative) |
+| Created | `assets/icons/icon-{why,stack,features,quick-start,tiers,roadmap,docs}.svg` |
+| Removed | `docs/11_design/banners/` (contents migrated to `assets/`) |
+
+### Docs Updated
+
+- `docs/00_overview/folder_structure.md` — added `assets/` to top-level tree + `apps/web_landing/`; added a footnote explaining the runtime-copies sync model.
+- `assets/README.md` (new) — documents the layout, the duplication rationale, and where each consumer pulls from.
+- `assets/brand/README.md` (new) — brand colors, do/don't, clear-space, alpha-processing pipeline.
+
+### Decisions Made
+
+- **`/assets/` lives at repo root, not under `packages/`.** Brand assets are organisation-wide metadata (next to `LICENSE`, `README.md`), not Dart code. `packages/` is for shared code libraries, `apps/` for deployables. Brand fits neither.
+- **Three-location duplication is accepted.** Flutter `pubspec.yaml` only bundles assets co-located with the package, and Next.js `public/` only ships files co-located with the app. Single-source rendering would require a build step that copies + processes on demand — not worth introducing for an asset set this small. Documented the sync flow in `assets/README.md` instead.
+- **Brand masters renamed to kebab-case in `/assets/brand/` only.** Runtime copies were already kebab-case; matching them across master + runtime makes the 1:1 traceability obvious. Originals in `docs/11_design/ref images/brand/` keep their snake_case ChatGPT-export names so the trace from frozen-reference → master is explicit.
+- **Single README serves both private and public repo.** The mirror-public.yml workflow strips `## For AI Agents` + filters AGENT_LOG/CLAUDE.md lines, but the README itself is identical in both — no special-case handling. Confirmed with the user this is the desired model.
+- **Wordmark embedded as base64 inside the hero SVG, not referenced as an external image.** GitHub serves repository SVGs through the `camo` image proxy which sandboxes them and strips `<image href="../path.png">` requests. Inlining as `data:image/png;base64,...` is the only reliable way to ship the wordmark inside an animated README hero. File size cost (~150 KB after Pillow optimisation) is acceptable.
+- **Used external image services (`go-skill-icons.vercel.app`, `capsule-render.vercel.app`, `img.shields.io`) in README despite supply-chain caveat.** Trade-off: each is a third-party Vercel/SaaS app that could rot. Mitigations: shields.io is widely trusted and was already in use; tech-stack table immediately under go-skill-icons serves as visible fallback if the image breaks; capsule-render footer wave is purely decorative (its absence won't degrade the README).
+
+### Issues Discovered / Reported to User
+
+- **`logo_wordmark_horizontal_v2_dark.png` source file is RGB (no alpha channel).** Confirmed via `file` command and PIL — the v2 master from the user has a solid dark backdrop. Runtime copies under `packages/fluxora_core/assets/brand/` and `apps/web_landing/public/brand/` are the alpha-processed derivatives (RGBA, transparent). Future re-exports must re-run the Pillow alpha-from-brightness pipeline; documented in `assets/brand/README.md`.
+- **Earlier git-status snapshot at session start showed `apps/server/routers/{auth,files,info,settings}.py` as modified, but the actual working tree had no diff in those files** — likely a cached snapshot from before a previous commit landed. No action needed; mentioning in case it surfaces again.
+
+### Blockers / Open Issues
+
+- **`/assets/screenshots/` is empty, by design.** Will be populated post-Desktop M3 with real Dashboard captures (1440×900). Manual task §12.1 in `docs/10_planning/04_manual_tasks.md` already tracks this.
+- **External image services in README** are a low-grade rot risk. If go-skill-icons.vercel.app or capsule-render.vercel.app go down, the badges silently break. Reported to user; user kept them since they degrade gracefully.
+
+### Next Agent Should
+
+1. **Begin desktop redesign M3 — Dashboard** (unchanged from prior session). All M0 backend deps shipped; the redesigned Dashboard is the highest-impact next chunk. Pixel-match against `docs/11_design/desktop_prototype/Fluxora Desktop.html` at 1440 × 900. After M3 captures land, populate `assets/screenshots/` with the marketing screenshots and update README's Features section to reference them inline (currently text-only).
+2. **Process the Phase 6 operator entries** in `docs/10_planning/04_manual_tasks.md` (Cloudflare Access on `/orders`, WAF rules, tunnel-health alerts, TURN evaluation). The `/info/logs` entry there is now stale.
+3. **Optional: inline external image services in README.** If supply-chain risk matters more than easy updates, swap `go-skill-icons.vercel.app` for a static SVG showing the same icons, and `capsule-render.vercel.app` for a custom footer wave. ~15 minutes of work, zero functional change.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran without explicit per-action OK. Commit authorised by user this turn ("update docs and comit"). No push performed.
+- [x] No agent / AI branding in any code, doc, or commit message.
+- [x] No `print()` / `debugPrint()` introduced (no code changed in this entry — assets + docs only).
+- [x] No exceptions swallowed (no exception handling changed).
+- [x] No secrets / hardcoded paths added.
+- [x] No new third-party deps (none added; READme references three external Vercel apps but those are image fetches at view-time, not Node deps).
+- [x] No backwards-compat hacks — old paths in docs were updated, not aliased.
+---
