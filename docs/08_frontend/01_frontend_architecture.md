@@ -33,21 +33,14 @@
 
 ## Design System
 
-Two parallel design systems coexist during the redesign migration:
+[`DESIGN.md`](../../DESIGN.md) is the canonical, single-source-of-truth spec. The V2 violet system below powers desktop, web landing, and (post-migration per [`mobile_redesign_plan.md`](../11_design/mobile_redesign_plan.md)) the mobile Flutter app.
 
-**Mobile / legacy desktop** (Phase 1–5 surface):
-- Color palette: dark-mode — `#0F172A` background, `#6366F1` primary, `#22D3EE` accent
-- Typography: `Inter` (Google Fonts)
-- Theming: Material 3 `ThemeData` with `ColorScheme.dark()`, `CardThemeData`, `AppBarTheme`
-- Tokens: `packages/fluxora_core/lib/constants/app_colors.dart` (top half), `app_typography.dart` (top half), `app_sizes.dart`
-- Full spec: `DESIGN.md`
-
-**Desktop redesign** (Phase 5 — new tokens, new primitives, no Material defaults):
-- Color palette: `#08061A` root, `#A855F7` violet primary, glassmorphic surfaces (`rgba(20,18,38,0.7)`), 7-color pill semantics, status-dot semantics
-- Typography: `Inter` 400/500/600/700/800 + `JetBrains Mono` 400/500/600 — bundled, no runtime `google_fonts` fetch
-- Theming: not driven by `ThemeData` — every redesign primitive owns its own `BoxDecoration` / `TextStyle` so Material's defaults can't bleed in
-- Tokens (new): `packages/fluxora_core/lib/constants/app_colors.dart` v2 section, `app_typography.dart` v2 section, `app_gradients.dart`, `app_spacing.dart`, `app_radii.dart`, `app_shadows.dart`
-- Full spec: [`docs/11_design/desktop_redesign_plan.md`](../11_design/desktop_redesign_plan.md)
+- **Color palette:** `#08061A` root, `#A855F7` violet primary, glassmorphic surfaces (`rgba(20,18,38,0.7)`), 7-color pill semantics, status-dot semantics.
+- **Typography:** `Inter` 400/500/600/700/800 + `JetBrains Mono` 400/500/600.
+- **Theming (desktop):** [`apps/desktop/lib/shared/theme/app_theme.dart`](../../apps/desktop/lib/shared/theme/app_theme.dart) wires V2 tokens through Material 3 `ThemeData` (`scaffoldBackgroundColor: bgRoot`, `colorScheme.primary: violet`, etc.) so Material defaults can't leak slate-blue. Every redesign primitive **also** owns its own `BoxDecoration` / `TextStyle` so it stays pixel-locked even outside the theme.
+- **Theming (mobile):** Currently consumes V1 tokens (legacy mobile palette in `app_colors.dart` lines 1-35); migrating to V2 per `mobile_redesign_plan.md`. Until mobile M9, `apps/mobile/lib/shared/theme/app_theme.dart` keeps the V1 wiring; mobile screens reference V1 styles. The V1 token block exists in code only because mobile hasn't migrated yet — it is not part of the design spec.
+- **Tokens:** `packages/fluxora_core/lib/constants/app_colors.dart` (V2 section, lines 43-94), `app_typography.dart` (V2 section, lines 102-207), `app_gradients.dart`, `app_spacing.dart`, `app_radii.dart`, `app_shadows.dart`.
+- **Surface plans:** [`desktop_redesign_plan.md`](../11_design/desktop_redesign_plan.md), [`mobile_redesign_plan.md`](../11_design/mobile_redesign_plan.md), [`web_landing_redesign_plan.md`](../11_design/web_landing_redesign_plan.md).
 
 ---
 
@@ -110,7 +103,7 @@ Pixel-matched to `docs/11_design/desktop_prototype/app/components/primitives.jsx
 
 ### Showcase route
 
-[`apps/desktop/lib/shared/showcase/primitives_showcase_screen.dart`](../../apps/desktop/lib/shared/showcase/primitives_showcase_screen.dart) renders every redesign primitive in every variant on the `bgRoot` background. Routed at `/showcase` outside the `ShellRoute` so it sits on a clean canvas for visual diff against the prototype. Removed at the M9 cutover.
+[`apps/desktop/lib/shared/showcase/primitives_showcase_screen.dart`](../../apps/desktop/lib/shared/showcase/primitives_showcase_screen.dart) renders every redesign primitive in every variant on the `bgRoot` background. Routed at `/showcase` outside the `ShellRoute` so it sits on a clean canvas for visual diff against the prototype. Kept post-M9 as an ongoing reference surface — useful when mobile starts referencing the same primitives.
 
 ---
 

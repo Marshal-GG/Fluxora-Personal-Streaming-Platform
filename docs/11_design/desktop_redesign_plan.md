@@ -1,9 +1,9 @@
 # Desktop App Redesign — Implementation Plan
 
-> **Status:** Implementing — M0 backend prerequisites partially shipped, M1 foundation complete (2026-05-02), M2 shell complete, M3 Dashboard complete (2026-05-02), M4 Library + Clients complete (2026-05-02), M5 Groups + Activity + Transcoding complete (2026-05-02), M6 Logs + Settings complete (2026-05-02), **M7 Subscription + Profile + Notifications + Help complete (2026-05-02)**
+> **Status:** Complete — M0 backend prerequisites partially shipped, M1 foundation complete (2026-05-02), M2 shell complete, M3 Dashboard complete (2026-05-02), M4 Library + Clients complete (2026-05-02), M5 Groups + Activity + Transcoding complete (2026-05-02), M6 Logs + Settings complete (2026-05-02), M7 Subscription + Profile + Notifications + Help complete (2026-05-02), M8 Polish complete (2026-05-03), M9 Cleanup complete (2026-05-03), **M9.5 V2 theme cutover complete (2026-05-03 — unplanned follow-up; desktop is now V2-pure).** **M10 Custom window chrome complete (2026-05-03 — `window_manager` 0.5.1, `FluxTitlebar`, frameless window with native Win 11 caption-button geometry, AppUserModelID + WNDCLASSEX shell-integration fixes for Aero Peek).**
 > **Created:** 2026-05-01
 > **Owner:** Marshal
-> **Source design:** [`docs/11_design/desktop_prototype/`](./desktop_prototype/) — React/JSX prototype exported from claude.ai/design
+> **Source design:** [`docs/11_design/prototype/`](./prototype/) — React/JSX prototype bundle from claude.ai/design (top-level [`README.md`](./prototype/README.md) is the agent-handoff doc; desktop port spec at [`prototype/app/desktop/README.md`](./prototype/app/desktop/README.md))
 > **Target:** [`apps/desktop/`](../../apps/desktop/) — Flutter desktop control panel
 
 This plan translates the Fluxora Desktop prototype into the existing Flutter desktop app. It is the single source of truth for the redesign — every screen PR should reference a section here.
@@ -101,6 +101,15 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 - **Visual review against prototype** is the user's manual verification step — `flutter run -d windows` and pixel-compare each redesigned screen against `desktop_prototype/Fluxora Desktop.html` at 1440 × 900. No code can substitute for this.
 - **Desktop redesign milestone is complete.** The remaining cleanup item from M8 (Tooltips + Semantics on the 8 screens Sonnet didn't reach + the GetIt-mocking fix to enable goldens) is documented in `test/goldens/_README.md` and the M8 row of `current_status.md`.
 
+### M9.5 — V2 theme cutover *(✅ Done 2026-05-03 — unplanned follow-up)*
+
+> Triggered by an owner bug report: switching tabs caused a brief slate-blue scaffold flash. Root cause: the redesign built every screen against V2 tokens directly but never rewrote the underlying `ThemeData` body — `scaffoldBackgroundColor` was still `AppColors.background` (`#0F172A` slate). Material defaults underneath the V2-painted screens flashed during route transitions.
+
+- **`apps/desktop/lib/shared/theme/app_theme.dart` body rewritten** — every V1 token swapped to V2: `scaffoldBackgroundColor: bgRoot`, `colorScheme.primary: violet`, `colorScheme.surface: surfaceGlass`, `cardColor: surfaceGlass`, `dividerColor: borderSubtle`, `appBarTheme.backgroundColor: surfaceGlass`, `elevatedButtonTheme.backgroundColor: violet`, `progressIndicatorTheme.color: violet`, `navigationRailTheme.{bg: sidebarGlass, indicator: pillBgPurple, active: violet}`, `snackBarTheme.backgroundColor: surfaceGlass`. Typography swapped V1 → V2 across the `TextTheme` (`displayV2`, `h1`, `h2`, `body`, `bodySmall`, `eyebrow`, `captionV2`). File path + `AppTheme.dark` getter signature unchanged.
+- **5 V1 stragglers fixed** in feature screens: `encoder_settings_screen.dart:503` (`dropdownColor: surface` → `bgRoot`); `clients_screen.dart:308,312` and `library_screen.dart:292,297` (`textMuted` → `textDim`, `textSecondary` → `textMutedV2`, `bodyMd` → `body` — same hexes for the colours, just V2-named).
+- **Verification:** zero matches across `apps/desktop/lib/` for any `AppColors.{primary,background,surface,surfaceRaised,surfaceMuted,primaryVariant,accentPurple,info,textPrimary,textSecondary,textMuted,textDisabled,error}` (V1 tokens). `flutter analyze` clean (27.8 s). Desktop is V2-pure.
+- **Docs synced:** `DESIGN.md` rewritten as V2-only canonical (no legacy section, no migration framing); `current_status.md`, `frontend_architecture.md` updated; this file's M9.5 entry added; `mobile_redesign_plan.md` gate-lifted note (since this completes the desktop side of the M9-cutover dependency).
+
 ---
 
 ## 1. Decisions locked in
@@ -113,7 +122,8 @@ These are the answered questions that shape the rest of the plan. Do not relitig
 | 2 | **Real backend data only.** No mock-data layer in Flutter. Where the screen needs data the backend doesn't yet expose, the **backend endpoint ships before the screen** (see §7). | Owner wants only real user data. |
 | 3 | **Cmd+K palette = navigation only** (v1). No global media search in v1. | Scoped down for ship-ability. |
 | 4 | **Tweaks panel removed.** No accent-color customization. Brand violet (`#A855F7`) is fixed. | The prototype's tweaks were a design-tool affordance; not a product feature. |
-| 5 | **Native window chrome.** Use the OS title bar on every platform. No `bitsdojo_window`, no custom traffic-light buttons. The prototype's titlebar is **not** translated. | Owner asked to remove. Reduces platform-specific code paths. |
+| 5 | ~~**Native window chrome.** Use the OS title bar on every platform. No `bitsdojo_window`, no custom traffic-light buttons. The prototype's titlebar is **not** translated.~~ **REVERSED 2026-05-03.** Custom window chrome is now in scope — see §13 / M10. The prototype's 36 px titlebar with wordmark + tagline + help/bell/window-controls is the visual target. |
+| 6 | **Sidebar logo header removed (updated prototype, 2026-05-03).** The new prototype drops the wordmark + tagline block from the top of the sidebar — nav now starts at the top of the rail. The wordmark moves into the custom titlebar (Decision #5 reversal). | Updated prototype bundle removes duplicate branding (wordmark in titlebar + sidebar). One source of brand at the top edge of the window. |
 
 The bottom **status bar** (CPU/RAM/network/uptime strip) **is** kept — it is a content widget rendered inside the Flutter window, not OS chrome.
 
@@ -123,13 +133,17 @@ The bottom **status bar** (CPU/RAM/network/uptime strip) **is** kept — it is a
 
 | Concern | File |
 |---------|------|
-| Visual reference (open in browser) | [`docs/11_design/desktop_prototype/Fluxora Desktop.html`](./desktop_prototype/Fluxora%20Desktop.html) |
-| Primitive widget definitions | [`docs/11_design/desktop_prototype/app/components/primitives.jsx`](./desktop_prototype/app/components/primitives.jsx) |
-| Sidebar layout | [`docs/11_design/desktop_prototype/app/components/sidebar.jsx`](./desktop_prototype/app/components/sidebar.jsx) |
-| Per-screen layout | `docs/11_design/desktop_prototype/app/screens/<name>.jsx` |
-| Per-tab/sub-page layout | `docs/11_design/desktop_prototype/app/pages/<name>.jsx` |
-| Sample data shapes (study only — do not copy) | `docs/11_design/desktop_prototype/app/data/fluxora-data*.jsx` |
-| Brand assets (PNGs) | `docs/11_design/desktop_prototype/app/assets/logo-icon.png`, `logo-wordmark.png` |
+| Visual reference (open in browser) | [`docs/11_design/prototype/Fluxora Desktop.html`](./prototype/Fluxora%20Desktop.html) |
+| Desktop port spec (canonical) | [`docs/11_design/prototype/app/desktop/README.md`](./prototype/app/desktop/README.md) |
+| Window chrome (titlebar) layout | [`docs/11_design/prototype/app/desktop/app.jsx`](./prototype/app/desktop/app.jsx) (titlebar block + `tbBtn`/`winBtn` styles) |
+| Sidebar layout | [`docs/11_design/prototype/app/desktop/components/sidebar.jsx`](./prototype/app/desktop/components/sidebar.jsx) |
+| Primitive widget definitions | [`docs/11_design/prototype/app/shared/components/primitives.jsx`](./prototype/app/shared/components/primitives.jsx) (relocated from `app/components/` in the prior bundle) |
+| Per-screen layout | `docs/11_design/prototype/app/desktop/screens/<name>.jsx` |
+| Per-tab/sub-page layout | `docs/11_design/prototype/app/desktop/pages/<name>.jsx` |
+| Sample data shapes (study only — do not copy) | `docs/11_design/prototype/app/shared/data/fluxora-data*.jsx` |
+| Brand assets (PNGs) | `docs/11_design/prototype/app/shared/assets/logo-icon.png`, `logo-wordmark.png` |
+| Design-handoff README (top-level) | [`docs/11_design/prototype/README.md`](./prototype/README.md) |
+| Design-conversation transcripts | [`docs/11_design/prototype/chats/`](./prototype/chats/) |
 | Existing design tokens | [`DESIGN.md`](../../DESIGN.md), [`packages/fluxora_core/lib/constants/`](../../packages/fluxora_core/lib/constants/) |
 | Existing Flutter desktop code | [`apps/desktop/lib/`](../../apps/desktop/lib/) |
 
@@ -193,12 +207,12 @@ The current `AppShell` is a Material `Scaffold` + `Row` with a 6-item sidebar. T
 
 ### 4.1 Sidebar — `flux_sidebar.dart`
 - 232px wide, `rgba(13,11,28,0.7)`, 1px right border, **`BackdropFilter(blur: 20)`** for glass.
-- Top: `FluxoraWordmark(28)` + tagline (the wordmark is the integrated F + FLUXORA image — `logo-wordmark-h.png` — so no separate `FluxoraMark` is rendered next to it; that would double the F).
+- ~~Top: `FluxoraWordmark(28)` + tagline~~ **Logo header removed** (updated prototype, 2026-05-03 — see Decision #6). Nav now starts at the top of the rail with `padding: 16px 10px 8px`. The wordmark + tagline live in the new custom titlebar (§13).
 - 9 nav items: Dashboard, Library, Clients, Groups, Activity, Transcoding, Logs, Settings, Subscription. (Current sidebar has 6; this **adds** Groups, Activity, Subscription, **renames** Licenses → Subscription, **drops** the Settings-as-bottom-item pattern.)
 - Hover + active states: violet tint (`rgba(168,85,247,0.14)` bg, `rgba(168,85,247,0.3)` border, `#E9D5FF` text on active).
 - System Status block: server-running / LAN mode + IP / Internet Access — fed by `SystemStatusCubit` (new, see §6.3).
 - Upgrade card: visible only when `tier != ultimate`. Reads tier from existing `OrdersCubit` / `SettingsCubit`.
-- User footer: routes to `/profile`. Avatar uses `FluxAvatar` with `linear-gradient(135deg, #A855F7, #6366F1)` fallback.
+- User footer: routes to `/profile`. Avatar uses `FluxAvatar` with `linear-gradient(135deg, #A855F7, #8B5CF6)` fallback (violet → violetDeep, matches the brand button gradient).
 
 ### 4.2 Status bar — `flux_status_bar.dart`
 - 28px tall bottom strip: CPU%, RAM%, network throughput (Mbps), uptime.
@@ -681,10 +695,11 @@ Estimates are for a single dev. Halve with two devs after primitives are merged.
 | **M5 — Groups + Activity + Transcoding** | All three + Encoder Settings sub-page | 2 days ✅ Done 2026-05-02 |
 | **M6 — Logs + Settings** | Logs filtering UI + all 6 Settings tabs | 2 days |
 | **M7 — Subscription + Profile + Notifications + Help** | Subscription + Billing + Manage + Profile + Notifications overlay + Help | 2 days |
-| **M8 — Polish + visual QA** | Cmd+K polish, accessibility pass, golden tests, pixel review against prototype | 1.5 days |
-| **M9 — Cleanup + docs** | Delete legacy screen files, update all docs per §10, update `AGENT_LOG.md` | 0.5 day |
+| **M8 — Polish + visual QA** | Cmd+K polish, accessibility pass, golden tests, pixel review against prototype | 1.5 days ✅ Done 2026-05-03 |
+| **M9 — Cleanup + docs** | Delete legacy screen files, update all docs per §10, update `AGENT_LOG.md` | 0.5 day ✅ Done 2026-05-03 |
+| **M10 — Custom window chrome** | New `window_manager` dep + per-platform native runner edits + `FluxTitleBar` widget + sidebar logo-header removal. Full spec in §13. | 1–1.5 days ✅ Done 2026-05-03 |
 
-**Total: ~19 working days.** Backend (M0) can run in parallel with M1 once primitives are scoped.
+**Total: ~20–21 working days.** Backend (M0) can run in parallel with M1 once primitives are scoped.
 
 ---
 
@@ -733,3 +748,90 @@ Per CLAUDE.md doc protocol §3, after M9:
 | 2026-05-02 | Claude (session) | M3 Dashboard shipped. New entities `ActivityEvent` + `LibraryStorageBreakdown`/`StorageByType` in core. New features `storage/` + `recent_activity/` in desktop. `DashboardScreen` fully rewritten to pixel-match prototype: 4 stat tiles, Server Info card, Quick Access card, Recent Activity card, Storage Overview card. `DashboardRepository` extended with `restartServer`/`stopServer`. `Endpoints.activity` constant added. |
 | 2026-05-02 | Claude (session) | M5 shipped: Groups screen, Activity screen (replaced), Transcoding screen, Encoder Settings sub-page. New entities: `Group`/`GroupRestrictions`/`TimeWindow`/`GroupStatus` and `TranscodingStatus`/`EncoderLoad`/`ActiveTranscodeSession`. New features: `groups/` + `transcoding/`. `RecentActivityCubit` extended with `loadAll`/`pause`/`resume`. `Routes.encoderSettings` added. DI updated. |
 | 2026-05-02 | Claude (session) | M6 shipped: Logs screen (structured rows + 4 tabs + level/source/since filters + auto-scroll while live + pause/resume + click-to-expand) and Settings screen (6-tab side-rail layout — General / Network / Streaming / Security / Advanced / About — wires all 18 §7.10 extended fields plus tier-1 fields). New form primitives: `FluxTextField`, `FluxSelect`, `FluxSwitch`, `FluxSlider`. New `LogRecord` domain entity. |
+| 2026-05-03 | Claude (session) | **Updated prototype bundle imported.** Old `docs/11_design/desktop_prototype/` replaced by `docs/11_design/prototype/` — new layout splits files into `app/desktop/`, `app/mobile/`, `app/shared/`, plus top-level `README.md`, `chats/`, `uploads/`, and per-platform `app/desktop/README.md` + `app/mobile/README.md` port specs. Diff vs prior bundle: every desktop screen / page / data file is byte-identical (only relocated). Two real UI deltas: titlebar logo removed (wordmark only), sidebar logo header removed (nav at top). All §2 source-of-truth paths updated. **Decisions §1 #5 reversed** — custom window chrome is now in scope; new Decision #6 records the sidebar logo-header removal. New §13 spec + M10 milestone added. Mobile bundle parked — `mobile_player_redesign_plan.md` still gates on completion of these desktop milestones. |
+| 2026-05-03 | Claude (session) | **M8 deferred items shipped + M10 Custom window chrome shipped.** A11y pass completed for the 8 surfaces Sonnet didn't reach in M8 (Logs, Settings, Encoder Settings, Profile, Help, Notifications panel, Sidebar, Status bar) — `Tooltip` + `Semantics` annotations matching the existing M3-M7 pattern. Golden tests enabled via the GetIt-mock recipe (drop wrapping `MultiBlocProvider`, register mock repos in `setUp`); `dart_test.yaml` skip removed; baseline PNG regenerated; `test/goldens/_README.md` rewritten with the recipe. **M10 implemented:** `window_manager ^0.5.1` added; `main.dart` initialises with `TitleBarStyle.hidden` + `WindowOptions(size: 1440×900, minimumSize: 1332×720)`; new `lib/shared/widgets/flux_titlebar.dart` (36 px, drag region wraps wordmark + tagline, help/bell mid-right, min/max/close flush right at 46×36 px); `flux_shell.dart` restructured to mount titlebar above the existing Stack; sidebar `_LogoHeader` deleted (prototype dropped it); window-control glyphs use Segoe Fluent Icons codepoints (`U+E921` / `U+E922` / `U+E923` / `U+E8BB`) with Segoe MDL2 Assets fallback for native Win 11 visual identity. **Branding pass:** new `assets/brand/app_icon.ico` master regenerated from `logo-icon.png` with tight-crop + 8 % margin (was 59 % glyph fill → now 84 %); runtime copy synced to `windows/runner/resources/`; `Runner.rc` placeholders fixed (`com.example` → `Fluxora`, `fluxora_desktop` → `Fluxora Desktop Control Panel` for ProductName/CompanyName/LegalCopyright/FileDescription); `main.cpp` window title `L"fluxora_desktop"` → `L"Fluxora"`. **Aero Peek fix:** `win32_window.cpp` switched from `WNDCLASS` to `WNDCLASSEX` so both `hIcon` and `hIconSm` are registered (Win 11 thumbnail renderer needs the small variant); `main.cpp` calls `SetCurrentProcessExplicitAppUserModelID(L"Fluxora.Desktop")` before window creation; `shell32.lib` added in `windows/runner/CMakeLists.txt`. Tech stack + gotchas docs updated with Segoe Fluent Icons codepoint table, taskbar-icon margin recipe, Aero Peek root-cause analysis. |
+
+---
+
+## 13. Custom window chrome (M10)
+
+> **Status:** ✅ Done 2026-05-03. `window_manager` 0.5.1 selected (per §13.1 recommendation). Implementation summary in the §12 change log. Spec retained below as design-of-record.
+
+The updated prototype bundle (2026-05-03) ships a 36 px custom titlebar at the top of the app window. Decision #5 was reversed to bring this into scope. This section is the build spec.
+
+### 13.1 Dependency choice
+
+| Option | Pros | Cons |
+|--------|------|------|
+| **`window_manager` ^0.5.x** *(recommended)* | Actively maintained (last release < 60 days). Single API across Win / macOS / Linux. Ships drag/resize/minimize/maximize/close helpers. Good Wayland coverage. | Slightly heavier than the alternative; adds ~150 KB to release bundle. |
+| `bitsdojo_window` ^0.1.x | Smaller surface, well-documented for borderless windows. | Last release > 1 year old; macOS support has known traffic-light edge cases. |
+| Roll our own | Zero deps. | ~200 LOC of native code per platform we have to maintain. |
+
+**Recommendation:** `window_manager`. Add per CLAUDE.md Hard Prohibition #6 — single new dep, established maintainer, primary feature is exactly what we need.
+
+### 13.2 Native runner edits
+
+Each Flutter desktop platform needs a small runner change to enable a borderless / transparent window before the Dart side renders.
+
+| Platform | File | Change |
+|----------|------|--------|
+| Windows | `apps/desktop/windows/runner/main.cpp` | Pre-`runApp` call to `WindowManagerPlugin::SetTitleBarStyle("hidden")` (or equivalent — see `window_manager` README). Keep min size 1100×720 per §3.3 of the prototype's desktop README. |
+| macOS | `apps/desktop/macos/Runner/MainFlutterWindow.swift` | Set `titleVisibility = .hidden`, `titlebarAppearsTransparent = true`, `styleMask.insert(.fullSizeContentView)`. Position traffic-light buttons explicitly so they sit inside the custom bar without overlap (`standardWindowButton(.closeButton).frame.origin`). |
+| Linux | `apps/desktop/linux/runner/my_application.cc` | Use GTK `gtk_window_set_decorated(window, FALSE)` after window creation. Wayland may still apply server-side decorations on some distros — accept the visual quirk; do not block release. |
+
+Each edit is reversible (one block per file). Diff stays small.
+
+### 13.3 `FluxTitleBar` widget
+
+New file: `apps/desktop/lib/shared/widgets/flux_title_bar.dart`. Sits at the top of `FluxShell` above the sidebar/content row.
+
+**Layout** (matches `prototype/app/desktop/app.jsx` titlebar block + `tbBtn`/`winBtn` styles):
+
+| Region | Spec |
+|--------|------|
+| **Bar** | Height 36 px, full width, `bg = rgba(6,4,16,0.9)`, `border-bottom: 1px solid rgba(255,255,255,0.04)`. Wraps in `DragToMoveArea` (from `window_manager`) so the whole bar drags the window — except the right cluster. |
+| **Left** | `padding-left: 14`. `FluxoraWordmark(height: 13)` + 10 px gap + tagline `· Stream. Sync. Anywhere.` in `AppTypography.micro` colored `#64748B`. |
+| **Right cluster (icon buttons)** | 4 px gap. Each button `26×26`, radius 6, `bg = rgba(255,255,255,0.03)`, border `rgba(255,255,255,0.05)`. Icons: `helpCircle` (opens `/help`) and `bell` (opens notifications panel via `NotificationsPanelScope.open(context)`). Bell has a 6×6 violet dot (`#A855F7` with 6 px glow `BoxShadow`) in the top-right corner when `unreadCount > 0`. `margin-right: 8`. |
+| **Window controls** | 14 px gap. Three transparent icon-only buttons: minimize (`Icons.remove`, `windowManager.minimize()`), maximize/restore (`Icons.crop_square`, `windowManager.isMaximized() ? unmaximize() : maximize()`), close (`Icons.close`, `windowManager.close()`). All `winBtn` style: transparent bg, no border, 4 px padding. Tooltip on each per §8.5 accessibility checklist. |
+
+**Macros / pitfalls:**
+- The right-cluster buttons must NOT be inside `DragToMoveArea` — wrap only the left/middle drag region.
+- macOS traffic-light positioning: the `MainFlutterWindow.swift` change leaves them in their default top-left position. Either (a) keep them and shift `FluxTitleBar`'s left padding to 78 px on macOS only, OR (b) hide them entirely (`standardWindowButton(.closeButton).isHidden = true`) and rely on the right-cluster window controls. Owner pick — defaults to (a) for native macOS feel.
+
+### 13.4 Sidebar logo-header removal
+
+Per Decision #6: in `apps/desktop/lib/shared/widgets/flux_sidebar.dart`, delete the existing logo-header block (the leading `Padding` + `FluxoraWordmark(28)` + tagline `Column`). Nav rebuilds from the top of the sidebar, padding `16, 10, 16, 8` (top, right, bottom, left → matches prototype).
+
+The `FluxoraWordmark` widget itself stays; only the sidebar consumer is removed. Titlebar (§13.3) becomes the new consumer.
+
+### 13.5 Notifications-panel hookup
+
+The bell button in the titlebar needs to toggle the existing `NotificationsPanel` overlay (M7). Reuse `NotificationsPanelScope.of(context).toggle()`. The unread-count dot subscribes to `NotificationsCubit.unreadCount` via `BlocSelector` — no rebuild of the rest of the bar.
+
+### 13.6 Close-to-tray (deferred)
+
+The prototype's desktop README §11.1 calls for "close button → minimize to tray" on Windows/Linux. That's a **separate feature** with its own dep (`tray_manager`) and its own native runner work. **Out of scope for M10.** If we want it later, file under "M11 — System tray".
+
+For M10, the close button does what it says: closes the app.
+
+### 13.7 Acceptance criteria (a port is "done" when…)
+
+1. App launches at 1440×900 with custom titlebar visible at the top (no OS chrome) on all three platforms.
+2. Wordmark + tagline render at the prototype's exact metrics (13 px wordmark, 11.5 px tagline in `#64748B`).
+3. Help button routes to `/help`; bell button toggles `NotificationsPanel`; bell shows the violet dot when `unreadCount > 0`.
+4. Min/max/close buttons each work, tooltips appear on hover.
+5. Drag region: dragging the titlebar (anywhere except the icon buttons) moves the window.
+6. macOS: traffic lights either positioned cleanly inside the bar (option a) or hidden (option b) per owner pick.
+7. Linux Wayland: app launches without crash even if SSD is forced; visible quirks acceptable.
+8. Sidebar logo-header is gone — nav starts at row 1 of the sidebar.
+9. `flutter analyze` clean; no `print()` / `debugPrint()`.
+10. AGENT_LOG entry references this section + lists every native runner file touched.
+
+### 13.8 Risks specific to M10
+
+| Risk | Mitigation |
+|------|------------|
+| `window_manager` plugin breaks on a Flutter SDK bump | Pin in `pubspec.yaml`; revisit at each Flutter upgrade. The plugin's per-platform code is small enough to fork if needed. |
+| macOS traffic-light overlap with custom bar content | Either inset left padding to 78 px on macOS (default) or hide traffic lights — both options spec'd in §13.3. |
+| Linux Wayland refuses CSD | Document in known issues; visual-only impact, no functional regression. |
+| Close-to-tray expectations | Explicitly out of scope (§13.6). Owner already aware; revisit only if requested. |

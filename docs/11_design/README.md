@@ -1,105 +1,39 @@
-# Design & UI Concepts
+# Design — Folder Index
 
-> **Category:** Design  
-> **Status:** Concept Phase — 2026-04-27
-
----
-
-## Brand Summary
-
-| Property | Value |
-|----------|-------|
-| **Tagline** | Stream. Sync. Anywhere. |
-| **Brand Essence** | Fast · Connected · Secure |
-| **Tone of Voice** | Modern · Confident · Friendly · Innovative |
-| **Primary Font** | Inter (Regular / Medium / Semi Bold / Bold) |
-| **Theme** | Dark mode first |
+This folder holds Fluxora's design assets, prototypes, and per-surface redesign plans. **The single source of truth for the design system itself is [`/DESIGN.md`](../../DESIGN.md) at the repo root.**
 
 ---
 
-## Color Palette
+## Canonical sources
 
-### Primary
-| Swatch | Hex | Usage |
-|--------|-----|-------|
-| Indigo | `#6366F1` | Primary brand, buttons |
-| Violet | `#8B5CF6` | Gradients, accents |
-| Cyan | `#22D3EE` | Highlights, LAN status |
-| Purple | `#A855F7` | Logo gradient end |
-
-### Neutrals
-| Hex | Usage |
-|-----|-------|
-| `#0F172A` | App background |
-| `#1E293B` | Sidebar, cards |
-| `#334155` | Card borders |
-| `#475569` | Secondary text |
-| `#64748B` | Muted text |
-| `#E2E8F0` | Primary text |
-
-### Semantic
-| Hex | Usage |
-|-----|-------|
-| `#22C55E` | Online, active, success |
-| `#F59E0B` | Warning, idle, amber |
-| `#EF4444` | Error, danger, block |
-| `#3B82F6` | Info, internet mode |
-| `#8B5CF6` | Pro, premium |
+| What | Where |
+|------|-------|
+| **Design system spec** (colors, typography, components, do's/don'ts) | [`/DESIGN.md`](../../DESIGN.md) |
+| **Visual prototype** (high-fidelity HTML/JSX bundle, all 50+ desktop + mobile artboards) | [`prototype/`](./prototype/) — open `Fluxora Desktop.html` or `Fluxora Mobile.html` in a browser |
+| **Tokens (Flutter)** | [`/packages/fluxora_core/lib/constants/`](../../packages/fluxora_core/lib/constants/) — `app_colors.dart`, `app_typography.dart`, `app_spacing.dart`, `app_radii.dart`, `app_shadows.dart`, `app_gradients.dart` |
+| **Tokens (web landing)** | [`/apps/web_landing/src/app/globals.css`](../../apps/web_landing/src/app/globals.css) — V2 mirror as CSS vars |
+| **Brand assets (canonical masters)** | [`/assets/brand/`](../../assets/brand/) — wordmark, icon, brand sheet |
 
 ---
 
-## Logo Concept
+## Per-surface redesign plans
 
-```
-F  +  ≋  +  ▶  =  [Fluxora F mark]
-(letter) (wave/flow) (play) = combined mark
-```
-
-Gradient direction: Indigo → Purple → Cyan (top-left to bottom-right)
+| Surface | Plan | Status |
+|---------|------|--------|
+| Desktop control panel | [`desktop_redesign_plan.md`](./desktop_redesign_plan.md) | M0–M9 + M9.5 theme cutover ✅ done; M10 (custom window chrome) open |
+| Mobile Flutter app | [`mobile_redesign_plan.md`](./mobile_redesign_plan.md) | Plan locked; execution gate lifted 2026-05-03 — ready when scheduled |
+| Web landing (`fluxora.marshalx.dev`) | [`web_landing_redesign_plan.md`](./web_landing_redesign_plan.md) | ✅ done 2026-05-02 |
 
 ---
 
-## Screens Designed
+## Reference imagery
 
-| Screen | File |
+| Folder | What |
 |--------|------|
-| Subscription / Pricing | [design_reference.html](./design_reference.html) |
-| Library Manager | [design_reference.html](./design_reference.html) |
-| Clients Manager | [design_reference.html](./design_reference.html) |
-| Groups Manager | [design_reference.html](./design_reference.html) |
-| Brand Identity Sheet | [design_reference.html](./design_reference.html) |
+| [`ref images/brand/`](./ref%20images/brand/) | Wordmark / icon / brand-identity-sheet originals |
+| [`ref images/desktop/`](./ref%20images/desktop/) | Annotated desktop screen mockups |
+| [`ref images/mobile/`](./ref%20images/mobile/) | Annotated mobile screen mockups (incl. `mobile_player_with_legend.png`) |
+| [`ref images/web/`](./ref%20images/web/) | Web landing reference mockups |
 
 ---
 
-## Navigation Structure (Control Panel)
-
-```
-Sidebar:
-├── Dashboard
-├── Library
-├── Clients
-├── Groups
-├── Activity
-├── Transcoding
-├── Logs
-└── Settings
-
-Bottom (Sidebar):
-├── System Status (Server Running indicator)
-├── LAN Mode (IP shown)
-├── Internet Access (Connected)
-└── User Account
-```
-
----
-
-## Pricing Tiers (from concept)
-
-| Tier | Price | Clients | Quality | Key Features |
-|------|-------|---------|---------|-------------|
-| Free | $0/mo | 2 | 1080p | LAN only, 5 libraries |
-| Plus ⚡ | $4.99/mo | 5 | 1080p HD | Internet streaming, hardware transcoding, 50 libraries |
-| Pro 👑 | $9.99/mo | 20 | 4K Ultra HD | Advanced transcoding, unlimited libraries, priority support |
-| Ultimate 💎 | $19.99/mo | Unlimited | 4K + HDR | AI transcoding, advanced roles, real-time sync, dedicated support |
-
-> **Interactive HTML reference:** See `design_reference.html` for full UI recreation.

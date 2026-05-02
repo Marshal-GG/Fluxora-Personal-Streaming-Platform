@@ -2,7 +2,7 @@
 
 > Snapshot of what's done / in-progress / not-started across the codebase. Update on every significant milestone landing. The roadmap (`docs/10_planning/01_roadmap.md`) tracks future planning; this doc tracks shipped state.
 
-**As of 2026-05-02.** Phases 1–4 complete; Phase 5 in progress (hardware encoding + advanced desktop modules + desktop redesign).
+**As of 2026-05-03.** Phases 1–4 complete; Phase 5 in progress (hardware encoding + advanced desktop modules + desktop redesign — M10 custom window chrome shipped 2026-05-03).
 
 ---
 
@@ -72,8 +72,10 @@
 | **Desktop redesign M6 Logs + Settings** (Logs: structured rows + level/source/since filters + 4 tabs + auto-scroll + pause/resume; Settings: 6-tab side-rail layout — General / Network / Streaming / Security / Advanced / About — wires all 18 §7.10 extended fields; 4 new form primitives: `FluxTextField`, `FluxSelect`, `FluxSwitch`, `FluxSlider`; `LogRecord` domain entity) | ✅ done 2026-05-02 |
 | **Desktop redesign M7 Subscription + Profile + Notifications + Help** (Subscription with 3 sub-tabs Overview/Billing/Manage; Profile reuses `/api/v1/profile`; Notifications slide-over overlay subscribed to `WS /ws/notifications`; static Help screen; new entities `Profile` + `AppNotification`; new features `notifications/` + `help/`) | ✅ done 2026-05-02 |
 | **Desktop redesign M8 Cmd+K palette** (palette overlay + 13 commands: 12 routes + 2 server actions + 1 notifications toggle; `Cmd+K` on macOS, `Ctrl+K` elsewhere; arrow keys + Enter + Escape; mounted in `flux_shell.dart` via `Shortcuts`/`Actions`/`CommandPaletteScope`) | ✅ done 2026-05-02 |
-| **Desktop redesign M8 a11y pass + golden-test infra** (Tooltip + Semantics annotations across all M3–M7 screens + sidebar + status bar; `golden_toolkit` 0.15.0 + `mocktail` added; first M3 Dashboard golden test scaffolded — currently skip-marked via `dart_test.yaml` because production screen uses GetIt directly; fix recipe documented in `test/goldens/_README.md`) | ✅ done 2026-05-03 |
+| **Desktop redesign M8 Cmd+K + a11y pass + golden-test infra** (`Tooltip` + `Semantics` annotations across all 15 surfaces — M3–M7 screens + Logs / Settings / Encoder Settings / Profile / Help / Notifications panel / sidebar / status bar; `golden_toolkit` 0.15.0 + `mocktail` added; M3 Dashboard golden enabled via the GetIt-mock recipe in `setUp` — drop wrapping `MultiBlocProvider`, register mock repos in GetIt, then the screen's own `MultiBlocProvider.create` consumes them. Baseline PNG committed; `dart_test.yaml` skip removed; goldens are opt-in via `--tags=golden` and excluded in CI via `--exclude-tags=golden`. Recipe documented in `test/goldens/_README.md`.) | ✅ done 2026-05-03 |
 | **Desktop redesign M9 cleanup** (deleted 4 legacy widgets/screens superseded by M1–M7: `stat_card.dart`, `status_badge.dart`, `data_table.dart`, `licenses_screen.dart` — all unused after the redesign cutover; `flutter analyze` confirmed no remaining references) | ✅ done 2026-05-03 |
+| **Desktop V2 theme cutover** (rewrote `apps/desktop/lib/shared/theme/app_theme.dart` body to consume V2 tokens — `bgRoot`, `violet`, `surfaceGlass`, `textBright`, V2 typography, `pillBgPurple` indicator. Fixes the slate-blue scaffold flash on tab switches. Plus 5 V1 stragglers in `encoder_settings_screen.dart`/`clients_screen.dart`/`library_screen.dart`. Desktop is now V2-pure — zero `AppColors.{primary,background,surface,...}` references in `apps/desktop/lib/`. `flutter analyze` clean.) | ✅ done 2026-05-03 |
+| **Desktop redesign M10 Custom window chrome** (`window_manager ^0.5.1` added; OS title bar hidden via `TitleBarStyle.hidden` in `main.dart` with `WindowOptions(size: 1440×900, minimumSize: 1332×720)`; new `lib/shared/widgets/flux_titlebar.dart` widget — 36 px tall, `DragToMoveArea` wraps wordmark + tagline, help + bell mid-right, native Win 11 caption-button strip flush right at 46×36 px; `flux_shell.dart` restructured to mount titlebar above the existing Stack so notifications / Cmd+K overlays don't cover it; sidebar `_LogoHeader` deleted to match the updated prototype. Window-control glyphs use Segoe Fluent Icons codepoints `U+E921 / U+E922 / U+E923 / U+E8BB` with Segoe MDL2 Assets fallback. **Branding pass:** `app_icon.ico` regenerated from `assets/brand/logo-icon.png` with tight-crop + 8 % margin (was 59 % glyph fill → now 84 %), runtime copy synced to `windows/runner/resources/`; `Runner.rc` `com.example` placeholders → `Fluxora`; `main.cpp` window title `L"fluxora_desktop"` → `L"Fluxora"`. **Aero Peek shell-integration fix:** `win32_window.cpp` switched `WNDCLASS` → `WNDCLASSEX` so both `hIcon` and `hIconSm` are registered; `main.cpp` calls `SetCurrentProcessExplicitAppUserModelID(L"Fluxora.Desktop")`; `shell32.lib` linked in `windows/runner/CMakeLists.txt`.) | ✅ done 2026-05-03 |
 
 ---
 
@@ -95,8 +97,9 @@
 
 ## What's next
 
-See `AGENT_LOG.md` "Next Agent Should" section for the prioritised list. As of 2026-05-02:
+See `AGENT_LOG.md` "Next Agent Should" section for the prioritised list. As of 2026-05-03:
 
-1. **Desktop redesign M5** — next screens: Groups / Activity / Transcoding / Logs (check prototype JSX for each before starting)
-2. **Phase 6 routing hardening** — operator-driven Cloudflare config (Access policies, WAF rules, tunnel-health alerts, TURN evaluation)
-3. **Dependabot triage** — Dart 3.9 floor bump may have unstuck PRs blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`
+1. **Mobile app redesign** — execution gate is now lifted (desktop M0–M10 + theme cutover landed). Plan in `docs/11_design/mobile_redesign_plan.md` — 14 milestones (M0 foundation → M14 polish), V2 palette migration across the entire mobile app.
+2. **macOS / Linux desktop runners** — Windows-only today. When generating other-platform runners, port the M10 shell-integration: `WindowOptions.titleBarStyle: hidden` already works cross-platform via `window_manager`; native equivalents needed for `WM_GETMINMAXINFO` (window-size floor), `SetCurrentProcessExplicitAppUserModelID`, and `WNDCLASSEX hIconSm`. Caption-button glyphs need a `Platform.isWindows` swap to `CustomPainter` paths or a vendored TTF since Segoe Fluent Icons / Segoe MDL2 Assets are Windows-only.
+3. **Phase 6 routing hardening** — operator-driven Cloudflare config (Access policies, WAF rules, tunnel-health alerts, TURN evaluation).
+4. **Dependabot triage** — Dart 3.9 floor bump may have unstuck PRs blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`.
