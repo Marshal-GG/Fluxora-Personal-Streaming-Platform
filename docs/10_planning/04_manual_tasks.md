@@ -22,6 +22,46 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 
 ## Pending
 
+### 🔲 Swap landing-page hero screenshot for a real Dashboard capture
+
+- **What:** in [`apps/web_landing/public/mockups/desktop-dashboard.png`](../../apps/web_landing/public/mockups/desktop-dashboard.png), replace the temporary placeholder (currently the ref image at `docs/11_design/ref images/desktop/desktop_dashboard_redesign.png`) with a real 1440 × 900 PNG/WebP capture of the redesigned Flutter desktop Dashboard. Compress to ≤ 200 KB. Re-export OG image (`public/og.png`) using the new screenshot.
+- **Why:** the landing-page hero shows a faux-mockup; once redesign M3 ships the real Dashboard surface, the screenshot needs to be authentic to avoid the "fake screenshot" feel. Also improves OG card on Twitter / LinkedIn previews.
+- **Prereqs:** desktop redesign M3 (Dashboard) ships — see [`../11_design/desktop_redesign_plan.md`](../11_design/desktop_redesign_plan.md) §9 M3.
+- **Time:** ~10 min — boot desktop app at 1440 × 900, screenshot, optimize via `squoosh.app` or `sharp`.
+- **Trigger:** desktop redesign M3 lands.
+- **Doc:** [`../11_design/web_landing_redesign_plan.md`](../11_design/web_landing_redesign_plan.md) §15.1.
+- **Owner:** project owner.
+
+### 🔲 Replace TMDB movie posters with commissioned art (optional polish)
+
+- **What:** the 8 horizontal-carousel posters in [`apps/web_landing/src/components/PopularMovies.tsx`](../../apps/web_landing/src/components/PopularMovies.tsx) load real popular titles from TMDB's public CDN at `image.tmdb.org`. Per TMDB API ToS, attribution is now in the footer ([`Footer.tsx`](../../apps/web_landing/src/components/Footer.tsx)). Optionally swap for commissioned brand-aligned art (or curated CC0 imagery in violet/cyan palette) for a richer brand presentation.
+- **Why:** the current TMDB images are real-movie posters, legally fine with attribution, but optionally improvable with brand-aligned art.
+- **Prereqs:** none. Purely optional polish.
+- **Time:** commissioned art ~1–2 weeks; curated CC0 swap ~30 min.
+- **Trigger:** before public launch announcement, OR any brand polish pass.
+- **Doc:** [`../11_design/web_landing_redesign_plan.md`](../11_design/web_landing_redesign_plan.md) §15.2.
+- **Owner:** project owner.
+
+### 🔵 Wire remaining landing-page footer placeholder links
+
+- **What:** several `href="#"` placeholders remain in [`apps/web_landing/src/components/Footer.tsx`](../../apps/web_landing/src/components/Footer.tsx). Wire them to live URLs as each corresponding page ships. **Already wired in 2026-05-02 gap-fix round:** GitHub repo, Discussions, Issues, `/privacy`, `/terms`, `#faq` (anchor). **Still placeholder:** `Documentation`, `Help Center`, `Status`, `Roadmap`, `About`, `Blog`, `Press kit`, `Contact`, `Discord`, `X / Twitter`.
+- **Why:** broken / dead-link footers hurt SEO and look unprofessional.
+- **Prereqs:** the corresponding pages need to exist first — see [`../11_design/web_landing_redesign_plan.md`](../11_design/web_landing_redesign_plan.md) §11 (Out of scope for the landing PR).
+- **Time:** ~10 min once each linked page ships — find/replace `href="#"` with the real path.
+- **Trigger:** as each linked page (`/about`, `/help`, `/blog`, Discord server creation, etc.) ships.
+- **Doc:** [`../11_design/web_landing_redesign_plan.md`](../11_design/web_landing_redesign_plan.md) §15.3.
+- **Owner:** project owner.
+
+### 🔲 Wire Polar checkout URLs in landing-page Pricing component
+
+- **What:** [`apps/web_landing/src/components/Pricing.tsx`](../../apps/web_landing/src/components/Pricing.tsx) lines 6–9 still contain placeholder URLs (`https://polar.sh/fluxora/checkout/{plus,pro,ultimate}`). Paste real share-links from your Polar dashboard: Dashboard → Products → (Product name) → Share → Copy checkout link.
+- **Why:** Plus / Pro / Ultimate purchase buttons currently lead to invalid Polar URLs. **Site cannot ship to public until fixed** — paid product can't have broken checkout.
+- **Prereqs:** Polar dashboard product entries already exist (see [`../01_product/06_polar_product_setup.md`](../01_product/06_polar_product_setup.md)).
+- **Time:** ~5 min — copy 3 share links, paste into the `CHECKOUT` const at the top of the file.
+- **Trigger:** before any public launch / announcement of the marketing site.
+- **Doc:** [`../11_design/web_landing_redesign_plan.md`](../11_design/web_landing_redesign_plan.md) §15.4.
+- **Owner:** project owner.
+
 ### 🔲 UptimeRobot monitor for `/healthz`
 
 - **What:** sign up at [uptimerobot.com](https://uptimerobot.com) (free tier — 50 monitors, 5-min interval), add an HTTP(S) monitor pointed at `https://fluxora-api.marshalx.dev/api/v1/healthz`, add an email alert contact.

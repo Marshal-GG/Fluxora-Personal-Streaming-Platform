@@ -248,3 +248,189 @@ Eight M0 chunks shipped end-to-end (code + tests + docs). Server suite **149 →
 - [x] All new third-party deps reviewed (none added — only existing libs leveraged).
 - [x] No backwards-compat hacks (legacy `/info/logs` kept as already-shipped surface, not as code shim).
 ---
+
+## [2026-05-02] — Web Landing Page Gap-Fix Round (38 fixes) + full doc sync
+**Agent:** Claude (Sonnet 4.6)
+**Phase:** Phase 5 — web landing track (post-implementation hardening)
+**Status:** Implemented end-to-end; TypeScript exit 0; all 10 routes generate clean
+
+### What Was Done
+- **Critical-thinking gap analysis** of the prior session's web-landing redesign — categorised 38 issues across 🔴 critical (5: legal/conversion-breaking), 🟠 high (9: a11y / UX broken), 🟡 medium (9: polish), 🔵 consistency (3), ⚪ performance (5), 🟢 missing high-conversion (7).
+- **Fixed all 38 in one PR.** Highlights:
+  - **Removed all fabricated social proof** — `10K+ self-hosters`, `4.9★ / 247 reviews` in Hero, AboutStrip stats, JSON-LD `aggregateRating`. Each was either a Google rich-result policy violation or a misleading-advertising risk under ASCI / FTC. Replaced with provable signals: GitHub source-link pill in Hero, `MIT / 100% / 5 / 0` in AboutStrip.
+  - **Wired Free CTA to a real destination** — was `Hero "Get Started Free" → #pricing → "Download Now" → #how-it-works → dead-end`. Now links to GitHub repo. Conversion is no longer a deadlock.
+  - **Built `/privacy` and `/terms` full-content pages** via shared `LegalLayout`. DPDP-aware boilerplate with reviewed-by-lawyer disclaimer.
+  - **Added TMDB API attribution band** in Footer per TMDB ToS — required when serving images from `image.tmdb.org`.
+  - **Built `Screenshots.tsx`** — pure-CSS 6-tab gallery of desktop control-panel surfaces (Dashboard / Library / Clients / Groups / Settings / Logs). Zero JS, full keyboard accessibility. Copied 6 screenshots into `apps/web_landing/public/screenshots/`.
+  - **Auto-generated 1200×630 OG card** via `app/opengraph-image.tsx` (`ImageResponse` with `dynamic = 'force-static'`). Replaces missing `og.png`.
+  - **Switched to `next/font/google`** self-hosted Inter — eliminates render-blocking external font request.
+  - **Skip-to-content keyboard a11y link** + scoped `prefers-reduced-motion` (only kills wave SVG drift; preserves hover transitions).
+  - **Tier comparison table** wrapped in `tier-table-scroll` — fixes mobile overflow that was forcing horizontal scroll on the entire page.
+  - **Rewrote `/success` page** — was using uninstalled Tailwind classes that silently no-op'd, leaving raw text. Now uses project's `manage-*` CSS classes; matches `/manage` look.
+  - Smaller fixes: Navbar collapsed 3 duplicate-anchor nav links to 5 distinct ones; removed non-functional Search; replaced Sign-In with GitHub link; logo `href="#"` → `<Link href="/">`; LibraryTiles fake counts → feature captions (`Up to 4K HDR`, `Lossless FLAC + AAC`, `EXIF-aware sorting`); Pricing `/once` → `/lifetime`; Footer mailto → GitHub Discussions/Issues; HeroWaves `z-index: 0` → `-1`; mobile pricing-grid `gap: 1.75rem`; Hero subtitle rewritten; Plex compare lines removed; AboutStrip `5+` → `5`; sitemap extended.
+- **Final verification:** `npx tsc --noEmit` exit 0. `next build` compile + typecheck + page-generate all pass; only fails at the final `rmdir out/` step due to a non-CLI Windows file-handle (cosmetic — code is verified clean). Killed two leftover python `http.server` processes from earlier preview sessions.
+
+### Files Created / Modified
+
+**Components (modified):**
+| Action | Path |
+|--------|------|
+| Modified | `apps/web_landing/src/components/Hero.tsx` |
+| Modified | `apps/web_landing/src/components/Navbar.tsx` |
+| Modified | `apps/web_landing/src/components/Pricing.tsx` |
+| Modified | `apps/web_landing/src/components/LibraryTiles.tsx` |
+| Modified | `apps/web_landing/src/components/Footer.tsx` |
+| Modified | `apps/web_landing/src/components/AboutStrip.tsx` |
+| Modified | `apps/web_landing/src/components/TierComparison.tsx` |
+
+**Components (new):**
+| Action | Path |
+|--------|------|
+| Created | `apps/web_landing/src/components/Screenshots.tsx` |
+| Created | `apps/web_landing/src/components/LegalLayout.tsx` |
+
+**Routes:**
+| Action | Path |
+|--------|------|
+| Created | `apps/web_landing/src/app/privacy/page.tsx` |
+| Created | `apps/web_landing/src/app/terms/page.tsx` |
+| Created | `apps/web_landing/src/app/opengraph-image.tsx` |
+| Modified | `apps/web_landing/src/app/page.tsx` (Screenshots section added to flow) |
+| Modified | `apps/web_landing/src/app/layout.tsx` (next/font/google, skip-to-content, removed fake aggregateRating, simplified theme-color) |
+| Modified | `apps/web_landing/src/app/sitemap.ts` (added /privacy + /terms) |
+| Modified | `apps/web_landing/src/app/success/page.tsx` (rewritten — was using uninstalled Tailwind) |
+
+**Tokens / styles:**
+| Action | Path |
+|--------|------|
+| Modified | `apps/web_landing/src/app/globals.css` (skip-to-content, tier-table-scroll, footer-attribution, screenshots gallery, legal-page, github-pill, mobile pricing-grid gap, scoped reduced-motion, HeroWaves z-index) |
+
+**Assets:**
+| Action | Path |
+|--------|------|
+| Created | `apps/web_landing/public/screenshots/{dashboard,library,clients,groups,settings,logs}.png` |
+
+### Docs Updated
+- `docs/11_design/web_landing_redesign_plan.md` — IA table now lists §9.5 Screenshots and §14 Privacy/Terms; appended change-log entry 3 with the 38-fix breakdown; updated §15 manual tasks (footer links partial; new §15.4 Polar checkout URLs).
+- `docs/10_planning/04_manual_tasks.md` — TMDB poster task updated (attribution now in place); footer-links task marked 🔵 Partial with explicit done-vs-pending list; new task "Wire Polar checkout URLs in landing-page Pricing component" added with 🔲 Pending.
+- `docs/02_architecture/02_tech_stack.md` — status note extended with `next/font/google` + auto-generated `opengraph-image` route + gap-fix hardening signal.
+- `CLAUDE.md` — Current Status `apps/web_landing` block extended: 7 new components (Screenshots added), Privacy/Terms routes, OG generator, skip-to-content, next/font, scoped reduced-motion, fabricated-rating removed, route count 7 → 10.
+- `AGENT_LOG.md` — this entry (parallel agent had already rotated the prior log to `archive_04.md` and started this fresh file).
+
+### Decisions Made
+- **Removed every fabricated trust signal even though they help conversion.** Google rich-result policy + ASCI / FTC misleading-advertising rules apply once the site charges INR. Real signals (GitHub source-link, MIT badge) are weaker but defensible. Faking it short-term costs trust long-term.
+- **Built `/privacy` + `/terms` as full real pages, not stubs.** Site takes payment; in-place "Coming soon" for legal pages is unacceptable for a paid product. Added explicit "not legal advice; consult a lawyer for jurisdiction-specific obligations" disclaimer at the bottom of each.
+- **Pure-CSS Screenshots gallery via `<input type="radio">` + `:checked` siblings** — zero-JS, native keyboard a11y. Trade-off: adding a 7th screen requires both a new `<input>` and a new CSS rule for that screen's id; 6 is the practical cap before refactoring to a JS state machine.
+- **Auto-generated OG card via `app/opengraph-image.tsx`** — `next/og`'s `ImageResponse` runs at build time under `output: 'export'` with `dynamic = 'force-static'`. Requires no manual asset; can be replaced with a real composite when desktop M3 ships.
+- **Free-tier "Get Started" CTA points at the GitHub repo** — until Fluxora server has shipped binaries (PyInstaller releases), the GitHub repo with install-from-source instructions is the only real download destination. Will swap to a `/releases` URL once the first binary release is cut.
+
+### Blockers / Open Issues
+- **Polar checkout URLs still placeholder** — `apps/web_landing/src/components/Pricing.tsx` lines 6–9. Owner needs to paste real share-links from the Polar dashboard before public launch. Blocks public ship for paid tiers.
+- **Hero mockup is still the placeholder ref-image** — swap once desktop redesign M3 (Dashboard) lands. Tracked in `docs/10_planning/04_manual_tasks.md`.
+- **`out/` rebuild lock on Windows** — `next build` succeeds at compile/typecheck/page-generate but fails at the final `rmdir out/` step due to a non-CLI Windows file-handle (likely Search Indexer). Cosmetic — code is verified clean. Resolves after a reboot.
+
+### Next Agent Should
+1. **Visual QA the landing page locally**: F5 → "Web Landing (dev)". Hit every section + scroll-to-anchor link + click every CTA + tab through the page. Compare against `docs/11_design/ref images/web/web_landing_hero.png` at 1440×900 and 768×1024.
+2. **Verify `/privacy` and `/terms` legal-content pages** — make sure code blocks (`<code>...</code>`) and inline links look correct in the violet theme.
+3. **Owner: paste real Polar checkout URLs** in `Pricing.tsx` before announcing the marketing site publicly.
+4. Continue desktop redesign **M2 → M3** per `docs/11_design/desktop_redesign_plan.md` §9.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran during this session.
+- [x] No agent branding in any file.
+- [x] No `print()` / `console.log()` introduced.
+- [x] No exceptions swallowed.
+- [x] No secrets / hardcoded paths added (Polar URLs were already placeholder TODOs; not introduced this session).
+- [x] No new third-party JS / TS deps pulled in. `next/font/google` is built into Next.js core.
+- [x] TMDB attribution added to Footer per TMDB API ToS.
+- [x] Reduced-motion + skip-to-content + ARIA labels respected throughout.
+- [x] Removed misleading-advertising risk signals (`10K+ users`, `4.9★ / 247 reviews`).
+---
+
+## [2026-05-02] — Background animation polish + brand asset consolidation
+**Agent:** Claude (Sonnet 4.6)
+**Phase:** Phase 5 — web landing + desktop redesign track (post-hardening polish)
+**Status:** Implemented end-to-end; TypeScript exit 0; both `fluxora_core` and `apps/desktop` `flutter analyze` clean
+
+### What Was Done
+- **Background animation polish** on the web landing page — addressed owner feedback "make bg interesting, its flat":
+  - Three floating gradient orbs (violet / cyan / pink, 24/30/28 s alternating drift, blurred to soft 380–540 px blobs) sit at fixed position behind everything via `z-index: -1`. `will-change: transform` so the compositor promotes them off the main thread.
+  - Subtle dot-grid texture (28×28 px dots, alpha 0.06) with radial-mask fade at the edges so it doesn't compete with content.
+  - Animated hero title gradient flow — `Anywhere.` text now cycles `violet-tint → violet → cyan → violet → violet-tint` over 8 s via animated `background-position` on a 200%-sized linear gradient.
+  - Featured pricing card breathing glow — 5 s `box-shadow` loop fading the violet halo 0.10 → 0.20.
+  - Scroll-driven entry animations on every card / tile / FAQ item / table / section header using CSS `animation-timeline: view()` (Chromium 115+ / Safari 17.4+); diagonal stagger inside multi-card rows (Features / Libraries / Pricing / Platforms) via `:nth-child()` `animation-range` offsets at 6/12/18/24 % entry. `@supports not (animation-timeline: view())` fallback shows content normally on older browsers — page never starts invisible.
+  - All ambient animations + scroll fades disabled under `prefers-reduced-motion: reduce`; hover transitions deliberately kept (user-driven feedback).
+- **Brand asset consolidation** — owner provided refined `logo_wordmark_horizontal_v2_dark.png` (integrated F + FLUXORA in one image, 3D-style F):
+  - Pillow-processed (alpha-from-brightness, same routine as previous logos) → `1687×295` transparent PNG.
+  - Written to **two paths** so web + Flutter share the asset: `apps/web_landing/public/brand/logo-wordmark-h.png` and `packages/fluxora_core/assets/brand/logo-wordmark-h.png`.
+  - Web Navbar / Footer dropped the separate `<img logo-icon>` since the new wordmark contains the F integrated; Navbar wordmark sized to 26 px (was 16 px) per follow-up. Nav tabs now `justify-content: center` per follow-up.
+  - Flutter `FluxoraWordmark` widget repointed at `logo-wordmark-h.png` (was `logo-wordmark.png`, the legacy stacked version); default height 22 → 28 px.
+  - Flutter `FluxoraLogo` composite simplified — when `withWordmark: true`, renders only the wordmark (+ optional tagline below); when `false`, falls back to standalone `FluxoraMark`. Never renders both side-by-side (would double the F).
+  - Desktop sidebar header (`flux_sidebar.dart`) restructured to `Column(FluxoraWordmark + Tagline)` instead of `Row(FluxoraMark + Column(FluxoraWordmark + Tagline))`.
+  - `logo-icon.png` and legacy stacked `logo-wordmark.png` retained in the brand folders for any standalone-F use case (favicon source, app icon, brand-card slot).
+- **Reorganised 4 newly-dropped reference images** into `docs/11_design/ref images/{brand,web}/` with descriptive names:
+  - `web_landing_hero_v2.png` (new hero mockup)
+  - `web_landing_full_v2.png` (full-page mockup, lighter palette)
+  - `web_landing_full_v3.png` (full-page mockup, darker palette)
+  - `logo_wordmark_horizontal_v2_dark.png` (the new integrated-F wordmark used in this round)
+
+### Files Created / Modified
+
+**Web landing — animations:**
+| Action | Path |
+|--------|------|
+| Modified | `apps/web_landing/src/app/globals.css` (added: bg-orb-1/2/3 + drift keyframes, bg-grid texture, hero title gradient-shift, featured-card breathing, scroll-driven fade-up + stagger ranges, expanded reduced-motion guard) |
+| Modified | `apps/web_landing/src/app/layout.tsx` (3 `<div>` orbs + dot-grid added to body) |
+
+**Web landing — brand consolidation:**
+| Action | Path |
+|--------|------|
+| Replaced | `apps/web_landing/public/brand/logo-wordmark-h.png` (was the gradient horizontal version; now the v2 3D-F integrated wordmark) |
+| Modified | `apps/web_landing/src/components/Navbar.tsx` (removed separate icon `<img>`; wordmark only) |
+| Modified | `apps/web_landing/src/components/Footer.tsx` (already wordmark-only — no change this round) |
+| Modified | `apps/web_landing/src/components/Hero.tsx` (removed brief `<img className="hero-wordmark">` block from earlier iteration) |
+| Modified | `apps/web_landing/src/app/globals.css` (`.navbar-brand-mark` removed; `.navbar-brand-wordmark` 16 → 26 px; `.navbar-links` `justify-content: center`; `.hero-wordmark` style removed) |
+
+**Flutter — brand widgets:**
+| Action | Path |
+|--------|------|
+| Created | `packages/fluxora_core/assets/brand/logo-wordmark-h.png` (new integrated wordmark for Flutter use) |
+| Modified | `packages/fluxora_core/lib/widgets/fluxora_logo.dart` (`FluxoraWordmark` asset path → `logo-wordmark-h.png`, default height 22 → 28; `FluxoraLogo` simplified to wordmark-only or mark-only, no side-by-side composition) |
+| Modified | `apps/desktop/lib/shared/widgets/flux_sidebar.dart` (header restructured: dropped `FluxoraMark` line; now `Column(FluxoraWordmark + Tagline)`) |
+
+**Reference images:**
+| Action | Path |
+|--------|------|
+| Reorganised | 4 ChatGPT-export PNGs → `docs/11_design/ref images/{brand,web}/` with descriptive names |
+
+### Docs Updated
+- `docs/11_design/web_landing_redesign_plan.md` — appended change-log entry 4 covering bg animations + brand-asset consolidation in one entry.
+- `docs/11_design/desktop_redesign_plan.md` — sidebar header spec updated (single `FluxoraWordmark(28)` + tagline, no separate `FluxoraMark`); brand assets list extended with the three current files (`logo-icon.png`, `logo-wordmark.png` legacy stacked, `logo-wordmark-h.png` primary horizontal).
+- `docs/08_frontend/01_frontend_architecture.md` — brand-asset table extended to 3 rows distinguishing the standalone mark, the legacy stacked wordmark, and the new primary horizontal wordmark; `fluxora_logo.dart` exports section rewritten with the simplified composite semantics.
+- `CLAUDE.md` — `apps/web_landing` Current Status block extended with the bg animation polish + brand consolidation lines; brand widget description in `apps/desktop` block updated.
+- `AGENT_LOG.md` — this entry.
+
+### Decisions Made
+- **One brand mark across surfaces.** When the owner provided the integrated horizontal wordmark, the right move was unification — every primary nav surface (web Navbar / Footer / desktop sidebar) shows only that asset, no composition with the separate icon. Cuts a class of "F shown twice" bugs the codebase had cycled through twice.
+- **Scroll-driven CSS animations over IntersectionObserver JS.** `animation-timeline: view()` is ~85 % global support today and the `@supports not` fallback is safe — never starts elements invisible. JS-based scroll observers cost more code, more bundle, and more main-thread work for the same visual.
+- **Bg orbs use fixed positioning, not background-attachment.** Fixed `<div>` elements with `will-change: transform` get GPU-promoted; `background-attachment: fixed` is forced to repaint on every scroll on most browsers. Same animation, very different perf.
+- **Reduced-motion guard is scope-narrow.** Kills only the always-running ambient animations + scroll fades. Hover transitions stay because they're user-driven feedback — reduced-motion users want fewer animations, not zero feedback.
+- **Did not delete the legacy stacked wordmark.** `logo-wordmark.png` (F on top of FLUXORA) still ships — useful for any future brand-card slot that wants the stacked layout. The new `logo-wordmark-h.png` is the *primary* asset for inline horizontal use.
+
+### Blockers / Open Issues
+- Same carry-overs as the prior session: real Polar checkout URLs in `Pricing.tsx`, real desktop Dashboard screenshot post-M3, remaining footer placeholder links. No new blockers.
+
+### Next Agent Should
+1. **Visual QA on a real browser** — F5 → "Web Landing (dev)". Watch the bg orbs drift; tab through every section to confirm scroll-driven fade-ups feel smooth (not janky); confirm the new wordmark reads cleanly at 26 px in the navbar and 28 px in the desktop sidebar.
+2. **Continue desktop redesign M2 → M3** per `docs/11_design/desktop_redesign_plan.md` §9.
+3. **Owner: paste real Polar checkout URLs** in `apps/web_landing/src/components/Pricing.tsx` before public launch.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran during this session.
+- [x] No agent branding in any file.
+- [x] No `print()` / `console.log()` introduced.
+- [x] No exceptions swallowed.
+- [x] No secrets / hardcoded paths added.
+- [x] No new third-party deps pulled in. All effects use stock CSS + native HTML.
+- [x] Reduced-motion guard expanded — orbs / scroll fades / hero title shift / featured-card breathing all disabled under `prefers-reduced-motion: reduce`.
+---

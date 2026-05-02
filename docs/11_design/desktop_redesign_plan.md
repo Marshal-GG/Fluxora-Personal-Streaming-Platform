@@ -1,12 +1,46 @@
 # Desktop App Redesign — Implementation Plan
 
-> **Status:** Planning
+> **Status:** Implementing — M0 backend prerequisites partially shipped, M1 foundation complete (2026-05-02)
 > **Created:** 2026-05-01
 > **Owner:** Marshal
 > **Source design:** [`docs/11_design/desktop_prototype/`](./desktop_prototype/) — React/JSX prototype exported from claude.ai/design
 > **Target:** [`apps/desktop/`](../../apps/desktop/) — Flutter desktop control panel
 
 This plan translates the Fluxora Desktop prototype into the existing Flutter desktop app. It is the single source of truth for the redesign — every screen PR should reference a section here.
+
+---
+
+## Progress
+
+### M0 — Backend prerequisites *(in progress)*
+
+| § | Item | Status | Landed |
+|---|------|--------|--------|
+| 7.1 | Groups feature (table, service, 8 endpoints, stream-gate) | ✅ Done | migration 011 + `routers/groups.py` + `services/group_service.py` + stream-gate hook |
+| 7.2 | Profile management (GET/PATCH + password change) | ✅ Done | migration 012 + `routers/profile.py` + `services/profile_service.py` |
+| 7.3 | Notifications | 🔲 Pending | — |
+| 7.4 | Activity feed (event log) | 🔲 Pending | — (existing endpoint lists active stream sessions only) |
+| 7.5 | Storage breakdown | ✅ Done | `GET /api/v1/library/storage-breakdown` + `library_service.get_storage_breakdown()` |
+| 7.6 | System stats stream | ✅ Done | `GET /api/v1/info/stats` + `WS /api/v1/ws/stats` + `services/system_stats_service.py` (psutil) |
+| 7.7 | Restart / stop endpoints | ✅ Done | `POST /api/v1/info/restart`, `POST /api/v1/info/stop` (localhost-only) |
+| 7.8 | Transcoding status (per-encoder load) | 🔲 Pending | — |
+| 7.9 | Logs structured filtering | 🔲 Pending | — |
+| 7.10 | Settings extension (19 columns) | 🔲 Pending | — |
+| 7.11 | Orders pagination + Polar portal URL | 🔲 Pending | — |
+
+### M1 — Foundation *(✅ Done 2026-05-02)*
+
+- Tokens extended: `app_colors.dart` v2, `app_gradients.dart`, `app_spacing.dart`, `app_radii.dart`, `app_shadows.dart`, `app_typography.dart` v2
+- 11 primitives shipped in `apps/desktop/lib/shared/widgets/`: `FluxCard`, `SectionLabel`, `StatusDot`, `Pill`, `FluxProgress`, `FluxButton`, `StatTile`, `Sparkline`, `StorageDonut`, `PageHeader`
+- Brand widgets in `packages/fluxora_core/lib/widgets/`: `FluxoraMark`, `FluxoraWordmark`, `FluxoraLogo`, `HeroWaves`, `BrandLoader` (Flutter-driven ring around the untouched PNG mark), `PulseRing`, `EmptyState`
+- Hi-fidelity logo PNGs from `docs/11_design/ref images/` processed (Pillow alpha-from-brightness) and bundled in `packages/fluxora_core/assets/brand/`
+- `flutter_svg` 2.2.4 added — 4 animated SMIL SVGs in `packages/fluxora_core/assets/illustrations/`: `hero_waves.svg`, `pulse_ring.svg`, `empty_libraries.svg`, `empty_clients.svg`. The recreated F-mark loader was deleted per owner direction — brand mark is never re-drawn.
+- `/showcase` route renders every primitive on `bgRoot` for visual diff against the prototype (outside `ShellRoute`)
+- Both packages pass `flutter analyze` with zero issues
+
+### M2–M9 *(not started)*
+
+Pending M0 close-out and the M1 visual review on `/showcase`.
 
 ---
 
@@ -100,7 +134,7 @@ The current `AppShell` is a Material `Scaffold` + `Row` with a 6-item sidebar. T
 
 ### 4.1 Sidebar — `flux_sidebar.dart`
 - 232px wide, `rgba(13,11,28,0.7)`, 1px right border, **`BackdropFilter(blur: 20)`** for glass.
-- Top: `FluxoraMark(32)` + `FluxoraWordmark(14)` + tagline (read PNGs from `fluxora_core/assets/`; copy from `desktop_prototype/app/assets/`).
+- Top: `FluxoraWordmark(28)` + tagline (the wordmark is the integrated F + FLUXORA image — `logo-wordmark-h.png` — so no separate `FluxoraMark` is rendered next to it; that would double the F).
 - 9 nav items: Dashboard, Library, Clients, Groups, Activity, Transcoding, Logs, Settings, Subscription. (Current sidebar has 6; this **adds** Groups, Activity, Subscription, **renames** Licenses → Subscription, **drops** the Settings-as-bottom-item pattern.)
 - Hover + active states: violet tint (`rgba(168,85,247,0.14)` bg, `rgba(168,85,247,0.3)` border, `#E9D5FF` text on active).
 - System Status block: server-running / LAN mode + IP / Internet Access — fed by `SystemStatusCubit` (new, see §6.3).
@@ -160,7 +194,7 @@ For each screen, the recipe is:
 ## 6. Cross-cutting concerns
 
 ### 6.1 Asset packaging
-- Copy `desktop_prototype/app/assets/logo-icon.png` and `logo-wordmark.png` into `packages/fluxora_core/assets/brand/`.
+- Brand assets in `packages/fluxora_core/assets/brand/`: `logo-icon.png` (standalone F mark), `logo-wordmark.png` (legacy stacked F+FLUXORA — kept for any brand-card slot that wants the stacked layout), `logo-wordmark-h.png` (the **integrated horizontal wordmark** — F + FLUXORA in one image, used by sidebar / web Navbar / web Footer).
 - Register in `fluxora_core/pubspec.yaml` under `flutter.assets`.
 - Expose via `FluxoraMark` and `FluxoraWordmark` widgets in `fluxora_core/lib/widgets/`.
 
@@ -435,9 +469,9 @@ Implementation:
 
 ### 7.9 Logs — structured filtering
 
-**Status:** `GET /api/v1/info/logs` returns the last 1000 raw log lines as one string. The redesigned Logs screen needs filterable rows.
+**Status:** ✅ Done — `GET /api/v1/logs` is the canonical logs endpoint (structured, filtered, paginated). `WS /api/v1/ws/logs` provides live tail. The legacy `GET /api/v1/info/logs` endpoint has been removed; there is no backwards-compat shim.
 
-**Replace endpoint — `GET /api/v1/logs`** (new path; old `info/logs` stays for backwards compat in v1, deprecated):
+**Endpoint — `GET /api/v1/logs`**:
 | Param | Description |
 |-------|-------------|
 | `level` | `info \| warn \| error` (repeatable) |
@@ -636,3 +670,4 @@ Per CLAUDE.md doc protocol §3, after M9:
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-05-01 | Claude (session) | Initial plan |
+| 2026-05-02 | Claude (session) | M0 §7.5/§7.6/§7.7 shipped (storage breakdown, system stats REST + WS, restart/stop). M1 Foundation shipped (tokens, 11 primitives, brand visuals, 4 animated SVGs, `/showcase` route, `flutter_svg` dep, hi-fi logos). §7.1 Groups + §7.2 Profile shipped by parallel agent. Recreated F-mark SVG removed per owner direction — brand mark stays the original PNG. |

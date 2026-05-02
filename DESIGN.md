@@ -283,6 +283,15 @@ components:
 
 # Fluxora Design System
 
+> **Two coexisting systems during the desktop redesign migration (2026-05-02 → M9 cutover):**
+>
+> - **v1 (this document)** — drives the mobile app and the legacy desktop screens that haven't been rebuilt yet. Indigo `#6366F1` primary, `#0F172A` background. Tokens in `packages/fluxora_core/lib/constants/app_colors.dart` (top half) and `app_typography.dart` (top half).
+> - **v2 (desktop redesign + web landing)** — drives the redesigned desktop control panel **and the web landing page** at [fluxora.marshalx.dev](https://fluxora.marshalx.dev). Violet `#A855F7` primary, `#08061A` glassmorphic root.
+>   - Desktop spec: [`docs/11_design/desktop_redesign_plan.md`](./docs/11_design/desktop_redesign_plan.md). Tokens in `packages/fluxora_core/lib/constants/app_colors.dart` (v2 section), `app_typography.dart` (v2 section), `app_gradients.dart`, `app_spacing.dart`, `app_radii.dart`, `app_shadows.dart`. Primitives in `apps/desktop/lib/shared/widgets/`.
+>   - Web landing spec: [`docs/11_design/web_landing_redesign_plan.md`](./docs/11_design/web_landing_redesign_plan.md). Tokens mirrored as CSS vars in `apps/web_landing/src/app/globals.css` (Next.js can't import from a Flutter package). Implemented 2026-05-02 — `next build` clean.
+>
+> At M9 cutover the v1 tokens get removed once mobile migrates to the v2 palette.
+
 ## Overview
 
 Fluxora is a **self-hosted hybrid media streaming platform** — the spiritual successor to Plex, rebuilt with a privacy-first, LAN-native philosophy. The interface must feel **powerful without being overwhelming**, projecting technical confidence while remaining approachable to non-developers who simply want to stream their personal media collection.

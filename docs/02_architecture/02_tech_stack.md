@@ -1,7 +1,7 @@
 # Tech Stack
 
 > **Category:** Architecture  
-> **Status:** Active - Updated 2026-04-29 (Polar webhooks added)
+> **Status:** Active - Updated 2026-05-02 (`flutter_svg` 2.2.4 added for desktop redesign — animated SMIL SVGs back hero waves, live-status pulse rings, and empty-state illustrations where pure-Flutter would need multiple `AnimationController`s; web landing redesigned to v2 violet palette — Next.js 16 static export with `next/font/google` self-hosted Inter, auto-generated `opengraph-image` route, full SEO + JSON-LD structured data, hardened in 2026-05-02 gap-fix round)
 
 ---
 
@@ -21,6 +21,7 @@
 | Public Routing | Cloudflare Tunnel | `fluxora-api.marshalx.dev` — v1 single-tenant Phases 1–5 complete (tunnel `fluxora-home` live; CF middlewares, `/healthz`, `remote_url` on `/info`, dual-base `ApiClient`, mobile pairing persists `remote_url`, desktop Dashboard pill + Settings Remote Access section). Phase 6 hardening operator-driven. See [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) |
 | Frontend Framework | Flutter 3.41 (Dart 3.11) | Cross-platform; pinned in CI. SDK floor `>=3.9.0` for json_annotation 4.11+, go_router 17+. |
 | State Management | `flutter_bloc` (BLoC/Cubit) | Confirmed at Phase 1 mobile implementation |
+| Vector Graphics | `flutter_svg` 2.2.4 | Desktop redesign assets — animated SMIL SVGs for hero-wave decoration, live-status pulse rings, empty-state illustrations. Used where pure-Flutter `AnimationController` work would be expensive or non-pixel-faithful. |
 | Metadata API | TMDB API | Movie/TV show metadata |
 | Payment Webhooks | Polar Standard Webhooks | Paid-order license issuance |
 | PC Control Panel | Flutter Desktop | Electron alternative |

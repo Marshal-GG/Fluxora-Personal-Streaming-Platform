@@ -424,16 +424,21 @@ Tracked here so the deferral is intentional, not forgotten:
 | Run Python tests | `cd apps/server && pytest tests/ -v` |
 | Run Flutter tests | `flutter test` (from each app dir) |
 
-**VSCode launch configurations** (`.vscode/launch.json`):
+**VSCode launch configurations** ([`.vscode/launch.json`](../../.vscode/launch.json)):
 
 | Config | Description |
 |--------|-------------|
-| `Server` | Uvicorn with debugger attached — breakpoints work |
+| `Server` | Uvicorn on `:8080` with debugger attached — breakpoints work |
 | `Server (reload)` | Same + `--reload` for auto-restart on file save |
-| `Mobile` | Flutter debug on connected device |
-| `Desktop` | Flutter debug on Windows |
+| `Mobile` / `Mobile (profile)` / `Mobile (release)` | Flutter debug on connected device, three flutter modes |
+| `Desktop` / `Desktop (profile)` / `Desktop (release)` | Flutter debug on Windows, three flutter modes |
+| `Demo (design prototype)` | Python `http.server` on `:8765` serving the static React/JSX redesign prototype at `docs/11_design/desktop_prototype/`. `serverReadyAction` watches stderr and auto-opens the browser to `Fluxora%20Desktop.html`. |
+| `Web Landing (dev)` | `npm run dev` from `apps/web_landing/` — Next.js Turbopack dev server with HMR on `:3000`. `serverReadyAction` matches the Next.js "Local: http://…" line and auto-opens the browser. |
+| `Web Landing (static export preview)` | Pre-task `web-landing-build` runs `npm run build`, then Python `http.server` serves the generated `out/` directory on `:8766`. Use this to QA the *exact* files Cloudflare Pages will deliver — catches static-export bugs (missing `dynamic = 'force-static'`, broken image paths) the dev server lets through. |
 | `Server + Mobile` (compound) | Launches both simultaneously; `stopAll: true` |
 | `Server + Desktop` (compound) | Launches both simultaneously |
+
+The `Web Landing (static export preview)` config depends on a task defined in [`.vscode/tasks.json`](../../.vscode/tasks.json) (label `web-landing-build`) which runs `npm run build` from `apps/web_landing/` before the HTTP server starts. Both files are checked in via `.gitignore`'s `!.vscode/launch.json` exception (see [`runbooks/07_repo_init_checklist.md`](runbooks/07_repo_init_checklist.md) line 53) — they ship with the repo so every contributor gets identical run configs.
 
 ---
 
