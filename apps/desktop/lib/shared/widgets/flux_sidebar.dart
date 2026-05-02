@@ -26,7 +26,6 @@ import 'package:fluxora_core/constants/app_radii.dart';
 import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_core/entities/system_stats.dart';
-import 'package:fluxora_core/widgets/fluxora_logo.dart';
 
 import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
@@ -147,13 +146,6 @@ class FluxSidebar extends StatelessWidget {
   /// The upgrade callout is hidden when this equals `'ultimate'`.
   final String currentTier;
 
-  // Pre-computed to avoid repeated `.copyWith` in build.
-  static final TextStyle _taglineStyle = AppTypography.micro.copyWith(
-    color: AppColors.textDim,
-    fontSize: 9.5,
-    letterSpacing: 0.3,
-  );
-
   @override
   Widget build(BuildContext context) {
     return SizedBox(
@@ -171,51 +163,17 @@ class FluxSidebar extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // ── Region 1: Logo header ──────────────────────────────────
-                _LogoHeader(taglineStyle: _taglineStyle),
-
-                // ── Region 2: Nav list ─────────────────────────────────────
+                // The prototype's sidebar starts directly with the nav list —
+                // the wordmark + tagline live in the 36 px FluxTitlebar at the
+                // top of the window instead.
                 const Expanded(child: _NavList()),
-
-                // ── Region 3: System status block ──────────────────────────
                 const _SystemStatusBlock(),
-
-                // ── Region 4: Upgrade callout (gated) ─────────────────────
                 if (currentTier != 'ultimate') const _UpgradeCard(),
-
-                // ── Region 5: User footer ──────────────────────────────────
                 const _UserFooter(),
               ],
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-// ─── Region 1: Logo header ────────────────────────────────────────────────────
-
-class _LogoHeader extends StatelessWidget {
-  const _LogoHeader({required this.taglineStyle});
-
-  final TextStyle taglineStyle;
-
-  @override
-  Widget build(BuildContext context) {
-    // The horizontal wordmark contains the F lettermark integrated with
-    // the FLUXORA text, so no separate `FluxoraMark` is rendered next to
-    // it (would double the F).
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 20, 18, 16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const FluxoraWordmark(height: 28),
-          const SizedBox(height: AppSpacing.s6),
-          Text('Stream. Sync. Anywhere.', style: taglineStyle),
-        ],
       ),
     );
   }
@@ -308,31 +266,36 @@ class _NavItemState extends State<_NavItem> {
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: () => context.go(widget.entry.path),
-        child: Container(
-          margin: const EdgeInsets.only(bottom: 1),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          decoration: BoxDecoration(
-            color: _bgColor,
-            borderRadius: BorderRadius.circular(AppRadii.sm),
-            border: _border,
-          ),
-          child: Row(
-            children: [
-              Icon(widget.entry.icon, color: _iconColor, size: 16),
-              const SizedBox(width: AppSpacing.s11),
-              Text(
-                widget.entry.label,
-                style: TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 13,
-                  fontWeight: _fontWeight,
-                  color: _textColor,
-                  height: 1.4,
+      child: Semantics(
+        button: true,
+        selected: _isActive,
+        label: '${widget.entry.label} navigation',
+        child: GestureDetector(
+          onTap: () => context.go(widget.entry.path),
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: _bgColor,
+              borderRadius: BorderRadius.circular(AppRadii.sm),
+              border: _border,
+            ),
+            child: Row(
+              children: [
+                Icon(widget.entry.icon, color: _iconColor, size: 16),
+                const SizedBox(width: AppSpacing.s11),
+                Text(
+                  widget.entry.label,
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 13,
+                    fontWeight: _fontWeight,
+                    color: _textColor,
+                    height: 1.4,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -635,14 +598,17 @@ class _UpgradeButtonState extends State<_UpgradeButton> {
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: () => context.go('/subscription'),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 100),
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s12,
-            vertical: 7,
-          ),
+      child: Semantics(
+        button: true,
+        label: 'View subscription plans',
+        child: GestureDetector(
+          onTap: () => context.go('/subscription'),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s12,
+              vertical: 7,
+            ),
           decoration: BoxDecoration(
             // prototype line 87: rgba(255,255,255,0.04)
             color: _hovered
@@ -663,6 +629,7 @@ class _UpgradeButtonState extends State<_UpgradeButton> {
               ),
             ],
           ),
+        ),
         ),
       ),
     );
@@ -715,14 +682,17 @@ class _UserFooterState extends State<_UserFooter> {
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
-      child: GestureDetector(
-        onTap: () => context.go('/profile'),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 100),
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s14,
-            vertical: AppSpacing.s10,
-          ),
+      child: Semantics(
+        button: true,
+        label: 'Open profile',
+        child: GestureDetector(
+          onTap: () => context.go('/profile'),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s14,
+              vertical: AppSpacing.s10,
+            ),
           decoration: BoxDecoration(
             color: _hovered
                 ? const Color(0x08FFFFFF) // subtle hover tint
@@ -774,6 +744,7 @@ class _UserFooterState extends State<_UserFooter> {
               ),
             ],
           ),
+        ),
         ),
       ),
     );

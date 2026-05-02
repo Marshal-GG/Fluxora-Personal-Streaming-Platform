@@ -38,6 +38,7 @@ import 'package:fluxora_desktop/features/notifications/presentation/widgets/noti
 import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_sidebar.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_status_bar.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_titlebar.dart';
 
 class FluxShell extends StatelessWidget {
   const FluxShell({super.key, required this.child});
@@ -117,60 +118,72 @@ class _ShellBodyState extends State<_ShellBody> {
                       return AnimatedBuilder(
                         animation: _paletteNotifier,
                         builder: (context, _) {
-                          return Stack(
+                          return Column(
                             children: [
-                              Row(
-                                children: [
-                                  const FluxSidebar(),
-                                  Expanded(
-                                    child: Column(
+                              // Custom 36 px titlebar — replaces the OS chrome
+                              // (hidden via TitleBarStyle.hidden in main.dart).
+                              const FluxTitlebar(),
+                              Expanded(
+                                child: Stack(
+                                  children: [
+                                    Row(
                                       children: [
-                                        // The redesign was authored against
-                                        // a 1100 px content minimum (4 stat
-                                        // tiles + detail panel + table fit
-                                        // cleanly above that). Below that,
-                                        // horizontal-scroll the screen so
-                                        // layouts don't collapse into
-                                        // overflow stripes.
+                                        const FluxSidebar(),
                                         Expanded(
-                                          child: LayoutBuilder(
-                                            builder: (ctx, constraints) {
-                                              const minContentWidth = 1100.0;
-                                              if (constraints.maxWidth >=
-                                                  minContentWidth) {
-                                                return widget.child;
-                                              }
-                                              return SingleChildScrollView(
-                                                scrollDirection:
-                                                    Axis.horizontal,
-                                                child: SizedBox(
-                                                  width: minContentWidth,
-                                                  height:
-                                                      constraints.maxHeight,
-                                                  child: widget.child,
+                                          child: Column(
+                                            children: [
+                                              // The redesign was authored
+                                              // against a 1100 px content
+                                              // minimum (4 stat tiles + detail
+                                              // panel + table fit cleanly
+                                              // above that). Below that,
+                                              // horizontal-scroll the screen
+                                              // so layouts don't collapse into
+                                              // overflow stripes.
+                                              Expanded(
+                                                child: LayoutBuilder(
+                                                  builder:
+                                                      (ctx, constraints) {
+                                                    const minContentWidth =
+                                                        1100.0;
+                                                    if (constraints.maxWidth >=
+                                                        minContentWidth) {
+                                                      return widget.child;
+                                                    }
+                                                    return SingleChildScrollView(
+                                                      scrollDirection:
+                                                          Axis.horizontal,
+                                                      child: SizedBox(
+                                                        width: minContentWidth,
+                                                        height: constraints
+                                                            .maxHeight,
+                                                        child: widget.child,
+                                                      ),
+                                                    );
+                                                  },
                                                 ),
-                                              );
-                                            },
+                                              ),
+                                              const FluxStatusBar(),
+                                            ],
                                           ),
                                         ),
-                                        const FluxStatusBar(),
                                       ],
                                     ),
-                                  ),
-                                ],
+                                    if (panelOpen)
+                                      Positioned.fill(
+                                        child: NotificationsPanel(
+                                          onClose: _panelNotifier.close,
+                                        ),
+                                      ),
+                                    if (_paletteNotifier.isOpen)
+                                      Positioned.fill(
+                                        child: CommandPaletteOverlay(
+                                          notifier: _paletteNotifier,
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
-                              if (panelOpen)
-                                Positioned.fill(
-                                  child: NotificationsPanel(
-                                    onClose: _panelNotifier.close,
-                                  ),
-                                ),
-                              if (_paletteNotifier.isOpen)
-                                Positioned.fill(
-                                  child: CommandPaletteOverlay(
-                                    notifier: _paletteNotifier,
-                                  ),
-                                ),
                             ],
                           );
                         },

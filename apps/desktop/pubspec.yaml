@@ -23,6 +23,7 @@ dependencies:
   json_annotation: ^4.11.0
   file_picker: ^11.0.2
   dio: ^5.9.2
+  window_manager: ^0.5.1
 
 dev_dependencies:
   flutter_test:
