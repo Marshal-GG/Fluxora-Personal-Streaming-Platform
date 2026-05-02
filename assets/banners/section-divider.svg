@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Small static section divider used directly under <h3> headers in
+  README.md. Violet → cyan gradient, fades at both edges. 900×3 — sized
+  to look right at full README width without competing with content.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="900" height="3"
+     viewBox="0 0 900 3"
+     role="presentation"
+     aria-hidden="true">
+  <defs>
+    <linearGradient id="sd" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#A855F7" stop-opacity="0"/>
+      <stop offset="40%"  stop-color="#A855F7" stop-opacity="0.9"/>
+      <stop offset="60%"  stop-color="#22D3EE" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#22D3EE" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="900" height="3" fill="url(#sd)" rx="1.5"/>
+</svg>

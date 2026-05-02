@@ -7,10 +7,17 @@ Fluxora/
 ├── apps/           # All runnable applications
 │   ├── server/     # Python FastAPI backend
 │   ├── mobile/     # Flutter iOS + Android
-│   └── desktop/    # Flutter Windows/macOS/Linux control panel
+│   ├── desktop/    # Flutter Windows/macOS/Linux control panel
+│   └── web_landing/# Next.js marketing site (static export → CF Pages)
 │
 ├── packages/       # Shared Dart code (imported by mobile + desktop)
 │   └── fluxora_core/
+│
+├── assets/         # Brand & marketing asset masters (canonical)
+│   ├── brand/      # Logo, wordmark, identity-sheet masters
+│   ├── banners/    # README hero, dividers, GitHub social
+│   ├── icons/      # Animated section icons used in README.md
+│   └── screenshots/# Marketing screenshots (post-Desktop M3)
 │
 ├── docs/           # Architecture, planning, design docs
 ├── scripts/        # Build, release, CI scripts
@@ -20,6 +27,8 @@ Fluxora/
 ├── README.md
 └── .github/        # GitHub Actions CI/CD
 ```
+
+> `assets/` is the canonical source of truth for brand. Runtime copies live at `packages/fluxora_core/assets/brand/` (Flutter) and `apps/web_landing/public/brand/` (Next.js) — sized + alpha-processed derivatives, kept in sync manually. See [`assets/README.md`](../../assets/README.md) for the sync flow.
 
 ---
 
