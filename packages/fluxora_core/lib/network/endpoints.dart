@@ -49,6 +49,9 @@ class Endpoints {
   // Orders / license keys (localhost-only, owner retrieval)
   static const String orders = '$_base/orders';
 
+  // Activity event log
+  static const String activity = '$_base/activity';
+
   // WebSocket
   static const String wsSignal = '$_base/ws/signal';
   static const String wsStatus = '$_base/ws/status';

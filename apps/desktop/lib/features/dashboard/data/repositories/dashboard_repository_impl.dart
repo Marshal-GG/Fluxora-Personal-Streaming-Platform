@@ -24,4 +24,16 @@ class DashboardRepositoryImpl implements DashboardRepository {
             .map((e) => ClientListItem.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
+
+  @override
+  Future<int> getLibraryCount() => _apiClient.get(
+        Endpoints.library,
+        fromJson: (json) => (json as List<dynamic>).length,
+      );
+
+  @override
+  Future<void> restartServer() => _apiClient.post<void>(Endpoints.infoRestart);
+
+  @override
+  Future<void> stopServer() => _apiClient.post<void>(Endpoints.infoStop);
 }

@@ -17,6 +17,10 @@ import 'package:fluxora_desktop/features/activity/data/repositories/activity_rep
 import 'package:fluxora_desktop/features/system_stats/data/repositories/system_stats_repository_impl.dart';
 import 'package:fluxora_desktop/features/system_stats/domain/repositories/system_stats_repository.dart';
 import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
+import 'package:fluxora_desktop/features/storage/data/repositories/storage_repository_impl.dart';
+import 'package:fluxora_desktop/features/storage/domain/repositories/storage_repository.dart';
+import 'package:fluxora_desktop/features/recent_activity/data/repositories/recent_activity_repository_impl.dart';
+import 'package:fluxora_desktop/features/recent_activity/domain/repositories/recent_activity_repository.dart';
 
 final getIt = GetIt.instance;
 
@@ -78,5 +82,15 @@ Future<void> setupInjector() async {
   );
   getIt.registerFactory<SystemStatsCubit>(
     () => SystemStatsCubit(repository: getIt<SystemStatsRepository>()),
+  );
+
+  // ── Storage ───────────────────────────────────────────────────────────────────
+  getIt.registerLazySingleton<StorageRepository>(
+    () => StorageRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+
+  // ── Recent activity ───────────────────────────────────────────────────────────
+  getIt.registerLazySingleton<RecentActivityRepository>(
+    () => RecentActivityRepositoryImpl(apiClient: getIt<ApiClient>()),
   );
 }

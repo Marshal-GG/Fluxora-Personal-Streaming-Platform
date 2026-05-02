@@ -26,7 +26,7 @@
 
 ## `packages/fluxora_core` — Phase 3 dual-base routing complete (8 passing tests)
 
-- **Entities:** PolarOrder, MediaFile (resume), ServerInfo (with `remoteUrl`), Library, Client, StreamSession, SystemStats
+- **Entities:** PolarOrder, MediaFile (resume), ServerInfo (with `remoteUrl`), Library, Client, StreamSession, SystemStats, `ActivityEvent` (M3), `LibraryStorageBreakdown` / `StorageByType` (M3)
 - **Network:** dual-base `ApiClient` (per-request `LanCheck` resolves between `localBaseUrl` and `remoteBaseUrl`, throws `NoRemoteConfiguredException` off-LAN with no remote), `NetworkPathDetector`, `Endpoints` (with `healthz`, `logs`)
 - **Storage:** `SecureStorage` with `saveRemoteUrl/getRemoteUrl/savePairing`
 - **Design tokens (v2):** `app_colors.dart` (v2 section), `app_typography.dart` (v2 section), `app_gradients.dart`, `app_spacing.dart`, `app_radii.dart`, `app_shadows.dart`
@@ -62,7 +62,8 @@
 | Transcoding screen | 🔵 scaffold only; settings managed via Settings screen |
 | **Desktop redesign M1 Foundation** (tokens + 11 primitives + brand widgets + `/showcase`) | ✅ done 2026-05-02 |
 | Desktop redesign M2 Shell (sidebar + status bar + new routes + `SystemStatsCubit`) | ✅ done 2026-05-02 |
-| Desktop redesign M3+ (Dashboard / Library / Clients / Groups / Activity / Transcoding / Logs / Settings / Subscription / Profile / Notifications) | 🔲 not started |
+| **Desktop redesign M3 Dashboard** (4 stat tiles + Server Info + Quick Access + Recent Activity + Storage donut — pixel-matched prototype; `StorageCubit` + `RecentActivityCubit` + `ActivityEvent` + `LibraryStorageBreakdown` entities) | ✅ done 2026-05-02 |
+| Desktop redesign M4+ (Library / Clients / Groups / Activity / Transcoding / Logs / Settings / Subscription / Profile / Notifications) | 🔲 not started |
 
 ---
 
@@ -86,6 +87,6 @@
 
 See `AGENT_LOG.md` "Next Agent Should" section for the prioritised list. As of 2026-05-02:
 
-1. **Desktop redesign M3 Dashboard** — wire all M0 backend APIs into the redesigned Dashboard (storage donut, sparklines, system status, recent activity)
+1. **Desktop redesign M4 Library + Clients** — pixel-match Library and Clients screens against prototype
 2. **Phase 6 routing hardening** — operator-driven Cloudflare config (Access policies, WAF rules, tunnel-health alerts, TURN evaluation)
-3. **Dependabot PR triage** — Dart 3.9 floor bump may have unstuck PRs
+3. **Dependabot triage** — Dart 3.9 floor bump may have unstuck PRs blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`

@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active - Updated 2026-05-01 (Phase 5: desktop library/orders/activity/logs/transcoding screens; mobile player settings sheet; desktop Remote Access UI on Dashboard + Settings; SDK floor `>=3.9.0` (Flutter 3.41); 38 desktop tests)
+> **Status:** Active - Updated 2026-05-02 (M3 Dashboard shipped: new entities `ActivityEvent` + `LibraryStorageBreakdown`, new features `storage/` + `recent_activity/`, `DashboardScreen` rewritten to pixel-match prototype; SDK floor `>=3.9.0` (Flutter 3.41); 38 desktop tests)
 
 ---
 
@@ -51,7 +51,7 @@ Two parallel design systems coexist during the redesign migration:
 
 ---
 
-## Desktop Redesign — M1 Foundation (✅ Done 2026-05-02)
+## Desktop Redesign — M1 Foundation (✅ Done 2026-05-02) · M2 Shell (✅ Done) · M3 Dashboard (✅ Done 2026-05-02)
 
 The redesigned Fluxora Desktop app is being built screen-by-screen following [`desktop_redesign_plan.md`](../11_design/desktop_redesign_plan.md). M1 (foundation) ships the design tokens, primitives, and brand visuals — every later milestone builds on these.
 
@@ -313,13 +313,13 @@ apps/desktop/lib/
 │       └── status_badge.dart    # ClientStatus badge (Approved/Pending/Rejected)
 │
 └── features/
-    ├── dashboard/               # ✅ Implemented
-    │   ├── domain/repositories/dashboard_repository.dart
+    ├── dashboard/               # ✅ Implemented + M3 redesign (pixel-matched prototype)
+    │   ├── domain/repositories/dashboard_repository.dart  # + restartServer() / stopServer()
     │   ├── data/repositories/dashboard_repository_impl.dart
     │   └── presentation/
-    │       ├── cubit/dashboard_cubit.dart  # load() fetches info + clients
+    │       ├── cubit/dashboard_cubit.dart  # load() fetches serverInfo + clients
     │       ├── cubit/dashboard_state.dart
-    │       └── screens/dashboard_screen.dart
+    │       └── screens/dashboard_screen.dart  # MultiBlocProvider: Dashboard+Storage+RecentActivity+SystemStats
     │
     ├── clients/                 # ✅ Implemented
     │   ├── domain/repositories/clients_repository.dart
@@ -344,12 +344,26 @@ apps/desktop/lib/
     │       ├── cubit/orders_cubit.dart
     │       └── screens/licenses_screen.dart  # Polar orders with copyable license keys + tier color chips
     │
-    ├── activity/                # ✅ Implemented (Phase 5)
+    ├── activity/                # ✅ Implemented (Phase 5 — active sessions, legacy name, DO NOT rename)
     │   ├── domain/repositories/activity_repository.dart
     │   ├── data/repositories/activity_repository_impl.dart
     │   └── presentation/
     │       ├── cubit/activity_cubit.dart   # freezed state
     │       └── screens/activity_screen.dart  # Active stream sessions monitor
+    │
+    ├── storage/                 # ✅ M3 — storage breakdown for Dashboard donut
+    │   ├── domain/repositories/storage_repository.dart
+    │   ├── data/repositories/storage_repository_impl.dart   # GET /api/v1/library/storage-breakdown
+    │   └── presentation/cubit/
+    │       ├── storage_cubit.dart      # load() → StorageLoaded(breakdown)
+    │       └── storage_state.dart      # StorageInitial|Loading|Loaded|Failure
+    │
+    ├── recent_activity/         # ✅ M3 — activity event log for Dashboard card
+    │   ├── domain/repositories/recent_activity_repository.dart
+    │   ├── data/repositories/recent_activity_repository_impl.dart   # GET /api/v1/activity?limit=4
+    │   └── presentation/cubit/
+    │       ├── recent_activity_cubit.dart   # load()/refresh() → RecentActivityLoaded([events])
+    │       └── recent_activity_state.dart   # RecentActivityInitial|Loading|Loaded|Failure
     │
     ├── logs/                    # ✅ Implemented (Phase 5)
     │   ├── domain/repositories/logs_repository.dart
@@ -375,7 +389,7 @@ apps/desktop/lib/
 
 | Route | Screen | State class | Status |
 |-------|--------|-------------|--------|
-| `/` | DashboardScreen | `DashboardCubit` | ✅ Done |
+| `/` | DashboardScreen | `DashboardCubit` + `StorageCubit` + `RecentActivityCubit` + `SystemStatsCubit` | ✅ Done (M3 redesign) |
 | `/clients` | ClientsScreen | `ClientsCubit` | ✅ Done |
 | `/library` | LibraryScreen | `LibraryCubit` | ✅ Done |
 | `/licenses` | LicensesScreen | `OrdersCubit` | ✅ Done |

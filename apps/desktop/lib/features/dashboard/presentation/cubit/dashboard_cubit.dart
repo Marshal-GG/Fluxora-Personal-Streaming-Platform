@@ -17,7 +17,20 @@ class DashboardCubit extends Cubit<DashboardState> {
     try {
       final serverInfo = await _repository.getServerInfo();
       final clients = await _repository.getClients();
-      emit(DashboardLoaded(serverInfo: serverInfo, clients: clients));
+      // Library count is best-effort — the dashboard still loads if
+      // /library 401s while clients are being approved.
+      var libraryCount = 0;
+      try {
+        libraryCount = await _repository.getLibraryCount();
+      } catch (e, st) {
+        _log.w('Library count unavailable; defaulting to 0',
+            error: e, stackTrace: st);
+      }
+      emit(DashboardLoaded(
+        serverInfo: serverInfo,
+        clients: clients,
+        libraryCount: libraryCount,
+      ));
     } on ApiException catch (e, st) {
       _log.e('Dashboard load failed', error: e, stackTrace: st);
       emit(DashboardFailure(e.message));

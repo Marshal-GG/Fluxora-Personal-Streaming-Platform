@@ -1,7 +1,9 @@
+export 'entities/activity_event.dart';
 export 'entities/client.dart';
 export 'entities/client_list_item.dart';
 export 'entities/enums.dart';
 export 'entities/library.dart';
+export 'entities/library_storage_breakdown.dart';
 export 'entities/media_file.dart';
 export 'entities/server_info.dart';
 export 'entities/stream_session.dart';

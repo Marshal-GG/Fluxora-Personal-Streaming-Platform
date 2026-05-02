@@ -18,10 +18,12 @@ class DashboardLoaded extends DashboardState {
   const DashboardLoaded({
     required this.serverInfo,
     required this.clients,
+    this.libraryCount = 0,
   });
 
   final ServerInfo serverInfo;
   final List<ClientListItem> clients;
+  final int libraryCount;
 
   int get pendingCount =>
       clients.where((c) => c.status == ClientStatus.pending).length;

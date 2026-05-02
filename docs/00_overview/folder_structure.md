@@ -177,31 +177,45 @@ apps/desktop/
     │   └── router/
     │       └── app_router.dart # Routes: /, /clients, /library, /settings
     ├── features/
-    │   ├── dashboard/
+    │   ├── dashboard/           # M3: MultiBlocProvider; restartServer/stopServer added
     │   │   ├── data/
     │   │   ├── domain/
     │   │   └── presentation/
     │   ├── library/
     │   │   ├── data/
     │   │   ├── domain/
-    │   │   └── presentation/   # Stats row, filter chips, file list + resume bar
+    │   │   └── presentation/
     │   ├── clients/
     │   │   ├── data/
     │   │   ├── domain/
     │   │   └── presentation/
-    │   ├── activity/
-    │   │   └── presentation/   # Scaffolded, not implemented
+    │   ├── activity/            # Legacy name — active sessions only (DO NOT rename)
+    │   │   ├── data/
+    │   │   ├── domain/
+    │   │   └── presentation/
+    │   ├── storage/             # M3: GET /api/v1/library/storage-breakdown
+    │   │   ├── data/repositories/storage_repository_impl.dart
+    │   │   ├── domain/repositories/storage_repository.dart
+    │   │   └── presentation/cubit/  # StorageCubit, StorageState
+    │   ├── recent_activity/     # M3: GET /api/v1/activity?limit=4
+    │   │   ├── data/repositories/recent_activity_repository_impl.dart
+    │   │   ├── domain/repositories/recent_activity_repository.dart
+    │   │   └── presentation/cubit/  # RecentActivityCubit, RecentActivityState
+    │   ├── system_stats/        # M2: polls /api/v1/info/stats every 1.1s
+    │   │   ├── data/
+    │   │   ├── domain/
+    │   │   └── presentation/cubit/  # SystemStatsCubit, SystemStatsState (ring buffer)
     │   ├── transcoding/
-    │   │   └── presentation/   # Scaffolded, not implemented
+    │   │   └── presentation/   # Scaffolded only
     │   ├── logs/
-    │   │   └── presentation/   # Scaffolded, not implemented
+    │   │   └── presentation/
     │   └── settings/
     │       └── presentation/
     │           ├── cubit/
-    │           │   ├── settings_cubit.dart  # load/save server URL, ApiClient.configure()
-    │           │   └── settings_state.dart  # Sealed: Initial/Loading/Loaded/Saved/Error
+    │           │   ├── settings_cubit.dart
+    │           │   └── settings_state.dart
     │           └── screens/
-    │               └── settings_screen.dart # Server URL form + About section
+    │               └── settings_screen.dart
     └── shared/
         ├── widgets/
         │   ├── sidebar.dart    # AppShell + nav (Dashboard, Clients, Library, Settings)
@@ -226,11 +240,16 @@ packages/fluxora_core/
 └── lib/
     ├── fluxora_core.dart       # Barrel export
     ├── entities/
-    │   ├── media_file.dart
-    │   ├── library.dart
+    │   ├── activity_event.dart         # M3: ActivityEvent (id, type, summary, createdAt …)
     │   ├── client.dart
+    │   ├── client_list_item.dart
+    │   ├── enums.dart
+    │   ├── library.dart
+    │   ├── library_storage_breakdown.dart  # M3: LibraryStorageBreakdown + StorageByType
+    │   ├── media_file.dart
+    │   ├── server_info.dart
     │   ├── stream_session.dart
-    │   └── server_info.dart
+    │   └── system_stats.dart
     ├── network/
     │   ├── api_client.dart     # Dio singleton + interceptors
     │   ├── endpoints.dart      # All API URL constants

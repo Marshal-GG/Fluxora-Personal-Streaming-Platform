@@ -1,6 +1,6 @@
 # Desktop App Redesign — Implementation Plan
 
-> **Status:** Implementing — M0 backend prerequisites partially shipped, M1 foundation complete (2026-05-02)
+> **Status:** Implementing — M0 backend prerequisites partially shipped, M1 foundation complete (2026-05-02), M2 shell complete, M3 Dashboard complete (2026-05-02)
 > **Created:** 2026-05-01
 > **Owner:** Marshal
 > **Source design:** [`docs/11_design/desktop_prototype/`](./desktop_prototype/) — React/JSX prototype exported from claude.ai/design
@@ -38,9 +38,26 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 - `/showcase` route renders every primitive on `bgRoot` for visual diff against the prototype (outside `ShellRoute`)
 - Both packages pass `flutter analyze` with zero issues
 
-### M2–M9 *(not started)*
+### M2 — Shell *(✅ Done)*
 
-Pending M0 close-out and the M1 visual review on `/showcase`.
+`flux_shell.dart`, `flux_sidebar.dart`, `flux_status_bar.dart` shipped. `SystemStatsCubit` polls every 1.1 s. Routes wired in `app_router.dart`.
+
+### M3 — Dashboard *(✅ Done 2026-05-02)*
+
+- `DashboardScreen` rewritten — full `MultiBlocProvider` composition: `DashboardCubit` + `StorageCubit` + `RecentActivityCubit`; `SystemStatsCubit` read from shell context.
+- 4 stat tiles (Libraries / Connected Clients / Active Streams / CPU + sparkline).
+- Server Information card (6 rows: name, LAN IP+`StatusDot`, internet `Pill`, public address, uptime, version).
+- Quick Access card (2×2 grid + span-2 Settings tile), all navigating via `context.go`.
+- Recent Activity card: `GET /api/v1/activity?limit=4` via new `RecentActivityCubit`. Relative timestamps, category→icon/color mapping.
+- Storage Overview card: `StorageDonut` + legend + `FluxProgress` bar, fed by `StorageCubit` → `GET /api/v1/library/storage-breakdown`.
+- New entities: `ActivityEvent` + `LibraryStorageBreakdown` / `StorageByType` in `packages/fluxora_core`.
+- New `Endpoints.activity` constant.
+- `DashboardRepository` extended with `restartServer()` / `stopServer()`.
+- New desktop features: `storage/` + `recent_activity/` registered in DI.
+
+### M4–M9 *(not started)*
+
+Pending M3 visual review against prototype.
 
 ---
 
@@ -167,20 +184,20 @@ The current `Routes.licenses` is **renamed** to `Routes.subscription`. Old `lice
 
 Each screen gets one PR. Order is chosen so each screen exercises a primitive that future screens reuse.
 
-| # | Screen | Existing Cubit | New entities/Cubits | Backend gap (§7) |
-|---|--------|----------------|---------------------|------------------|
-| 1 | **Dashboard** | `DashboardCubit` (extend) | `SystemStatsCubit` *(new)* | §7.5, §7.6, §7.7 |
-| 2 | **Library** | `LibraryCubit` (kept) | – | – |
-| 3 | **Clients** | `ClientsCubit` (kept) | – | – |
-| 4 | **Groups** | – | `GroupsCubit` *(new)* | §7.1 |
-| 5 | **Activity** | `ActivityCubit` (kept) | – | – |
-| 6 | **Transcoding** + Encoder Settings | `SettingsCubit` (extend) | `TranscodingCubit` *(new)* | §7.8 |
-| 7 | **Logs** + tabs | `LogsCubit` (extend) | – | §7.9 |
-| 8 | **Settings** + 6 tabs | `SettingsCubit` (extend) | – | §7.10 |
-| 9 | **Subscription** + Billing + Manage | `OrdersCubit` (extend) | – | §7.11 |
-| 10 | **Profile** | – | `ProfileCubit` *(new)* | §7.2 |
-| 11 | **Notifications** | – | `NotificationsCubit` *(new)* | §7.3 |
-| 12 | **Help** | – | – (static) | – |
+| # | Screen | Existing Cubit | New entities/Cubits | Backend gap (§7) | Status |
+|---|--------|----------------|---------------------|------------------|--------|
+| 1 | **Dashboard** | `DashboardCubit` (extend) | `StorageCubit` *(new)*, `RecentActivityCubit` *(new)* | §7.5, §7.6, §7.7 | ✅ Done |
+| 2 | **Library** | `LibraryCubit` (kept) | – | – | 🔲 Pending |
+| 3 | **Clients** | `ClientsCubit` (kept) | – | – | 🔲 Pending |
+| 4 | **Groups** | – | `GroupsCubit` *(new)* | §7.1 | 🔲 Pending |
+| 5 | **Activity** | `ActivityCubit` (kept) | – | – | 🔲 Pending |
+| 6 | **Transcoding** + Encoder Settings | `SettingsCubit` (extend) | `TranscodingCubit` *(new)* | §7.8 | 🔲 Pending |
+| 7 | **Logs** + tabs | `LogsCubit` (extend) | – | §7.9 | 🔲 Pending |
+| 8 | **Settings** + 6 tabs | `SettingsCubit` (extend) | – | §7.10 | 🔲 Pending |
+| 9 | **Subscription** + Billing + Manage | `OrdersCubit` (extend) | – | §7.11 | 🔲 Pending |
+| 10 | **Profile** | – | `ProfileCubit` *(new)* | §7.2 | 🔲 Pending |
+| 11 | **Notifications** | – | `NotificationsCubit` *(new)* | §7.3 | 🔲 Pending |
+| 12 | **Help** | – | – (static) | – | 🔲 Pending |
 
 For each screen, the recipe is:
 1. Open the prototype's `screens/<name>.jsx` next to the editor.
@@ -671,3 +688,4 @@ Per CLAUDE.md doc protocol §3, after M9:
 |------|--------|--------|
 | 2026-05-01 | Claude (session) | Initial plan |
 | 2026-05-02 | Claude (session) | M0 §7.5/§7.6/§7.7 shipped (storage breakdown, system stats REST + WS, restart/stop). M1 Foundation shipped (tokens, 11 primitives, brand visuals, 4 animated SVGs, `/showcase` route, `flutter_svg` dep, hi-fi logos). §7.1 Groups + §7.2 Profile shipped by parallel agent. Recreated F-mark SVG removed per owner direction — brand mark stays the original PNG. |
+| 2026-05-02 | Claude (session) | M3 Dashboard shipped. New entities `ActivityEvent` + `LibraryStorageBreakdown`/`StorageByType` in core. New features `storage/` + `recent_activity/` in desktop. `DashboardScreen` fully rewritten to pixel-match prototype: 4 stat tiles, Server Info card, Quick Access card, Recent Activity card, Storage Overview card. `DashboardRepository` extended with `restartServer`/`stopServer`. `Endpoints.activity` constant added. |
