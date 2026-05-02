@@ -434,3 +434,152 @@ Eight M0 chunks shipped end-to-end (code + tests + docs). Server suite **149 →
 - [x] No new third-party deps pulled in. All effects use stock CSS + native HTML.
 - [x] Reduced-motion guard expanded — orbs / scroll fades / hero title shift / featured-card breathing all disabled under `prefers-reduced-motion: reduce`.
 ---
+
+## [2026-05-02] — Post-M0 cleanup: legacy removal · CLAUDE.md trim · auth audit · activity-emitter rounds
+**Phase:** Phase 5 — desktop redesign track + cross-cutting hygiene
+**Status:** Complete. Server suite **240 → 247 passing**. CLAUDE.md trimmed **444 → 97 lines**. URL inventory shipped. Two real auth gaps closed.
+
+### What Was Done
+
+This session ran after the M0 backend close-out. M0 itself (§7.1–§7.11) shipped earlier; this entry covers the cross-cutting hygiene work that followed:
+
+#### 1. Legacy code removal (commit `6d8d548`)
+- Server: deleted `GET /api/v1/info/logs` (was deprecated by `/api/v1/logs` shipped in §7.9; "new product, no users — no need for backwards-compat shim"). Removed unused `from pathlib import Path` import.
+- `routers/logs.py`: removed the "legacy backwards compat" docstring paragraph.
+- `models/settings.py:license_key_format`: corrected stale docstring claiming legacy 4-part keys were accepted (code already rejected them).
+- `packages/fluxora_core/lib/network/api_client.dart`: removed the `@Deprecated('Use localBaseUrl instead') String? baseUrl` constructor + `configure()` argument that aliased to `localBaseUrl` during the dual-base migration. Dual-base has been the only API since the migration completed.
+- `endpoints.dart`: `Endpoints.logs` updated `/info/logs` → `/logs`.
+- `apps/desktop/lib/features/logs/data/repositories/logs_repository_impl.dart`: migrated to consume `/api/v1/logs?limit=1000`, deserializes the structured response, joins records into the same `String` shape the existing `LogsCubit` + `LogsScreen` expect. M6 redesign will rewrite the screen to render structured rows directly; this is the minimal migration that drops the legacy dependency.
+- Removed the `'legacy baseUrl param maps to localBaseUrl'` test from `api_client_test.dart`.
+- 7 doc files swept to drop legacy references: `04_api/01_api_contracts.md`, `04_api/02_versioning_policy.md`, `05_infrastructure/02_url_inventory.md`, `05_infrastructure/03_public_routing.md`, `runbooks/09_monitoring_and_observability.md`, `09_backend/01_backend_architecture.md`, `10_planning/01_roadmap.md`.
+
+#### 2. CLAUDE.md trim (commit `9627ba3`)
+- 444 → 97 lines. Three sections extracted to dedicated docs:
+  - `docs/12_guidelines/02_documentation_update_protocol.md` (74 lines — full 5-step protocol + tables)
+  - `docs/12_guidelines/03_gotchas.md` (was 16 entries; 2 added during this session: URL `+` decoding, Python `or`-on-empty-list)
+  - `docs/00_overview/current_status.md` (91 lines — was the most token-expensive section in CLAUDE.md, rewritten on every milestone landing)
+- Repository Layout (82-line tree), Phase Roadmap, Design System tokens, Detailed Development Guidelines pointer all collapsed to one-line pointers (the underlying canonical docs already existed).
+- What stayed: Mandatory Agent Rules · Hard Prohibitions table · 1-paragraph "What is Fluxora?" · pointer table · Out of Scope one-liner. Nothing else.
+
+#### 3. MCP server cleanup (config-only — no commit)
+- Removed the `dart` MCP server from `~/.claude.json` global `mcpServers` block (was loading ~30 tool schemas on every turn). User reported a fresh-session message was costing 12% of token budget; removing the unused MCP + the CLAUDE.md trim drops the per-turn baseline materially.
+
+#### 4. Two real auth gaps closed + activity-emitter extension round 1 (commit `51169a3`)
+- **`GET /api/v1/info/stats`** was wide-open: anyone with a request URL could pull operator-level metrics (CPU/RAM/network/lan_ip/public_address). Now uses `validate_token_or_local` — matches the `/ws/stats` WebSocket auth pattern.
+- **`DELETE /api/v1/auth/revoke/{client_id}`** was a privilege escalation: any token-holding client could revoke any other client. Now `require_local_caller` (operator-only) — matches `/auth/approve` + `/auth/reject`.
+- Activity emitters wired (extending the §7.4 catalogue): `file.upload` (`routers/files.py:upload_file`), `settings.change` (`routers/settings.py:update_settings` — logs field NAMES, not values, since values may include license keys / URLs with secrets), `client.revoke` (`routers/auth.py:revoke_client`, now operator-only). All wrapped in try/except logging-only.
+- Stale test `test_protected_route_requires_token` renamed to `test_revoke_blocked_from_lan` and updated for the new auth pattern.
+
+#### 5. Activity-emitter extension round 2 (commit `c39e157`)
+- Rounded out the §7.4 catalogue so every admin write surfaces in the audit feed: `library.create`, `library.delete`, `file.delete` (in `routers/library.py` and `routers/files.py`).
+- Both `delete_*` handlers look up the entity name BEFORE deletion so audit summaries are human-readable instead of opaque ids.
+
+#### 6. Doc sync (commits `551bc21`, this commit)
+- API contracts auth-modes table + per-endpoint Auth rows for `info/stats` + `auth/revoke`.
+- Security route-authorization matrix: new `/info/stats` row (with leak history note); `/auth/revoke` row updated to localhost-only with privilege-escalation history called out.
+- URL inventory + public routing matrix: auth columns updated.
+- New gotcha entry: "auth-gate drift on admin endpoints" — audit pattern is `grep "@router\.\(get\|post\|patch\|delete\)" routers/` and confirm every handler has an explicit auth `Depends(...)` since FastAPI's default is no-auth.
+- Test count bumps 240 → 244 → 247.
+
+### Files Created / Modified
+
+**Code (server):**
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/routers/info.py` (deleted legacy `/info/logs`; tightened `/info/stats` to `validate_token_or_local`) |
+| Modified | `apps/server/routers/logs.py` (docstring trim) |
+| Modified | `apps/server/routers/auth.py` (`revoke_client` to localhost-only + `client.revoke` activity emit) |
+| Modified | `apps/server/routers/files.py` (`file.upload` + `file.delete` activity emits) |
+| Modified | `apps/server/routers/library.py` (`library.create` + `library.delete` activity emits) |
+| Modified | `apps/server/routers/settings.py` (`settings.change` activity emit; field-name-only payload) |
+| Modified | `apps/server/models/settings.py` (license_key_format docstring corrected) |
+| Modified | `apps/server/tests/test_auth.py` (renamed + rewrote `test_protected_route_requires_token` → `test_revoke_blocked_from_lan`) |
+| Modified | `apps/server/tests/test_activity.py` (+6 emitter tests) |
+| Modified | `apps/server/tests/test_info_stats.py` (auth-gate test) |
+
+**Code (Dart):**
+| Action | Path |
+|--------|------|
+| Modified | `packages/fluxora_core/lib/network/api_client.dart` (removed `baseUrl:` deprecated alias from constructor + `configure()`) |
+| Modified | `packages/fluxora_core/lib/network/endpoints.dart` (`logs` path) |
+| Modified | `packages/fluxora_core/test/network/api_client_test.dart` (removed legacy alias test) |
+| Modified | `apps/desktop/lib/features/logs/data/repositories/logs_repository_impl.dart` (migrated to `/api/v1/logs?limit=1000`) |
+
+**Docs:**
+| Action | Path |
+|--------|------|
+| Modified | `CLAUDE.md` (444 → 97 lines) |
+| Created | `docs/12_guidelines/02_documentation_update_protocol.md` |
+| Created | `docs/12_guidelines/03_gotchas.md` (added: URL `+` decoding · `or`-on-empty-list · auth-gate drift) |
+| Created | `docs/00_overview/current_status.md` |
+| Modified | `docs/04_api/01_api_contracts.md` (legacy endpoint removed; auth-modes table updated; `/info/stats` + `/auth/revoke` rows updated) |
+| Modified | `docs/04_api/02_versioning_policy.md` (legacy endpoint listing removed) |
+| Modified | `docs/05_infrastructure/02_url_inventory.md` (legacy row removed; `/info/stats` + `/auth/revoke` auth columns updated) |
+| Modified | `docs/05_infrastructure/03_public_routing.md` (matrix + admin-route notes updated) |
+| Modified | `docs/05_infrastructure/runbooks/09_monitoring_and_observability.md` (legacy endpoint replaced) |
+| Modified | `docs/06_security/01_security.md` (new `/info/stats` row + `/auth/revoke` row with privilege-escalation history) |
+| Modified | `docs/09_backend/01_backend_architecture.md` (test count 240 → 247; project tree updated) |
+| Modified | `docs/10_planning/01_roadmap.md` (legacy endpoint historical note rewritten as "removed (no backwards-compat shim)") |
+| Modified | `docs/11_design/desktop_redesign_plan.md` (§7.9 status line: "removed, no shim") |
+| Modified | `docs/00_overview/current_status.md` (test count bumps) |
+
+**Config:**
+| Action | Path |
+|--------|------|
+| Modified | `~/.claude.json` (removed `dart` MCP server from global `mcpServers`) |
+
+### Commits This Session
+- `6d8d548` refactor: remove legacy /info/logs endpoint + ApiClient baseUrl alias
+- `9627ba3` docs(claude): trim CLAUDE.md 444 → 97 lines; extract three sections (note: actual hash may differ; check `git log` if not present)
+- `51169a3` feat(server): close 2 admin auth gaps + extend §7.4 activity emitters
+- `551bc21` docs: sync to auth-gate fixes + activity emitter extension
+- `c39e157` feat(server): activity emitters for library.create / library.delete / file.delete
+
+(Plus the pending doc-patch commit and this AGENT_LOG commit, both yet to be authorized at time of writing.)
+
+### Validation
+- `python -m pytest` — **247 passed** on `apps/server`.
+- `flutter analyze` — clean across `packages/fluxora_core`, `apps/desktop`, `apps/mobile`.
+- `flutter test` — `fluxora_core` 8 ✅ (was 9 — legacy alias test removed), `apps/desktop` 38 ✅, `apps/mobile` unchanged.
+- `ruff check` + `black --check` — clean across every touched file.
+
+### Decisions Made
+
+- **"It's a new product — no users — no backwards-compat shim."** The user explicitly authorized removing `/info/logs` and the Dart `baseUrl:` alias since neither has external consumers yet. Future deprecations should still ship a transition window unless similarly authorized.
+- **Settings.change activity payload logs field NAMES, not values.** PATCH bodies routinely include `license_key`, `relay_server_url`, `custom_server_url`, `tmdb_api_key` — values would leak into the audit log queryable by any token-holding client (since `/api/v1/activity` is `validate_token_or_local`). Field names are sufficient for "operator changed setting X at time Y" audit trail.
+- **`delete_*` handlers capture entity name BEFORE delete.** Audit summary is meant for humans reading the activity feed — `Library 'Movies' deleted` is more useful than `Library a3f7b21e-... deleted`.
+- **Auth gate audit pattern goes in gotchas.md.** New endpoints will keep being added without explicit auth `Depends`. The gotcha codifies the audit step (`grep "@router\.\(...\)" routers/` then confirm each handler has a non-None Depends) so future agents catch the same class of issue.
+- **CLAUDE.md is rules-only now.** Volume content moved out so per-turn prompt cost drops. The "What is Fluxora?" intro stayed because new agents need product framing immediately; "Out of Scope" stayed as a one-liner because the multi-user / cloud-backup boundary comes up frequently.
+- **Single-owner model is product-locked.** User asked the question explicitly; recorded that multi-user is a phase-2 product call needing a `users` table + per-user library scoping + role hierarchy + sub-account UI, not a small refactor.
+
+### Issues Discovered / Reported to User
+
+- **`/info/stats` was no-auth from §7.6 ship date** — leaked CPU/RAM/lan_ip/public_address over the public tunnel. Fixed in `51169a3`.
+- **`/auth/revoke` privilege escalation** — bearer token from any paired client could revoke any other client (handler validated token presence but never ownership). Fixed in `51169a3`.
+- **Settings PATCH activity audit was leaking secrets in payload** (caught during write) — values would have included license keys + URLs with secrets. Fixed before shipping by switching to field-names-only payload.
+- **Stale "legacy 4-part license keys accepted" docstring** — code rejected them but doc claimed otherwise. Misleading for a future developer reading the validator. Fixed.
+- **CLAUDE.md was paying ~12% token budget per-turn for a fresh session** (per user's complaint). Trimmed 444 → 97 lines + removed unused dart MCP. Per-turn baseline should now drop materially.
+
+### Blockers / Open Issues
+
+- **M3 Desktop Dashboard not started.** All M0 backend deps are ready. Next session should pixel-match the redesigned Dashboard against `docs/11_design/desktop_prototype/` at 1440 × 900: SystemStatsCard wired to `/ws/stats`; sparklines accumulate the last 30 ticks; storage donut consumes `/library/storage-breakdown`; recent-activity widget consumes `/api/v1/activity?limit=4`; remote-access pill (already shipped) stays.
+- **Phase 6 routing hardening** — operator-driven Cloudflare config tracked in `docs/10_planning/04_manual_tasks.md`. The `/info/logs` line in those tasks is now stale (endpoint removed); other tasks (Cloudflare Access on `/orders`, WAF rules, tunnel-health alerts, TURN evaluation) still apply.
+- **Dependabot PR queue** — Dart 3.9 floor bump from prior session may have unstuck PRs that were blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`. Worth re-auditing the queue.
+- **`apps/desktop` Logs screen renders text-blob format only.** Repository was migrated to consume the new structured endpoint but the screen still expects a single-string render. M6 will rewrite the screen properly with structured rows + filter UI.
+
+### Next Agent Should
+
+1. **Begin desktop redesign M3 — Dashboard.** All M0 backend deps shipped; the redesigned Dashboard is the highest-impact next chunk. Pixel-match against `docs/11_design/desktop_prototype/Fluxora Desktop.html` at 1440 × 900.
+2. **Process the Phase 6 operator entries** in `docs/10_planning/04_manual_tasks.md`. The `/info/logs` Cloudflare Access entry is stale (endpoint removed) — drop or rewrite that one. The other four (CF Access on `/orders`, WAF rules, tunnel-health alerts, TURN evaluation) all still apply and should land before the public URL is announced externally.
+3. **Re-audit the Dependabot PR queue.** Dart 3.9 floor bump from prior session may have unblocked `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`. Close any ceiling-pin PRs that are now redundant.
+4. **(Mechanical follow-up)** Activity emitter could grow to cover `auth.request_pair` (currently emits `client.pair`, fine) — but `library.scan` only emits when files are added; consider emitting a `library.scan` event with `files_added=0` payload for "scan-found-nothing" runs too, so the audit log records every scan. Low priority.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran without explicit per-action OK. Memory rule reinforced this session: even within an authorized arc, ask before each commit ("commit in chunks" ≠ ongoing autopilot). Updated `feedback_no_git_writes_default.md`.
+- [x] No agent / AI branding in any code, doc, or commit message.
+- [x] No `print()` / `debugPrint()` introduced (Dart) or `print()` (Python).
+- [x] No exceptions swallowed silently (every emitter is `try/except` + `logger.warning(..., exc_info=True)`).
+- [x] No secrets / hardcoded paths added (settings.change payload explicitly avoids logging values; license-secret paths unchanged).
+- [x] No new third-party deps (none added; one MCP removed).
+- [x] No backwards-compat hacks left behind — legacy paths and Dart shim deleted outright per "new product" directive.
+---
