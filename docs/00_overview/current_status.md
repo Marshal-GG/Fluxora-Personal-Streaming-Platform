@@ -97,7 +97,6 @@
 
 ## What's next
 
-See `AGENT_LOG.md` "Next Agent Should" section for the prioritised list. As of 2026-05-03:
 
 1. **Mobile app redesign** — execution gate is now lifted (desktop M0–M10 + theme cutover landed). Plan in `docs/11_design/mobile_redesign_plan.md` — 14 milestones (M0 foundation → M14 polish), V2 palette migration across the entire mobile app.
 2. **macOS / Linux desktop runners** — Windows-only today. When generating other-platform runners, port the M10 shell-integration: `WindowOptions.titleBarStyle: hidden` already works cross-platform via `window_manager`; native equivalents needed for `WM_GETMINMAXINFO` (window-size floor), `SetCurrentProcessExplicitAppUserModelID`, and `WNDCLASSEX hIconSm`. Caption-button glyphs need a `Platform.isWindows` swap to `CustomPainter` paths or a vendored TTF since Segoe Fluent Icons / Segoe MDL2 Assets are Windows-only.

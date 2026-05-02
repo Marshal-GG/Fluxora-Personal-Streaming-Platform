@@ -500,7 +500,6 @@ Implementation:
 
 ### 7.7 Dashboard "Quick Access" actions (Restart / Stop server)
 
-**Status:** no endpoints; CLAUDE.md / config.py boot flow exists but not exposed.
 
 **New endpoints — `apps/server/routers/info.py`:**
 | Method | Path | Description | Auth |
@@ -629,7 +628,6 @@ Implementation: Polar SDK exposes a customer-portal URL builder; cache per `cust
 | `psutil` | CPU / RAM / process probe for §7.6 | `apps/server/pyproject.toml` |
 | (consider) `pyinotify` (Linux) / `watchdog` (cross-platform) | Live-log tail for §7.9 | optional; polling is acceptable v1 |
 
-Pin to current latest versions per CLAUDE.md Rule #12 — verify at PR time, do not pin to a number from training data.
 
 ---
 
@@ -674,7 +672,6 @@ These rules are enforced on every screen PR. Each comes from a real Flutter pitf
 - [ ] No `print()` / `debugPrint()`.
 - [ ] No `// TODO` left behind.
 - [ ] Existing tests pass; new screen has at least a smoke test that mounts it.
-- [ ] `AGENT_LOG.md` entry appended; relevant docs updated per CLAUDE.md doc protocol.
 
 ### 8.6 Visual regression harness (recommended)
 Add `golden_toolkit`. Capture a golden PNG of each screen at 1440×900 with a fixed data fixture. Re-run on every PR to catch unintended visual changes. Goldens live in `apps/desktop/test/goldens/`.
@@ -696,7 +693,6 @@ Estimates are for a single dev. Halve with two devs after primitives are merged.
 | **M6 — Logs + Settings** | Logs filtering UI + all 6 Settings tabs | 2 days |
 | **M7 — Subscription + Profile + Notifications + Help** | Subscription + Billing + Manage + Profile + Notifications overlay + Help | 2 days |
 | **M8 — Polish + visual QA** | Cmd+K polish, accessibility pass, golden tests, pixel review against prototype | 1.5 days ✅ Done 2026-05-03 |
-| **M9 — Cleanup + docs** | Delete legacy screen files, update all docs per §10, update `AGENT_LOG.md` | 0.5 day ✅ Done 2026-05-03 |
 | **M10 — Custom window chrome** | New `window_manager` dep + per-platform native runner edits + `FluxTitleBar` widget + sidebar logo-header removal. Full spec in §13. | 1–1.5 days ✅ Done 2026-05-03 |
 
 **Total: ~20–21 working days.** Backend (M0) can run in parallel with M1 once primitives are scoped.
@@ -705,7 +701,6 @@ Estimates are for a single dev. Halve with two devs after primitives are merged.
 
 ## 10. Doc-update protocol — files to touch on cutover
 
-Per CLAUDE.md doc protocol §3, after M9:
 
 | File | Update |
 |------|--------|
@@ -721,8 +716,6 @@ Per CLAUDE.md doc protocol §3, after M9:
 | `docs/10_planning/01_roadmap.md` | Phase 5 progress |
 | `docs/10_planning/02_decisions.md` | Decisions §1.1–§1.5 here become ADR entries |
 | `DESIGN.md` | Extend tokens with new colors / spacing / radii / shadows |
-| `CLAUDE.md` | Update "Current Status" + "Phase Roadmap" tables |
-| `AGENT_LOG.md` | Per-session entries throughout |
 
 ---
 
@@ -767,7 +760,6 @@ The updated prototype bundle (2026-05-03) ships a 36 px custom titlebar at the t
 | `bitsdojo_window` ^0.1.x | Smaller surface, well-documented for borderless windows. | Last release > 1 year old; macOS support has known traffic-light edge cases. |
 | Roll our own | Zero deps. | ~200 LOC of native code per platform we have to maintain. |
 
-**Recommendation:** `window_manager`. Add per CLAUDE.md Hard Prohibition #6 — single new dep, established maintainer, primary feature is exactly what we need.
 
 ### 13.2 Native runner edits
 
@@ -825,7 +817,6 @@ For M10, the close button does what it says: closes the app.
 7. Linux Wayland: app launches without crash even if SSD is forced; visible quirks acceptable.
 8. Sidebar logo-header is gone — nav starts at row 1 of the sidebar.
 9. `flutter analyze` clean; no `print()` / `debugPrint()`.
-10. AGENT_LOG entry references this section + lists every native runner file touched.
 
 ### 13.8 Risks specific to M10
 

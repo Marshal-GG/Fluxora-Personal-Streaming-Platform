@@ -23,7 +23,6 @@ This doc lists what's *actually installed* (with versions) per package, why it's
 | WebRTC (server) | `aiortc` 1.9 | STUN/TURN signaling server-side |
 | Public Routing | Cloudflare Tunnel | `fluxora-api.marshalx.dev` (Phases 1–5 live, Phase 6 hardening operator-driven). See [`05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) |
 | Secret Storage (server) | `keyring` 25.7 + `cryptography` 47.0 | OS-keyring backed; Fernet for at-rest encryption of API keys |
-| Bearer Token Hashing | HMAC-SHA256 (stdlib) | Tokens stored as hashes, never plaintext (CLAUDE.md hard rule #13) |
 | Password Hashing | `argon2-cffi` 25.1 | (Currently unused — Fluxora has no operator-password concept; reserved for future) |
 | Error Tracking | `sentry-sdk[fastapi]` 2.58 | FastAPI integration |
 | Metadata API | TMDB API | Movie/TV show metadata (HTTPS, key in DB) |
@@ -90,7 +89,6 @@ Versions pinned exactly in `apps/server/pyproject.toml` (no `^` / `~`).
 | `flutter_secure_storage` | ^9.0.0 | Token + remote_url + pairing persistence |
 | `freezed_annotation` | ^3.0.0 | Annotation pair for `freezed` codegen |
 | `json_annotation` | ^4.11.0 | Annotation pair for `json_serializable` codegen |
-| `logger` | ^2.7.0 | Structured logging — replaces `print` (CLAUDE.md hard rule #3) |
 | `connectivity_plus` | ^7.1.1 | Network state monitoring (Wi-Fi vs cellular vs offline) |
 | `equatable` | ^2.0.8 | Value-equality for non-freezed value classes |
 | `flutter_svg` | ^2.2.4 | SMIL-animated SVG rendering for brand widgets |
@@ -256,7 +254,6 @@ Inherits `fluxora_core`. Adds:
 | Tool | Where | Purpose |
 |------|-------|---------|
 | GitHub Actions | `.github/workflows/` | CI for server (`server.yml`), desktop (`desktop.yml`), mobile (`mobile.yml`) — `flutter test --exclude-tags=golden`, `flutter analyze`, `pytest`, `ruff`, `black --check` |
-| `mirror-public.yml` | `.github/workflows/` | Mirrors private → public repo, strips `## For AI Agents` + filters `AGENT_LOG.md` / `CLAUDE.md` lines |
 | PyInstaller | local + CI | Server distribution as standalone executable |
 | Cloudflare Pages | `fluxora.marshalx.dev` | Static export of `apps/web_landing/` |
 | Cloudflare Tunnel (`cloudflared`) | `fluxora-api.marshalx.dev` | Public routing v1 — no inbound port forwarding required |

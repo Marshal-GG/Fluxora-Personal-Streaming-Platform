@@ -382,7 +382,6 @@ onboarding/   splash_screen.dart       signin_screen.dart      server_picker_scr
 - `docs/00_overview/current_status.md` — add line per milestone.
 - `docs/08_frontend/01_frontend_architecture.md` — mobile section grows with each new feature.
 - `docs/10_planning/01_roadmap.md` — Phase 5 row updated as milestones land.
-- `AGENT_LOG.md` — per-session entry.
 
 ---
 

@@ -448,7 +448,6 @@ These appear in `web_landing_full_layout.png` but ship in **separate PRs after t
 
 ## 14. Doc-update protocol — files to touch on cutover
 
-Per CLAUDE.md doc protocol §3:
 
 | File | Update |
 |------|--------|
@@ -458,8 +457,6 @@ Per CLAUDE.md doc protocol §3:
 | `docs/10_planning/01_roadmap.md` | Mark "Web landing page redesign" track |
 | `docs/10_planning/02_decisions.md` | Locked-in decisions §2.1–§2.11 here |
 | `DESIGN.md` | Note that the landing page now uses the v2 violet palette |
-| `CLAUDE.md` | Repo-layout section if `apps/web_landing/public/` gains many subfolders |
-| `AGENT_LOG.md` | Per-session entries throughout |
 
 ---
 
