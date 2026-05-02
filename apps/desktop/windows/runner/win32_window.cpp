@@ -88,19 +88,31 @@ WindowClassRegistrar* WindowClassRegistrar::instance_ = nullptr;
 
 const wchar_t* WindowClassRegistrar::GetWindowClass() {
   if (!class_registered_) {
-    WNDCLASS window_class{};
+    // WNDCLASSEX (not WNDCLASS) so we can set both hIcon and hIconSm. The
+    // small icon is what Windows uses in the taskbar — without it, Win 11
+    // can fail to render Aero Peek thumbnails for the running window. Load
+    // the small variant from the same `IDI_APP_ICON` resource at the
+    // taskbar's expected size (16 px logical).
+    WNDCLASSEX window_class{};
+    window_class.cbSize = sizeof(WNDCLASSEX);
     window_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
     window_class.lpszClassName = kWindowClassName;
     window_class.style = CS_HREDRAW | CS_VREDRAW;
     window_class.cbClsExtra = 0;
     window_class.cbWndExtra = 0;
     window_class.hInstance = GetModuleHandle(nullptr);
-    window_class.hIcon =
-        LoadIcon(window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
+    window_class.hIcon = static_cast<HICON>(LoadImage(
+        window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON),
+        IMAGE_ICON, GetSystemMetrics(SM_CXICON),
+        GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR));
+    window_class.hIconSm = static_cast<HICON>(LoadImage(
+        window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON),
+        IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+        GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
     window_class.hbrBackground = 0;
     window_class.lpszMenuName = nullptr;
     window_class.lpfnWndProc = Win32Window::WndProc;
-    RegisterClass(&window_class);
+    RegisterClassEx(&window_class);
     class_registered_ = true;
   }
   return kWindowClassName;
@@ -222,6 +234,11 @@ Win32Window::MessageHandler(HWND hwnd,
       // authored bounds (1100 px content + 232 px sidebar = 1332 logical
       // px wide, 720 px tall). DPI-scaled to physical pixels so the
       // minimum holds correctly on high-DPI displays.
+      //
+      // window_manager also sets `minimumSize` from main.dart, which
+      // covers programmatic resize calls. This handler is the
+      // belt-and-braces guard for native edge-drag resize, which bypasses
+      // the Flutter-level constraint.
       HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
       UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
       double scale_factor = dpi / 96.0;

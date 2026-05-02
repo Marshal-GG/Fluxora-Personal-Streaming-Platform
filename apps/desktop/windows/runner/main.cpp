@@ -1,5 +1,6 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <shobjidl.h>
 #include <windows.h>
 
 #include "flutter_window.h"
@@ -12,6 +13,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
     CreateAndAttachConsole();
   }
+
+  // Register an explicit AppUserModelID so the Windows shell groups the
+  // running window with any pinned taskbar/start-menu shortcut and renders
+  // the live thumbnail / Aero Peek preview on hover. Must be called before
+  // the window is shown. Format follows the documented MS recommendation
+  // "CompanyName.ProductName.SubProduct.Version".
+  ::SetCurrentProcessExplicitAppUserModelID(L"Fluxora.Desktop");
 
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.
@@ -26,8 +34,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
-  if (!window.Create(L"fluxora_desktop", origin, size)) {
+  // Initial size mirrors the Flutter-side WindowOptions in main.dart
+  // (1440x900). The WM_GETMINMAXINFO handler enforces a 1332x720 floor.
+  Win32Window::Size size(1440, 900);
+  if (!window.Create(L"Fluxora", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
