@@ -60,9 +60,18 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 - **Library screen** *(✅ Done)* — full grid, stat tiles, FluxTabBar, detail panel, `StorageCubit` integration.
 - **Clients screen** *(✅ Done 2026-05-02)* — `clients_screen.dart` fully rewritten. No Material `Scaffold`/`AppBar`/`Card`/`DataTable`. Implements: `PageHeader`, 4 `StatTile`s (total/online/active streams placeholder/total connections), client-side search + status/device/sort `PopupMenuButton` filters, 7-column table in `FluxCard(padding: 0)` with hover + selected row states, visual-only pagination footer, 300 px detail panel with avatar block + 7 info rows + 4 action tiles (Disconnect Client wired to `cubit.reject()`; 3 others disabled with TODO comments). `FluxTabBar` primitive shipped as part of Library. Active Streams tile shows `—` pending `SystemStatsCubit` accessibility (TODO comment in code). IP address and per-client session columns show `—` pending backend fields.
 
-### M5–M9 *(not started)*
+### M5 — Groups + Activity + Transcoding + Encoder Settings *(✅ Done 2026-05-02)*
 
-Pending M4 visual review against prototype.
+- **New entities** in `packages/fluxora_core/lib/entities/`: `Group` / `GroupRestrictions` / `TimeWindow` / `GroupStatus` (`group.dart`); `TranscodingStatus` / `EncoderLoad` / `ActiveTranscodeSession` (`transcoding_status.dart`). Both freezed + json_serializable.
+- **New endpoints** in `Endpoints`: `groups`, `groupById(id)`, `groupMembers(id)`, `groupMember(groupId, clientId)`, `transcodingStatus`.
+- **Groups feature** (`apps/desktop/lib/features/groups/`): `GroupsRepository` + `GroupsRepositoryImpl`; `GroupsCubit` + `GroupsState`; full `GroupsScreen` — `PageHeader`, 4 `StatTile`s, table with selected-row highlight, 300px detail panel with restrictions + members list, create/edit/delete dialogs, add/remove member.
+- **Transcoding feature** (`apps/desktop/lib/features/transcoding/`): `TranscodingRepository` + impl; `TranscodingCubit` polls `/api/v1/transcoding/status` every 2 s; `TranscodingScreen` — 4 stat tiles, active sessions card (reuses legacy `ActivityCubit` for stream sessions, joins with `TranscodingStatus` for codec/fps/speed); `EncoderSettingsScreen` — hardware encoder selector, preset chip-picker, CRF slider, live stats sidebar; `Routes.encoderSettings = '/transcoding/encoder'` added to router.
+- **Activity screen** (`apps/desktop/lib/features/activity/presentation/screens/activity_screen.dart`) — fully replaced: `PageHeader` + search, 4 `StatTile`s derived from real event counts (no fabricated deltas), 2-col layout with Live Activity card + Filter sidebar. Polling via extended `RecentActivityCubit` (added `loadAll`, `pause`, `resume`, `isPaused`). Legacy `ActivityCubit` + repository preserved for Transcoding screen.
+- **DI** — `GroupsRepository` + `TranscodingRepository` registered in `injector.dart`.
+
+### M6–M9 *(not started)*
+
+Pending M5 visual review against prototype.
 
 ---
 
@@ -641,7 +650,7 @@ Estimates are for a single dev. Halve with two devs after primitives are merged.
 | **M2 — Shell** | Sidebar + status bar + new routes (replacing existing), `SystemStatsCubit`, Cmd+K palette | 1.5 days |
 | **M3 — Dashboard** | Pixel-verified Dashboard, live-tick wiring, Sparkline, Donut | 1.5 days |
 | **M4 — Library + Clients** | Both screens incl. detail panels | 2 days |
-| **M5 — Groups + Activity + Transcoding** | All three + Encoder Settings sub-page | 2 days |
+| **M5 — Groups + Activity + Transcoding** | All three + Encoder Settings sub-page | 2 days ✅ Done 2026-05-02 |
 | **M6 — Logs + Settings** | Logs filtering UI + all 6 Settings tabs | 2 days |
 | **M7 — Subscription + Profile + Notifications + Help** | Subscription + Billing + Manage + Profile + Notifications overlay + Help | 2 days |
 | **M8 — Polish + visual QA** | Cmd+K polish, accessibility pass, golden tests, pixel review against prototype | 1.5 days |
@@ -694,3 +703,4 @@ Per CLAUDE.md doc protocol §3, after M9:
 | 2026-05-01 | Claude (session) | Initial plan |
 | 2026-05-02 | Claude (session) | M0 §7.5/§7.6/§7.7 shipped (storage breakdown, system stats REST + WS, restart/stop). M1 Foundation shipped (tokens, 11 primitives, brand visuals, 4 animated SVGs, `/showcase` route, `flutter_svg` dep, hi-fi logos). §7.1 Groups + §7.2 Profile shipped by parallel agent. Recreated F-mark SVG removed per owner direction — brand mark stays the original PNG. |
 | 2026-05-02 | Claude (session) | M3 Dashboard shipped. New entities `ActivityEvent` + `LibraryStorageBreakdown`/`StorageByType` in core. New features `storage/` + `recent_activity/` in desktop. `DashboardScreen` fully rewritten to pixel-match prototype: 4 stat tiles, Server Info card, Quick Access card, Recent Activity card, Storage Overview card. `DashboardRepository` extended with `restartServer`/`stopServer`. `Endpoints.activity` constant added. |
+| 2026-05-02 | Claude (session) | M5 shipped: Groups screen, Activity screen (replaced), Transcoding screen, Encoder Settings sub-page. New entities: `Group`/`GroupRestrictions`/`TimeWindow`/`GroupStatus` and `TranscodingStatus`/`EncoderLoad`/`ActiveTranscodeSession`. New features: `groups/` + `transcoding/`. `RecentActivityCubit` extended with `loadAll`/`pause`/`resume`. `Routes.encoderSettings` added. DI updated. |

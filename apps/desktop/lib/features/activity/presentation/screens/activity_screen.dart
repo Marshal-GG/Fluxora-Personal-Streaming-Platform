@@ -2,253 +2,649 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
 import 'package:fluxora_core/constants/app_colors.dart';
+import 'package:fluxora_core/constants/app_radii.dart';
+import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
-import 'package:fluxora_core/entities/stream_session.dart';
-import 'package:fluxora_desktop/features/activity/domain/repositories/activity_repository.dart';
-import 'package:fluxora_desktop/features/activity/presentation/cubit/activity_cubit.dart';
-import 'package:fluxora_desktop/shared/widgets/stat_card.dart';
-import 'package:intl/intl.dart';
+import 'package:fluxora_core/entities/activity_event.dart';
+import 'package:fluxora_desktop/features/recent_activity/domain/repositories/recent_activity_repository.dart';
+import 'package:fluxora_desktop/features/recent_activity/presentation/cubit/recent_activity_cubit.dart';
+import 'package:fluxora_desktop/features/recent_activity/presentation/cubit/recent_activity_state.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
+import 'package:fluxora_desktop/shared/widgets/page_header.dart';
+import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
+
+// ── Entry point ────────────────────────────────────────────────────────────────
 
 class ActivityScreen extends StatelessWidget {
   const ActivityScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<ActivityCubit>(
-      create: (_) => ActivityCubit(
-        GetIt.I<ActivityRepository>(),
-      )..loadSessions(),
+    return BlocProvider<RecentActivityCubit>(
+      create: (_) => RecentActivityCubit(
+        repository: GetIt.I<RecentActivityRepository>(),
+      )..loadAll(),
       child: const _ActivityView(),
     );
   }
 }
 
-class _ActivityView extends StatelessWidget {
+// ── Main stateful view ─────────────────────────────────────────────────────────
+
+class _ActivityView extends StatefulWidget {
   const _ActivityView();
 
   @override
+  State<_ActivityView> createState() => _ActivityViewState();
+}
+
+class _ActivityViewState extends State<_ActivityView> {
+  String _searchQuery = '';
+  final _searchController = TextEditingController();
+
+  // Category filters — null means "show all". Active categories are included.
+  final Set<String> _activeCategories = {
+    'stream',
+    'client',
+    'transcode',
+    'library',
+    'system',
+  };
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: const Text('Activity Monitoring'),
-        actions: [
-          BlocBuilder<ActivityCubit, ActivityState>(
-            builder: (context, state) => IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Refresh',
-              onPressed: () => context.read<ActivityCubit>().loadSessions(),
-            ),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: BlocBuilder<ActivityCubit, ActivityState>(
-        builder: (context, state) => state.when(
-          initial: () => const SizedBox.shrink(),
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (message) => _ErrorView(message: message),
-          loaded: (sessions) => _SessionsList(sessions: sessions),
+    return Container(
+      color: AppColors.bgRoot,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.only(
+          left: AppSpacing.s28,
+          right: AppSpacing.s28,
+          bottom: AppSpacing.s28,
+        ),
+        child: BlocBuilder<RecentActivityCubit, RecentActivityState>(
+          builder: (context, state) {
+            final events = state is RecentActivityLoaded ? state.events : <ActivityEvent>[];
+            final filtered = _applyFilters(events);
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Header ─────────────────────────────────────────────
+                PageHeader(
+                  title: 'Activity',
+                  subtitle:
+                      'Real-time event log of streams, clients, and server operations',
+                  actions: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Search input
+                      SizedBox(
+                        width: 220,
+                        height: 34,
+                        child: TextField(
+                          controller: _searchController,
+                          onChanged: (v) =>
+                              setState(() => _searchQuery = v),
+                          style: AppTypography.body.copyWith(
+                            color: AppColors.textBody,
+                            fontSize: 12,
+                          ),
+                          decoration: InputDecoration(
+                            hintText: 'Search events…',
+                            hintStyle: AppTypography.body.copyWith(
+                              color: AppColors.textDim,
+                              fontSize: 12,
+                            ),
+                            prefixIcon: const Icon(Icons.search_rounded,
+                                size: 15, color: AppColors.textDim),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(
+                                vertical: 8, horizontal: 10),
+                            filled: true,
+                            fillColor: const Color(0x0AFFFFFF),
+                            border: OutlineInputBorder(
+                              borderRadius:
+                                  BorderRadius.circular(AppRadii.sm),
+                              borderSide: const BorderSide(
+                                  color: Color(0x0FFFFFFF)),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius:
+                                  BorderRadius.circular(AppRadii.sm),
+                              borderSide: const BorderSide(
+                                  color: Color(0x0FFFFFFF)),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius:
+                                  BorderRadius.circular(AppRadii.sm),
+                              borderSide: const BorderSide(
+                                  color: AppColors.violet),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.s8),
+                      // Export — disabled (no backend endpoint).
+                      const FluxButton(
+                        variant: FluxButtonVariant.secondary,
+                        icon: Icons.download_outlined,
+                        onPressed: null,
+                        child: Text('Export'),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // ── Stat tiles ─────────────────────────────────────────
+                _StatTilesRow(events: events),
+                const SizedBox(height: AppSpacing.s18),
+
+                // ── 2-col grid ─────────────────────────────────────────
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Live Activity card
+                    Expanded(
+                      child: _LiveActivityCard(
+                        state: state,
+                        events: filtered,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.s14),
+
+                    // Right sidebar
+                    SizedBox(
+                      width: 280,
+                      child: _FilterSidebar(
+                        events: events,
+                        activeCategories: _activeCategories,
+                        onToggle: (cat) => setState(() {
+                          if (_activeCategories.contains(cat)) {
+                            _activeCategories.remove(cat);
+                          } else {
+                            _activeCategories.add(cat);
+                          }
+                        }),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
+
+  List<ActivityEvent> _applyFilters(List<ActivityEvent> events) {
+    return events.where((e) {
+      // Category filter
+      final cat = e.type.split('.').first;
+      if (!_activeCategories.contains(cat) &&
+          !_activeCategories.contains('stream') &&
+          cat == 'stream') {
+        return false;
+      }
+      // Map event prefix to filter category
+      final mappedCat = switch (cat) {
+        'stream' => 'stream',
+        'client' => 'client',
+        'transcode' || 'transcod' => 'transcode',
+        'library' || 'file' => 'library',
+        _ => 'system',
+      };
+      if (!_activeCategories.contains(mappedCat)) return false;
+
+      // Search filter
+      if (_searchQuery.isNotEmpty) {
+        return e.summary
+            .toLowerCase()
+            .contains(_searchQuery.toLowerCase());
+      }
+      return true;
+    }).toList();
+  }
 }
 
-class _SessionsList extends StatelessWidget {
-  const _SessionsList({required this.sessions});
+// ── Stat tiles ─────────────────────────────────────────────────────────────────
 
-  final List<StreamSession> sessions;
+class _StatTilesRow extends StatelessWidget {
+  const _StatTilesRow({required this.events});
+
+  final List<ActivityEvent> events;
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildSummary(context),
-          const SizedBox(height: 32),
-          Text(
-            'Active Sessions',
-            style: AppTypography.headingMd.copyWith(color: AppColors.textPrimary),
-          ),
-          const SizedBox(height: 16),
-          _buildTable(context),
-        ],
-      ),
-    );
-  }
+    // Derive counts from loaded events — no fabricated deltas.
+    final today = DateTime.now().toUtc();
+    final todayEvents = events.where((e) {
+      try {
+        final dt = DateTime.parse(e.createdAt).toUtc();
+        return dt.year == today.year &&
+            dt.month == today.month &&
+            dt.day == today.day;
+      } catch (_) {
+        return false;
+      }
+    }).toList();
 
-  Widget _buildSummary(BuildContext context) {
-    return Wrap(
-      spacing: 16,
-      runSpacing: 16,
+    final streamsStarted = events
+        .where((e) => e.type.startsWith('stream.start'))
+        .length;
+    final clientEvents = events
+        .where((e) => e.type.startsWith('client.'))
+        .length;
+    final warnings = events
+        .where((e) =>
+            e.type.contains('warn') || e.type.contains('error'))
+        .length;
+
+    return Row(
       children: [
-        SizedBox(
-          width: 240,
-          child: StatCard(
-            label: 'Active Streams',
-            value: sessions.length.toString(),
-            icon: Icons.play_circle_outline,
-            color: AppColors.success,
+        Expanded(
+          child: StatTile(
+            icon: Icons.bar_chart_rounded,
+            label: 'Events Today',
+            value: '${todayEvents.length}',
+            color: AppColors.violet,
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s14),
+        Expanded(
+          child: StatTile(
+            icon: Icons.play_circle_outline_rounded,
+            label: 'Streams Started',
+            value: '$streamsStarted',
+            color: AppColors.blue,
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s14),
+        Expanded(
+          child: StatTile(
+            icon: Icons.devices_outlined,
+            label: 'Client Events',
+            value: '$clientEvents',
+            color: AppColors.emerald,
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s14),
+        Expanded(
+          child: StatTile(
+            icon: Icons.warning_amber_rounded,
+            label: 'Warnings',
+            value: '$warnings',
+            color: AppColors.amber,
+            accent: AppColors.amber,
           ),
         ),
       ],
     );
   }
+}
 
-  Widget _buildTable(BuildContext context) {
-    if (sessions.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Center(
-            child: Column(
+// ── Live Activity card ─────────────────────────────────────────────────────────
+
+class _LiveActivityCard extends StatelessWidget {
+  const _LiveActivityCard({
+    required this.state,
+    required this.events,
+  });
+
+  final RecentActivityState state;
+  final List<ActivityEvent> events;
+
+  @override
+  Widget build(BuildContext context) {
+    final cubit = context.read<RecentActivityCubit>();
+    final isPaused = cubit.isPaused;
+
+    return FluxCard(
+      padding: 0,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Card header
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s18,
+              vertical: AppSpacing.s14,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Icon(Icons.inbox_outlined, size: 48, color: AppColors.textMuted),
-                const SizedBox(height: 16),
-                Text(
-                  'No active sessions',
-                  style: AppTypography.bodyMd.copyWith(color: AppColors.textSecondary),
+                Row(
+                  children: [
+                    const Text('Live Activity', style: AppTypography.h2),
+                    const SizedBox(width: AppSpacing.s8),
+                    if (!isPaused)
+                      Row(
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(
+                              color: AppColors.emerald,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Color(0x8010B981),
+                                  blurRadius: 6,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            'Live',
+                            style: AppTypography.captionV2.copyWith(
+                              color: AppColors.emerald,
+                            ),
+                          ),
+                        ],
+                      ),
+                    if (isPaused)
+                      Text(
+                        'Paused',
+                        style: AppTypography.captionV2.copyWith(
+                          color: AppColors.amber,
+                        ),
+                      ),
+                  ],
+                ),
+                FluxButton(
+                  variant: FluxButtonVariant.secondary,
+                  size: FluxButtonSize.sm,
+                  icon: isPaused
+                      ? Icons.play_arrow_rounded
+                      : Icons.pause_rounded,
+                  onPressed: () {
+                    if (isPaused) {
+                      cubit.resume();
+                    } else {
+                      cubit.pause();
+                    }
+                  },
+                  child: Text(isPaused ? 'Resume' : 'Pause'),
                 ),
               ],
             ),
           ),
-        ),
-      );
-    }
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Theme(
-            data: Theme.of(context).copyWith(
-              dividerColor: AppColors.surfaceRaised,
-            ),
-            child: DataTable(
-              headingTextStyle: AppTypography.headingSm.copyWith(
-                color: AppColors.textMuted,
-                fontSize: 12,
+          // Event list
+          switch (state) {
+            RecentActivityInitial() ||
+            RecentActivityLoading() =>
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: AppSpacing.s28),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.violet,
+                    ),
+                  ),
+                ),
               ),
-              dataTextStyle: AppTypography.bodyMd.copyWith(
-                color: AppColors.textSecondary,
-                fontSize: 13,
+            RecentActivityFailure(:final message) => Padding(
+                padding: const EdgeInsets.symmetric(
+                    vertical: AppSpacing.s20),
+                child: Center(
+                  child: Text(
+                    message,
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.textDim),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
               ),
-              columnSpacing: 32,
-              columns: const [
-                DataColumn(label: Text('CLIENT ID')),
-                DataColumn(label: Text('FILE ID')),
-                DataColumn(label: Text('STARTED')),
-                DataColumn(label: Text('TYPE')),
-                DataColumn(label: Text('PROGRESS')),
-                DataColumn(label: Text('ACTIONS')),
-              ],
-              rows: sessions.map((session) {
-                final startTime = DateFormat('HH:mm:ss').format(session.startedAt.toLocal());
-                return DataRow(
-                  cells: [
-                    DataCell(Text(session.clientId, style: AppTypography.mono)),
-                    DataCell(Text(session.fileId, style: AppTypography.mono)),
-                    DataCell(Text(startTime)),
-                    DataCell(_Badge(
-                      label: session.connectionType.name.toUpperCase(),
-                      color: session.connectionType.name == 'webrtc' 
-                        ? AppColors.accent 
-                        : AppColors.primary,
-                    )),
-                    DataCell(Text(session.progressSec != null 
-                      ? '${session.progressSec!.toStringAsFixed(1)}s' 
-                      : '-')),
-                    DataCell(
-                      IconButton(
-                        icon: const Icon(Icons.stop_circle_outlined, color: AppColors.error, size: 20),
-                        tooltip: 'Terminate Session',
-                        onPressed: () => _confirmTerminate(context, session.id),
+            RecentActivityLoaded() => events.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.s28),
+                    child: Center(
+                      child: Text(
+                        'No events match the current filters.',
+                        style: AppTypography.bodySmall
+                            .copyWith(color: AppColors.textDim),
                       ),
                     ),
-                  ],
-                );
-              }).toList(),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _confirmTerminate(BuildContext context, String sessionId) {
-    showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Terminate Session'),
-        content: const Text('Are you sure you want to stop this stream session?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              context.read<ActivityCubit>().stopSession(sessionId);
-              Navigator.pop(dialogContext);
-            },
-            child: const Text('Terminate', style: TextStyle(color: AppColors.error)),
-          ),
+                  )
+                : Column(
+                    children: events
+                        .take(100)
+                        .toList()
+                        .asMap()
+                        .entries
+                        .map((entry) => _ActivityEventRow(
+                              event: entry.value,
+                              isLast: entry.key ==
+                                  (events.length > 100
+                                          ? 100
+                                          : events.length) -
+                                      1,
+                            ))
+                        .toList(),
+                  ),
+          },
         ],
       ),
     );
   }
 }
 
-class _Badge extends StatelessWidget {
-  const _Badge({required this.label, required this.color});
-  final String label;
-  final Color color;
+// ── Activity event row ─────────────────────────────────────────────────────────
+
+class _ActivityEventRow extends StatelessWidget {
+  const _ActivityEventRow({required this.event, required this.isLast});
+
+  final ActivityEvent event;
+  final bool isLast;
+
+  static (Color, IconData) _iconFor(String type) {
+    final category = type.split('.').first;
+    return switch (category) {
+      'stream' => (AppColors.blue, Icons.play_circle_outline_rounded),
+      'client' => (AppColors.violet, Icons.devices_outlined),
+      'library' => (AppColors.cyan, Icons.folder_outlined),
+      'file' => (AppColors.cyan, Icons.insert_drive_file_outlined),
+      'settings' => (AppColors.amber, Icons.settings_outlined),
+      'transcode' || 'transcod' => (AppColors.pink, Icons.memory_outlined),
+      'system' => (AppColors.textMutedV2, Icons.dns_outlined),
+      _ => (AppColors.textMutedV2, Icons.circle_outlined),
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
+    final (color, iconData) = _iconFor(event.type);
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withAlpha(30),
-        borderRadius: BorderRadius.circular(9999),
-        border: Border.all(color: color.withAlpha(80)),
+        border: isLast
+            ? null
+            : const Border(
+                bottom: BorderSide(color: Color(0x08FFFFFF))),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.5,
-        ),
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.s20,
+        vertical: AppSpacing.s14,
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(9),
+            ),
+            child: Center(
+              child: Icon(iconData, size: 15, color: color),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.s14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  event.summary,
+                  style: AppTypography.body.copyWith(
+                    color: AppColors.textBody,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  event.type,
+                  style: AppTypography.captionV2
+                      .copyWith(color: AppColors.textDim),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.s8),
+          Text(
+            _relativeTime(event.createdAt),
+            style: AppTypography.monoCaption
+                .copyWith(color: AppColors.textDim),
+          ),
+        ],
       ),
     );
   }
+
+  static String _relativeTime(String iso) {
+    try {
+      final dt = DateTime.parse(iso).toUtc();
+      final diff = DateTime.now().toUtc().difference(dt);
+      if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+      if (diff.inHours < 24) return '${diff.inHours}h ago';
+      return '${diff.inDays}d ago';
+    } catch (_) {
+      return '—';
+    }
+  }
 }
 
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message});
-  final String message;
+// ── Filter sidebar ─────────────────────────────────────────────────────────────
+
+class _FilterSidebar extends StatelessWidget {
+  const _FilterSidebar({
+    required this.events,
+    required this.activeCategories,
+    required this.onToggle,
+  });
+
+  final List<ActivityEvent> events;
+  final Set<String> activeCategories;
+  final ValueChanged<String> onToggle;
+
+  static const _categories = [
+    ('stream', 'Streams', AppColors.violet),
+    ('client', 'Clients', AppColors.blue),
+    ('transcode', 'Transcoding', AppColors.pink),
+    ('library', 'Library', AppColors.emerald),
+    ('system', 'System', AppColors.textMutedV2),
+  ];
+
+  int _countForCategory(String cat) {
+    return events.where((e) {
+      final prefix = e.type.split('.').first;
+      return switch (cat) {
+        'transcode' => prefix == 'transcode' || prefix == 'transcod',
+        'library' => prefix == 'library' || prefix == 'file',
+        _ => prefix == cat,
+      };
+    }).length;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Center(
+    return FluxCard(
+      padding: AppSpacing.s18,
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.cloud_off_outlined, color: AppColors.textMuted, size: 56),
-          const SizedBox(height: 16),
-          Text(message, style: AppTypography.bodyMd.copyWith(color: AppColors.textSecondary)),
-          const SizedBox(height: 24),
-          ElevatedButton.icon(
-            onPressed: () => context.read<ActivityCubit>().loadSessions(),
-            icon: const Icon(Icons.refresh, size: 18),
-            label: const Text('Retry'),
-          ),
+          const Text('Filter by Type', style: AppTypography.h2),
+          const SizedBox(height: AppSpacing.s12),
+          ..._categories.map((cat) {
+            final (id, label, color) = cat;
+            final count = _countForCategory(id);
+            final isActive = activeCategories.contains(id);
+
+            return GestureDetector(
+              onTap: () => onToggle(id),
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 120),
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: isActive
+                              ? color.withValues(alpha: 0.2)
+                              : Colors.transparent,
+                          border: Border.all(
+                            color: isActive ? color : AppColors.textDim,
+                            width: 1.5,
+                          ),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: isActive
+                            ? Icon(Icons.check_rounded,
+                                size: 9, color: color)
+                            : null,
+                      ),
+                      const SizedBox(width: AppSpacing.s10),
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.s8),
+                      Expanded(
+                        child: Text(
+                          label,
+                          style: AppTypography.body.copyWith(
+                            color: isActive
+                                ? AppColors.textBody
+                                : AppColors.textDim,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '$count',
+                        style: AppTypography.monoCaption.copyWith(
+                          color: AppColors.textDim,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
         ],
       ),
     );

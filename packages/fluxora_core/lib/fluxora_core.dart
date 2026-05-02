@@ -1,5 +1,7 @@
 export 'entities/activity_event.dart';
 export 'entities/client.dart';
+export 'entities/group.dart';
+export 'entities/transcoding_status.dart';
 export 'entities/client_list_item.dart';
 export 'entities/enums.dart';
 export 'entities/library.dart';

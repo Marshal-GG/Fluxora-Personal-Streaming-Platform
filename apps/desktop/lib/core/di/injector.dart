@@ -4,6 +4,10 @@ import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
 import 'package:fluxora_desktop/features/clients/data/repositories/clients_repository_impl.dart';
 import 'package:fluxora_desktop/features/clients/domain/repositories/clients_repository.dart';
+import 'package:fluxora_desktop/features/groups/data/repositories/groups_repository_impl.dart';
+import 'package:fluxora_desktop/features/groups/domain/repositories/groups_repository.dart';
+import 'package:fluxora_desktop/features/transcoding/data/repositories/transcoding_repository_impl.dart';
+import 'package:fluxora_desktop/features/transcoding/domain/repositories/transcoding_repository.dart';
 import 'package:fluxora_desktop/features/dashboard/data/repositories/dashboard_repository_impl.dart';
 import 'package:fluxora_desktop/features/dashboard/domain/repositories/dashboard_repository.dart';
 import 'package:fluxora_desktop/features/library/data/repositories/library_repository_impl.dart';
@@ -92,5 +96,15 @@ Future<void> setupInjector() async {
   // ── Recent activity ───────────────────────────────────────────────────────────
   getIt.registerLazySingleton<RecentActivityRepository>(
     () => RecentActivityRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+
+  // ── Groups ────────────────────────────────────────────────────────────────────
+  getIt.registerLazySingleton<GroupsRepository>(
+    () => GroupsRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+
+  // ── Transcoding ───────────────────────────────────────────────────────────────
+  getIt.registerLazySingleton<TranscodingRepository>(
+    () => TranscodingRepositoryImpl(apiClient: getIt<ApiClient>()),
   );
 }

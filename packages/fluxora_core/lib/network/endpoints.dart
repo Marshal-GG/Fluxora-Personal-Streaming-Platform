@@ -52,6 +52,16 @@ class Endpoints {
   // Activity event log
   static const String activity = '$_base/activity';
 
+  // Groups
+  static const String groups = '$_base/groups';
+  static String groupById(String id) => '$_base/groups/$id';
+  static String groupMembers(String id) => '$_base/groups/$id/members';
+  static String groupMember(String groupId, String clientId) =>
+      '$_base/groups/$groupId/members/$clientId';
+
+  // Transcoding status
+  static const String transcodingStatus = '$_base/transcoding/status';
+
   // WebSocket
   static const String wsSignal = '$_base/ws/signal';
   static const String wsStatus = '$_base/ws/status';

@@ -9,6 +9,7 @@ import 'package:fluxora_desktop/features/logs/presentation/screens/logs_screen.d
 import 'package:fluxora_desktop/features/profile/presentation/screens/profile_screen.dart';
 import 'package:fluxora_desktop/features/settings/presentation/screens/settings_screen.dart';
 import 'package:fluxora_desktop/features/subscription/presentation/screens/subscription_screen.dart';
+import 'package:fluxora_desktop/features/transcoding/presentation/screens/encoder_settings_screen.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/screens/transcoding_screen.dart';
 import 'package:fluxora_desktop/shared/showcase/primitives_showcase_screen.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_shell.dart';
@@ -26,6 +27,7 @@ class Routes {
   static const String settings = '/settings';
   static const String subscription = '/subscription';
   static const String profile = '/profile';
+  static const String encoderSettings = '/transcoding/encoder';
 
   // Redesign primitives showcase — deep-link only, removed at M9 cutover.
   static const String showcase = '/showcase';
@@ -68,6 +70,10 @@ final appRouter = GoRouter(
         GoRoute(
           path: Routes.transcoding,
           builder: (_, _) => const TranscodingScreen(),
+        ),
+        GoRoute(
+          path: Routes.encoderSettings,
+          builder: (_, _) => const EncoderSettingsScreen(),
         ),
         GoRoute(
           path: Routes.logs,

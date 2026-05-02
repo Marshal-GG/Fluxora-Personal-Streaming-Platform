@@ -373,8 +373,22 @@ apps/desktop/lib/
     │       ├── cubit/logs_state.dart
     │       └── screens/logs_screen.dart  # Live server log viewer
     │
-    ├── transcoding/             # 🔵 Partial (Phase 5 — screen scaffold only; settings via SettingsScreen)
-    │   └── presentation/screens/transcoding_screen.dart
+    ├── groups/                  # ✅ M5 redesign
+    │   ├── domain/repositories/groups_repository.dart
+    │   ├── data/repositories/groups_repository_impl.dart
+    │   └── presentation/
+    │       ├── cubit/groups_cubit.dart       # load, createGroup, updateGroup, deleteGroup, addMember, removeMember
+    │       ├── cubit/groups_state.dart
+    │       └── screens/groups_screen.dart    # PageHeader + 4 StatTiles + table + 300px detail panel + dialogs
+    │
+    ├── transcoding/             # ✅ M5 redesign
+    │   ├── domain/repositories/transcoding_repository.dart
+    │   ├── data/repositories/transcoding_repository_impl.dart
+    │   └── presentation/
+    │       ├── cubit/transcoding_cubit.dart  # polls /api/v1/transcoding/status every 2 s
+    │       ├── cubit/transcoding_state.dart
+    │       ├── screens/transcoding_screen.dart        # 4 StatTiles + Active Sessions card; joins ActivityCubit
+    │       └── screens/encoder_settings_screen.dart   # /transcoding/encoder; hardware selector + preset chips + CRF slider
     │
     └── settings/                # ✅ Implemented (Phases 2 + 5)
         ├── domain/repositories/settings_repository.dart
@@ -393,7 +407,10 @@ apps/desktop/lib/
 | `/clients` | ClientsScreen | `ClientsCubit` | ✅ Done (M4 redesign) |
 | `/library` | LibraryScreen | `LibraryCubit` | ✅ Done |
 | `/licenses` | LicensesScreen | `OrdersCubit` | ✅ Done |
-| `/activity` | ActivityScreen | `ActivityCubit` | ✅ Done |
+| `/groups` | GroupsScreen | `GroupsCubit` | ✅ Done (M5 redesign) |
+| `/activity` | ActivityScreen | `RecentActivityCubit` (limit=200, live-poll) | ✅ Done (M5 redesign — replaced legacy) |
+| `/transcoding` | TranscodingScreen | `TranscodingCubit` + `ActivityCubit` | ✅ Done (M5 redesign) |
+| `/transcoding/encoder` | EncoderSettingsScreen | `SettingsCubit` + `TranscodingCubit` | ✅ Done (M5 redesign) |
 | `/settings` | SettingsScreen | `SettingsCubit` | ✅ Done |
 | `/showcase` | PrimitivesShowcaseScreen | — (stateless; M1 redesign primitives) | ✅ Done — renders outside `ShellRoute`; deep-link only |
 

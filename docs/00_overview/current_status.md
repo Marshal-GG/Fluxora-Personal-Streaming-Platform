@@ -26,7 +26,7 @@
 
 ## `packages/fluxora_core` — Phase 3 dual-base routing complete (8 passing tests)
 
-- **Entities:** PolarOrder, MediaFile (resume), ServerInfo (with `remoteUrl`), Library, Client, StreamSession, SystemStats, `ActivityEvent` (M3), `LibraryStorageBreakdown` / `StorageByType` (M3)
+- **Entities:** PolarOrder, MediaFile (resume), ServerInfo (with `remoteUrl`), Library, Client, StreamSession, SystemStats, `ActivityEvent` (M3), `LibraryStorageBreakdown` / `StorageByType` (M3), `Group` / `GroupRestrictions` / `TimeWindow` / `GroupStatus` (M5), `TranscodingStatus` / `EncoderLoad` / `ActiveTranscodeSession` (M5)
 - **Network:** dual-base `ApiClient` (per-request `LanCheck` resolves between `localBaseUrl` and `remoteBaseUrl`, throws `NoRemoteConfiguredException` off-LAN with no remote), `NetworkPathDetector`, `Endpoints` (with `healthz`, `logs`)
 - **Storage:** `SecureStorage` with `saveRemoteUrl/getRemoteUrl/savePairing`
 - **Design tokens (v2):** `app_colors.dart` (v2 section), `app_typography.dart` (v2 section), `app_gradients.dart`, `app_spacing.dart`, `app_radii.dart`, `app_shadows.dart`
@@ -65,7 +65,11 @@
 | **Desktop redesign M3 Dashboard** (4 stat tiles + Server Info + Quick Access + Recent Activity + Storage donut — pixel-matched prototype; `StorageCubit` + `RecentActivityCubit` + `ActivityEvent` + `LibraryStorageBreakdown` entities) | ✅ done 2026-05-02 |
 | **Desktop redesign M4 Library** (grid + stat tiles + FluxTabBar + detail panel + `StorageCubit`) | ✅ done 2026-05-02 |
 | **Desktop redesign M4 Clients** (7-col table + search/filter + detail panel — `PageHeader`, `StatTile`, `Pill`, `StatusDot`, `FluxCard`; approve/reject/revoke wired) | ✅ done 2026-05-02 |
-| Desktop redesign M5+ (Groups / Activity / Transcoding / Logs / Settings / Subscription / Profile / Notifications) | 🔲 not started |
+| **Desktop redesign M5 Groups** (table + detail panel + create/edit/delete + member management; `GroupsCubit`, `Group` entity) | ✅ done 2026-05-02 |
+| **Desktop redesign M5 Activity** (replaced legacy screen; `PageHeader` + search + 4 stat tiles + Live Activity card + Filter sidebar; `RecentActivityCubit` extended with `loadAll`/`pause`/`resume`) | ✅ done 2026-05-02 |
+| **Desktop redesign M5 Transcoding** (4 stat tiles + Active Sessions card; `TranscodingCubit` polls 2 s; joins legacy `ActivityCubit` for stream sessions) | ✅ done 2026-05-02 |
+| **Desktop redesign M5 Encoder Settings** (sub-page at `/transcoding/encoder`; hardware encoder selector + preset chips + CRF slider + live stats sidebar; reuses `SettingsCubit`) | ✅ done 2026-05-02 |
+| Desktop redesign M6+ (Logs / Settings / Subscription / Profile / Notifications) | 🔲 not started |
 
 ---
 
