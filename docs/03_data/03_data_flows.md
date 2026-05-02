@@ -1,7 +1,7 @@
 # Data Flow Diagrams
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-02 (Polar payment webhook flow added; stream-gate group enforcement flow added; Notification fan-out flow added; Activity event log flow added)
+> **Status:** Active - Updated 2026-05-02 (Polar payment webhook flow added; stream-gate group enforcement flow added; Notification fan-out flow added; Activity event log flow added; §7.9 Log Pipeline flow added)
 
 ---
 
@@ -311,6 +311,60 @@ Activity screen and Dashboard "Recent Activity" widget:
 | `routers/stream.py start_stream` | `stream.start` | `client` | `session` | `file_id`, `connection_type` |
 | `routers/stream.py stop_stream` | `stream.end` | `client` | `session` | — |
 | `library_service.scan_library` (added > 0) | `library.scan` | `system` | `library` | `files_added` |
+
+---
+
+---
+
+## Flow 9 — Log Pipeline (§7.9 Structured Logs)
+
+Every log record emitted by any Python logger in the server is:
+1. Written to the rotating JSON-line file (file handler)
+2. Forwarded live to all WebSocket subscribers (BroadcastHandler)
+3. Available for historical retrieval with filtering (REST endpoint)
+
+```
+[Python logger.log(level, message)]
+    │
+    ├──▶ FileHandler (python-json-logger)
+    │       │
+    │       └──▶ ~/.fluxora/logs/server.log (rotating, JSON-line)
+    │                 Each line: {"asctime": "...", "levelname": "INFO",
+    │                             "name": "fluxora.stream", "message": "..."}
+    │
+    └──▶ BroadcastHandler (attached to root logger at startup)
+            │
+            └──▶ fan-out to all subscribed asyncio.Queue instances
+                    │
+                    ├── Queue max size: 100 items per subscriber
+                    ├── If queue is full → frame DROPPED (slow consumer policy)
+                    └── Logger continues without blocking
+
+[WS /api/v1/ws/logs — one coroutine per connected client]
+    │
+    ├── On connect: log_service.subscribe() → dedicated asyncio.Queue
+    ├── Drain loop: await queue.get() → send_text({"type":"log","data":<payload>})
+    └── On disconnect: log_service.unsubscribe(queue) → removed from registry
+
+[REST GET /api/v1/logs?level=&source=&since=&until=&q=&limit=&cursor=]
+    │
+    └──▶ log_service.list_logs(...)
+            │
+            ├── Open ~/.fluxora/logs/server.log
+            ├── Seek to line offset `cursor`
+            ├── Parse each line as JSON → LogRecord(ts, level, source, message)
+            ├── Apply filters: level ≥ threshold, source prefix match,
+            │                  ts in [since, until], q in message (case-insensitive)
+            ├── Collect up to `limit` records
+            └── Return LogListResponse(items=[...], next_cursor=<offset|null>)
+```
+
+### Console vs file formatter
+
+| Handler | Formatter | When |
+|---------|-----------|------|
+| `StreamHandler` (stdout) | Human-readable string | Always (dev and prod) |
+| `RotatingFileHandler` | JSON (`python-json-logger`) | Always — `log_service` depends on JSON format |
 
 ---
 

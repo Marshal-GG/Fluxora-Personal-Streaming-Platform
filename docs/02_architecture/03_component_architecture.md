@@ -1,7 +1,7 @@
 # Component Architecture
 
 > **Category:** Architecture  
-> **Status:** Active — Updated 2026-05-02 (added system stats, license, webhook, and orders services; refreshed desktop screen list; Profile Service added; Notification Service added; Activity Service added)
+> **Status:** Active — Updated 2026-05-02 (added system stats, license, webhook, and orders services; refreshed desktop screen list; Profile Service added; Notification Service added; Activity Service added; §7.8 Transcoding Service added; §7.9 Log Service + BroadcastHandler added)
 
 ---
 
@@ -56,6 +56,22 @@
 │  │  log; producer call sites in auth,       │   │
 │  │  stream, library; polled by desktop      │   │
 │  │  Activity screen + Dashboard widget)     │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │  Transcoding Service (encoder discovery  │   │
+│  │  via ffmpeg -encoders; GPU probe via     │   │
+│  │  nvidia-smi; backs GET /transcoding/     │   │
+│  │  status — encoder loads + active         │   │
+│  │  sessions with per-session metadata)     │   │
+│  └──────────────────────────────────────────┘   │
+│                                                  │
+│  ┌──────────────────────────────────────────┐   │
+│  │  Log Service (reads JSON-line log file;  │   │
+│  │  filters + paginates for GET /logs;      │   │
+│  │  BroadcastHandler on root logger fans   │   │
+│  │  live records to WS /ws/logs queues;    │   │
+│  │  slow consumers drop frames)            │   │
 │  └──────────────────────────────────────────┘   │
 │                                                  │
 │  ┌──────────────────────────────────────────┐   │
@@ -152,9 +168,9 @@
 - **Dependencies:** `psutil`, SQLite (active stream count from `stream_sessions`)
 
 ### Orders / Licenses View
-- **Responsibility:** Owner-only retrieval of issued Polar license keys for manual customer delivery. Reads from `polar_orders`.
-- **Interfaces:** `GET /api/v1/orders` (localhost-only)
-- **Dependencies:** SQLite `polar_orders` table
+- **Responsibility:** Owner-only retrieval of issued Polar license keys for manual customer delivery. Reads from `polar_orders`. Supports cursor-based pagination. Returns the Polar customer-portal URL when configured.
+- **Interfaces:** `GET /api/v1/orders?limit=&cursor=` (localhost-only, paginated); `GET /api/v1/orders/portal-url` (localhost-only — returns `FLUXORA_POLAR_PORTAL_URL` or 404)
+- **Dependencies:** SQLite `polar_orders` table; `FLUXORA_POLAR_PORTAL_URL` env var (optional)
 
 ### Public Routing (v1 single-tenant Phases 1–5 complete; Phase 6 operator-driven)
 - **Responsibility:** Expose the home server at `https://fluxora-api.marshalx.dev` for off-LAN clients via a Cloudflare Tunnel. Control plane only — media bandwidth stays on direct/P2P paths.
@@ -185,6 +201,16 @@
 - **Responsibility:** Append-only audit trail of notable server actions. `record()` inserts one event row into `activity_events`; each producer call site wraps the call in `try/except` so a missing audit row never breaks the underlying flow. `list_events()` returns events most-recent-first, with optional `since` (ISO-8601 cutoff) and `type_prefix` (`LIKE 'prefix%'`) filters. Invalid `payload` JSON is silently coerced to `null` rather than raising. The desktop Activity screen and Dashboard "Recent Activity" widget poll this endpoint.
 - **Interfaces:** `GET /api/v1/activity?limit=&since=&type=` (`validate_token_or_local`; limit 1–200, default 50)
 - **Dependencies:** SQLite `activity_events` table (migration 014); produced by `routers/stream.py` (`stream.start`, `stream.end`), `services/auth_service.py` (`client.pair`, `client.approve`, `client.reject`), and `services/library_service.py` (`library.scan`)
+
+### Transcoding Service
+- **Responsibility:** Provides a live view of transcoding load across all FFmpeg encoders. Discovers available encoders by parsing `ffmpeg -encoders` output once and caching the result. Probes NVENC GPU utilization via `nvidia-smi` (best-effort — returns `None` if unavailable or on non-NVIDIA hardware). Builds the `TranscodingStatusResponse` by joining active stream sessions from SQLite with the encoder load data.
+- **Interfaces:** `GET /api/v1/transcoding/status` (localhost-only); internal `TranscodingService.get_transcoding_status(db)`
+- **Dependencies:** FFmpeg binary (for encoder discovery), `nvidia-smi` (optional, NVENC only), SQLite `stream_sessions` table
+
+### Log Service
+- **Responsibility:** Reads `~/.fluxora/logs/server.log` (JSON-line format written by `python-json-logger`) and provides filtered, cursor-paginated access via REST. Also manages an in-process pub/sub bus via a `BroadcastHandler` (a custom Python `logging.Handler`) attached to the root logger at server startup. Every log record emitted by any logger is forwarded to subscribed asyncio queues; slow consumers drop frames rather than blocking the logging path.
+- **Interfaces:** `GET /api/v1/logs?level=&source=&since=&until=&q=&limit=&cursor=` (`validate_token_or_local`); `WS /api/v1/ws/logs` (loopback-or-token auth, same pattern as `/ws/stats`); internal `log_service.list_logs()`, `subscribe()`, `unsubscribe(q)`
+- **Dependencies:** JSON log file (`~/.fluxora/logs/server.log`); `python-json-logger` (for structured file output)
 
 ### Flutter Client — Presentation Layer
 - **Responsibility:** UI screens (Home, Connect, Browser, Player, Settings)
@@ -217,7 +243,7 @@
 | Flutter Client | STUN Server | UDP | WebRTC ICE |
 | Flutter Client | TURN Server | UDP/TCP | WebRTC relay (optional, see runbook) |
 | Flutter Client ↔ Flutter Client / Server (P2P) | Direct or via TURN | WebRTC SCTP/data channels | Internet streaming |
-| Flutter Client ↔ FastAPI Server | WebSocket | `/ws/status`, `/ws/signal`, `/ws/stats` | Bidirectional events |
+| Flutter Client ↔ FastAPI Server | WebSocket | `/ws/status`, `/ws/signal`, `/ws/stats`, `/ws/logs` | Bidirectional events |
 | FastAPI Server | FFmpeg | Subprocess pipe | Internal process |
 | FastAPI Server | SQLite | aiosqlite (WAL) | Query/Write |
 | FastAPI Server | TMDB API | HTTPS REST | Request/Response (best-effort enrichment) |

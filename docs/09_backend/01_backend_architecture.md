@@ -1,7 +1,7 @@
 # Backend Architecture
 
 > **Category:** Backend  
-> **Status:** Active - Updated 2026-05-02 (Phase 5: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint, live system stats + storage breakdown, info actions, conditional Sentry init, `/healthz` + `remote_url` on `/info`, CF Tunnel real-IP / HLS-block / admin-hardening middlewares for public routing; legacy 4-part license keys removed; Groups CRUD + stream-gate; Profile endpoints; Notifications (REST + WS + in-process pub/sub); Activity event log; 198 tests)
+> **Status:** Active - Updated 2026-05-02 (Phase 5: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint, live system stats + storage breakdown, info actions, conditional Sentry init, `/healthz` + `remote_url` on `/info`, CF Tunnel real-IP / HLS-block / admin-hardening middlewares for public routing; legacy 4-part license keys removed; Groups CRUD + stream-gate; Profile endpoints; Notifications (REST + WS + in-process pub/sub); Activity event log; §7.8 transcoding status endpoint + transcoding_service + models/transcoding.py; §7.9 structured JSON logs + GET /api/v1/logs + WS /ws/logs + log_service; §7.10 settings extended 18 fields + migration 015; §7.11 orders pagination + portal-url endpoint; 240 tests)
 
 ---
 
@@ -44,7 +44,8 @@ server/
 │       ├── 011_groups.sql              # groups, group_members, group_restrictions tables + idx_group_members_client
 │       ├── 012_profile_fields.sql      # adds display_name, email, avatar_path, profile_created_at, last_login_at to user_settings
 │       ├── 013_notifications.sql       # notifications table + idx_notifications_unread
-│       └── 014_activity_events.sql     # activity_events table + idx_activity_created + idx_activity_type_created
+│       ├── 014_activity_events.sql     # activity_events table + idx_activity_created + idx_activity_type_created
+│       └── 015_extended_settings.sql   # 18 new columns on user_settings (general/network/streaming/security/advanced)
 │
 ├── routers/
 │   ├── info.py             # GET /api/v1/info, /info/logs, /info/stats; POST /info/restart, /info/stop ✅
@@ -56,11 +57,13 @@ server/
 │   ├── ws.py               # WS /status (token auth + ping/pong + progress), WS /stats (live system stats) ✅
 │   ├── signal.py           # WS /signal: SDP offer/answer + ICE relay ✅
 │   ├── settings.py         # GET/PATCH /api/v1/settings; require_local_caller ✅
-│   ├── orders.py           # GET /api/v1/orders; require_local_caller; owner license key retrieval ✅
+│   ├── orders.py           # GET /api/v1/orders (paginated); GET /orders/portal-url; require_local_caller ✅
 │   ├── groups.py           # GET/POST /api/v1/groups, GET/PATCH/DELETE /{id}, GET/POST /{id}/members, DELETE /{id}/members/{cid}; mixed auth ✅
 │   ├── notifications.py    # GET /api/v1/notifications, POST /{id}/read, POST /read-all, DELETE /{id}; validate_token_or_local ✅
 │   ├── profile.py          # GET/PATCH /api/v1/profile; require_local_caller ✅
 │   ├── activity.py         # GET /api/v1/activity?limit=&since=&type=; validate_token_or_local ✅
+│   ├── transcoding.py      # GET /api/v1/transcoding/status; require_local_caller ✅
+│   ├── logs.py             # GET /api/v1/logs; WS /api/v1/ws/logs; validate_token_or_local ✅
 │   └── webhook.py          # POST /api/v1/webhook/polar; Standard Webhooks signature ✅
 │
 │
@@ -78,7 +81,9 @@ server/
 │   │   ├── notification_service.py # CRUD (create/list/mark_read/mark_all_read/dismiss) + in-process pub/sub (subscribe/unsubscribe); backs /api/v1/notifications + WS /ws/notifications ✅
 │   │   ├── activity_service.py # record() + list_events(limit, since, type_prefix); backs /api/v1/activity; producer errors swallowed by callers ✅
 │   │   ├── profile_service.py  # get_profile(db) + update_profile(db, ...); avatar_letter computation ✅
-│   │   └── system_stats_service.py # CPU/RAM/network/uptime/IP/internet probe; backs /info/stats + /ws/stats ✅
+│   │   ├── system_stats_service.py # CPU/RAM/network/uptime/IP/internet probe; backs /info/stats + /ws/stats ✅
+│   │   ├── transcoding_service.py  # encoder discovery via `ffmpeg -encoders` (cached); GPU probe via nvidia-smi (best-effort); backs GET /api/v1/transcoding/status ✅
+│   │   └── log_service.py          # parse JSON-line log file; filter (level/source/since/until/q); cursor pagination; pubsub for WS /ws/logs ✅
 │
 │
 │   ├── models/
@@ -89,9 +94,11 @@ server/
 │   │   ├── settings.py         # UserSettingsResponse (incl. license_status, license_tier, transcoding fields), UpdateSettingsBody ✅
 │   │   ├── notification.py     # NotificationResponse, NotificationCreate; NotificationType, NotificationCategory type aliases ✅
 │   │   ├── activity.py         # ActivityEventResponse (id, type, actor_kind?, actor_id?, target_kind?, target_id?, summary, payload?, created_at) ✅
-│   │   ├── order.py            # PolarOrderItem, PolarOrderListResponse ✅
+│   │   ├── order.py            # PolarOrderItem, PolarOrderListResponse (+ total_all/next_cursor), PortalUrlResponse ✅
 │   │   ├── profile.py          # ProfileResponse (avatar_letter computed), ProfileUpdate ✅
-│   │   └── group.py            # TimeWindow, GroupRestrictions, GroupResponse, GroupCreate, GroupUpdate, GroupMemberAdd; GroupStatus ✅
+│   │   ├── group.py            # TimeWindow, GroupRestrictions, GroupResponse, GroupCreate, GroupUpdate, GroupMemberAdd; GroupStatus ✅
+│   │   ├── transcoding.py      # TranscodingStatusResponse, EncoderLoad, ActiveTranscodeSession ✅
+│   │   └── log_record.py       # LogRecord, LogListResponse ✅
 │
 │
 │   └── tests/
@@ -104,7 +111,7 @@ server/
 │       ├── test_signal.py       # 8 tests — WS signaling auth + SDP/ICE protocol ✅
 │       ├── test_settings.py     # 9 tests — GET/PATCH settings + tier concurrency + 429 enforcement + license_status ✅
 │       ├── test_license_service.py # 22 tests — key validation (happy/expired/bad-sig/advisory/malformed/4-part-rejected) + generation ✅
-│       ├── test_orders.py       # 4 tests — GET /orders localhost restriction + response schema ✅
+│       ├── test_orders.py       # 9 tests — GET /orders localhost restriction + response schema + pagination + portal-url ✅
 │       ├── test_tmdb_service.py # 5 tests — TMDB search (movie/TV/person/network-error/missing-poster) ✅
 │       ├── test_webhook.py      # 19 tests — Polar signature, paid orders, router responses ✅
 │       ├── test_info_stats.py   # 5 tests — REST /info/stats shape + active streams + WS /stats localhost & non-localhost auth ✅
@@ -113,9 +120,12 @@ server/
 │       ├── test_groups.py       # 16 tests — CRUD, member management, auth split, stream-gate enforcement ✅
 │       ├── test_notifications.py # 12 tests — REST CRUD, WS auth + fan-out, unread filter, dismiss, read-all ✅
 │       ├── test_profile.py      # 9 tests — GET/PATCH profile localhost restriction + response schema + avatar_letter computation ✅
-│       └── test_activity.py     # 12 tests — service CRUD, payload roundtrip, since/type filters, REST endpoints, pair emitter integration, off-loopback 401 ✅
+│       ├── test_activity.py     # 12 tests — service CRUD, payload roundtrip, since/type filters, REST endpoints, pair emitter integration, off-loopback 401 ✅
+│       ├── test_transcoding.py  # 6 tests — encoder discovery, GPU probe, status response shape, localhost restriction ✅
+│       ├── test_logs.py         # 15 tests — JSON-line parse, level/source/since/until/q filters, pagination, WS fan-out, localhost + token auth ✅
+│       └── test_settings_extended.py # 16 tests — PATCH + GET for all 18 new settings fields, Pydantic constraint enforcement ✅
 
-Total: 198 tests passing ✅ (186 pre-§7.4 + 12 new)
+Total: 240 tests passing ✅ (198 pre-§7.8 + 6 §7.8 + 15 §7.9 + 16 §7.10 + 5 §7.11)
 ```
 
 ---
@@ -137,6 +147,8 @@ Total: 198 tests passing ✅ (186 pre-§7.4 + 12 new)
 | `notification_service` ✅ | Persists notifications to the `notifications` table and fans them out live via an in-process pub/sub bus. `create()` inserts a row and broadcasts to every subscribed asyncio.Queue (max 100 items per queue). Slow consumers drop frames rather than blocking producers. `subscribe()` returns a new queue; `unsubscribe(q)` removes it. CRUD: `list_notifications()`, `mark_read()`, `mark_all_read()`, `dismiss()`. | `create()`, `list_notifications(*, only_unread, limit)`, `mark_read()`, `mark_all_read()`, `dismiss()`, `subscribe()`, `unsubscribe(q)` |
 | `activity_service` ✅ | Appends activity events to the `activity_events` table. `record()` inserts one event row; callers must wrap it in `try/except` so audit failures are non-fatal. `list_events()` returns most-recent-first, optionally filtered by `since` (ISO-8601 timestamp) and `type_prefix` (`LIKE 'prefix%'`). Invalid JSON in `payload` is silently returned as `null`. | `record(db, *, type, summary, actor_kind?, actor_id?, target_kind?, target_id?, payload?)`, `list_events(db, *, limit, since?, type_prefix?)` |
 | `profile_service` ✅ | Reads and writes operator profile metadata from the `user_settings` singleton. Computes `avatar_letter` on every read (not stored). Pass `""` to clear a field; pass `None` to leave it unchanged. | `get_profile(db)` → `ProfileResponse`, `update_profile(db, *, display_name?, email?)` → `ProfileResponse` |
+| `transcoding_service` ✅ | Discovers available FFmpeg encoders by parsing `ffmpeg -encoders` output (cached for server lifetime). Probes GPU utilization via `nvidia-smi` for NVENC (best-effort — returns `None` on failure). QSV/VAAPI probes deferred. Builds `TranscodingStatusResponse` with active encoder, available encoders, per-encoder loads, and per-session metadata. | `get_transcoding_status(db)` → `TranscodingStatusResponse` |
+| `log_service` ✅ | Reads the JSON-line log file (`~/.fluxora/logs/server.log`) and provides filtered, cursor-paginated access. Also runs an in-process `BroadcastHandler` attached to the root Python logger at startup that fans every emitted record to subscribed asyncio queues (drop on slow consumers). | `list_logs(*, level?, source?, since?, until?, q?, limit, cursor)` → `LogListResponse`, `subscribe()` → `asyncio.Queue`, `unsubscribe(q)` |
 
 ---
 
@@ -202,5 +214,7 @@ Output: .m3u8 playlist + numbered .ts segment files
 
 - **Library:** Python `logging` module → structured JSON logs
 - **Level:** INFO in prod, DEBUG in dev
-- **Outputs:** Console (stdout) + rotating file (`~/.fluxora/logs/server.log`)
+- **Outputs:** Console (stdout, human-readable string formatter) + rotating file (`~/.fluxora/logs/server.log`, **JSON formatter** via `python-json-logger`)
+- **File format:** Every line is a JSON object with fields `asctime`, `levelname`, `name`, `message` — parseable by `log_service.py`
+- **Live tail:** `BroadcastHandler` is attached to the root logger at startup and fans each `LogRecord` to all subscribers of `WS /api/v1/ws/logs`
 - **Key events to log:** Stream start/end, library scans, auth events, FFmpeg errors

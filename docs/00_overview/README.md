@@ -60,6 +60,7 @@ Python/FastAPI executable on the user's home machine.
 - [Architecture Decisions (ADRs)](../10_planning/02_decisions.md)
 - [Manual / External Tasks (TODO)](../10_planning/04_manual_tasks.md) — third-party signups + dashboard work
 - [Desktop Redesign Plan](../11_design/desktop_redesign_plan.md)
+- [Web Landing Redesign Plan](../11_design/web_landing_redesign_plan.md)
 
 ### API & data
 - [API Contracts](../04_api/01_api_contracts.md)
@@ -70,6 +71,7 @@ Python/FastAPI executable on the user's home machine.
 
 ### Infrastructure & operations
 - [Infrastructure & CI/CD](../05_infrastructure/01_infrastructure.md)
+- [URL Inventory](../05_infrastructure/02_url_inventory.md) — all REST/WS endpoints, public hostnames, third-party URLs, future URLs
 - [Polar Webhook Deployment](../05_infrastructure/02_polar_webhook_deployment.md)
 - [Public Routing Plan (v1 + v2)](../05_infrastructure/03_public_routing.md)
 - [Domains & Subdomains Inventory](../05_infrastructure/04_domains_and_subdomains.md)

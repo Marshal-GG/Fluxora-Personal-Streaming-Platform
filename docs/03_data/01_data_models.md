@@ -1,7 +1,7 @@
 # Data Models
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-02 (TMDB fields, resume progress, license keys, Polar orders + customer_email, transcoding settings, Groups + stream-gate, Profile fields, Notification entity, ActivityEvent entity)
+> **Status:** Active - Updated 2026-05-02 (TMDB fields, resume progress, license keys, Polar orders + customer_email, transcoding settings, Groups + stream-gate, Profile fields, Notification entity, ActivityEvent entity, UserSettings 18 new §7.10 columns, LogRecord computed entity)
 
 ---
 
@@ -94,6 +94,24 @@
 | avatar_path | TEXT | ❌ | Absolute path to a local avatar image file (migration 012) |
 | profile_created_at | TEXT | ❌ | UTC ISO-8601 timestamp; backfilled to migration-apply time for the pre-existing row (migration 012) |
 | last_login_at | TEXT | ❌ | Reserved for v2; always `null` in v1 (migration 012) |
+| language | TEXT | ❌ | UI language code; default `'en'` (migration 015) |
+| auto_start_on_boot | BOOLEAN | ❌ | Start server on OS boot; default `0` (migration 015) |
+| auto_restart_on_crash | BOOLEAN | ❌ | Restart server after crash; default `1` (migration 015) |
+| minimize_to_system_tray | BOOLEAN | ❌ | Hide to tray instead of close; default `1` (migration 015) |
+| theme_accent | TEXT | ❌ | Reserved for future accent override; always `null` in v1 — brand locked to violet (migration 015) |
+| default_library_view | TEXT | ❌ | Default library render mode; `'grid'` or `'list'`; default `'grid'` (migration 015) |
+| scan_libraries_on_startup | BOOLEAN | ❌ | Auto-scan all libraries at server start; default `1` (migration 015) |
+| generate_thumbnails | BOOLEAN | ❌ | Auto-generate media thumbnails after scan; default `1` (migration 015) |
+| preferred_mode | TEXT | ❌ | Network mode preference: `'auto'`, `'lan'`, `'webrtc'`; default `'auto'` (migration 015) |
+| enable_mdns | BOOLEAN | ❌ | Broadcast mDNS on LAN; default `1` (migration 015) |
+| enable_webrtc | BOOLEAN | ❌ | Allow WebRTC for WAN streaming; default `1` (migration 015) |
+| relay_server_url | TEXT | ❌ | Override TURN relay URL; `null` = use server default (migration 015) |
+| default_quality | TEXT | ❌ | Default stream quality: `'auto'`, `'4k'`, `'1080p'`, `'720p'`, `'480p'`; default `'auto'` (migration 015) |
+| ai_segment_duration_seconds | INTEGER | ❌ | HLS segment duration in seconds for AI-driven adaptive streaming; default `4` (migration 015) |
+| enable_pairing_required | BOOLEAN | ❌ | Require explicit pairing approval before client access; default `1` (migration 015) |
+| session_timeout_minutes | INTEGER | ❌ | Idle session lifetime in minutes; range 1–1440; default `60` (migration 015) |
+| enable_log_export | BOOLEAN | ❌ | Allow log export via API; default `1` (migration 015) |
+| custom_server_url | TEXT | ❌ | Operator-specified public URL; overrides `FLUXORA_PUBLIC_URL` env var; `null` = use env (migration 015) |
 
 > **Computed field — not stored:** `avatar_letter` is derived server-side by `profile_service.get_profile()`. Priority: first non-whitespace character of `display_name` → first character of the `email` local-part → `'F'`.
 
@@ -172,6 +190,20 @@ Composite primary key: `(group_id, client_id)`. A client may belong to multiple 
 
 ---
 
+### Entity: `LogRecord`
+> A single structured log line emitted by the server. **Not stored in SQLite** — backed by the rotating JSON-line log file at `~/.fluxora/logs/server.log`. Returned by `GET /api/v1/logs` and streamed by `WS /api/v1/ws/logs`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| ts | TEXT | ✅ | UTC ISO-8601 timestamp from the `asctime` JSON field |
+| level | TEXT | ✅ | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| source | TEXT | ✅ | Logger name (`name` field) — e.g. `fluxora.stream`, `uvicorn.access` |
+| message | TEXT | ✅ | Human-readable log message |
+
+> **Storage note:** The file handler in `main.py` uses `python-json-logger`'s `json` formatter — every line written to disk is a JSON object. `log_service.py` reads, parses, and filters these lines. The console handler in dev mode remains a human-readable string. When `GET /api/v1/logs` is called, `log_service` reads the current log file, applies `level`/`source`/`since`/`until`/`q` filters, and returns paginated `LogRecord` objects.
+
+---
+
 ### Entity: `ActivityEvent`
 > Append-only audit trail of notable server actions, feeding the desktop Activity screen and the Dashboard "Recent Activity" widget. Distinct from `Notification` — notifications are user-actionable alerts; activity events are the historical audit log.
 
@@ -224,6 +256,9 @@ ActivityEvent ── independent audit log; no FK constraints
 | `GroupStatus` | `active`, `inactive` |
 | `NotificationType` | `info`, `warning`, `error`, `success` |
 | `NotificationCategory` | `system`, `client`, `license`, `transcode`, `storage` |
+| `DefaultLibraryView` | `grid`, `list` |
+| `PreferredMode` | `auto`, `lan`, `webrtc` |
+| `DefaultQuality` | `auto`, `4k`, `1080p`, `720p`, `480p` |
 
 ---
 
@@ -241,3 +276,9 @@ ActivityEvent ── independent audit log; no FK constraints
 - A client can belong to any number of groups simultaneously; the stream-gate combines restrictions across every active group
 - `UserSettings.display_name` and `UserSettings.email` have a server-enforced `max_length` (via `ProfileUpdate` Pydantic model); pass an empty string `""` to clear a field, pass `null` to leave it unchanged
 - `UserSettings.avatar_letter` is computed on every read — it is never stored in the DB
+- `UserSettings.default_library_view` must be `'grid'` or `'list'` (Pydantic `Literal` guard)
+- `UserSettings.preferred_mode` must be `'auto'`, `'lan'`, or `'webrtc'` (Pydantic `Literal` guard)
+- `UserSettings.default_quality` must be `'auto'`, `'4k'`, `'1080p'`, `'720p'`, or `'480p'` (Pydantic `Literal` guard)
+- `UserSettings.session_timeout_minutes` must be in range `[1, 1440]` (1 minute to 24 hours)
+- `UserSettings.ai_segment_duration_seconds` must be a positive integer
+- `LogRecord` is never stored — it is always derived by reading and parsing the JSON log file

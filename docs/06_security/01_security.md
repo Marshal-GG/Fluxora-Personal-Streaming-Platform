@@ -94,6 +94,11 @@ New Device:
 | `DELETE /api/v1/notifications/{id}` | ✅ Bearer token or localhost | Dismiss notification (`validate_token_or_local`) |
 | `WS /api/v1/ws/notifications` | ✅ Loopback or first-message token | Same auth pattern as `/ws/stats` — loopback callers skip handshake |
 | `GET /api/v1/activity` | ✅ Bearer token or localhost | Activity event log (`validate_token_or_local`); `limit` 1–200 |
+| `GET /api/v1/logs` | ✅ Bearer token or localhost | Structured log records with filtering (`validate_token_or_local`) |
+| `WS /api/v1/ws/logs` | ✅ Loopback or first-message token | Live log tail; same auth pattern as `/ws/stats` |
+| `GET /api/v1/transcoding/status` | 🔒 Localhost only | Encoder loads + active sessions — `require_local_caller` |
+| `GET /api/v1/orders` | 🔒 Localhost only | Paginated Polar order list — `require_local_caller` |
+| `GET /api/v1/orders/portal-url` | 🔒 Localhost only | Polar customer-portal URL — `require_local_caller`; 404 when env var unset |
 | All Control Panel routes | ✅ Localhost only | Not exposed externally |
 
 ---
@@ -197,6 +202,15 @@ Rules:
 - `POST /auth/approve` and `POST /auth/reject` are restricted to `localhost` by `require_local_caller`
 - `TOKEN_HMAC_KEY` must be set — server refuses to start with an empty key
 - File path resolution must always be within configured library roots
+
+## Auth-relevant Settings (§7.10)
+
+Two of the 18 new settings columns directly affect the security posture:
+
+| Setting | Column | Default | Effect |
+|---------|--------|---------|--------|
+| Pairing required | `enable_pairing_required` | `1` (true) | When `true`, all new clients must go through the manual approval flow. Setting to `false` auto-approves every `POST /auth/request-pair` — **not recommended** on a publicly accessible server. |
+| Session timeout | `session_timeout_minutes` | `60` | Planned idle-session lifetime. In v1 sessions do not currently auto-expire via this field — enforcement is deferred to the session-cleanup background job (Phase 6). Range 1–1440 is enforced at the API layer. |
 - Control Panel binds to `localhost` only and is never exposed on the network
 - Token hashes stored in DB with a constant-time comparison to prevent timing attacks
 - `/api/v1/webhook/polar` is externally reachable by design, but must reject requests without valid `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers

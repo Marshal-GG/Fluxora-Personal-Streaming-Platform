@@ -44,16 +44,19 @@ apps/server/
 │       ├── 011_groups.sql      # groups, group_members, group_restrictions
 │       ├── 012_profile_fields.sql  # display_name, email, avatar_path, profile_created_at, last_login_at on user_settings
 │       ├── 013_notifications.sql   # notifications table + idx_notifications_unread
-│       └── 014_activity_events.sql # activity_events table + 2 indexes
+│       ├── 014_activity_events.sql # activity_events table + 2 indexes
+│       └── 015_extended_settings.sql # 18 new columns on user_settings (general/network/streaming/security/advanced)
 ├── routers/
 │   ├── auth.py
 │   ├── activity.py             # GET /api/v1/activity; validate_token_or_local
 │   ├── files.py
 │   ├── groups.py
 │   ├── library.py
+│   ├── logs.py                 # GET /api/v1/logs; WS /api/v1/ws/logs; validate_token_or_local
 │   ├── notifications.py        # GET, POST /{id}/read, POST /read-all, DELETE /{id}; WS /ws/notifications
 │   ├── profile.py
 │   ├── stream.py
+│   ├── transcoding.py          # GET /api/v1/transcoding/status; require_local_caller
 │   └── ws.py
 ├── services/
 │   ├── activity_service.py     # record() + list_events(limit, since, type_prefix)
@@ -62,9 +65,11 @@ apps/server/
 │   ├── library_service.py
 │   ├── discovery_service.py
 │   ├── auth_service.py
+│   ├── log_service.py          # parse JSON-line log; filter/paginate; pubsub for WS /ws/logs
 │   ├── notification_service.py # CRUD + asyncio pub/sub fan-out
 │   ├── profile_service.py
 │   ├── tmdb_service.py
+│   ├── transcoding_service.py  # encoder discovery + GPU probe; backs GET /transcoding/status
 │   └── webrtc_service.py
 ├── models/
 │   ├── activity.py             # ActivityEventResponse
@@ -72,8 +77,10 @@ apps/server/
 │   ├── group.py
 │   ├── library.py
 │   ├── client.py
+│   ├── log_record.py           # LogRecord, LogListResponse
 │   ├── notification.py         # NotificationResponse, NotificationCreate, type/category enums
 │   ├── profile.py              # ProfileResponse (avatar_letter computed), ProfileUpdate
+│   ├── transcoding.py          # TranscodingStatusResponse, EncoderLoad, ActiveTranscodeSession
 │   ├── stream_session.py
 │   └── settings.py
 ├── utils/
@@ -89,7 +96,10 @@ apps/server/
     ├── test_notifications.py   # 12 tests — REST CRUD + WS fan-out + unread filter + dismiss
     ├── test_profile.py         # 9 tests — GET/PATCH profile + avatar_letter computation
     ├── test_stream.py
-    └── test_tmdb.py
+    ├── test_tmdb.py
+    ├── test_transcoding.py     # 6 tests — encoder discovery, GPU probe, status shape, localhost restriction
+    ├── test_logs.py            # 15 tests — JSON-line parse, filters, pagination, WS fan-out, auth
+    └── test_settings_extended.py # 16 tests — PATCH + GET for 18 new settings fields, constraint enforcement
 ```
 
 ---

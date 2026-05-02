@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-02 (migrations 004-014; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents)
+> **Status:** Active - Updated 2026-05-02 (migrations 004-015; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10)
 
 ---
 
@@ -87,7 +87,31 @@ CREATE TABLE user_settings (
     email                    TEXT,      -- operator email address
     avatar_path              TEXT,      -- absolute path to local avatar image
     profile_created_at       TEXT,      -- backfilled to migration-apply time for the existing row
-    last_login_at            TEXT       -- reserved for v2; always NULL in v1
+    last_login_at            TEXT,      -- reserved for v2; always NULL in v1
+    -- migration 015: extended settings (18 new columns)
+    -- General
+    language                 TEXT DEFAULT 'en',
+    auto_start_on_boot       INTEGER NOT NULL DEFAULT 0,
+    auto_restart_on_crash    INTEGER NOT NULL DEFAULT 1,
+    minimize_to_system_tray  INTEGER NOT NULL DEFAULT 1,
+    theme_accent             TEXT,      -- forward-compat; NULL in v1 (brand locked to violet)
+    default_library_view     TEXT NOT NULL DEFAULT 'grid',  -- 'grid' | 'list'
+    scan_libraries_on_startup INTEGER NOT NULL DEFAULT 1,
+    generate_thumbnails      INTEGER NOT NULL DEFAULT 1,
+    -- Network
+    preferred_mode           TEXT NOT NULL DEFAULT 'auto',  -- 'auto' | 'lan' | 'webrtc'
+    enable_mdns              INTEGER NOT NULL DEFAULT 1,
+    enable_webrtc            INTEGER NOT NULL DEFAULT 1,
+    relay_server_url         TEXT,      -- override TURN relay; NULL = use default
+    -- Streaming
+    default_quality          TEXT NOT NULL DEFAULT 'auto',  -- 'auto' | '4k' | '1080p' | '720p' | '480p'
+    ai_segment_duration_seconds INTEGER NOT NULL DEFAULT 4,
+    -- Security
+    enable_pairing_required  INTEGER NOT NULL DEFAULT 1,
+    session_timeout_minutes  INTEGER NOT NULL DEFAULT 60,   -- range 1–1440
+    -- Advanced
+    enable_log_export        INTEGER NOT NULL DEFAULT 1,
+    custom_server_url        TEXT       -- operator-specified public URL; NULL = use env var
 );
 
 -- Polar paid-order idempotency table
@@ -210,3 +234,4 @@ CREATE INDEX IF NOT EXISTS idx_activity_type_created
 | `012_profile_fields.sql` | Adds 5 nullable columns to `user_settings`: `display_name TEXT`, `email TEXT`, `avatar_path TEXT`, `profile_created_at TEXT` (backfilled to migration-apply time for the existing row), `last_login_at TEXT` (reserved for v2; null in v1). |
 | `013_notifications.sql` | Creates `notifications` table (id UUID PK, type/category with CHECK constraints, title, message, related_kind?, related_id?, created_at, read_at?, dismissed_at?); adds `idx_notifications_unread` on `(read_at, dismissed_at, created_at DESC)`. |
 | `014_activity_events.sql` | Creates `activity_events` table (id UUID PK, type, actor_kind?, actor_id?, target_kind?, target_id?, summary, payload JSON?, created_at); adds `idx_activity_created` on `(created_at DESC)` and `idx_activity_type_created` on `(type, created_at DESC)`. |
+| `015_extended_settings.sql` | Adds 18 columns to `user_settings` (skips `max_concurrent_streams` which already exists from 001): General — `language`, `auto_start_on_boot`, `auto_restart_on_crash`, `minimize_to_system_tray`, `theme_accent`, `default_library_view`, `scan_libraries_on_startup`, `generate_thumbnails`; Network — `preferred_mode`, `enable_mdns`, `enable_webrtc`, `relay_server_url`; Streaming — `default_quality`, `ai_segment_duration_seconds`; Security — `enable_pairing_required`, `session_timeout_minutes`; Advanced — `enable_log_export`, `custom_server_url`. |

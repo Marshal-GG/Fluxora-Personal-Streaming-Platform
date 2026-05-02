@@ -386,13 +386,13 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
 
 - Monorepo scaffold complete: `apps/server/`, `apps/mobile/`, `apps/desktop/`, `packages/fluxora_core/`
 - All documentation in sync with code
-- `apps/server` — **Phases 1–5 partially complete** (198 passing tests; ruff + black clean; public-routing v1 Phases 2–5 complete; Phase 6 hardening operator-driven):
-  - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured logging, rotating log file
-  - Routers: info (+ logs + healthz), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding), orders, groups, notifications, activity, profile, webhook ✅
-  - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook, system_stats (`_public_address` probe), group_service (CRUD + stream-gate), notification_service (CRUD + asyncio pub/sub), activity_service (record + list_events), profile_service ✅
-  - Migrations 001–014 applied on startup ✅
+- `apps/server` — **Phases 1–5 partially complete** (240 passing tests; ruff + black clean; public-routing v1 Phases 2–5 complete; Phase 6 hardening operator-driven):
+  - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured JSON logging (`python-json-logger`), rotating log file
+  - Routers: info (+ logs + healthz), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding + 18 extended fields), orders (paginated + portal-url), groups, notifications, activity, profile, webhook, transcoding (status), logs (REST + WS) ✅
+  - Services: auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook, system_stats (`_public_address` probe), group_service (CRUD + stream-gate), notification_service (CRUD + asyncio pub/sub), activity_service (record + list_events), profile_service, transcoding_service (encoder discovery + nvidia-smi GPU probe), log_service (filter/paginate/BroadcastHandler pubsub) ✅
+  - Migrations 001–015 applied on startup ✅ (015 adds 18 extended settings columns)
   - Hardware encoding: `ffmpeg_service.py` reads `transcoding_encoder/preset/crf` from DB; supports libx264, h264_nvenc, h264_qsv, h264_vaapi ✅
-  - Orders: `GET /api/v1/orders` (localhost) exposes Polar order + license key for manual customer delivery ✅
+  - Orders: `GET /api/v1/orders` (localhost, paginated) exposes Polar orders + license keys; `GET /api/v1/orders/portal-url` returns `FLUXORA_POLAR_PORTAL_URL` ✅
   - `validate_token_or_local` dependency — files/library endpoints accessible from localhost without bearer token ✅
   - Public routing: `RealIPMiddleware` (CF-Connecting-IP rewrite against published Cloudflare ranges), `HLSBlockOverTunnelMiddleware`, `/healthz`, `remote_url` field on `/info`, admin endpoints reject tunneled requests ✅
 - `packages/fluxora_core` — **Phase 3 dual-base routing complete** (9 passing tests):
@@ -424,5 +424,14 @@ Full roadmap: `docs/10_planning/01_roadmap.md`
     - `flutter_svg` 2.2.4 dep + 4 animated SMIL SVGs in `packages/fluxora_core/assets/illustrations/` (`hero_waves.svg`, `pulse_ring.svg`, `empty_libraries.svg`, `empty_clients.svg`)
     - `/showcase` route renders every primitive on `bgRoot` for visual diff against the prototype (outside `ShellRoute`)
     - Both packages pass `flutter analyze` with zero issues
+- `apps/web_landing` — **Redesigned to v2 violet palette ✅ Done 2026-05-02** — see [`docs/11_design/web_landing_redesign_plan.md`](docs/11_design/web_landing_redesign_plan.md):
+  - Token migration in `globals.css` (indigo `#6366F1` → violet `#A855F7`, ambient bg radial wash)
+  - Hero: two-column with desktop mockup + animated `hero_waves.svg` backdrop + 4.9★ social-proof stack ("10,000+ self-hosters")
+  - 6 new components: `PopularMovies` (8 real popular titles with TMDB CDN posters: Dune Part Two, Oppenheimer, Deadpool & Wolverine, The Batman, Spider-Verse, Top Gun: Maverick, Interstellar, Inception), `LibraryTiles`, `TierComparison`, `Faq` (zero-JS `<details>`), `AboutStrip`, `FinalCta`
+  - 7 modified components: `Navbar` (logo + 6 nav links + Sign-In + Get Started), `Hero`, `Features`, `HowItWorks`, `Pricing` (`Core`→`Free` rename), `Platforms` (with platform-icon SVGs), `Footer` (4-column grid)
+  - Brand assets copied from `fluxora_core` to `apps/web_landing/public/`
+  - Full SEO: `metadataBase` + keywords + OG/Twitter cards + JSON-LD (`Organization`+`WebSite`+`SoftwareApplication`+`FAQPage`) + `robots.ts` + `sitemap.ts` + `manifest.json` + TMDB preconnect
+  - `next build` clean — 7 routes prerendered as static
+  - 2 new VS Code launch configs (`Web Landing (dev)`, `Web Landing (static export preview)`) + `.vscode/tasks.json` for the `web-landing-build` pre-task
 
-**Next:** redesign M2 (Sidebar + status bar + nav replacement), then M3 Dashboard. Backend M0 leftovers (§7.8 transcoding load probe, §7.9 structured logs, §7.10 settings extension, §7.11 orders pagination + Polar portal URL) can run in parallel. Public-routing Phase 6 (TURN, WAF rules, tunnel health alerts, Cloudflare Access) is tracked as operator-driven manual tasks; pick up before announcing the public URL externally.
+**Next:** redesign M2 (Sidebar + status bar + nav replacement), then M3 Dashboard. Backend M0 is now **fully complete** (§7.1–§7.11 all done, 240 tests). Public-routing Phase 6 (TURN, WAF rules, tunnel health alerts, Cloudflare Access) is tracked as operator-driven manual tasks; pick up before announcing the public URL externally.

@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-02 (new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added)
+> **Status:** Active - Updated 2026-05-02 (new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs` + `/info/logs` deprecated; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`)
 
 ---
 
@@ -34,9 +34,9 @@ Authorization: Bearer {auth_token}
 | Mode | Dependency | Used by |
 |------|-----------|---------|
 | Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints |
-| Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity` — desktop control panel needs no token |
-| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/clients`, `/settings`, `/orders`, `/stream/sessions`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
-| No auth | — | `/info`, `/info/logs`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
+| Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity`, `GET /logs` — desktop control panel needs no token |
+| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
+| No auth | — | `/info`, `/info/logs` (deprecated), `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
 
 ---
 
@@ -76,9 +76,9 @@ Authorization: Bearer {auth_token}
 ---
 
 ### `GET /api/v1/info/logs`
-**Description:** Return the last 1000 lines of the server log file (`~/.fluxora/logs/server.log`).  
+**Description:** Return the last 1000 lines of the server log file (`~/.fluxora/logs/server.log`) as a single string.  
 **Auth:** None required.  
-**Status:** ✅ Implemented
+**Status:** ✅ Implemented — **DEPRECATED** (superseded by `GET /api/v1/logs` with structured filtering and `WS /api/v1/ws/logs` for live tailing). Retained for v1 backwards compatibility.
 
 **Response:**
 ```json
@@ -630,14 +630,32 @@ Client connects → sends auth message → server replies auth_ok
   "license_tier": "free",
   "transcoding_encoder": "libx264",
   "transcoding_preset": "veryfast",
-  "transcoding_crf": 23
+  "transcoding_crf": 23,
+  "language": "en",
+  "auto_start_on_boot": false,
+  "auto_restart_on_crash": true,
+  "minimize_to_system_tray": true,
+  "theme_accent": null,
+  "default_library_view": "grid",
+  "scan_libraries_on_startup": true,
+  "generate_thumbnails": true,
+  "preferred_mode": "auto",
+  "enable_mdns": true,
+  "enable_webrtc": true,
+  "relay_server_url": null,
+  "default_quality": "auto",
+  "ai_segment_duration_seconds": 4,
+  "enable_pairing_required": true,
+  "session_timeout_minutes": 60,
+  "enable_log_export": true,
+  "custom_server_url": null
 }
 ```
 
 ---
 
 ### `PATCH /api/v1/settings`
-**Description:** Update one or more server settings. Changing `tier` automatically adjusts `max_concurrent_streams` to match the tier limit.  
+**Description:** Update one or more server settings. Changing `tier` automatically adjusts `max_concurrent_streams` to match the tier limit. Only fields explicitly passed in the request body are written to the DB — omitted fields are unchanged.  
 **Auth:** Localhost only — `require_local_caller`.  
 **Status:** ✅ Implemented
 
@@ -650,7 +668,24 @@ Client connects → sends auth message → server replies auth_ok
   "transcoding_enabled": true,
   "transcoding_encoder": "h264_nvenc",
   "transcoding_preset": "fast",
-  "transcoding_crf": 20
+  "transcoding_crf": 20,
+  "language": "en",
+  "auto_start_on_boot": false,
+  "auto_restart_on_crash": true,
+  "minimize_to_system_tray": true,
+  "default_library_view": "grid",
+  "scan_libraries_on_startup": true,
+  "generate_thumbnails": true,
+  "preferred_mode": "auto",
+  "enable_mdns": true,
+  "enable_webrtc": true,
+  "relay_server_url": null,
+  "default_quality": "auto",
+  "ai_segment_duration_seconds": 4,
+  "enable_pairing_required": true,
+  "session_timeout_minutes": 60,
+  "enable_log_export": true,
+  "custom_server_url": null
 }
 ```
 
@@ -662,6 +697,11 @@ Client connects → sends auth message → server replies auth_ok
 | `transcoding_encoder` | `libx264` · `h264_nvenc` · `h264_qsv` · `h264_vaapi` |
 | `transcoding_preset` | `ultrafast` · `superfast` · `veryfast` · `faster` · `fast` · `medium` · `slow` · `slower` · `veryslow` |
 | `transcoding_crf` | Integer in `[0, 51]` (0 = lossless, 23 = default, 51 = worst quality) |
+| `default_library_view` | `grid` · `list` |
+| `preferred_mode` | `auto` · `lan` · `webrtc` |
+| `default_quality` | `auto` · `4k` · `1080p` · `720p` · `480p` |
+| `session_timeout_minutes` | Integer in `[1, 1440]` (1 minute to 24 hours) |
+| `ai_segment_duration_seconds` | Positive integer |
 
 **Tier values and stream limits:**
 
@@ -673,14 +713,20 @@ Client connects → sends auth message → server replies auth_ok
 | `ultimate` | 9999 (unlimited) |
 
 **Response:** Same schema as `GET /api/v1/settings`.  
-**Errors:** `422` invalid tier or blank server_name · `403` not from localhost
+**Errors:** `422` invalid tier or blank server_name or constraint violation · `403` not from localhost
 
 ---
 
 ### `GET /api/v1/orders`
-**Description:** List all processed Polar orders with their generated license keys. Intended for the Desktop Control Panel owner screen to forward keys to customers manually.  
+**Description:** List processed Polar orders with their generated license keys. Paginated. Intended for the Desktop Control Panel owner screen to forward keys to customers manually.  
 **Auth:** Localhost only — `require_local_caller`.  
 **Status:** ✅ Implemented
+
+**Query params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | integer | `20` | Max orders per page; range `1..200` |
+| `cursor` | integer | `0` | Zero-based row offset for the next page |
 
 **Response:**
 ```json
@@ -694,11 +740,29 @@ Client connects → sends auth message → server replies auth_ok
       "processed_at": "2026-05-01T10:00:00Z"
     }
   ],
-  "total": 1
+  "total": 1,
+  "total_all": 1,
+  "next_cursor": null
 }
 ```
 
+`next_cursor` is `null` when the last page has been reached. Pass it as the `cursor` param for the next request. `total_all` is the full count across all pages regardless of `limit`.
+
 **Errors:** `403` not from localhost
+
+---
+
+### `GET /api/v1/orders/portal-url`
+**Description:** Return the Polar customer-portal URL for the current operator. The customer portal uses Polar's magic-link flow — the URL itself encodes no per-customer session token; Polar emails a link after the customer submits their address. Returns `404` when `FLUXORA_POLAR_PORTAL_URL` is unset.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{ "url": "https://polar.sh/fluxora/portal" }
+```
+
+**Errors:** `403` not from localhost · `404` env var `FLUXORA_POLAR_PORTAL_URL` not set
 
 ---
 
@@ -1089,6 +1153,109 @@ All emitter call-sites are wrapped in `try/except` with logging — a notificati
 All producer call-sites are wrapped in `try/except` with logging — an activity-write failure never breaks the underlying flow.
 
 **Errors:** `422` limit out of bounds · `401` off-loopback caller without token
+
+---
+
+---
+
+### `GET /api/v1/transcoding/status`
+**Description:** Return live transcoding status — which encoder is active, which encoders are available on this machine, per-encoder load, and the list of currently active transcode sessions with per-session metadata.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "active_encoder": "libx264",
+  "available_encoders": ["libx264", "h264_nvenc"],
+  "encoder_loads": {
+    "libx264": {
+      "active_sessions": 1,
+      "cpu_utilization_percent": 42.5,
+      "gpu_utilization_percent": null,
+      "vram_used_mb": null
+    }
+  },
+  "active_sessions": [
+    {
+      "id": "session-uuid",
+      "client_id": "client-uuid",
+      "client_name": "Pixel 8 Pro",
+      "media_title": "Inception",
+      "input_codec": "h264",
+      "output_codec": "h264",
+      "fps": null,
+      "speed_x": null,
+      "progress": 342.5
+    }
+  ]
+}
+```
+
+**Notes:**
+- `available_encoders` is discovered by parsing `ffmpeg -encoders` output; result is cached for the server lifetime.
+- `gpu_utilization_percent` and `vram_used_mb` are populated via `nvidia-smi` for `h264_nvenc` only; `null` on non-NVENC encoders or if `nvidia-smi` is unavailable (best-effort).
+- QSV (`h264_qsv`) and VAAPI (`h264_vaapi`) GPU probes are deferred to a future release — those fields remain `null`.
+- `fps` and `speed_x` on active sessions are v1 placeholders — `null` until real-time FFmpeg progress parsing lands.
+
+**Errors:** `403` not from localhost
+
+---
+
+### `GET /api/v1/logs`
+**Description:** List structured log records from the server's JSON log file with filtering and cursor-based pagination.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Query params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `level` | string | — | Filter to records at or above this level (e.g. `WARNING` returns `WARNING`, `ERROR`, `CRITICAL`) |
+| `source` | string | — | Prefix filter on the logger `name` field (e.g. `fluxora.stream` matches all stream-router logs) |
+| `since` | string (ISO-8601) | — | Return only records with `ts` strictly after this timestamp |
+| `until` | string (ISO-8601) | — | Return only records with `ts` strictly before this timestamp |
+| `q` | string | — | Case-insensitive substring search against the `message` field |
+| `limit` | integer | `200` | Max records per page; range `1..1000` |
+| `cursor` | integer | `0` | Zero-based line offset into the log file (returned as `next_cursor` from previous page) |
+
+**Response:**
+```json
+{
+  "items": [
+    {
+      "ts": "2026-05-02T10:00:00.123Z",
+      "level": "INFO",
+      "source": "fluxora.stream",
+      "message": "Stream session abc123 started for client Pixel 8 Pro"
+    }
+  ],
+  "next_cursor": 200
+}
+```
+
+`next_cursor` is `null` when the end of the log file has been reached for the current filter set.
+
+**Errors:** `401` off-loopback caller without token · `422` invalid `limit`
+
+---
+
+### `WebSocket /api/v1/ws/logs`
+**Description:** Live log tail — emits a frame for every new log record as the server writes it. Uses the same in-process `BroadcastHandler` that is attached to the root Python logger at startup; each connected subscriber gets its own asyncio queue. Slow consumers drop frames (queue capped at 100 items) rather than blocking log producers.  
+**Auth:** Loopback connections skip auth. Non-loopback connections must send the same `{"type":"auth","token":"<bearer>"}` first-message handshake as `/ws/stats`.  
+**Status:** ✅ Implemented
+
+**Frame format (server → client):**
+```json
+{
+  "type": "log",
+  "data": {
+    "ts": "2026-05-02T10:00:00.123Z",
+    "level": "WARNING",
+    "source": "fluxora.library",
+    "message": "Storage usage is above 90%"
+  }
+}
+```
 
 ---
 

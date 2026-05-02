@@ -28,7 +28,7 @@ Fluxora is a self-hosted, cross-platform media streaming system where your **PC 
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| FastAPI server | ✅ Done | 198 tests; all routers + services; migrations 001–014; hardware encoding; orders/logs/healthz endpoints; live system stats; conditional Sentry init; `remote_url` on /info; CF Tunnel real-IP middleware + HLS-block + admin-route hardening; client groups (`/api/v1/groups`) with stream-gate restriction enforcement; operator profile (`/api/v1/profile`); in-app notifications (`/api/v1/notifications` + WS `/ws/notifications`); activity event log (`/api/v1/activity`) |
+| FastAPI server | ✅ Done | 240 tests; all routers + services; migrations 001–015; hardware encoding; orders (paginated + portal-url)/logs/healthz endpoints; live system stats; structured JSON logs + live WS tail; transcoding status API; extended settings (18 new fields); conditional Sentry init; `remote_url` on /info; CF Tunnel real-IP middleware + HLS-block + admin-route hardening; client groups + stream-gate; operator profile; in-app notifications; activity event log |
 | `fluxora_core` package | ✅ Done | Entities (PolarOrder, MediaFile w/ resume, ServerInfo w/ remoteUrl), dual-base ApiClient (LAN+remote routing via NetworkPathDetector), SecureStorage (savePairing helper), design tokens; 9 tests |
 | Flutter mobile — connect | ✅ Done | mDNS auto-discovery + manual IP; Android MulticastLock |
 | Flutter mobile — auth | ✅ Done | Full pairing flow; token in SecureStorage; post-pair `/info` fetch persists `remote_url` for off-LAN routing |
