@@ -18,12 +18,18 @@
 /// Provides a single `SystemStatsCubit` to the entire subtree so the
 /// sidebar's System Status block, the status bar, and the Dashboard
 /// sparklines all read the same polling stream — no double polls.
+///
+/// Also owns the `NotificationsCubit` + `NotificationsPanelNotifier` so the
+/// bell-toggle in the sidebar and the slide-over panel share one source of
+/// truth.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_desktop/core/di/injector.dart';
+import 'package:fluxora_desktop/features/notifications/presentation/cubit/notifications_cubit.dart';
+import 'package:fluxora_desktop/features/notifications/presentation/widgets/notifications_panel.dart';
 import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_sidebar.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_status_bar.dart';
@@ -37,26 +43,97 @@ class FluxShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<SystemStatsCubit>(
-      create: (_) => getIt<SystemStatsCubit>()..start(),
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider<SystemStatsCubit>(
+          create: (_) => getIt<SystemStatsCubit>()..start(),
+        ),
+        BlocProvider<NotificationsCubit>(
+          create: (_) => getIt<NotificationsCubit>()..start(),
+        ),
+      ],
+      child: _ShellBody(child: child),
+    );
+  }
+}
+
+class _ShellBody extends StatefulWidget {
+  const _ShellBody({required this.child});
+  final Widget child;
+
+  @override
+  State<_ShellBody> createState() => _ShellBodyState();
+}
+
+class _ShellBodyState extends State<_ShellBody> {
+  final _panelNotifier = NotificationsPanelNotifier();
+
+  @override
+  void dispose() {
+    _panelNotifier.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationsPanelScope(
+      notifier: _panelNotifier,
       child: Scaffold(
         backgroundColor: AppColors.bgRoot,
         body: SafeArea(
-          child: Row(
-            children: [
-              const FluxSidebar(),
-              Expanded(
-                child: Column(
-                  children: [
-                    Expanded(child: child),
-                    const FluxStatusBar(),
-                  ],
-                ),
-              ),
-            ],
+          child: ValueListenableBuilder<bool>(
+            valueListenable: _panelNotifier,
+            builder: (context, panelOpen, _) {
+              return Stack(
+                children: [
+                  Row(
+                    children: [
+                      const FluxSidebar(),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Expanded(child: widget.child),
+                            const FluxStatusBar(),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (panelOpen)
+                    Positioned.fill(
+                      child: NotificationsPanel(
+                        onClose: _panelNotifier.close,
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ),
       ),
     );
   }
+}
+
+/// Inherited widget that gives any descendant access to the
+/// [NotificationsPanelNotifier] without needing GetIt.
+class NotificationsPanelScope extends InheritedWidget {
+  const NotificationsPanelScope({
+    super.key,
+    required this.notifier,
+    required super.child,
+  });
+
+  final NotificationsPanelNotifier notifier;
+
+  static NotificationsPanelNotifier of(BuildContext context) {
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<NotificationsPanelScope>();
+    assert(scope != null, 'NotificationsPanelScope not found in tree');
+    return scope!.notifier;
+  }
+
+  @override
+  bool updateShouldNotify(NotificationsPanelScope oldWidget) =>
+      notifier != oldWidget.notifier;
 }

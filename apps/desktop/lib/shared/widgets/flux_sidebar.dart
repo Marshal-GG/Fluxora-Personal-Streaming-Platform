@@ -106,6 +106,12 @@ const List<_NavEntry> _navItems = [
     icon: Icons.workspace_premium_outlined,
     path: '/subscription',
   ),
+  _NavEntry(
+    id: 'help',
+    label: 'Help',
+    icon: Icons.help_outline,
+    path: '/help',
+  ),
 ];
 
 // ─── Uptime formatter ────────────────────────────────────────────────────────

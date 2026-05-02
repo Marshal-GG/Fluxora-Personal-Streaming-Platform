@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active - Updated 2026-05-02 (M3 Dashboard shipped: new entities `ActivityEvent` + `LibraryStorageBreakdown`, new features `storage/` + `recent_activity/`, `DashboardScreen` rewritten to pixel-match prototype; SDK floor `>=3.9.0` (Flutter 3.41); 38 desktop tests)
+> **Status:** Active - Updated 2026-05-02 (M7 shipped: `Profile` + `AppNotification` entities; `profile/`, `notifications/`, `help/` features; `subscription/` rewritten; `NotificationsPanel` slide-over + `NotificationsPanelScope`; `FluxShell` extended; `/help` route + sidebar entry)
 
 ---
 

@@ -6,6 +6,12 @@ import 'package:fluxora_desktop/features/clients/data/repositories/clients_repos
 import 'package:fluxora_desktop/features/clients/domain/repositories/clients_repository.dart';
 import 'package:fluxora_desktop/features/groups/data/repositories/groups_repository_impl.dart';
 import 'package:fluxora_desktop/features/groups/domain/repositories/groups_repository.dart';
+import 'package:fluxora_desktop/features/notifications/data/repositories/notifications_repository_impl.dart';
+import 'package:fluxora_desktop/features/notifications/domain/repositories/notifications_repository.dart';
+import 'package:fluxora_desktop/features/notifications/presentation/cubit/notifications_cubit.dart';
+import 'package:fluxora_desktop/features/profile/data/repositories/profile_repository_impl.dart';
+import 'package:fluxora_desktop/features/profile/domain/repositories/profile_repository.dart';
+import 'package:fluxora_desktop/features/profile/presentation/cubit/profile_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/data/repositories/transcoding_repository_impl.dart';
 import 'package:fluxora_desktop/features/transcoding/domain/repositories/transcoding_repository.dart';
 import 'package:fluxora_desktop/features/dashboard/data/repositories/dashboard_repository_impl.dart';
@@ -96,6 +102,22 @@ Future<void> setupInjector() async {
   // ── Recent activity ───────────────────────────────────────────────────────────
   getIt.registerLazySingleton<RecentActivityRepository>(
     () => RecentActivityRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+
+  // ── Profile ───────────────────────────────────────────────────────────────────
+  getIt.registerLazySingleton<ProfileRepository>(
+    () => ProfileRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+  getIt.registerFactory<ProfileCubit>(
+    () => ProfileCubit(repository: getIt<ProfileRepository>()),
+  );
+
+  // ── Notifications ─────────────────────────────────────────────────────────────
+  getIt.registerLazySingleton<NotificationsRepository>(
+    () => NotificationsRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+  getIt.registerFactory<NotificationsCubit>(
+    () => NotificationsCubit(repository: getIt<NotificationsRepository>()),
   );
 
   // ── Groups ────────────────────────────────────────────────────────────────────

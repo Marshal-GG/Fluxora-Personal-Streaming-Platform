@@ -1,6 +1,6 @@
 # Desktop App Redesign — Implementation Plan
 
-> **Status:** Implementing — M0 backend prerequisites partially shipped, M1 foundation complete (2026-05-02), M2 shell complete, M3 Dashboard complete (2026-05-02), M4 Library + Clients complete (2026-05-02)
+> **Status:** Implementing — M0 backend prerequisites partially shipped, M1 foundation complete (2026-05-02), M2 shell complete, M3 Dashboard complete (2026-05-02), M4 Library + Clients complete (2026-05-02), M5 Groups + Activity + Transcoding complete (2026-05-02), M6 Logs + Settings complete (2026-05-02), **M7 Subscription + Profile + Notifications + Help complete (2026-05-02)**
 > **Created:** 2026-05-01
 > **Owner:** Marshal
 > **Source design:** [`docs/11_design/desktop_prototype/`](./desktop_prototype/) — React/JSX prototype exported from claude.ai/design
@@ -76,9 +76,22 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 - **New form primitives** in `apps/desktop/lib/shared/widgets/`: `FluxTextField`, `FluxSelect`, `FluxSwitch`, `FluxSlider` — thin Material wrappers with violet-glass styling, drop-in replacements for the corresponding Material widgets.
 - About tab: server version + uptime + LAN IP from SystemStats / serverInfo; GitHub repo / Documentation / Report Issue buttons; Credits.
 
-### M7–M9 *(not started)*
+### M7 — Subscription + Profile + Notifications + Help *(✅ Done 2026-05-02)*
 
-Pending M6 visual review against prototype.
+- **New entities** in `packages/fluxora_core/lib/entities/`: `Profile` (freezed, `avatar_letter`, `display_name`, `email`, `created_at`, `last_login_at`); `AppNotification` (freezed, full enum types `NotificationType` + `NotificationCategory`).
+- **New endpoints** in `Endpoints`: `profile`, `notifications`, `notificationRead(id)`, `notificationsReadAll`, `notificationDismiss(id)`, `ordersPortalUrl`, `wsNotifications`.
+- **Profile feature** (`apps/desktop/lib/features/profile/`): `ProfileRepository` + impl (GET/PATCH `/api/v1/profile`); `ProfileCubit` with `load` / `save` / `markDirty`; full `ProfileScreen` — 240 px left nav with 5 tabs (Profile / Security / Preferences / Sessions / Danger Zone), avatar block, dirty-tracked save button, form fields bound to parent state controllers.
+- **Orders feature extended**: `OrdersRepository.portalUrl()` added (returns `null` on 404); `OrdersCubit.openPortal()` fetches URL + copies to clipboard.
+- **Notifications feature** (`apps/desktop/lib/features/notifications/`): `NotificationsRepository` + 5s-polling impl (WS deferred to M8 — TODO comment added); `NotificationsCubit` with `start` / `markRead` / `markAllRead` / `dismiss`; `NotificationsPanel` slide-over (420 px, right-edge, category filter bar, animated unread badge, dismiss X, empty state); `NotificationsPanelNotifier` (`ValueNotifier<bool>`) + `NotificationsPanelScope` inherited widget.
+- **Shell updated**: `FluxShell` now provides `NotificationsCubit` (factory via DI) + mounts `NotificationsPanel` as a `Stack` overlay toggled by `NotificationsPanelScope`. Bell icon nav item registered in sidebar.
+- **Subscription feature** (`apps/desktop/lib/features/subscription/`): full `SubscriptionScreen` with `FluxTabBar` (Plans & Pricing / Billing History / Manage). Plans tab: 4 `_PlanCard`s + feature comparison table. Billing tab: 4 `StatTile`s + order table with copy-license-key button (uses `OrdersCubit`). Manage tab: portal button (copies URL to clipboard), plan action rows, info banner.
+- **Help feature** (`apps/desktop/lib/features/help/`): static screen — keyboard shortcut groups, expandable FAQ (6 entries), Get Help links card, Status card (`StatusDot`), Diagnostics card. No cubit/repository.
+- **Router**: `/help` route added. `Routes.help` constant added. Help added to sidebar nav list.
+- **DI**: `ProfileRepository`, `ProfileCubit`, `NotificationsRepository`, `NotificationsCubit` registered in `injector.dart`.
+
+### M8–M9 *(not started)*
+
+Pending M7 visual review against prototype.
 
 ---
 

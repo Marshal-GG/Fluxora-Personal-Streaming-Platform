@@ -1,5 +1,6 @@
 import 'package:fluxora_core/entities/polar_order.dart';
 import 'package:fluxora_core/network/api_client.dart';
+import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_core/network/endpoints.dart';
 import 'package:fluxora_desktop/features/orders/domain/repositories/orders_repository.dart';
 
@@ -16,4 +17,18 @@ class OrdersRepositoryImpl implements OrdersRepository {
             .map((e) => PolarOrder.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
+
+  @override
+  Future<String?> portalUrl() async {
+    try {
+      final result = await _apiClient.get<String?>(
+        Endpoints.ordersPortalUrl,
+        fromJson: (json) => json['portal_url'] as String?,
+      );
+      return result;
+    } on ApiException catch (e) {
+      if (e.isNotFound) return null;
+      rethrow;
+    }
+  }
 }

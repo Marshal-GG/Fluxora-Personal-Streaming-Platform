@@ -62,7 +62,21 @@ class Endpoints {
   // Transcoding status
   static const String transcodingStatus = '$_base/transcoding/status';
 
+  // Profile
+  static const String profile = '$_base/profile';
+
+  // Notifications
+  static const String notifications = '$_base/notifications';
+  static String notificationRead(String id) =>
+      '$_base/notifications/$id/read';
+  static const String notificationsReadAll = '$_base/notifications/read-all';
+  static String notificationDismiss(String id) => '$_base/notifications/$id';
+
+  // Orders portal URL
+  static const String ordersPortalUrl = '$_base/orders/portal-url';
+
   // WebSocket
   static const String wsSignal = '$_base/ws/signal';
   static const String wsStatus = '$_base/ws/status';
+  static const String wsNotifications = '$_base/ws/notifications';
 }
