@@ -11,6 +11,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:get_it/get_it.dart';
 import 'package:golden_toolkit/golden_toolkit.dart';
 import 'package:mocktail/mocktail.dart';
 
@@ -22,16 +23,10 @@ import 'package:fluxora_core/entities/server_info.dart';
 import 'package:fluxora_core/entities/system_stats.dart';
 
 import 'package:fluxora_desktop/features/dashboard/domain/repositories/dashboard_repository.dart';
-import 'package:fluxora_desktop/features/dashboard/presentation/cubit/dashboard_cubit.dart';
-import 'package:fluxora_desktop/features/dashboard/presentation/cubit/dashboard_state.dart';
 import 'package:fluxora_desktop/features/recent_activity/domain/repositories/recent_activity_repository.dart';
-import 'package:fluxora_desktop/features/recent_activity/presentation/cubit/recent_activity_cubit.dart';
-import 'package:fluxora_desktop/features/recent_activity/presentation/cubit/recent_activity_state.dart';
 import 'package:fluxora_desktop/features/storage/domain/repositories/storage_repository.dart';
-import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_cubit.dart';
-import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_state.dart';
-import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_desktop/features/system_stats/domain/repositories/system_stats_repository.dart';
+import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_desktop/features/dashboard/presentation/screens/dashboard_screen.dart';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
@@ -122,45 +117,13 @@ const _sysStats = SystemStats(
   activeStreams: 1,
 );
 
-// ── Stub cubits ───────────────────────────────────────────────────────────────
+// ── SystemStatsCubit stub ─────────────────────────────────────────────────────
+//
+// flux_shell.dart provides this cubit in production; the dashboard reads it via
+// `BlocBuilder<SystemStatsCubit, _>`. We can't go through GetIt here because
+// SystemStatsCubit's polling Timer would tick during the golden capture and
+// produce a flaky snapshot. Stub it to emit one deterministic sample then idle.
 
-/// A [DashboardCubit] that starts in the [DashboardLoaded] state without
-/// hitting any real repository.
-class _StubDashboardCubit extends DashboardCubit {
-  _StubDashboardCubit(_MockDashboardRepo repo) : super(repository: repo);
-
-  @override
-  Future<void> load() async {
-    emit(const DashboardLoading());
-    emit(DashboardLoaded(
-      serverInfo: _serverInfo,
-      clients: _clients,
-      libraryCount: 6,
-    ));
-  }
-}
-
-class _StubStorageCubit extends StorageCubit {
-  _StubStorageCubit(_MockStorageRepo repo) : super(repository: repo);
-
-  @override
-  Future<void> load() async {
-    emit(const StorageLoading());
-    emit(const StorageLoaded(_storage));
-  }
-}
-
-class _StubRecentActivityCubit extends RecentActivityCubit {
-  _StubRecentActivityCubit(_MockActivityRepo repo) : super(repository: repo);
-
-  @override
-  Future<void> load() async {
-    emit(const RecentActivityLoading());
-    emit(RecentActivityLoaded(_activities));
-  }
-}
-
-/// A [SystemStatsCubit] that emits a deterministic state without polling.
 class _StubSystemStatsCubit extends SystemStatsCubit {
   _StubSystemStatsCubit(_MockSystemStatsRepo repo) : super(repository: repo);
 
@@ -194,40 +157,52 @@ void main() {
     await loadAppFonts();
   });
 
+  setUp(() {
+    // Production `DashboardScreen.build()` resolves DashboardRepository,
+    // StorageRepository, and RecentActivityRepository from the global
+    // GetIt instance inside `MultiBlocProvider.create`. To exercise the
+    // real screen wiring under test, register mock repos before pumping,
+    // then stub their methods to return deterministic test data.
+    GetIt.I.reset();
+    GetIt.I.registerSingleton<DashboardRepository>(mockDashboardRepo);
+    GetIt.I.registerSingleton<StorageRepository>(mockStorageRepo);
+    GetIt.I.registerSingleton<RecentActivityRepository>(mockActivityRepo);
+
+    when(() => mockDashboardRepo.getServerInfo())
+        .thenAnswer((_) async => _serverInfo);
+    when(() => mockDashboardRepo.getClients())
+        .thenAnswer((_) async => _clients);
+    when(() => mockDashboardRepo.getLibraryCount())
+        .thenAnswer((_) async => 6);
+    when(() => mockStorageRepo.fetch())
+        .thenAnswer((_) async => _storage);
+    when(() => mockActivityRepo.fetch(limit: any(named: 'limit')))
+        .thenAnswer((_) async => _activities);
+  });
+
+  tearDown(() => GetIt.I.reset());
+
   testGoldens('DashboardScreen — m3 default state', (tester) async {
-    final dashboardCubit = _StubDashboardCubit(mockDashboardRepo);
-    final storageCubit = _StubStorageCubit(mockStorageRepo);
-    final activityCubit = _StubRecentActivityCubit(mockActivityRepo);
     final systemStatsCubit = _StubSystemStatsCubit(mockSystemStatsRepo);
 
     await tester.pumpWidgetBuilder(
-      MultiBlocProvider(
-        providers: [
-          BlocProvider<DashboardCubit>.value(value: dashboardCubit),
-          BlocProvider<StorageCubit>.value(value: storageCubit),
-          BlocProvider<RecentActivityCubit>.value(value: activityCubit),
-          BlocProvider<SystemStatsCubit>.value(value: systemStatsCubit),
-        ],
+      // Dashboard reads SystemStatsCubit from a parent provider in prod
+      // (flux_shell). Other cubits are created from GetIt-registered mocks.
+      BlocProvider<SystemStatsCubit>.value(
+        value: systemStatsCubit,
         child: const DashboardScreen(),
       ),
       surfaceSize: const Size(1440, 900),
     );
 
-    // Trigger all stub loads.
-    await dashboardCubit.load();
-    storageCubit.load();
-    activityCubit.load();
     systemStatsCubit.start();
 
-    // Settle animations.
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    // Drain the async repo loads inside DashboardCubit / StorageCubit /
+    // RecentActivityCubit — they all emit Loaded states asynchronously.
+    await tester.pumpAndSettle(const Duration(milliseconds: 300));
 
     await screenMatchesGolden(tester, 'm3_dashboard_default');
 
-    await dashboardCubit.close();
-    await storageCubit.close();
-    await activityCubit.close();
     await systemStatsCubit.close();
   });
 }

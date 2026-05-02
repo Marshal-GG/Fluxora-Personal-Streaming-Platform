@@ -1,14 +1,13 @@
 # Test configuration for apps/desktop.
 #
-# The `golden` tag is skipped by default: golden tests need extra setup
-# (registering mock repositories in GetIt before pumping the widget,
-# since DashboardScreen creates its cubits via `GetIt.I<>()` rather
-# than reading them from a parent BlocProvider). See test/goldens/_README.md
-# for the fix recipe and how to run goldens locally.
+# Golden tests are tagged 'golden' via the `@Tags(['golden'])` annotation
+# at the top of each golden test file. They run only when explicitly
+# requested; CI excludes them to avoid platform subpixel-rendering
+# false negatives.
 #
 # To run goldens:    flutter test --tags=golden test/goldens/
 # To regenerate:     flutter test --tags=golden --update-goldens test/goldens/
-
-tags:
-  golden:
-    skip: "Golden tests need GetIt mock-registration in setUp; tracked in test/goldens/_README.md"
+# To skip in CI:     flutter test --exclude-tags=golden
+#
+# The GetIt mock-registration recipe used by golden tests lives in
+# test/goldens/_README.md.

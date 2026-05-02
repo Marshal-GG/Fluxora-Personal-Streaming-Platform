@@ -9,27 +9,25 @@ Golden tests capture pixel-perfect screenshots of screens for visual regression 
 flutter test --tags=golden test/goldens/
 
 # Update golden baselines after intentional visual changes
-flutter test --update-goldens test/goldens/
+flutter test --tags=golden --update-goldens test/goldens/
+
+# Default test run + CI: skip goldens (platform subpixel rendering differs)
+flutter test --exclude-tags=golden
 ```
 
 ## Adding a new golden test
 
 1. Create a test file in `test/goldens/`.
-2. Import `package:golden_toolkit/golden_toolkit.dart`.
-3. Wrap the test in `testGoldens(...)` and use `screenMatchesGolden(tester, 'my_test_name')` to capture.
-4. Run `flutter test --update-goldens` once to generate the initial PNG baseline in
-   `test/goldens/goldens/`.
-5. Commit the generated PNG along with the test file.
+2. Add `@Tags(['golden'])` to the top of the file (above `library;`) so the test is gated behind the `golden` tag.
+3. Import `package:golden_toolkit/golden_toolkit.dart`.
+4. Use the **GetIt-mock pattern** (see below) for any screen that resolves repos via `GetIt.I<>()` inside `MultiBlocProvider.create`.
+5. Wrap the test in `testGoldens(...)` and use `screenMatchesGolden(tester, 'my_test_name')` to capture.
+6. Run `flutter test --tags=golden --update-goldens test/goldens/my_new_test.dart` once to generate the initial PNG baseline in `test/goldens/goldens/`.
+7. Commit the generated PNG along with the test file.
 
 ## Windows / font-rendering note
 
-Golden images are platform-sensitive. Baselines generated on Windows may differ from macOS/Linux
-due to font subpixel rendering differences. To opt CI out of golden comparisons:
-
-```yaml
-# .github/workflows/desktop.yml — skip goldens on CI:
-flutter test --exclude-tags=golden
-```
+Golden images are platform-sensitive. Baselines generated on Windows may differ from macOS/Linux due to font subpixel rendering differences. CI excludes golden tests via `flutter test --exclude-tags=golden`. The committed baselines reflect the maintainer's Windows machine; rebaseline on the same OS family if you regenerate.
 
 If golden generation fails with `"Surface size too large"` or font-loading errors, try:
 
@@ -45,34 +43,64 @@ GoldenToolkit.runWithConfiguration(
 
 | File | Screen | Size | Notes |
 |------|--------|------|-------|
-| `m3_dashboard_golden_test.dart` | DashboardScreen | 1440×900 | **Skipped by default** — see "Known limitation" below |
+| `m3_dashboard_golden_test.dart` | DashboardScreen | 1440×900 | Uses GetIt-mock recipe — see below |
 
-## Known limitation — GetIt vs MultiBlocProvider
+## GetIt-mock recipe — for screens that resolve repos via `GetIt.I<>()`
 
-The current golden test fails because production `DashboardScreen` creates its cubits inside
-`MultiBlocProvider.create` via `GetIt.I<DashboardRepository>()` (see [`dashboard_screen.dart`](../../lib/features/dashboard/presentation/screens/dashboard_screen.dart)). The test wraps the screen in a `MultiBlocProvider` with mock cubits, but the screen ignores those and asks GetIt for the real repo — which isn't registered, so `GetIt: Object/factory with type DashboardRepository is not registered` is thrown.
+Production screens like `DashboardScreen` create their cubits inside `MultiBlocProvider.create` using `GetIt.I<DashboardRepository>()` etc. A wrapping `MultiBlocProvider` in a test won't override those — the inner `create` block runs after the test's wrapping provider and asks the GetIt singleton directly.
 
-**Fix recipe (when ready to enable golden tests):**
+The fix: register **mock repositories** in GetIt before pumping, and stub their methods to return deterministic data. The screen's `MultiBlocProvider.create` then constructs real cubits that talk to your mocks.
 
 ```dart
-// In test setUp:
-final mockDashRepo = _MockDashboardRepo();
-final mockStorageRepo = _MockStorageRepo();
-final mockActivityRepo = _MockActivityRepo();
-final mockSystemStatsRepo = _MockSystemStatsRepo();
+class _MockDashboardRepo extends Mock implements DashboardRepository {}
+class _MockStorageRepo extends Mock implements StorageRepository {}
+class _MockActivityRepo extends Mock implements RecentActivityRepository {}
 
-setUp(() {
-  GetIt.I.reset();
-  GetIt.I.registerSingleton<DashboardRepository>(mockDashRepo);
-  GetIt.I.registerSingleton<StorageRepository>(mockStorageRepo);
-  GetIt.I.registerSingleton<RecentActivityRepository>(mockActivityRepo);
-  GetIt.I.registerSingleton<SystemStatsRepository>(mockSystemStatsRepo);
-  // Stub the mocks to return the deterministic states the test needs.
-});
+void main() {
+  final mockDashboardRepo = _MockDashboardRepo();
+  final mockStorageRepo = _MockStorageRepo();
+  final mockActivityRepo = _MockActivityRepo();
 
-tearDown(() => GetIt.I.reset());
+  setUp(() {
+    GetIt.I.reset();
+    GetIt.I.registerSingleton<DashboardRepository>(mockDashboardRepo);
+    GetIt.I.registerSingleton<StorageRepository>(mockStorageRepo);
+    GetIt.I.registerSingleton<RecentActivityRepository>(mockActivityRepo);
+
+    when(() => mockDashboardRepo.getServerInfo()).thenAnswer((_) async => _serverInfo);
+    when(() => mockDashboardRepo.getClients()).thenAnswer((_) async => _clients);
+    when(() => mockDashboardRepo.getLibraryCount()).thenAnswer((_) async => 6);
+    when(() => mockStorageRepo.fetch()).thenAnswer((_) async => _storage);
+    when(() => mockActivityRepo.fetch(limit: any(named: 'limit')))
+        .thenAnswer((_) async => _activities);
+  });
+
+  tearDown(() => GetIt.I.reset());
+
+  testGoldens('DashboardScreen — m3 default state', (tester) async {
+    await tester.pumpWidgetBuilder(
+      // Wrap only cubits that aren't created by the screen itself.
+      // SystemStatsCubit is provided by `flux_shell.dart` in prod.
+      BlocProvider<SystemStatsCubit>.value(
+        value: stubSystemStats,
+        child: const DashboardScreen(),
+      ),
+      surfaceSize: const Size(1440, 900),
+    );
+
+    // Drain async repo loads.
+    await tester.pumpAndSettle(const Duration(milliseconds: 300));
+
+    await screenMatchesGolden(tester, 'm3_dashboard_default');
+  });
+}
 ```
 
-The wrapping `MultiBlocProvider` can then be dropped — the screen will create its own cubits from the mock repos.
+### Why a stub `SystemStatsCubit` (not a mock repo)?
 
-**Until that fix lands, the `golden` tag is skipped via `dart_test.yaml`.** The default `flutter test` run does NOT include golden tests; they're opt-in via `--tags=golden` (which currently still fails — that's expected). The infrastructure is in place; only the GetIt-mock setup needs writing.
+`SystemStatsCubit.start()` schedules a `Timer.periodic` poll. Under test that timer would fire mid-capture and produce a flaky snapshot. Subclassing the cubit and overriding `start()` to emit one deterministic state, then idling, is simpler than disabling the timer through mocks.
+
+### Adapting for other screens
+
+- If a screen creates its cubits via a parent `BlocProvider` (not `GetIt.I<>()`), stub the cubit directly with `BlocProvider<X>.value(...)` instead of registering repos.
+- If a screen uses `BlocProvider.value` for an outer cubit and `MultiBlocProvider.create` + `GetIt` for inner ones, combine both patterns.
