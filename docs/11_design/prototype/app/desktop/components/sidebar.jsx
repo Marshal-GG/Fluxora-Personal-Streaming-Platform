@@ -20,17 +20,8 @@ const Sidebar = ({ active, onNav }) => {
       display: "flex", flexDirection: "column",
       backdropFilter: "blur(20px)",
     }}>
-      {/* Logo */}
-      <div style={{ padding: "20px 18px 16px", display: "flex", alignItems: "center", gap: 11 }}>
-        <FluxoraMark size={32}/>
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          <FluxoraWordmark height={14}/>
-          <span style={{ fontSize: 9.5, color: "#64748B", letterSpacing: 0.3 }}>Stream. Sync. Anywhere.</span>
-        </div>
-      </div>
-
       {/* Nav */}
-      <div style={{ padding: "8px 10px", flex: 1, overflowY: "auto" }}>
+      <div style={{ padding: "16px 10px 8px", flex: 1, overflowY: "auto" }}>
         <nav style={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {items.map(it => <NavItem key={it.id} item={it} active={active === it.id} onClick={() => onNav(it.id)}/>)}
         </nav>

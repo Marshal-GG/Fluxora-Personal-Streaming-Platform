@@ -33,8 +33,7 @@ const App = () => {
     <>
       <div className="titlebar">
         <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
-          <FluxoraMark size={18}/>
-          <FluxoraWordmark height={11}/>
+          <FluxoraWordmark height={13}/>
           <span style={{ fontSize: 11.5, color: "#64748B" }}>· Stream. Sync. Anywhere.</span>
         </div>
         <div style={{ display: "flex", gap: 4, alignItems: "center", marginRight: 8 }}>

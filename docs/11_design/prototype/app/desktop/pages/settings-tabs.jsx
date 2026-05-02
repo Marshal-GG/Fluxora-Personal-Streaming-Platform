@@ -173,8 +173,7 @@ const SettingsAdvancedTab = () => (
 const SettingsAboutTab = () => (
   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
     <Card padding={28} style={{ textAlign: "center" }}>
-      <div style={{ display: "inline-flex", justifyContent: "center", marginBottom: 16 }}><FluxoraMark size={72}/></div>
-      <div style={{ display: "inline-flex", justifyContent: "center", marginTop: 4 }}><FluxoraWordmark height={26}/></div>
+      <div style={{ display: "inline-flex", justifyContent: "center", marginBottom: 8 }}><FluxoraWordmark height={40}/></div>
       <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 8 }}>Stream. Sync. Anywhere.</div>
       <div style={{ fontFamily: "JetBrains Mono", fontSize: 11, color: "#A855F7", marginTop: 14 }}>v1.0.0 · build 2025.05.21.482</div>
       <div style={{ marginTop: 18, display: "flex", gap: 8, justifyContent: "center" }}>

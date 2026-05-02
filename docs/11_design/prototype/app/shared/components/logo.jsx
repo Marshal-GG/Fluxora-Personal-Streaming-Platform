@@ -3,7 +3,7 @@
 
 const FluxoraMark = ({ size = 32, glow = false, style }) => (
   <img
-    src="app/assets/logo-icon.png"
+    src="app/shared/assets/logo-icon.png"
     width={size}
     height={size}
     alt="Fluxora"
@@ -21,7 +21,7 @@ const FluxoraMark = ({ size = 32, glow = false, style }) => (
 
 const FluxoraWordmark = ({ height = 22, style }) => (
   <img
-    src="app/assets/logo-wordmark.png"
+    src="app/shared/assets/logo-wordmark.png"
     height={height}
     alt="Fluxora"
     draggable={false}

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Fluxora · Mobile (Android)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #f0eee9;
+    color: #E2E8F0;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 4px; }
+  /* hide horizontal scrollbars inside posters/rails */
+  .no-sb::-webkit-scrollbar { display: none; }
+</style>
+</head>
+<body>
+<div id="mobile-root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<!-- shared (data, brand, primitives) -->
+<script type="text/babel" src="app/shared/data/fluxora-data.jsx"></script>
+<script type="text/babel" src="app/shared/data/fluxora-data-2.jsx"></script>
+<script type="text/babel" src="app/shared/components/icons.jsx"></script>
+<script type="text/babel" src="app/shared/components/logo.jsx"></script>
+<script type="text/babel" src="app/shared/components/primitives.jsx"></script>
+
+<!-- mobile primitives + canvas -->
+<script type="text/babel" src="app/mobile/design-canvas.jsx"></script>
+<script type="text/babel" src="app/mobile/components/mobile-primitives.jsx"></script>
+
+<!-- mobile screens -->
+<script type="text/babel" src="app/mobile/screens/splash.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/home.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/library.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/search.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/detail.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/player-landscape.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/player-portrait.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/downloads.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/profile.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/extras.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/extras2.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/player-legend.jsx"></script>
+<script type="text/babel" src="app/mobile/screens/flow-diagram.jsx"></script>
+
+<!-- main app -->
+<script type="text/babel" src="app/mobile/mobile-app.jsx"></script>
+</body>
+</html>
