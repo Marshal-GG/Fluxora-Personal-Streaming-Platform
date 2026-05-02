@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Empty-state illustration: Library screen "No libraries yet".
+
+  An open folder rendered with a soft violet→cyan gradient on the front
+  flap, a softer body, and three faded media stubs peeking out the top to
+  hint at "this is where your media goes". A subtle plus glyph floats top-
+  right to invite the user to add one. Static (no animation) — readable
+  at a glance, doesn't compete with surrounding live data.
+
+  ViewBox: 240×180. Designed against AppColors.bgRoot.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 240 180"
+     fill="none">
+  <defs>
+    <linearGradient id="folderFront" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#A855F7" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#22D3EE" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="folderBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1E1A36"/>
+      <stop offset="100%" stop-color="#0F0D1F"/>
+    </linearGradient>
+    <linearGradient id="cardSheen" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#A855F7" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#22D3EE" stop-opacity="0.10"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Faded media stubs peeking out the top of the folder -->
+  <g opacity="0.65">
+    <rect x="76"  y="48" width="32" height="44" rx="3"
+          fill="url(#cardSheen)"
+          stroke="rgba(168,85,247,0.35)" stroke-width="0.8"/>
+    <rect x="112" y="42" width="32" height="50" rx="3"
+          fill="url(#cardSheen)"
+          stroke="rgba(168,85,247,0.45)" stroke-width="0.8"/>
+    <rect x="148" y="50" width="32" height="42" rx="3"
+          fill="url(#cardSheen)"
+          stroke="rgba(168,85,247,0.30)" stroke-width="0.8"/>
+  </g>
+
+  <!-- Folder body (back) -->
+  <path d="M 56 70
+           L 90 70
+           L 100 60
+           L 184 60
+           Q 192 60 192 68
+           L 192 132
+           Q 192 140 184 140
+           L 56 140
+           Q 48 140 48 132
+           L 48 78
+           Q 48 70 56 70 Z"
+        fill="url(#folderBody)"
+        stroke="rgba(255,255,255,0.05)"
+        stroke-width="1"/>
+
+  <!-- Folder front flap -->
+  <path d="M 56 84
+           L 184 84
+           Q 192 84 192 92
+           L 192 132
+           Q 192 140 184 140
+           L 56 140
+           Q 48 140 48 132
+           L 48 92
+           Q 48 84 56 84 Z"
+        fill="url(#folderFront)"
+        opacity="0.85"/>
+
+  <!-- Top edge highlight -->
+  <line x1="56" y1="84" x2="184" y2="84"
+        stroke="rgba(255,255,255,0.20)" stroke-width="1"/>
+
+  <!-- Plus glyph: top-right invitation -->
+  <g transform="translate(190 38)">
+    <circle r="14" fill="rgba(168,85,247,0.18)"
+            stroke="rgba(168,85,247,0.55)" stroke-width="1.2"/>
+    <line x1="-6" y1="0" x2="6" y2="0"
+          stroke="#C4A8F5" stroke-width="1.6" stroke-linecap="round"/>
+    <line x1="0" y1="-6" x2="0" y2="6"
+          stroke="#C4A8F5" stroke-width="1.6" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Pulse ring — concentric expanding rings for live indicators.
+
+  Wraps a small solid dot in two outward-expanding rings whose radius and
+  opacity animate in opposite phase. Used behind the StatusDot for "live",
+  "streaming", "recording" states — the kind of pulse that's mechanical to
+  set up in Flutter (two AnimationControllers with offset begins) and
+  trivial here.
+
+  ViewBox: 64×64. Centre dot is 8 px diameter; rings expand to 30 px max.
+  Pass a `currentColor` consumer in Dart to recolour the SVG at use site.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 64 64"
+     fill="none">
+  <!-- Outer ring — slower, fades sooner -->
+  <circle cx="32" cy="32" r="6" stroke="currentColor" stroke-width="1.5">
+    <animate attributeName="r"
+             values="6;30"
+             dur="2.4s"
+             repeatCount="indefinite"
+             keyTimes="0;1"
+             calcMode="spline"
+             keySplines="0.4 0 0.6 1"/>
+    <animate attributeName="opacity"
+             values="0.7;0"
+             dur="2.4s"
+             repeatCount="indefinite"
+             keyTimes="0;1"/>
+    <animate attributeName="stroke-width"
+             values="1.5;0.4"
+             dur="2.4s"
+             repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Inner ring — offset by half-cycle -->
+  <circle cx="32" cy="32" r="6" stroke="currentColor" stroke-width="1.5">
+    <animate attributeName="r"
+             values="6;24"
+             dur="2.4s"
+             begin="-1.2s"
+             repeatCount="indefinite"
+             keyTimes="0;1"
+             calcMode="spline"
+             keySplines="0.4 0 0.6 1"/>
+    <animate attributeName="opacity"
+             values="0.55;0"
+             dur="2.4s"
+             begin="-1.2s"
+             repeatCount="indefinite"
+             keyTimes="0;1"/>
+  </circle>
+
+  <!-- Solid centre dot — gentle breathing -->
+  <circle cx="32" cy="32" r="4" fill="currentColor">
+    <animate attributeName="r"
+             values="3.6;4.2;3.6"
+             dur="1.6s"
+             repeatCount="indefinite"/>
+  </circle>
+</svg>
