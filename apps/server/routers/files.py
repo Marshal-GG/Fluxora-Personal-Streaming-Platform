@@ -98,8 +98,24 @@ async def delete_file(
     db: aiosqlite.Connection = Depends(get_db),
     _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> None:
+    # Capture the file name before delete so the audit summary is
+    # human-readable instead of just an opaque id.
+    existing = await library_service.get_file(db, file_id)
     deleted = await library_service.delete_file(db, file_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
         )
+    try:
+        name = existing["name"] if existing else file_id
+        await activity_service.record(
+            db,
+            type="file.delete",
+            summary=f"File '{name}' deleted",
+            actor_kind="client" if _client else "operator",
+            actor_id=_client["id"] if _client else None,
+            target_kind="file",
+            target_id=file_id,
+        )
+    except Exception:
+        logger.warning("Failed to record file.delete activity event", exc_info=True)

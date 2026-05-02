@@ -282,3 +282,70 @@ async def test_revoke_emits_activity(client: AsyncClient, monkeypatch):
     )
     assert match is not None
     assert match["actor_kind"] == "operator"
+
+
+@pytest.mark.asyncio
+async def test_library_create_emits_activity(client: AsyncClient, tmp_path):
+    resp = await client.post(
+        "/api/v1/library",
+        json={
+            "name": "Movies",
+            "type": "movies",
+            "root_paths": [str(tmp_path)],
+        },
+    )
+    assert resp.status_code == 201
+    lib_id = resp.json()["id"]
+
+    listing = await client.get("/api/v1/activity")
+    rows = listing.json()
+    match = next(
+        (r for r in rows if r["type"] == "library.create" and r["target_id"] == lib_id),
+        None,
+    )
+    assert match is not None
+    assert "Movies" in match["summary"]
+    assert match["payload"]["type"] == "movies"
+
+
+@pytest.mark.asyncio
+async def test_library_delete_emits_activity(client: AsyncClient, tmp_path):
+    create = await client.post(
+        "/api/v1/library",
+        json={"name": "ToDelete", "type": "tv", "root_paths": [str(tmp_path)]},
+    )
+    lib_id = create.json()["id"]
+
+    resp = await client.delete(f"/api/v1/library/{lib_id}")
+    assert resp.status_code == 204
+
+    listing = await client.get("/api/v1/activity")
+    rows = listing.json()
+    match = next(
+        (r for r in rows if r["type"] == "library.delete" and r["target_id"] == lib_id),
+        None,
+    )
+    assert match is not None
+    assert "ToDelete" in match["summary"]
+
+
+@pytest.mark.asyncio
+async def test_file_delete_emits_activity(client: AsyncClient, test_db):
+    """Direct DB seed → DELETE → activity event."""
+    await test_db.execute(
+        "INSERT INTO media_files (id, path, name, extension, size_bytes)"
+        " VALUES ('del-1', '/m.mkv', 'gone.mkv', 'mkv', 100)"
+    )
+    await test_db.commit()
+
+    resp = await client.delete("/api/v1/files/del-1")
+    assert resp.status_code == 204
+
+    listing = await client.get("/api/v1/activity")
+    rows = listing.json()
+    match = next(
+        (r for r in rows if r["type"] == "file.delete" and r["target_id"] == "del-1"),
+        None,
+    )
+    assert match is not None
+    assert "gone.mkv" in match["summary"]

@@ -12,7 +12,7 @@ from models.library import (
     StorageByType,
 )
 from routers.deps import validate_token_or_local
-from services import library_service
+from services import activity_service, library_service
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,19 @@ async def create_library(
     row = await library_service.create_library(
         db, name=body.name, lib_type=body.type, root_paths=body.root_paths
     )
+    try:
+        await activity_service.record(
+            db,
+            type="library.create",
+            summary=f"Library '{body.name}' created ({body.type})",
+            actor_kind="client" if _client else "operator",
+            actor_id=_client["id"] if _client else None,
+            target_kind="library",
+            target_id=row["id"],
+            payload={"type": body.type, "root_count": len(body.root_paths)},
+        )
+    except Exception:
+        logger.warning("Failed to record library.create activity event", exc_info=True)
     return _parse_library(row)
 
 
@@ -86,11 +99,27 @@ async def delete_library(
     db: aiosqlite.Connection = Depends(get_db),
     _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> None:
+    # Capture the library name before delete so the audit summary is
+    # human-readable instead of just an opaque id.
+    existing = await library_service.get_library(db, library_id)
     deleted = await library_service.delete_library(db, library_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Library not found"
         )
+    try:
+        name = existing["name"] if existing else library_id
+        await activity_service.record(
+            db,
+            type="library.delete",
+            summary=f"Library '{name}' deleted",
+            actor_kind="client" if _client else "operator",
+            actor_id=_client["id"] if _client else None,
+            target_kind="library",
+            target_id=library_id,
+        )
+    except Exception:
+        logger.warning("Failed to record library.delete activity event", exc_info=True)
 
 
 @router.post("/{library_id}/scan", status_code=status.HTTP_200_OK)
