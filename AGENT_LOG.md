@@ -725,3 +725,83 @@ This arc shipped every desktop redesign screen on top of the M0 backend that fin
 - [x] All new third-party deps version-checked (`golden_toolkit ^0.15.0`, `mocktail ^1.0.4`).
 - [x] No backwards-compat hacks left behind — M9 deleted the 4 legacy widgets outright.
 ---
+
+## [2026-05-03] — Mobile redesign plan + Desktop V2 theme cutover (M9.5) + DESIGN.md V2 rewrite + doc sweep
+**Phase:** Phase 5 — Mobile redesign planning + Desktop V2 finalization
+**Status:** Complete
+
+### What Was Done
+
+This session had three tightly-related arcs.
+
+**Arc 1 — Mobile redesign plan (whole-app scope).** A new design prototype bundle was copied into `docs/11_design/prototype/` covering 28 mobile screens + flow diagram. The prior `mobile_player_redesign_plan.md` (drafted earlier the same day, narrowly scoped to the player screen) was rewritten and renamed `mobile_redesign_plan.md` to cover the entire mobile app. 14 milestones (M0 foundation → M14 polish) replace the original 7. The earlier "keep legacy mobile palette" decision (player-only scope) was reversed in §1 row 2: the whole-app redesign forces V2 palette migration. Original player-only sections preserved as §15 for cross-reference. Cleanup: deleted `docs/11_design/prototype/chats/` and `.tmp_design/`.
+
+**Arc 2 — Desktop V2 theme cutover (M9.5 — unplanned).** Owner reported a slate-blue scaffold flash on tab switches. Root cause: `apps/desktop/lib/shared/theme/app_theme.dart` body was still 100 % V1 (26 references) — `scaffoldBackgroundColor: AppColors.background` (#0F172A slate) was painting underneath the V2-painted route bodies during transitions. Rewrote the entire `app_theme.dart` body to consume V2 tokens (kept file path + `AppTheme.dark` getter signature unchanged). Fixed 5 V1 stragglers in feature screens. Verified zero `AppColors.{primary,background,surface,...}` references remain in `apps/desktop/lib/`. `flutter analyze` clean (27.8 s).
+
+**Arc 3 — DESIGN.md V2 rewrite + cross-doc sweep.** Owner directive: "do proper fix" + "dont keep anything legacy". Rewrote DESIGN.md (648 → 727 lines) as V2-only canonical — removed V1 color/typography blocks, dropped the "two coexisting systems" framing, deleted the V1 legacy appendix entirely, stripped all migration / cutover / deprecated wording from prose. Then synced affected docs.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `docs/11_design/mobile_redesign_plan.md` *(via git mv from `mobile_player_redesign_plan.md` + scope expansion)* |
+| Modified | `apps/desktop/lib/shared/theme/app_theme.dart` *(full body rewrite V1 → V2)* |
+| Modified | `apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart` *(line 503 dropdownColor: surface → bgRoot)* |
+| Modified | `apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart` *(textMuted → textDim, textSecondary → textMutedV2, bodyMd → body)* |
+| Modified | `apps/desktop/lib/features/library/presentation/screens/library_screen.dart` *(same rename pattern)* |
+| Modified | `DESIGN.md` *(full V2 rewrite, no legacy)* |
+| Modified | `docs/00_overview/current_status.md` *(date bump, V2 theme cutover entry, next-steps refresh)* |
+| Modified | `docs/08_frontend/01_frontend_architecture.md` *(Design System section reframed; line 113 showcase wording)* |
+| Modified | `docs/11_design/desktop_redesign_plan.md` *(M9.5 entry added; line 206 indigo gradient → violetDeep)* |
+| Modified | `docs/11_design/mobile_redesign_plan.md` *(execution gate marked lifted; whole-app scope rewrite earlier in session)* |
+| Modified | `docs/11_design/README.md` *(rewritten as folder index pointing to canonical sources)* |
+| Deleted | `docs/11_design/prototype/chats/` *(prototype handoff transcripts — not project content)* |
+| Deleted | `.tmp_design/` *(temp scratch dir)* |
+| Deleted | `docs/11_design/design_reference.html` *(2026-04-27 V1 concept HTML — superseded by `DESIGN.md` + `prototype/`)* |
+| Modified | `AGENT_LOG.md` *(this entry)* |
+
+### Docs Updated
+
+- `DESIGN.md` — V2-only canonical
+- `docs/00_overview/current_status.md` — V2 theme cutover line + next-steps
+- `docs/08_frontend/01_frontend_architecture.md` — single-source-of-truth framing
+- `docs/11_design/desktop_redesign_plan.md` — M9.5 entry + status line
+- `docs/11_design/mobile_redesign_plan.md` — gate-lifted §0
+- `docs/11_design/README.md` — folder index
+
+### Decisions Made
+
+- **Mobile redesign scope expanded to whole-app.** The earlier player-only plan can't apply V2 piecemeal — half-violet / half-indigo would feel broken. Whole-app migration locked in (`mobile_redesign_plan.md` §1 row 2 reverses the original §1 row 4 decision).
+- **Plan filename changed to match desktop convention.** `mobile_player_redesign_plan.md` → `mobile_redesign_plan.md` via `git mv` to preserve history.
+- **Theme directive: don't recreate theme infrastructure.** Owner directive 2026-05-03. Mobile redesign consumes existing `AppColors` / `AppTypography` / `AppRadii` / `AppSpacing` / `AppShadows` only — no new tokens, no new theme classes. Plan §1 row 2, §4, §4.2, §4.3 revised to document the mapping. M0 no longer adds tokens; M9 rewrites `apps/mobile/lib/shared/theme/app_theme.dart` body in-place.
+- **Desktop M9.5 was unplanned but necessary.** The M9 plan only covered "delete legacy widgets + update docs" — never specified a `ThemeData` rewrite. The redesigned screens bypassed Material theme by hardcoding V2 tokens, which masked the underlying V1 ThemeData until route transitions exposed the slate-blue scaffold. Logged as M9.5 in `desktop_redesign_plan.md` to keep the milestone history honest.
+- **DESIGN.md V2-only, no legacy section, no migration framing.** Owner directive. The mobile app still consumes V1 tokens in code, but DESIGN.md does not document them — it states the canonical spec. When mobile catches up, DESIGN.md doesn't change.
+- **Deleted `docs/11_design/design_reference.html`** rather than flagging as historical. 257-line V1 concept HTML from 2026-04-27 is no longer canonical (superseded by `DESIGN.md` + `prototype/`). Per "don't keep anything legacy" directive.
+
+### Blockers / Open Issues
+
+- **Visual smoke test for the V2 theme cutover.** `flutter run -d windows` to verify Material widgets that previously rendered indigo (default `TextField` border focus, `Switch` thumb tint, dialog `OK` button, dropdowns, snackbars, the active nav-rail tab indicator pill) all now render violet. No regressions caught by `flutter analyze` but visual sweep recommended.
+- **Mobile redesign execution.** Plan locked, gate lifted, but no code work started. Owner-scheduled.
+
+### Issues Discovered / Reported to User
+
+- **Theme migration was incomplete after desktop M9.** The redesign plan considered M9 ("Cleanup + final docs") to be the end of the desktop arc, but the underlying `ThemeData` body had never been rewritten — only individual screens migrated. This is now patched as M9.5 but the takeaway: future redesign plans should explicitly include a "rewrite ThemeData body" line item, not assume it as part of "cleanup".
+- **Two stale legacy artifacts found in design folder:** `design_reference.html` (V1 concept HTML) deleted; `prototype/chats/` (handoff transcripts) deleted; `.tmp_design/` (temp scratch) deleted.
+- **Showcase screen at `/showcase` was documented as "removed at M9 cutover" in `frontend_architecture.md:113` but is still present.** Updated wording to "Kept post-M9 as ongoing reference surface" — owner can decide separately whether to delete.
+
+### Next Agent Should
+
+1. **Visual smoke test of the M9.5 theme cutover** — `flutter run -d windows`, walk every screen, look for any Material widget that previously appeared indigo and confirm it now renders violet (most critical: dialogs, dropdowns, snackbars, focused inputs).
+2. **Mobile redesign M0** — when owner schedules. Foundation milestone is no-code-change (just runtime deps `google_fonts` / `lucide_icons` / `cached_network_image` + `BackgroundGradient` widget). Per `mobile_redesign_plan.md` §7.
+3. **Desktop M10 — Custom window chrome** — open per `desktop_redesign_plan.md` §13. Independent of mobile.
+4. **Optional: delete the `/showcase` route** if no longer wanted as a reference surface (currently kept).
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran. Owner does all version control.
+- [x] No agent / AI branding anywhere in code, docs, or commit messages.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No exceptions swallowed silently.
+- [x] No secrets / hardcoded paths added.
+- [x] No new third-party deps added this session — only existing tokens consumed.
+- [x] No backwards-compat hacks left behind — V1 tokens still in `app_colors.dart` only because mobile hasn't migrated; will be deleted at mobile M9.
+---
