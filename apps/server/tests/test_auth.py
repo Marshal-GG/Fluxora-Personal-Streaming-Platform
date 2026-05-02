@@ -94,9 +94,14 @@ async def test_rejection_flow(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_protected_route_requires_token(client: AsyncClient):
-    response = await client.delete(f"/api/v1/auth/revoke/{PAIR_BODY['client_id']}")
-    assert response.status_code == 401
+async def test_revoke_blocked_from_lan(test_db):
+    """`DELETE /auth/revoke/{id}` is localhost-only — non-loopback rejected."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app, client=("192.168.1.100", 50000)),
+        base_url="http://test",
+    ) as lan:
+        resp = await lan.delete("/api/v1/auth/revoke/any-id")
+    assert resp.status_code == 403
 
 
 # ── Localhost restriction ────────────────────────────────────────────────────

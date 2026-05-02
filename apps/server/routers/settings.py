@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from database.db import get_db
 from models.settings import UpdateSettingsBody, UserSettingsResponse
 from routers.deps import require_local_caller
-from services import settings_service
+from services import activity_service, settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +56,29 @@ async def update_settings(
     db: aiosqlite.Connection = Depends(get_db),
     _local: None = Depends(require_local_caller),
 ) -> UserSettingsResponse:
+    changed = body.model_dump(exclude_none=True)
     try:
-        row = await settings_service.update_settings(
-            db, **body.model_dump(exclude_none=True)
-        )
+        row = await settings_service.update_settings(db, **changed)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
+    if changed:
+        try:
+            # Log only the field names changed; values may include license keys
+            # or URLs with secrets.
+            field_list = sorted(changed.keys())
+            await activity_service.record(
+                db,
+                type="settings.change",
+                summary=f"Settings updated: {', '.join(field_list)}",
+                actor_kind="operator",
+                target_kind="settings",
+                payload={"fields": field_list},
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record settings.change activity event", exc_info=True
+            )
     return _to_response(row)

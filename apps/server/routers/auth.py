@@ -14,8 +14,8 @@ from models.client import (
     PairRequestBody,
     PairResponse,
 )
-from routers.deps import require_local_caller, validate_token
-from services import auth_service
+from routers.deps import require_local_caller
+from services import activity_service, auth_service
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -130,7 +130,7 @@ async def reject_client(
 async def revoke_client(
     client_id: str,
     db: aiosqlite.Connection = Depends(get_db),
-    _client: aiosqlite.Row = Depends(validate_token),
+    _local: None = Depends(require_local_caller),
 ) -> None:
     client = await auth_service.get_client(db, client_id)
     if client is None:
@@ -139,6 +139,17 @@ async def revoke_client(
         )
 
     await auth_service.revoke_client(db, client_id)
+    try:
+        await activity_service.record(
+            db,
+            type="client.revoke",
+            summary=f"Client {client_id} revoked",
+            actor_kind="operator",
+            target_kind="client",
+            target_id=client_id,
+        )
+    except Exception:
+        logger.warning("Failed to record client.revoke activity event", exc_info=True)
 
 
 # In-memory store for tokens pending first poll.

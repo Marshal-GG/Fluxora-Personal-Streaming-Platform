@@ -16,7 +16,7 @@ from config import settings
 from database.db import get_db
 from models.media_file import MediaFileResponse
 from routers.deps import validate_token_or_local
-from services import library_service
+from services import activity_service, library_service
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,22 @@ async def upload_file(
             file=file,
             tmdb_api_key=settings.fluxora_tmdb_key or None,
         )
+        try:
+            await activity_service.record(
+                db,
+                type="file.upload",
+                summary=f"Uploaded {row.get('name', 'file')} to library",
+                actor_kind="client" if _client else "operator",
+                actor_id=_client["id"] if _client else None,
+                target_kind="file",
+                target_id=row.get("id"),
+                payload={
+                    "library_id": library_id,
+                    "size_bytes": row.get("size_bytes"),
+                },
+            )
+        except Exception:
+            logger.warning("Failed to record file.upload activity event", exc_info=True)
         return MediaFileResponse(**row)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

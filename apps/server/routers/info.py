@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, status
 from config import settings
 from database.db import get_db
 from models.settings import ServerInfoResponse, SystemStatsResponse
-from routers.deps import require_local_caller
+from routers.deps import require_local_caller, validate_token_or_local
 from services.system_stats_service import system_stats
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,7 @@ async def get_info(db: aiosqlite.Connection = Depends(get_db)) -> ServerInfoResp
 @router.get("/info/stats", response_model=SystemStatsResponse)
 async def get_stats(
     db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> SystemStatsResponse:
     """Live server stats — sidebar System Status, status bar, sparklines.
 

@@ -6,7 +6,9 @@ import json
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from config import settings as _settings
 from main import app
@@ -127,3 +129,20 @@ def test_ws_stats_non_localhost_requires_auth(test_db):
                         ws.receive_text()
                 except WebSocketDisconnect as exc:
                     assert exc.code == 1008
+
+
+# ── auth gate (token-or-localhost) ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_info_stats_blocked_from_tunnel_without_token(test_db):
+    """Tunneled callers without a bearer token must be rejected."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app, client=("203.0.113.7", 50000)),
+        base_url="http://test",
+    ) as remote:
+        resp = await remote.get(
+            "/api/v1/info/stats",
+            headers={"CF-Connecting-IP": "203.0.113.7"},
+        )
+    assert resp.status_code == 401

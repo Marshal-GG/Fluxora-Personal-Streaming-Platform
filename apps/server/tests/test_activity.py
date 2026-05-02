@@ -218,3 +218,67 @@ async def test_endpoint_requires_token_off_loopback(test_db):
             headers={"CF-Connecting-IP": "203.0.113.7"},
         )
     assert resp.status_code == 401
+
+
+# ── extended emitters (file.upload, settings.change, client.revoke) ───────
+
+
+@pytest.mark.asyncio
+async def test_settings_change_emits_activity(client: AsyncClient):
+    resp = await client.patch("/api/v1/settings", json={"server_name": "Renamed"})
+    assert resp.status_code == 200
+    listing = await client.get("/api/v1/activity")
+    rows = listing.json()
+    match = next((r for r in rows if r["type"] == "settings.change"), None)
+    assert match is not None
+    assert match["actor_kind"] == "operator"
+    # Field names logged, values not
+    assert match["payload"]["fields"] == ["server_name"]
+    assert "Renamed" not in match["summary"]
+
+
+@pytest.mark.asyncio
+async def test_settings_change_skipped_when_body_empty(client: AsyncClient):
+    """Empty PATCH (all fields excluded as None) emits no activity event."""
+    before = await client.get("/api/v1/activity")
+    before_count = len(before.json())
+    resp = await client.patch("/api/v1/settings", json={})
+    assert resp.status_code == 200
+    after = await client.get("/api/v1/activity")
+    after_settings = [r for r in after.json() if r["type"] == "settings.change"]
+    assert len(after_settings) == 0
+    # Total event count unchanged
+    assert len(after.json()) == before_count
+
+
+@pytest.mark.asyncio
+async def test_revoke_emits_activity(client: AsyncClient, monkeypatch):
+    """Revoking a paired client emits a client.revoke event with operator
+    actor and the revoked client_id as target."""
+    monkeypatch.setattr(
+        "routers.auth.settings.token_hmac_key", "test-secret-key-for-unit-tests-only"
+    )
+    body = {
+        "client_id": "to-revoke",
+        "device_name": "Phone",
+        "platform": "android",
+        "app_version": "0.1.0",
+    }
+    await client.post("/api/v1/auth/request-pair", json=body)
+    await client.post("/api/v1/auth/approve/to-revoke")
+
+    resp = await client.delete("/api/v1/auth/revoke/to-revoke")
+    assert resp.status_code == 204
+
+    listing = await client.get("/api/v1/activity")
+    rows = listing.json()
+    match = next(
+        (
+            r
+            for r in rows
+            if r["type"] == "client.revoke" and r["target_id"] == "to-revoke"
+        ),
+        None,
+    )
+    assert match is not None
+    assert match["actor_kind"] == "operator"
