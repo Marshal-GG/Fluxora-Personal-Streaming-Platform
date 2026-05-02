@@ -13,7 +13,7 @@ dependencies:
   fluxora_core:
     path: ../../packages/fluxora_core
   flutter_bloc: ^9.1.1
-  go_router: ^13.0.0
+  go_router: ^17.2.3
   get_it: ^7.6.7
   multicast_dns: ^0.3.2
   flutter_secure_storage: ^9.0.0
