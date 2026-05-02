@@ -27,7 +27,7 @@ All paths are under the base `http://{server_ip}:8080` on LAN or `https://fluxor
 |--------|------|------|---------|
 | `GET` | `/api/v1/info` | None | Server identity — name, version, tier, remote_url |
 | `GET` | `/api/v1/healthz` | None | Liveness probe for Cloudflare Tunnel health check |
-| `GET` | `/api/v1/info/stats` | None | Live CPU, RAM, network, uptime, active streams |
+| `GET` | `/api/v1/info/stats` | Token OR localhost | Live CPU, RAM, network, uptime, active streams |
 | `POST` | `/api/v1/info/restart` | Localhost only | Schedule graceful server restart |
 | `POST` | `/api/v1/info/stop` | Localhost only | Schedule graceful server shutdown |
 
@@ -39,7 +39,7 @@ All paths are under the base `http://{server_ip}:8080` on LAN or `https://fluxor
 | `GET` | `/api/v1/auth/status/{client_id}` | None | Poll pairing status; token returned once on approval |
 | `POST` | `/api/v1/auth/approve/{client_id}` | Localhost only | Approve pending pair request |
 | `POST` | `/api/v1/auth/reject/{client_id}` | Localhost only | Reject pending pair request |
-| `DELETE` | `/api/v1/auth/revoke/{client_id}` | Bearer token | Revoke an approved client |
+| `DELETE` | `/api/v1/auth/revoke/{client_id}` | Localhost only | Revoke an approved client (operator action) |
 | `GET` | `/api/v1/auth/clients` | Localhost only | List all paired clients |
 
 ### `files` router

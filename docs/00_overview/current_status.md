@@ -13,7 +13,7 @@
 
 ---
 
-## `apps/server` — Phases 1–5 partially complete (240 passing tests; ruff + black clean)
+## `apps/server` — Phases 1–5 partially complete (244 passing tests; ruff + black clean)
 
 - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured JSON logging (`python-json-logger`), rotating log file
 - **Routers:** info (+ healthz), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding + 18 extended fields), orders (paginated + portal-url), groups, notifications, activity, profile, webhook, transcoding (status), logs (REST + WS)

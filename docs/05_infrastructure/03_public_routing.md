@@ -79,7 +79,7 @@ Some pieces of the routing plan landed alongside the desktop redesign work, ahea
 |-----------|------|--------|
 | `SystemStatsResponse` model with `public_address` field | `apps/server/models/settings.py` | ✅ Shipped (field always `null` until Phase 2.6) |
 | `system_stats_service` collecting CPU/RAM/network/uptime/active streams | `apps/server/services/system_stats_service.py` | ✅ Shipped |
-| `GET /api/v1/info/stats` REST endpoint | `apps/server/routers/info.py` | ✅ Shipped (no auth) |
+| `GET /api/v1/info/stats` REST endpoint | `apps/server/routers/info.py` | ✅ Shipped (`validate_token_or_local`) |
 | `WS /api/v1/ws/stats` live-update WebSocket | `apps/server/routers/ws.py` | ✅ Shipped |
 | `POST /api/v1/info/restart`, `POST /api/v1/info/stop` admin actions | `apps/server/routers/info.py` | ✅ Shipped (`require_local_caller`) |
 | Validation: `transcoding_encoder/preset/crf` Pydantic enums + bounds | `apps/server/models/settings.py` | ✅ Shipped |

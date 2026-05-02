@@ -34,8 +34,8 @@ Authorization: Bearer {auth_token}
 | Mode | Dependency | Used by |
 |------|-----------|---------|
 | Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints |
-| Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity`, `GET /logs` — desktop control panel needs no token |
-| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
+| Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /info/stats`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity`, `GET /logs` — desktop control panel needs no token |
+| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /info/restart`, `POST /info/stop`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
 | No auth | — | `/info`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
 
 ---
@@ -101,7 +101,7 @@ Authorization: Bearer {auth_token}
 
 ### `GET /api/v1/info/stats`
 **Description:** Live system stats — CPU, RAM, network throughput, uptime, LAN IP, internet connectivity, active stream count. Backs the redesigned sidebar System Status block, the bottom status bar, and the Dashboard sparklines.  
-**Auth:** None required.  
+**Auth:** Bearer token OR localhost (`validate_token_or_local`). Matches the `/ws/stats` WebSocket auth pattern.  
 **Status:** ✅ Implemented
 
 **Response:**
@@ -203,8 +203,8 @@ Authorization: Bearer {auth_token}
 ---
 
 ### `DELETE /api/v1/auth/revoke/{client_id}`
-**Description:** Revoke an approved client's access. Takes effect immediately.  
-**Auth:** Bearer token required.  
+**Description:** Revoke an approved client's access. Takes effect immediately. Emits a `client.revoke` activity event.  
+**Auth:** Localhost only (`require_local_caller`). Operator action surfaced from the desktop Clients screen — clients cannot revoke each other.  
 **Status:** ✅ Implemented
 
 **Response:** `204 No Content`

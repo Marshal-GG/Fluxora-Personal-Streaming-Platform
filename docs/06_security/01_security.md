@@ -59,11 +59,12 @@ New Device:
 | Route Pattern | Auth Required | Notes |
 |--------------|--------------|-------|
 | `GET /api/v1/info` | ❌ Public | Server identity only — no sensitive data |
+| `GET /api/v1/info/stats` | 🟡 Token OR localhost | `validate_token_or_local` — earlier versions had no auth, leaking CPU / RAM / lan_ip / public_address over the public tunnel; tightened to match `/ws/stats`. |
 | `POST /api/v1/auth/request-pair` | ❌ Public | Pairing initiation |
 | `GET /api/v1/auth/status/{id}` | ❌ Public | Polling endpoint — token returned once on first approved poll |
 | `POST /api/v1/auth/approve/{id}` | 🔒 Localhost only | `require_local_caller` dep — 403 if `request.client.host` not in `{127.0.0.1, ::1, localhost}` |
 | `POST /api/v1/auth/reject/{id}` | 🔒 Localhost only | Same `require_local_caller` restriction |
-| `DELETE /api/v1/auth/revoke/{id}` | ✅ Bearer token | Revoke a client's access |
+| `DELETE /api/v1/auth/revoke/{id}` | 🔒 Localhost only | `require_local_caller` — operator action surfaced from desktop Clients screen. Earlier versions accepted any bearer token, which let one client revoke another (privilege escalation); tightened to localhost-only. |
 | `GET /api/v1/files` | ✅ Bearer token | List indexed media files |
 | `GET /api/v1/files/{id}` | ✅ Bearer token | Single file lookup |
 | `GET /api/v1/library` | ✅ Bearer token | List libraries |
