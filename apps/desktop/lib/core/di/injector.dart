@@ -14,6 +14,9 @@ import 'package:fluxora_desktop/features/orders/presentation/cubit/orders_cubit.
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
 import 'package:fluxora_desktop/features/activity/domain/repositories/activity_repository.dart';
 import 'package:fluxora_desktop/features/activity/data/repositories/activity_repository_impl.dart';
+import 'package:fluxora_desktop/features/system_stats/data/repositories/system_stats_repository_impl.dart';
+import 'package:fluxora_desktop/features/system_stats/domain/repositories/system_stats_repository.dart';
+import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 
 final getIt = GetIt.instance;
 
@@ -64,5 +67,16 @@ Future<void> setupInjector() async {
   );
   getIt.registerFactory<OrdersCubit>(
     () => OrdersCubit(repository: getIt<OrdersRepository>()),
+  );
+
+  // ── System stats ─────────────────────────────────────────────────────────────
+  // Polls /api/v1/info/stats every 1.1 s; one shared cubit at the shell
+  // level so sidebar / status bar / Dashboard sparklines all read the same
+  // ring buffer.
+  getIt.registerLazySingleton<SystemStatsRepository>(
+    () => SystemStatsRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+  getIt.registerFactory<SystemStatsCubit>(
+    () => SystemStatsCubit(repository: getIt<SystemStatsRepository>()),
   );
 }
