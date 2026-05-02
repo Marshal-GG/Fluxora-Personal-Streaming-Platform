@@ -73,7 +73,7 @@
 | **Desktop redesign M7 Subscription + Profile + Notifications + Help** (Subscription with 3 sub-tabs Overview/Billing/Manage; Profile reuses `/api/v1/profile`; Notifications slide-over overlay subscribed to `WS /ws/notifications`; static Help screen; new entities `Profile` + `AppNotification`; new features `notifications/` + `help/`) | ✅ done 2026-05-02 |
 | **Desktop redesign M8 Cmd+K palette** (palette overlay + 13 commands: 12 routes + 2 server actions + 1 notifications toggle; `Cmd+K` on macOS, `Ctrl+K` elsewhere; arrow keys + Enter + Escape; mounted in `flux_shell.dart` via `Shortcuts`/`Actions`/`CommandPaletteScope`) | ✅ done 2026-05-02 |
 | **Desktop redesign M8 a11y pass + golden-test infra** (Tooltip + Semantics annotations across all M3–M7 screens + sidebar + status bar; `golden_toolkit` 0.15.0 + `mocktail` added; first M3 Dashboard golden test scaffolded — currently skip-marked via `dart_test.yaml` because production screen uses GetIt directly; fix recipe documented in `test/goldens/_README.md`) | ✅ done 2026-05-03 |
-| Desktop redesign M9 (cleanup + final docs) | 🔲 not started |
+| **Desktop redesign M9 cleanup** (deleted 4 legacy widgets/screens superseded by M1–M7: `stat_card.dart`, `status_badge.dart`, `data_table.dart`, `licenses_screen.dart` — all unused after the redesign cutover; `flutter analyze` confirmed no remaining references) | ✅ done 2026-05-03 |
 
 ---
 

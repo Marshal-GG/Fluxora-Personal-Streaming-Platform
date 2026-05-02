@@ -95,9 +95,11 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 - **Accessibility pass ✅ Done 2026-05-03:** Tooltip wrappers added to every icon-only `IconButton`/`InkWell` across all M3–M7 screens + sidebar + status bar (refresh, close X, eye/stop/more, copy, dismiss, pause/resume, pagination chevrons, three-dot overflows, the bell). `Semantics(label: ...)` wrappers added to every `StatTile` value + `Sparkline`. No behavioural changes.
 - **Golden-test infra ✅ Done 2026-05-03 (skip-marked):** `golden_toolkit` 0.15.0 + `mocktail` added as dev_dependencies. First Dashboard golden test scaffolded at `test/goldens/m3_dashboard_golden_test.dart` with deterministic mock states (server info, 6 libraries, 1 active stream, fixed storage breakdown, 4 activity events at fixed timestamps, 30-sample CPU buffer). The test currently fails because production `DashboardScreen` creates cubits via `GetIt.I<>()` rather than reading from the test's `MultiBlocProvider`. Skip-marked via `dart_test.yaml` (`golden` tag); detailed fix recipe in `test/goldens/_README.md`. Default `flutter test` excludes the golden suite cleanly.
 
-### M9 — Cleanup + final docs *(🔲 Not started)*
+### M9 — Cleanup + final docs *(✅ Done 2026-05-03)*
 
-Pending the deferred M8 work + visual review against prototype.
+- **Legacy widgets/screens deleted:** `apps/desktop/lib/shared/widgets/stat_card.dart` (superseded by M1 `stat_tile.dart`), `status_badge.dart` (superseded by M1 `pill.dart` + `status_dot.dart`), `data_table.dart` (superseded by per-screen custom tables built on `FluxCard`), and `apps/desktop/lib/features/orders/presentation/screens/licenses_screen.dart` (superseded by M7 `subscription_screen.dart`'s Billing tab). Verified zero remaining references via `grep`; `flutter analyze` clean post-deletion.
+- **Visual review against prototype** is the user's manual verification step — `flutter run -d windows` and pixel-compare each redesigned screen against `desktop_prototype/Fluxora Desktop.html` at 1440 × 900. No code can substitute for this.
+- **Desktop redesign milestone is complete.** The remaining cleanup item from M8 (Tooltips + Semantics on the 8 screens Sonnet didn't reach + the GetIt-mocking fix to enable goldens) is documented in `test/goldens/_README.md` and the M8 row of `current_status.md`.
 
 ---
 
