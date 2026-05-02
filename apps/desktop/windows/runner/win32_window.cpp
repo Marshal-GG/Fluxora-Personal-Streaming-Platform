@@ -216,6 +216,20 @@ Win32Window::MessageHandler(HWND hwnd,
     case WM_DWMCOLORIZATIONCOLORCHANGED:
       UpdateTheme(hwnd);
       return 0;
+
+    case WM_GETMINMAXINFO: {
+      // Enforce a minimum window size matching the desktop redesign's
+      // authored bounds (1100 px content + 232 px sidebar = 1332 logical
+      // px wide, 720 px tall). DPI-scaled to physical pixels so the
+      // minimum holds correctly on high-DPI displays.
+      HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+      UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
+      double scale_factor = dpi / 96.0;
+      MINMAXINFO* info = reinterpret_cast<MINMAXINFO*>(lparam);
+      info->ptMinTrackSize.x = Scale(1332, scale_factor);
+      info->ptMinTrackSize.y = Scale(720, scale_factor);
+      return 0;
+    }
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);

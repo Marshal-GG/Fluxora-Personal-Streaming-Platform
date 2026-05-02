@@ -593,7 +593,7 @@ class _TableHeaderRow extends StatelessWidget {
           Expanded(flex: 10, child: Text('LAST ACTIVE', style: style)),
           Expanded(flex: 16, child: Text('CURRENT STREAM', style: style)),
           Expanded(
-            flex: 10,
+            flex: 14,
             child: Text('ACTIONS', style: style, textAlign: TextAlign.right),
           ),
         ],
@@ -699,9 +699,11 @@ class _ClientRowState extends State<_ClientRow> {
                   ),
                 ),
               ),
-              // Actions
+              // Actions — flex 14 to fit 3×26 px icons + 4 px gaps without
+              // overflow when the detail panel is open and the table is
+              // narrower (~600 px).
               Expanded(
-                flex: 10,
+                flex: 14,
                 child: _RowActions(
                   client: c,
                   isProcessing: widget.isProcessing,

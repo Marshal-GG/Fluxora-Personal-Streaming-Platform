@@ -125,7 +125,34 @@ class _ShellBodyState extends State<_ShellBody> {
                                   Expanded(
                                     child: Column(
                                       children: [
-                                        Expanded(child: widget.child),
+                                        // The redesign was authored against
+                                        // a 1100 px content minimum (4 stat
+                                        // tiles + detail panel + table fit
+                                        // cleanly above that). Below that,
+                                        // horizontal-scroll the screen so
+                                        // layouts don't collapse into
+                                        // overflow stripes.
+                                        Expanded(
+                                          child: LayoutBuilder(
+                                            builder: (ctx, constraints) {
+                                              const minContentWidth = 1100.0;
+                                              if (constraints.maxWidth >=
+                                                  minContentWidth) {
+                                                return widget.child;
+                                              }
+                                              return SingleChildScrollView(
+                                                scrollDirection:
+                                                    Axis.horizontal,
+                                                child: SizedBox(
+                                                  width: minContentWidth,
+                                                  height:
+                                                      constraints.maxHeight,
+                                                  child: widget.child,
+                                                ),
+                                              );
+                                            },
+                                          ),
+                                        ),
                                         const FluxStatusBar(),
                                       ],
                                     ),
