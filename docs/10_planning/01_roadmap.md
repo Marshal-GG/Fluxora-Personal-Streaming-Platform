@@ -1,7 +1,7 @@
 # Project Roadmap & Milestones
 
 > **Category:** Planning  
-> **Status:** Active - Updated 2026-05-02 (Phase 5 in progress; M0 backend fully complete: §7.8 transcoding status, §7.9 structured logs, §7.10 extended settings, §7.11 orders pagination + portal-url; 240 tests)
+> **Status:** Active - Updated 2026-05-03 (Phase 5 in progress; M0 backend fully complete: 247 tests; desktop redesign M1–M10 shipped — including M10 custom window chrome / FluxTitlebar / Aero Peek shell-integration. Mobile redesign gate now lifted.)
 
 ---
 

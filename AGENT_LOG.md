@@ -805,3 +805,149 @@ This session had three tightly-related arcs.
 - [x] No new third-party deps added this session — only existing tokens consumed.
 - [x] No backwards-compat hacks left behind — V1 tokens still in `app_colors.dart` only because mobile hasn't migrated; will be deleted at mobile M9.
 ---
+
+## [2026-05-03] — M8 deferred items + M10 custom window chrome + branding/Aero Peek fixes
+**Phase:** Phase 5 — Desktop redesign close-out
+**Status:** Complete. Desktop redesign is now M0-M10 fully shipped end-to-end. Mobile redesign gate already lifted by the prior M9.5 cutover; no remaining desktop blockers.
+
+### What Was Done
+
+#### A11y pass — 8 surfaces (M8 deferred from prior session)
+Added `Tooltip` + `Semantics` annotations to the screens Sonnet didn't reach in M8. Pattern matches the existing M3-M7 work: `Semantics(button: true, selected: ...)` on tappable widgets without a visible-button affordance, `Semantics(label: ...)` on info displays, tooltip-only on icon buttons that already have visible affordance.
+- `logs_screen.dart` — log row expand button (`Semantics(button: true, label: 'LEVEL log at TIME from SOURCE: MSG', toggled: isExpanded)`), live indicator container (`Semantics(label: 'Logs live/paused, N entries', container: true)`), Reset filters link (`Semantics(button: true, label: 'Reset filters')`).
+- `settings_screen.dart` — 6 tab-row items (`Semantics(button: true, selected: isActive, label: 'X settings tab')`).
+- `encoder_settings_screen.dart` — encoder selector cards + preset chips (`Semantics(button: true, selected, label)`).
+- `profile_screen.dart` — left-rail tab nav + custom toggle pills (`Semantics(button: true, toggled, label)`).
+- `help_screen.dart` — FAQ expanders (`Semantics(button: true, expanded, label)`) + external link rows (`Semantics(button: true, link: true, label)`).
+- `notifications_panel.dart` — filter chips + notification rows (`Semantics(button: true, selected/label, full title+message readout)`).
+- `flux_sidebar.dart` — nav items (`selected: _isActive`), View Plans (`label: 'View subscription plans'`), profile footer (`label: 'Open profile'`).
+- `flux_status_bar.dart` — metric chips wrapped in `Semantics(label: 'CPU 18%', container: true, excludeSemantics: true)` so screen readers read the combined value, not three fragments.
+
+#### Golden test enabled
+Switched the M3 Dashboard golden from skip-marked to active using the GetIt-mock recipe documented in `test/goldens/_README.md`:
+- `setUp` resets `GetIt.I`, registers mock `DashboardRepository` / `StorageRepository` / `RecentActivityRepository`. `when(() => mock.method()).thenAnswer(...)` stubs the methods the screen calls.
+- The wrapping `MultiBlocProvider` around `DashboardScreen` is dropped — the screen's own `MultiBlocProvider.create` block now consumes the mocks via `GetIt.I<X>()`.
+- `SystemStatsCubit` stays as a stub cubit (subclass overrides `start()` to emit one deterministic state) because its production `Timer.periodic` would tick mid-capture and produce flaky frames.
+- `dart_test.yaml` `skip:` removed; tag declared via per-file `@Tags(['golden'])`. Default `flutter test` excludes goldens automatically; opt-in with `--tags=golden`; regenerate with `--update-goldens`.
+- Baseline PNG `m3_dashboard_default.png` regenerated and committed.
+
+#### Tech stack doc rewrite
+`docs/02_architecture/02_tech_stack.md` was missing codegen + desktop-specific deps. Rewrote as a full canonical inventory: every package per repo (server, fluxora_core, desktop, mobile, web_landing) with versions + purpose, dedicated codegen pipeline section (freezed + json_serializable + build_runner), test stack (mocktail + bloc_test + golden_toolkit), build/CI/deploy (PyInstaller, GitHub Actions, Cloudflare Pages, Cloudflare Tunnel, devcontainer), external services, networking + risks. New section "System fonts used by FluxTitlebar" documents the Segoe Fluent Icons / Segoe MDL2 Assets fallback chain with codepoint table.
+
+#### M10 — Custom window chrome shipped
+Plan was authored at `desktop_redesign_plan.md` Section 13; implemented end-to-end in this session.
+- Added `window_manager: ^0.5.1` to `apps/desktop/pubspec.yaml`. Latest stable; primary-feature dep; allowed per CLAUDE.md hard rule #6 with explicit owner approval.
+- `apps/desktop/lib/main.dart` — `await windowManager.ensureInitialized()` before runApp; `WindowOptions(size: 1440x900, minimumSize: 1332x720, center: true, backgroundColor: transparent, titleBarStyle: TitleBarStyle.hidden)`. The `minimumSize` mirrors the existing `WM_GETMINMAXINFO` floor in the C++ runner.
+- New widget `apps/desktop/lib/shared/widgets/flux_titlebar.dart`:
+  - 36 px tall, `rgba(6,4,16,0.9)` bg, 1 px bottom border `rgba(255,255,255,0.04)`.
+  - Left half is a `DragToMoveArea` wrapping `FluxoraWordmark(height: 13)` + tagline. Trailing `Expanded(SizedBox.expand())` keeps the rest of the empty space draggable.
+  - Mid-right: 26x26 pill-style help button (routes to `/help`) + notifications bell with violet status dot + glow shadow (toggles existing `NotificationsPanelScope`).
+  - Far right: 3 native Win 11 caption buttons, 46x36 px each, **flush with the window edge, no inter-button gaps** so the muscle-memory "click top-right corner to close" gesture works.
+  - Window-control glyphs use Segoe Fluent Icons codepoints (Win 11 native): U+E921 ChromeMinimize, U+E922 ChromeMaximize, U+E923 ChromeRestore, U+E8BB ChromeClose. `Segoe MDL2 Assets` fallback for Win 10 1511+.
+  - Hover/press states match Windows 11 spec exactly: min/max -> transparent / `rgba(255,255,255,0.06)` hover / `rgba(255,255,255,0.10)` press; close -> transparent / `#C42B1C` hover with white icon / `#B72516` press. 80 ms `AnimatedContainer` for the bg fade. Tooltip 600 ms wait. Cursor stays `basic` (arrow), not click-hand — matches OS title bar.
+  - `WindowListener` hook re-syncs `_isMaximized` on `onWindowMaximize` / `onWindowUnmaximize` so the middle button's icon + tooltip swap (`Maximize` <-> `Restore`) follow the window state correctly.
+- `apps/desktop/lib/shared/widgets/flux_shell.dart` — restructured the body from a single Stack to a Column with the titlebar at top and an Expanded(Stack(Row + overlays)) below, so notifications panel + Cmd+K palette overlays don't cover the titlebar.
+- Sidebar `_LogoHeader` widget deleted from `flux_sidebar.dart` — the updated prototype starts the sidebar directly with the nav list (the wordmark moves to the titlebar). Unused `_taglineStyle` static + `fluxora_logo.dart` import dropped.
+
+#### Branding pass — Fluxora app icon end-to-end
+- New master `assets/brand/app_icon.ico` regenerated from `assets/brand/logo-icon.png` (1254x1254 source) via Pillow pipeline:
+  1. Alpha-from-brightness (brightness 10 -> alpha 0; brightness 100 -> alpha 255) so the dark backdrop becomes transparent.
+  2. Tight-crop to alpha bounding box (was 59% glyph fill of canvas — way smaller than peer apps).
+  3. Re-paste with **8% margin** to a square canvas (now 84% glyph fill, matching Slack/Discord/VS Code).
+  4. Save as multi-size .ico: 16/20/24/32/40/48/64/96/128/256.
+- Runtime copy synced to `apps/desktop/windows/runner/resources/app_icon.ico` (the `.rc` references this path; can't move). Sync flow + recipe documented in `assets/README.md`.
+- `apps/desktop/windows/runner/Runner.rc` — replaced `com.example` placeholders: ProductName / CompanyName = `Fluxora`, FileDescription = `Fluxora Desktop Control Panel`, LegalCopyright = `Copyright (C) 2026 Fluxora. All rights reserved.`. FileVersion / ProductVersion auto-pulled from pubspec `version: 0.1.0+1` via `FLUTTER_VERSION_*` macros. InternalName / OriginalFilename stay `fluxora_desktop` (binary identity).
+- `apps/desktop/windows/runner/main.cpp` — window title `L"fluxora_desktop"` -> `L"Fluxora"`, initial window size 1280x720 -> 1440x900 to match the Flutter-side `WindowOptions`.
+
+#### Aero Peek shell-integration fix
+The user reported: "I'm not getting dock prompt on windows when I hover over it". Two combined causes — fixed both:
+- `apps/desktop/windows/runner/win32_window.cpp` — switched `WNDCLASS` -> `WNDCLASSEX` + `RegisterClassEx`. Now loads **both** icon variants via `LoadImage(..., GetSystemMetrics(SM_CXICON / SM_CXSMICON), ..., LR_DEFAULTCOLOR)`. Without `hIconSm`, Windows downsamples the large icon for the taskbar — quality is poor, and Win 11's thumbnail renderer can skip thumbnail registration entirely.
+- `apps/desktop/windows/runner/main.cpp` — added `#include <shobjidl.h>` and `SetCurrentProcessExplicitAppUserModelID(L"Fluxora.Desktop")` before window creation. Without an explicit AUMID, the shell can't group the running .exe with any pinned shortcut and Aero Peek doesn't trigger.
+- `apps/desktop/windows/runner/CMakeLists.txt` — linked `shell32.lib` (where `SetCurrentProcessExplicitAppUserModelID` lives).
+
+### Validation
+- `flutter analyze` clean across `packages/fluxora_core`, `apps/desktop`.
+- `flutter test --exclude-tags=golden` — 38/38 desktop tests pass; 8/8 fluxora_core tests pass.
+- `flutter test --tags=golden test/goldens/` — 1/1 golden passes against committed baseline.
+- Server suite untouched — still 247/247 from the M0 close-out.
+- Visual smoke test pending the user's `flutter run -d windows` (full restart required for native runner changes).
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `apps/desktop/pubspec.yaml` (add `window_manager: ^0.5.1`) |
+| Modified | `apps/desktop/lib/main.dart` (windowManager init + frameless `WindowOptions`) |
+| Created | `apps/desktop/lib/shared/widgets/flux_titlebar.dart` |
+| Modified | `apps/desktop/lib/shared/widgets/flux_shell.dart` (mount titlebar above Stack) |
+| Modified | `apps/desktop/lib/shared/widgets/flux_sidebar.dart` (delete `_LogoHeader` + unused style + import) |
+| Modified | `apps/desktop/lib/shared/widgets/flux_status_bar.dart` (Semantics on metric chips) |
+| Modified | `apps/desktop/lib/features/logs/presentation/screens/logs_screen.dart` (a11y) |
+| Modified | `apps/desktop/lib/features/settings/presentation/screens/settings_screen.dart` (a11y on tab row) |
+| Modified | `apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart` (a11y on selectors) |
+| Modified | `apps/desktop/lib/features/profile/presentation/screens/profile_screen.dart` (a11y on tabs + toggles) |
+| Modified | `apps/desktop/lib/features/help/presentation/screens/help_screen.dart` (a11y on FAQ + link rows) |
+| Modified | `apps/desktop/lib/features/notifications/presentation/widgets/notifications_panel.dart` (a11y on chips + rows) |
+| Modified | `apps/desktop/test/goldens/m3_dashboard_golden_test.dart` (GetIt-mock pattern, drop wrapping MultiBlocProvider) |
+| Modified | `apps/desktop/test/goldens/goldens/m3_dashboard_default.png` (regenerated baseline) |
+| Modified | `apps/desktop/test/goldens/_README.md` (recipe rewritten) |
+| Modified | `apps/desktop/dart_test.yaml` (drop `skip` for `golden` tag) |
+| Modified | `apps/desktop/windows/runner/main.cpp` (AUMID, title `L"Fluxora"`, size 1440x900) |
+| Modified | `apps/desktop/windows/runner/win32_window.cpp` (WNDCLASSEX with hIcon + hIconSm; comment update on min-size handler) |
+| Modified | `apps/desktop/windows/runner/Runner.rc` (Fluxora metadata) |
+| Modified | `apps/desktop/windows/runner/CMakeLists.txt` (link shell32.lib) |
+| Modified | `apps/desktop/windows/runner/resources/app_icon.ico` (regenerated, tight-crop + 8% margin) |
+| Created | `assets/brand/app_icon.ico` (master copy of the regenerated icon) |
+| Modified | `assets/README.md` (added Desktop Windows runner sync-flow row) |
+
+### Docs Updated
+
+- `docs/02_architecture/02_tech_stack.md` — full rewrite into canonical inventory; added `window_manager` row, Native runners shell-integration section, "System fonts used by FluxTitlebar" subsection with Segoe codepoint table, golden_toolkit description updated to reflect tag-gating (no longer skip-marked).
+- `docs/00_overview/current_status.md` — date bump 2026-05-02 -> 2026-05-03; M8 row updated to reflect a11y completion + golden test enablement; new M10 row added; "What's next" section updated (M10 removed, macOS / Linux runners added with the porting checklist).
+- `docs/00_overview/folder_structure.md` — `apps/desktop/` tree rewritten to current state (was missing 12 features + every M1/M6/M10 widget; was still listing deleted `stat_card`/`status_badge`/`data_table`); added `windows/runner/` annotations for the runner files and resources; updated assets sync-flow note to include the runner .ico copy.
+- `docs/00_overview/README.md` — Last-Updated date bump.
+- `docs/10_planning/01_roadmap.md` — Status header date bump + M10 mention added.
+- `docs/11_design/desktop_redesign_plan.md` — top-of-file status string updated (M10 marked done); Section 9 milestone table M10 row marked done; Section 12 changelog row added for this session; Section 13 status changed from "Spec only" to "Done — design-of-record retained".
+- `docs/11_design/mobile_redesign_plan.md` — top-of-file status updated (no longer notes M10 as open on desktop); Section 0 execution-gate body refreshed to "Desktop is now fully shipped".
+- `docs/12_guidelines/03_gotchas.md` — three new rows: Segoe Fluent Icons fallback, taskbar-icon margin recipe, no-Aero-Peek root cause (WNDCLASSEX + AUMID).
+- `assets/README.md` — added Desktop Windows runner row to the consumer sync-flow table with the Pillow regeneration recipe.
+
+### Decisions Made
+
+- **`window_manager` over `bitsdojo_window` or rolling our own.** Per `desktop_redesign_plan.md` Section 13.1 recommendation. Confirmed actively maintained (last release < 60 days), single API across Win/macOS/Linux, ships drag/resize/min/max/close helpers. Owner ack obtained explicitly mid-session.
+- **Window controls flush with the right edge, not floating with prototype's `gap: 14` between them.** The prototype's `winBtn` styling was minimal/decorative; making the buttons fill the full 46x36 caption-button area and sit flush with the edge matches Windows 11 native behaviour exactly so the muscle-memory "click top-right" works.
+- **Native Windows caption glyphs (Segoe Fluent Icons) over Material icons.** Material's `Icons.minimize_rounded` / `Icons.crop_square` / `Icons.filter_none` don't pixel-match the OS — different stroke weight, sub-pixel placement, and the restore icon especially looks wrong. Using the OS font means our caption strip is identical to every other Win 11 app's.
+- **Tooltip text `Restore` not `Restore Down`** per user direction.
+- **App icon regenerated with 8% margin (was 0% by default).** The source `logo-icon.png` had ~21% transparent margin per side built in, so the actual glyph filled only 59% of the .ico canvas. Tight-cropping to alpha bbox + adding 8% margin (matching Slack/Discord/VS Code) brings the rendered taskbar icon to the same visual size as peer apps.
+- **Master .ico lives in `/assets/brand/`, runtime copy in `apps/desktop/windows/runner/resources/`.** Same duplication model already documented for `logo-icon.png`, `logo-wordmark-h.png`, etc. The .rc file references the runtime path and can't move; documented the sync flow + Pillow recipe in `assets/README.md` and saved a feedback memory so future generated assets default to `/assets/` first.
+- **AppUserModelID set in `main.cpp`, not via a manifest fragment or shortcut metadata.** Setting it programmatically before window creation is the simplest path that survives both `flutter run` (no shortcut) and any future pinned-shortcut launches.
+
+### Issues Discovered / Reported to User
+
+- **Mid-session feedback that "Restore Down" was wrong** — owner pointed out plain "Restore" is the desired label. Reverted.
+- **Mid-session feedback that taskbar Aero Peek wasn't appearing** — owner noticed during smoke check. Root-caused to two issues (no `hIconSm` + no AUMID), fixed both, documented in gotchas.
+- **Source `logo-icon.png` is RGB with no alpha channel.** Documented in `assets/brand/README.md` already; the alpha-from-brightness pipeline must be re-run any time the master is replaced.
+- **macOS / Linux runners not yet generated.** When they are, they will need: native equivalents of `WM_GETMINMAXINFO` + `SetCurrentProcessExplicitAppUserModelID` + `WNDCLASSEX hIconSm`, plus a `Platform.isWindows` swap for the Segoe Fluent Icons codepoints (the fonts are Windows-only). Documented in `current_status.md` "What's next" + `tech_stack.md` Native runners section.
+
+### Blockers / Open Issues
+
+- **Visual smoke test pending the user's restart.** Native runner changes (icon, AUMID, WNDCLASSEX) and `TitleBarStyle.hidden` only apply at process launch — full `flutter run -d windows` restart is needed; hot-reload won't pick them up. The user has been notified.
+- **No remaining desktop redesign blockers.** M0-M10 fully shipped.
+
+### Next Agent Should
+
+1. **Verify the visual smoke test** the user runs and triage any remaining bugs.
+2. **Mobile app redesign** — gate is lifted (was lifted at M9.5; M10 is also done now). Plan in `docs/11_design/mobile_redesign_plan.md` Section 7. Start at M0.
+3. **macOS / Linux desktop runners** when scoped — the Win-specific shell integration items (AUMID, WNDCLASSEX hIconSm, Segoe glyphs) need per-platform equivalents. Checklist in `current_status.md` "What's next".
+4. **Phase 6 routing hardening operator tasks** in `docs/10_planning/04_manual_tasks.md` (Cloudflare Access on `/orders`, WAF rules, tunnel-health alerts, TURN evaluation). All operator-driven.
+5. **Dependabot triage** — the Dart 3.9 floor bump may have unstuck PRs blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran without explicit per-action OK. No commits created this session — owner has not authorised.
+- [x] No agent / AI branding anywhere in code, docs, or commit messages.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No exceptions swallowed silently.
+- [x] No secrets / hardcoded paths added.
+- [x] All new third-party deps version-checked — `window_manager 0.5.1` (latest stable per pub.dev, owner ack obtained per CLAUDE.md hard rule #6).
+- [x] No backwards-compat hacks left behind. Sidebar `_LogoHeader` deleted outright, not deprecated.
+---

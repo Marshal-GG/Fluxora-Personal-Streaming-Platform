@@ -28,7 +28,7 @@ Fluxora/
 └── .github/        # GitHub Actions CI/CD
 ```
 
-> `assets/` is the canonical source of truth for brand. Runtime copies live at `packages/fluxora_core/assets/brand/` (Flutter) and `apps/web_landing/public/brand/` (Next.js) — sized + alpha-processed derivatives, kept in sync manually. See [`assets/README.md`](../../assets/README.md) for the sync flow.
+> `assets/` is the canonical source of truth for brand. Runtime copies live at `packages/fluxora_core/assets/brand/` (Flutter), `apps/web_landing/public/brand/` (Next.js), and `apps/desktop/windows/runner/resources/app_icon.ico` (Windows runner) — all sized + alpha-processed derivatives, kept in sync manually. See [`assets/README.md`](../../assets/README.md) for the sync flow.
 
 ---
 
@@ -161,69 +161,52 @@ apps/mobile/
 
 ```
 apps/desktop/
-├── pubspec.yaml
+├── pubspec.yaml          # window_manager 0.5.1, flutter_bloc, go_router 17, get_it 9, intl, file_picker, dio
 ├── analysis_options.yaml
 ├── README.md
-├── windows/
-├── macos/
-├── linux/
+├── windows/runner/       # C++ runner — frameless via TitleBarStyle.hidden + WNDCLASSEX (hIcon + hIconSm) + AppUserModelID
+│   ├── main.cpp          # SetCurrentProcessExplicitAppUserModelID(L"Fluxora.Desktop") for Aero Peek
+│   ├── win32_window.cpp  # WM_GETMINMAXINFO floor 1332×720; UpdateTheme; WNDCLASSEX with both icon variants
+│   ├── Runner.rc         # ProductName/CompanyName/FileDescription = Fluxora; pulls version from pubspec
+│   ├── CMakeLists.txt    # links dwmapi.lib + shell32.lib (AUMID)
+│   └── resources/app_icon.ico  # ← runtime copy of assets/brand/app_icon.ico
+├── macos/                # Not yet generated
+├── linux/                # Not yet generated
 ├── test/
+│   ├── features/         # Unit + bloc tests (38 passing)
+│   └── goldens/          # M3 Dashboard golden — opt-in via --tags=golden, GetIt-mock recipe in _README.md
 └── lib/
-    ├── main.dart
-    ├── app.dart
+    ├── main.dart         # windowManager.ensureInitialized() + WindowOptions(titleBarStyle: hidden)
+    ├── app.dart          # MaterialApp.router; title 'Fluxora'
     ├── core/
-    │   ├── di/
-    │   │   └── injector.dart   # GetIt: SecureStorage, ApiClient (persisted URL), Dashboard, Clients, Library, Settings
-    │   └── router/
-    │       └── app_router.dart # Routes: /, /clients, /library, /settings
-    ├── features/
-    │   ├── dashboard/           # M3: MultiBlocProvider; restartServer/stopServer added
-    │   │   ├── data/
-    │   │   ├── domain/
-    │   │   └── presentation/
-    │   ├── library/
-    │   │   ├── data/
-    │   │   ├── domain/
-    │   │   └── presentation/
-    │   ├── clients/
-    │   │   ├── data/
-    │   │   ├── domain/
-    │   │   └── presentation/
-    │   ├── activity/            # Legacy name — active sessions only (DO NOT rename)
-    │   │   ├── data/
-    │   │   ├── domain/
-    │   │   └── presentation/
-    │   ├── storage/             # M3: GET /api/v1/library/storage-breakdown
-    │   │   ├── data/repositories/storage_repository_impl.dart
-    │   │   ├── domain/repositories/storage_repository.dart
-    │   │   └── presentation/cubit/  # StorageCubit, StorageState
-    │   ├── recent_activity/     # M3: GET /api/v1/activity?limit=4
-    │   │   ├── data/repositories/recent_activity_repository_impl.dart
-    │   │   ├── domain/repositories/recent_activity_repository.dart
-    │   │   └── presentation/cubit/  # RecentActivityCubit, RecentActivityState
-    │   ├── system_stats/        # M2: polls /api/v1/info/stats every 1.1s
-    │   │   ├── data/
-    │   │   ├── domain/
-    │   │   └── presentation/cubit/  # SystemStatsCubit, SystemStatsState (ring buffer)
-    │   ├── transcoding/
-    │   │   └── presentation/   # Scaffolded only
-    │   ├── logs/
-    │   │   └── presentation/
-    │   └── settings/
-    │       └── presentation/
-    │           ├── cubit/
-    │           │   ├── settings_cubit.dart
-    │           │   └── settings_state.dart
-    │           └── screens/
-    │               └── settings_screen.dart
+    │   ├── di/injector.dart  # GetIt registrations for every repo + cubit
+    │   └── router/app_router.dart  # ShellRoute(builder: FluxShell) wraps every redesigned screen
+    ├── features/         # 17 features: dashboard, library, clients, groups, activity, transcoding,
+    │                     #   logs, settings, subscription, profile, notifications, help, storage,
+    │                     #   recent_activity, system_stats, command_palette, orders
     └── shared/
-        ├── widgets/
-        │   ├── sidebar.dart    # AppShell + nav (Dashboard, Clients, Library, Settings)
-        │   ├── stat_card.dart
-        │   ├── data_table.dart
-        │   └── status_badge.dart
-        └── theme/
-            └── app_theme.dart
+        ├── widgets/      # V2 widgets only (legacy stat_card / status_badge / data_table deleted in M9)
+        │   ├── flux_shell.dart      # Root layout — FluxTitlebar + sidebar + content + status bar
+        │   ├── flux_titlebar.dart   # M10 — 36 px custom titlebar (drag region, help/bell, native Win 11 caption buttons)
+        │   ├── flux_sidebar.dart    # 232 px nav rail (no logo header — moved to titlebar in M10)
+        │   ├── flux_status_bar.dart # 28 px metric strip (CPU/RAM/NET/UP)
+        │   ├── flux_button.dart     # M1 primitive — primary/secondary/ghost/danger × sm/md/lg
+        │   ├── flux_card.dart       # M1 — glassmorphic surface
+        │   ├── flux_progress.dart   # M1 — linear progress bar
+        │   ├── flux_tab_bar.dart    # M4 — tab bar primitive
+        │   ├── flux_text_field.dart # M6 form primitive
+        │   ├── flux_select.dart     # M6 form primitive
+        │   ├── flux_switch.dart     # M6 form primitive
+        │   ├── flux_slider.dart     # M6 form primitive
+        │   ├── page_header.dart     # M1 — title + subtitle + actions
+        │   ├── pill.dart            # M1 — 7-color pill semantics
+        │   ├── section_label.dart   # M1 — eyebrow caption
+        │   ├── sparkline.dart       # M1 — micro line chart
+        │   ├── stat_tile.dart       # M1 — icon + label + value tile
+        │   ├── status_dot.dart      # M1 — colored status indicator
+        │   └── storage_donut.dart   # M1 — donut breakdown chart
+        ├── showcase/                # /showcase route — every primitive rendered (dev/QA tool)
+        └── theme/app_theme.dart     # V2-pure (post-M9.5 cutover)
 ```
 
 ---
