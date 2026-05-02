@@ -19,17 +19,16 @@ class ApiClient {
   ApiClient({
     String? localBaseUrl,
     String? remoteBaseUrl,
-    @Deprecated('Use localBaseUrl instead') String? baseUrl,
     String? bearerToken,
     LanCheck lanCheck = NetworkPathDetector.isLan,
-  })  : _localBaseUrl = localBaseUrl ?? baseUrl,
+  })  : _localBaseUrl = localBaseUrl,
         _remoteBaseUrl = remoteBaseUrl,
         _lanCheck = lanCheck {
     _dio = Dio(
       BaseOptions(
         // Seed with whichever base is available so Dio has a non-empty
         // baseUrl until the first request (interceptor will rewrite).
-        baseUrl: (localBaseUrl ?? baseUrl ?? remoteBaseUrl ?? ''),
+        baseUrl: localBaseUrl ?? remoteBaseUrl ?? '',
         connectTimeout: const Duration(seconds: 10),
         receiveTimeout: const Duration(seconds: 30),
         headers: const {'Content-Type': 'application/json'},
@@ -55,18 +54,14 @@ class ApiClient {
   /// Only the named arguments that are provided (non-null) are applied;
   /// the rest are preserved. To clear the bearer token use
   /// [clearBearerToken]; to clear the remote URL use [clearRemoteBaseUrl].
-  ///
-  /// Accepts the legacy single [baseUrl] argument as an alias for
-  /// [localBaseUrl] so existing callers keep working until migrated.
   void configure({
     String? localBaseUrl,
     String? remoteBaseUrl,
-    @Deprecated('Use localBaseUrl instead') String? baseUrl,
     String? bearerToken,
     LanCheck? lanCheck,
   }) {
-    if (localBaseUrl != null || baseUrl != null) {
-      _localBaseUrl = localBaseUrl ?? baseUrl;
+    if (localBaseUrl != null) {
+      _localBaseUrl = localBaseUrl;
     }
     if (remoteBaseUrl != null) {
       _remoteBaseUrl = remoteBaseUrl;

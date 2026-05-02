@@ -5,8 +5,12 @@ class Endpoints {
 
   // Info
   static const String info = '$_base/info';
-  static const String logs = '$_base/info/logs';
+  static const String logs = '$_base/logs';
   static const String healthz = '$_base/healthz';
+  static const String infoStats = '$_base/info/stats';
+  static const String infoRestart = '$_base/info/restart';
+  static const String infoStop = '$_base/info/stop';
+  static const String libraryStorageBreakdown = '$_base/library/storage-breakdown';
 
   // Auth
   static const String requestPair = '$_base/auth/request-pair';

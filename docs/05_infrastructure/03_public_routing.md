@@ -56,7 +56,7 @@ Routing `.ts` HLS segments through Cloudflare Tunnel works technically but burns
 
 | Tier | Endpoints | LAN behavior | WAN behavior |
 |------|-----------|--------------|--------------|
-| **Control** | `GET /api/v1/info`, `GET /api/v1/info/logs` (deprecated), `GET /api/v1/info/stats`, `POST /api/v1/auth/request-pair`, `GET /api/v1/auth/status/{id}`, `DELETE /api/v1/auth/revoke/{id}`, `GET /api/v1/library`, `POST /api/v1/library`, `GET/DELETE /api/v1/library/{id}`, `POST /api/v1/library/{id}/scan`, `GET /api/v1/files`, `GET /api/v1/files/{id}`, `POST /api/v1/files/upload`, `DELETE /api/v1/files/{id}`, `GET /api/v1/groups`, `GET /api/v1/groups/{id}`, `GET /api/v1/groups/{id}/members`, `GET /api/v1/notifications`, `POST /api/v1/notifications/{id}/read`, `POST /api/v1/notifications/read-all`, `DELETE /api/v1/notifications/{id}`, `GET /api/v1/activity`, `GET /api/v1/logs` | direct (`http://lan-ip:8080`) | through `https://fluxora-api.marshalx.dev` |
+| **Control** | `GET /api/v1/info`, `GET /api/v1/info/stats`, `POST /api/v1/auth/request-pair`, `GET /api/v1/auth/status/{id}`, `DELETE /api/v1/auth/revoke/{id}`, `GET /api/v1/library`, `POST /api/v1/library`, `GET/DELETE /api/v1/library/{id}`, `POST /api/v1/library/{id}/scan`, `GET /api/v1/files`, `GET /api/v1/files/{id}`, `POST /api/v1/files/upload`, `DELETE /api/v1/files/{id}`, `GET /api/v1/groups`, `GET /api/v1/groups/{id}`, `GET /api/v1/groups/{id}/members`, `GET /api/v1/notifications`, `POST /api/v1/notifications/{id}/read`, `POST /api/v1/notifications/read-all`, `DELETE /api/v1/notifications/{id}`, `GET /api/v1/activity`, `GET /api/v1/logs` | direct (`http://lan-ip:8080`) | through `https://fluxora-api.marshalx.dev` |
 | **Stream init** | `POST /api/v1/stream/start/{id}`, `PATCH /api/v1/stream/{id}/progress`, `GET /api/v1/stream/{id}` | direct | through `https://fluxora-api.marshalx.dev` |
 | **Signaling** | `WS /api/v1/ws/status`, `WS /api/v1/ws/signal`, `WS /api/v1/ws/stats`, `WS /api/v1/ws/notifications` | direct (`ws://lan-ip:8080`) | `wss://fluxora-api.marshalx.dev/...` |
 | **Media (HLS)** | `GET /api/v1/hls/{session}/playlist.m3u8`, `GET /api/v1/hls/{session}/seg*.ts` | direct | **REJECTED** at server middleware — clients must negotiate WebRTC |
@@ -82,7 +82,6 @@ Some pieces of the routing plan landed alongside the desktop redesign work, ahea
 | `GET /api/v1/info/stats` REST endpoint | `apps/server/routers/info.py` | ✅ Shipped (no auth) |
 | `WS /api/v1/ws/stats` live-update WebSocket | `apps/server/routers/ws.py` | ✅ Shipped |
 | `POST /api/v1/info/restart`, `POST /api/v1/info/stop` admin actions | `apps/server/routers/info.py` | ✅ Shipped (`require_local_caller`) |
-| `GET /api/v1/info/logs` last-1000-lines endpoint | `apps/server/routers/info.py` | ✅ Shipped |
 | Validation: `transcoding_encoder/preset/crf` Pydantic enums + bounds | `apps/server/models/settings.py` | ✅ Shipped |
 
 The remaining server-side work for v1 routing is small: the four middlewares + one `/healthz` endpoint + the `FLUXORA_PUBLIC_URL` env var + populating `public_address` in stats. None of the existing code needs to be rewritten.
@@ -276,9 +275,9 @@ Resolution rules (private `_resolveBaseUrl`):
 
 The Dio request interceptor calls `_resolveBaseUrl()` and rewrites `options.baseUrl` per request, so every screen/route benefits transparently. If the resolver throws, each public method (`get/post/put/patch/delete`) unwraps the `NoRemoteConfiguredException` from the `DioException` and rethrows it directly — so callers can `catch (NoRemoteConfiguredException)` cleanly.
 
-`configure(...)` accepts the same dual-URL signature for live updates after pairing. The legacy single `baseUrl` arg is kept on both the constructor and `configure` as `@Deprecated` — calls keep compiling and route through `localBaseUrl`.
+`configure(...)` accepts the same dual-URL signature for live updates after pairing.
 
-Test coverage: `packages/fluxora_core/test/network/api_client_test.dart` — 9 tests covering all six resolution branches, `configure()`, `clearRemoteBaseUrl()`, and the legacy `baseUrl` alias.
+Test coverage: `packages/fluxora_core/test/network/api_client_test.dart` — 8 tests covering all six resolution branches, `configure()`, and `clearRemoteBaseUrl()`.
 
 #### 3.2 `SecureStorage` stores both URLs ✅
 
@@ -298,7 +297,7 @@ The same module exposes a `LanCheck` typedef (`Future<bool> Function(String)`) w
 #### 3.4 Injector + legacy callers migrated ✅
 
 - `apps/mobile/lib/core/di/injector.dart` — restores both `serverUrl` and `remoteUrl` from `SecureStorage` on app start and calls `ApiClient.configure(localBaseUrl: …, remoteBaseUrl: …)`.
-- All remaining callers (`auth_repository_impl`, `server_discovery_repository_impl`, `connect_screen`, desktop `injector`/`settings_cubit`/tests) now pass `localBaseUrl:` instead of the deprecated `baseUrl:`. `flutter analyze` is clean across `fluxora_core`, mobile, and desktop.
+- All callers (`auth_repository_impl`, `server_discovery_repository_impl`, `connect_screen`, desktop `injector`/`settings_cubit`/tests) pass `localBaseUrl:`. `flutter analyze` is clean across `fluxora_core`, mobile, and desktop.
 
 ### Phase 4 — Mobile client ✅ Complete (data path); Settings UI deferred
 
@@ -415,7 +414,7 @@ Persisted in `~/.fluxora/.env` like the rest. The desktop control panel's Settin
 | **Public exposure of `/auth/request-pair`** | Already public (no auth). Pairing requires owner approval via the localhost-only `/auth/approve` — opening `request-pair` to WAN is harmless. |
 | **Public exposure of `/auth/status/{id}`** | Returns the bearer token exactly once on the first approved poll. WAN exposure is OK because the token is single-use-per-poll and only revealed after explicit owner approval. |
 | **Tunnel credentials** | `~/.cloudflared/<id>.json` is a private key — back up like any other secret. Treat compromise as "anyone can MITM your `fluxora-api.marshalx.dev` traffic until you rotate". |
-| **DDoS amplification** | Cloudflare absorbs the L3/L4 hit. Add aggressive rate-limits on `/auth/request-pair` and `/info/logs` since those don't require auth. |
+| **DDoS amplification** | Cloudflare absorbs the L3/L4 hit. Add aggressive rate-limits on `/auth/request-pair` since it doesn't require auth. |
 
 ---
 

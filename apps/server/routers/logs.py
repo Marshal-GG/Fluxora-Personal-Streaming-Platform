@@ -10,10 +10,6 @@ Query params: `level` (repeatable), `source`, `since`, `until`, `q`,
 Localhost-only because the log file can contain operator-sensitive
 breadcrumbs (file paths, internal IPs, transcoder errors). The mobile
 client has no consumer for this surface.
-
-The legacy `GET /api/v1/info/logs` (returns the last 1000 raw lines as
-a single string) stays in place for v1 backwards compatibility — but is
-deprecated. New consumers should target this route.
 """
 
 import logging

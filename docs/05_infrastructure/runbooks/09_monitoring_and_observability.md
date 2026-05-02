@@ -175,7 +175,7 @@ When you have a real public deployment, ship logs off the host before they get r
 - **Self-hosted Loki + Grafana** — free, your servers ship logs to your Loki instance, Grafana dashboards on top
 - **Hosted: Better Stack, Datadog, Honeycomb** — start at $0–10/mo for low volumes
 
-For Fluxora today, we just keep logs on the host. The `GET /api/v1/info/logs` endpoint streams the most recent 1000 lines to the desktop control panel. That's enough for a single-owner deployment.
+For Fluxora today, we just keep logs on the host. The `GET /api/v1/logs` endpoint provides filtered, paginated structured log records to the desktop control panel; `WS /api/v1/ws/logs` provides a live tail. That's enough for a single-owner deployment.
 
 ---
 
@@ -221,4 +221,4 @@ Skip step 6 at your peril. Memory rots; an incident you don't document will repe
 
 - **`/healthz` endpoint pattern:** [`01_cloudflare_tunnel.md`](./01_cloudflare_tunnel.md) (the tunnel's smoke test uses one)
 - **Where SENTRY_DSN lives:** [`05_secrets_management.md`](./05_secrets_management.md)
-- **Existing Fluxora log endpoint:** `GET /api/v1/info/logs`
+- **Existing Fluxora log endpoints:** `GET /api/v1/logs` (structured, paginated) and `WS /api/v1/ws/logs` (live tail)

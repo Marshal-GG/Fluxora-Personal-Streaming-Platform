@@ -103,7 +103,6 @@ The full list lives in [`01_api_contracts.md`](./01_api_contracts.md). Every end
 ### Public surface (subject to v1 stability rules)
 
 - `GET /api/v1/info`
-- `GET /api/v1/info/logs`
 - `GET /api/v1/info/stats`
 - `POST /api/v1/auth/request-pair`
 - `GET /api/v1/auth/status/{client_id}`

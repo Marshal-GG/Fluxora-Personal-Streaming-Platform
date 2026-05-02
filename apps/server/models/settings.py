@@ -125,8 +125,7 @@ class UpdateSettingsBody(BaseModel):
     def license_key_format(cls, v: str | None) -> str | None:
         """Reject keys that are obviously malformed (wrong prefix / segment count).
 
-        Accepts both legacy 4-part keys (FLUXORA-TIER-EXPIRY-SIG) and modern
-        5-part keys with a nonce (FLUXORA-TIER-EXPIRY-NONCE-SIG).
+        Format: FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>
         """
         if v is None:
             return v

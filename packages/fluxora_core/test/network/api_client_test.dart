@@ -103,18 +103,5 @@ void main() {
       );
     });
 
-    test('legacy baseUrl param maps to localBaseUrl', () async {
-      // ignore: deprecated_member_use_from_same_package
-      final client = ApiClient(
-        // ignore: deprecated_member_use_from_same_package
-        baseUrl: 'http://192.168.1.10:8080',
-        lanCheck: (_) async => true,
-      );
-      expect(client.localBaseUrl, 'http://192.168.1.10:8080');
-      expect(
-        await client.resolveBaseUrlForTest(),
-        'http://192.168.1.10:8080',
-      );
-    });
   });
 }

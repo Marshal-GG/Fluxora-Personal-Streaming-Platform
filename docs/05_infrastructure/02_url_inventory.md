@@ -27,7 +27,6 @@ All paths are under the base `http://{server_ip}:8080` on LAN or `https://fluxor
 |--------|------|------|---------|
 | `GET` | `/api/v1/info` | None | Server identity — name, version, tier, remote_url |
 | `GET` | `/api/v1/healthz` | None | Liveness probe for Cloudflare Tunnel health check |
-| `GET` | `/api/v1/info/logs` | None | **DEPRECATED** — last 1000 raw log lines as a string |
 | `GET` | `/api/v1/info/stats` | None | Live CPU, RAM, network, uptime, active streams |
 | `POST` | `/api/v1/info/restart` | Localhost only | Schedule graceful server restart |
 | `POST` | `/api/v1/info/stop` | Localhost only | Schedule graceful server shutdown |
@@ -194,7 +193,7 @@ These URLs are not yet live but have been scoped or referenced elsewhere in the 
 | URL / Pattern | Purpose | Trigger to provision | Reference |
 |---------------|---------|---------------------|-----------|
 | TURN server (e.g. `turn:fluxora-api.marshalx.dev:3478`) | WebRTC TURN relay for symmetric NAT clients where STUN fails | When WAN streaming reports ICE failures for a meaningful percentage of users; `fluxora_turn_url` already a config key, empty by default | [`docs/05_infrastructure/06_webrtc_and_turn.md`](./06_webrtc_and_turn.md) |
-| Cloudflare Access policy on `fluxora-api.marshalx.dev/api/v1/orders` and `/info/logs` | Operator authentication for the most-sensitive admin-ish endpoints that are currently no-auth or token-only | Phase 6 hardening; operator-driven | [`docs/10_planning/04_manual_tasks.md`](../10_planning/04_manual_tasks.md) |
+| Cloudflare Access policy on `fluxora-api.marshalx.dev/api/v1/orders` | Operator authentication for the most-sensitive admin-ish endpoints that are currently token-only | Phase 6 hardening; operator-driven | [`docs/10_planning/04_manual_tasks.md`](../10_planning/04_manual_tasks.md) |
 | Tunnel-health alert webhook | Cloudflare notifies operator when the `fluxora-home` tunnel goes down | Phase 6 hardening; operator-driven | [`docs/10_planning/04_manual_tasks.md`](../10_planning/04_manual_tasks.md) |
 | Cloudflare WAF custom-rule dashboard URL | WAF rule to rate-limit `/api/v1/info/stats` (60/min per IP) and block common abuse patterns | Phase 6 hardening; operator-driven | [`docs/05_infrastructure/03_public_routing.md`](./03_public_routing.md) |
 | `https://polar.sh/fluxora/portal` (expected value of `FLUXORA_POLAR_PORTAL_URL`) | Customer self-service portal for Polar subscription management | Set `FLUXORA_POLAR_PORTAL_URL` in `~/.fluxora/.env` once the Polar org portal URL is confirmed | `GET /api/v1/orders/portal-url` returns 404 until this is set |

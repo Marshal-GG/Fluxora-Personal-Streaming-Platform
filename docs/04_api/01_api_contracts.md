@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-02 (new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs` + `/info/logs` deprecated; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`)
+> **Status:** Active - Updated 2026-05-02 (new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`)
 
 ---
 
@@ -36,7 +36,7 @@ Authorization: Bearer {auth_token}
 | Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints |
 | Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity`, `GET /logs` — desktop control panel needs no token |
 | Localhost only | `require_local_caller` | `/auth/approve`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
-| No auth | — | `/info`, `/info/logs` (deprecated), `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
+| No auth | — | `/info`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
 
 ---
 
@@ -72,20 +72,6 @@ Authorization: Bearer {auth_token}
 ```
 
 > Excluded from the OpenAPI schema — not part of the v1 contract; format may evolve. Anything heavier (system stats, license info) belongs at `/info` or `/info/stats`.
-
----
-
-### `GET /api/v1/info/logs`
-**Description:** Return the last 1000 lines of the server log file (`~/.fluxora/logs/server.log`) as a single string.  
-**Auth:** None required.  
-**Status:** ✅ Implemented — **DEPRECATED** (superseded by `GET /api/v1/logs` with structured filtering and `WS /api/v1/ws/logs` for live tailing). Retained for v1 backwards compatibility.
-
-**Response:**
-```json
-{ "logs": "<last 1000 log lines as a single string>" }
-```
-
-> Returns `{"logs": ""}` if the log file does not exist yet.
 
 ---
 

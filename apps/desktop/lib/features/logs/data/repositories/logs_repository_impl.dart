@@ -10,6 +10,18 @@ class LogsRepositoryImpl implements LogsRepository {
   @override
   Future<String> getLogs() => _apiClient.get(
         Endpoints.logs,
-        fromJson: (json) => json['logs'] as String,
+        queryParameters: const {'limit': 1000},
+        fromJson: (json) {
+          final items = (json['items'] as List).cast<Map<String, dynamic>>();
+          // Most-recent-last so the screen's reverse:true scroll keeps
+          // the newest entry at the bottom.
+          return items.reversed.map((rec) {
+            final ts = rec['ts'] ?? '';
+            final level = (rec['level'] ?? '').toString().toUpperCase();
+            final source = rec['source'] ?? '';
+            final message = rec['message'] ?? '';
+            return '$ts [$level] $source: $message';
+          }).join('\n');
+        },
       );
 }

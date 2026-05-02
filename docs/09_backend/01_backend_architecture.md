@@ -48,7 +48,7 @@ server/
 │       └── 015_extended_settings.sql   # 18 new columns on user_settings (general/network/streaming/security/advanced)
 │
 ├── routers/
-│   ├── info.py             # GET /api/v1/info, /info/logs, /info/stats; POST /info/restart, /info/stop ✅
+│   ├── info.py             # GET /api/v1/info, /info/stats; POST /info/restart, /info/stop ✅
 │   ├── auth.py             # /auth/* ✅ (request-pair, status, approve, reject, revoke)
 │   ├── deps.py             # validate_token, validate_token_or_local, require_local_caller FastAPI dependencies ✅
 │   ├── files.py            # GET/POST(upload)/DELETE /api/v1/files; validate_token_or_local ✅
