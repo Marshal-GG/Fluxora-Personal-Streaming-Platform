@@ -1,6 +1,6 @@
 # Desktop App Redesign — Implementation Plan
 
-> **Status:** Implementing — M0 backend prerequisites partially shipped, M1 foundation complete (2026-05-02), M2 shell complete, M3 Dashboard complete (2026-05-02)
+> **Status:** Implementing — M0 backend prerequisites partially shipped, M1 foundation complete (2026-05-02), M2 shell complete, M3 Dashboard complete (2026-05-02), M4 Library + Clients complete (2026-05-02)
 > **Created:** 2026-05-01
 > **Owner:** Marshal
 > **Source design:** [`docs/11_design/desktop_prototype/`](./desktop_prototype/) — React/JSX prototype exported from claude.ai/design
@@ -55,9 +55,14 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 - `DashboardRepository` extended with `restartServer()` / `stopServer()`.
 - New desktop features: `storage/` + `recent_activity/` registered in DI.
 
-### M4–M9 *(not started)*
+### M4 — Library + Clients *(🔵 In Progress)*
 
-Pending M3 visual review against prototype.
+- **Library screen** *(✅ Done)* — full grid, stat tiles, FluxTabBar, detail panel, `StorageCubit` integration.
+- **Clients screen** *(✅ Done 2026-05-02)* — `clients_screen.dart` fully rewritten. No Material `Scaffold`/`AppBar`/`Card`/`DataTable`. Implements: `PageHeader`, 4 `StatTile`s (total/online/active streams placeholder/total connections), client-side search + status/device/sort `PopupMenuButton` filters, 7-column table in `FluxCard(padding: 0)` with hover + selected row states, visual-only pagination footer, 300 px detail panel with avatar block + 7 info rows + 4 action tiles (Disconnect Client wired to `cubit.reject()`; 3 others disabled with TODO comments). `FluxTabBar` primitive shipped as part of Library. Active Streams tile shows `—` pending `SystemStatsCubit` accessibility (TODO comment in code). IP address and per-client session columns show `—` pending backend fields.
+
+### M5–M9 *(not started)*
+
+Pending M4 visual review against prototype.
 
 ---
 

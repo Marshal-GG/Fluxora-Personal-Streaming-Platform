@@ -327,7 +327,7 @@ apps/desktop/lib/
     │   └── presentation/
     │       ├── cubit/clients_cubit.dart
     │       ├── cubit/clients_state.dart
-    │       └── screens/clients_screen.dart  # Filter chips + ClientTile with approve/reject
+    │       └── screens/clients_screen.dart  # M4 redesign: PageHeader + 4 StatTiles + search/filter row + 7-column table + 300px detail panel (approve/reject/revoke wired)
     │
     ├── library/                 # ✅ Implemented (Phase 5)
     │   ├── domain/repositories/library_repository.dart
@@ -390,7 +390,7 @@ apps/desktop/lib/
 | Route | Screen | State class | Status |
 |-------|--------|-------------|--------|
 | `/` | DashboardScreen | `DashboardCubit` + `StorageCubit` + `RecentActivityCubit` + `SystemStatsCubit` | ✅ Done (M3 redesign) |
-| `/clients` | ClientsScreen | `ClientsCubit` | ✅ Done |
+| `/clients` | ClientsScreen | `ClientsCubit` | ✅ Done (M4 redesign) |
 | `/library` | LibraryScreen | `LibraryCubit` | ✅ Done |
 | `/licenses` | LicensesScreen | `OrdersCubit` | ✅ Done |
 | `/activity` | ActivityScreen | `ActivityCubit` | ✅ Done |

@@ -63,7 +63,9 @@
 | **Desktop redesign M1 Foundation** (tokens + 11 primitives + brand widgets + `/showcase`) | ✅ done 2026-05-02 |
 | Desktop redesign M2 Shell (sidebar + status bar + new routes + `SystemStatsCubit`) | ✅ done 2026-05-02 |
 | **Desktop redesign M3 Dashboard** (4 stat tiles + Server Info + Quick Access + Recent Activity + Storage donut — pixel-matched prototype; `StorageCubit` + `RecentActivityCubit` + `ActivityEvent` + `LibraryStorageBreakdown` entities) | ✅ done 2026-05-02 |
-| Desktop redesign M4+ (Library / Clients / Groups / Activity / Transcoding / Logs / Settings / Subscription / Profile / Notifications) | 🔲 not started |
+| **Desktop redesign M4 Library** (grid + stat tiles + FluxTabBar + detail panel + `StorageCubit`) | ✅ done 2026-05-02 |
+| **Desktop redesign M4 Clients** (7-col table + search/filter + detail panel — `PageHeader`, `StatTile`, `Pill`, `StatusDot`, `FluxCard`; approve/reject/revoke wired) | ✅ done 2026-05-02 |
+| Desktop redesign M5+ (Groups / Activity / Transcoding / Logs / Settings / Subscription / Profile / Notifications) | 🔲 not started |
 
 ---
 
@@ -87,6 +89,6 @@
 
 See `AGENT_LOG.md` "Next Agent Should" section for the prioritised list. As of 2026-05-02:
 
-1. **Desktop redesign M4 Library + Clients** — pixel-match Library and Clients screens against prototype
+1. **Desktop redesign M5** — next screens: Groups / Activity / Transcoding / Logs (check prototype JSX for each before starting)
 2. **Phase 6 routing hardening** — operator-driven Cloudflare config (Access policies, WAF rules, tunnel-health alerts, TURN evaluation)
 3. **Dependabot triage** — Dart 3.9 floor bump may have unstuck PRs blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`
