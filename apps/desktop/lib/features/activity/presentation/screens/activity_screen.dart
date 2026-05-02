@@ -250,39 +250,51 @@ class _StatTilesRow extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: StatTile(
-            icon: Icons.bar_chart_rounded,
-            label: 'Events Today',
-            value: '${todayEvents.length}',
-            color: AppColors.violet,
+          child: Semantics(
+            label: 'Events Today ${todayEvents.length}',
+            child: StatTile(
+              icon: Icons.bar_chart_rounded,
+              label: 'Events Today',
+              value: '${todayEvents.length}',
+              color: AppColors.violet,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.play_circle_outline_rounded,
-            label: 'Streams Started',
-            value: '$streamsStarted',
-            color: AppColors.blue,
+          child: Semantics(
+            label: 'Streams Started $streamsStarted',
+            child: StatTile(
+              icon: Icons.play_circle_outline_rounded,
+              label: 'Streams Started',
+              value: '$streamsStarted',
+              color: AppColors.blue,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.devices_outlined,
-            label: 'Client Events',
-            value: '$clientEvents',
-            color: AppColors.emerald,
+          child: Semantics(
+            label: 'Client Events $clientEvents',
+            child: StatTile(
+              icon: Icons.devices_outlined,
+              label: 'Client Events',
+              value: '$clientEvents',
+              color: AppColors.emerald,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.warning_amber_rounded,
-            label: 'Warnings',
-            value: '$warnings',
-            color: AppColors.amber,
-            accent: AppColors.amber,
+          child: Semantics(
+            label: 'Warnings $warnings',
+            child: StatTile(
+              icon: Icons.warning_amber_rounded,
+              label: 'Warnings',
+              value: '$warnings',
+              color: AppColors.amber,
+              accent: AppColors.amber,
+            ),
           ),
         ),
       ],

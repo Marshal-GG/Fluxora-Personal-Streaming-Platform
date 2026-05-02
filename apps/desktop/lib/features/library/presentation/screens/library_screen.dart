@@ -458,40 +458,52 @@ class _StatTilesRow extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: StatTile(
-            icon: Icons.folder_outlined,
-            label: 'Total Libraries',
-            value: '$totalLibraries',
-            color: AppColors.violet,
+          child: Semantics(
+            label: 'Total Libraries $totalLibraries',
+            child: StatTile(
+              icon: Icons.folder_outlined,
+              label: 'Total Libraries',
+              value: '$totalLibraries',
+              color: AppColors.violet,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.insert_drive_file_outlined,
-            label: 'Total Files',
-            value: totalFiles.toString(),
-            color: AppColors.blue,
+          child: Semantics(
+            label: 'Total Files $totalFiles',
+            child: StatTile(
+              icon: Icons.insert_drive_file_outlined,
+              label: 'Total Files',
+              value: totalFiles.toString(),
+              color: AppColors.blue,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.storage_outlined,
-            label: 'Total Size',
-            value: totalSizeStr,
-            color: AppColors.emerald,
-            accent: AppColors.textMutedV2,
+          child: Semantics(
+            label: 'Total Size $totalSizeStr',
+            child: StatTile(
+              icon: Icons.storage_outlined,
+              label: 'Total Size',
+              value: totalSizeStr,
+              color: AppColors.emerald,
+              accent: AppColors.textMutedV2,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.refresh_rounded,
-            label: 'Last Scan',
-            value: lastScan,
-            color: AppColors.amber,
-            accent: AppColors.textMutedV2,
+          child: Semantics(
+            label: 'Last Scan $lastScan',
+            child: StatTile(
+              icon: Icons.refresh_rounded,
+              label: 'Last Scan',
+              value: lastScan,
+              color: AppColors.amber,
+              accent: AppColors.textMutedV2,
+            ),
           ),
         ),
       ],

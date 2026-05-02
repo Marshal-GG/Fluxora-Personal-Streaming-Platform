@@ -167,43 +167,55 @@ class _ClientsViewState extends State<_ClientsView> {
     return Row(
       children: [
         Expanded(
-          child: StatTile(
-            icon: Icons.people_outline_rounded,
-            label: 'Total Clients',
-            value: '$total',
-            color: const Color(0xFFA855F7),
+          child: Semantics(
+            label: 'Total Clients $total',
+            child: StatTile(
+              icon: Icons.people_outline_rounded,
+              label: 'Total Clients',
+              value: '$total',
+              color: const Color(0xFFA855F7),
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.circle_outlined,
-            label: 'Online Now',
-            value: '$online',
-            color: const Color(0xFF10B981),
-            accent: AppColors.textMutedV2,
-          ),
-        ),
-        const SizedBox(width: AppSpacing.s14),
-        const Expanded(
-          child: StatTile(
-            icon: Icons.play_circle_outline_rounded,
-            label: 'Active Streams',
-            // TODO: read from SystemStatsCubit.state.latest?.activeStreams
-            // once SystemStatsCubit is accessible from this widget tree.
-            value: '—',
-            color: Color(0xFF3B82F6),
-            accent: AppColors.textMutedV2,
+          child: Semantics(
+            label: 'Online Now $online',
+            child: StatTile(
+              icon: Icons.circle_outlined,
+              label: 'Online Now',
+              value: '$online',
+              color: const Color(0xFF10B981),
+              accent: AppColors.textMutedV2,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.history_rounded,
-            label: 'Total Connections',
-            value: '$total',
-            color: const Color(0xFFEC4899),
-            accent: AppColors.textMutedV2,
+          child: Semantics(
+            label: 'Active Streams not available',
+            child: const StatTile(
+              icon: Icons.play_circle_outline_rounded,
+              label: 'Active Streams',
+              // TODO: read from SystemStatsCubit.state.latest?.activeStreams
+              // once SystemStatsCubit is accessible from this widget tree.
+              value: '—',
+              color: Color(0xFF3B82F6),
+              accent: AppColors.textMutedV2,
+            ),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s14),
+        Expanded(
+          child: Semantics(
+            label: 'Total Connections $total',
+            child: StatTile(
+              icon: Icons.history_rounded,
+              label: 'Total Connections',
+              value: '$total',
+              color: const Color(0xFFEC4899),
+              accent: AppColors.textMutedV2,
+            ),
           ),
         ),
       ],
@@ -254,9 +266,12 @@ class _ClientsViewState extends State<_ClientsView> {
         const Spacer(),
 
         // Refresh button
-        _IconActionButton(
-          icon: Icons.refresh_rounded,
-          onTap: () => context.read<ClientsCubit>().load(),
+        Tooltip(
+          message: 'Refresh clients',
+          child: _IconActionButton(
+            icon: Icons.refresh_rounded,
+            onTap: () => context.read<ClientsCubit>().load(),
+          ),
         ),
       ],
     );
@@ -838,15 +853,21 @@ class _RowActions extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         // View (eye) — opens detail panel (handled by row tap); visual only here
-        const _SmallIconButton(
-          icon: Icons.remove_red_eye_outlined,
-          onTap: null, // row tap handles selection
+        const Tooltip(
+          message: 'View client details',
+          child: _SmallIconButton(
+            icon: Icons.remove_red_eye_outlined,
+            onTap: null, // row tap handles selection
+          ),
         ),
         const SizedBox(width: 4),
         // Stop stream — disabled (no per-client stream-stop endpoint)
-        const _SmallIconButton(
-          icon: Icons.stop_circle_outlined,
-          onTap: null,
+        const Tooltip(
+          message: 'Stop stream',
+          child: _SmallIconButton(
+            icon: Icons.stop_circle_outlined,
+            onTap: null,
+          ),
         ),
         const SizedBox(width: 4),
         // More options — popup with Revoke
@@ -1129,10 +1150,13 @@ class _EmptyDetailPanel extends StatelessWidget {
                   color: AppColors.textBright,
                 ),
               ),
-              GestureDetector(
-                onTap: onClose,
-                child: const Icon(Icons.close_rounded,
-                    size: 14, color: AppColors.textDim),
+              Tooltip(
+                message: 'Close panel',
+                child: GestureDetector(
+                  onTap: onClose,
+                  child: const Icon(Icons.close_rounded,
+                      size: 14, color: AppColors.textDim),
+                ),
               ),
             ],
           ),
@@ -1195,10 +1219,13 @@ class _PopulatedDetailPanel extends StatelessWidget {
                   color: AppColors.textBright,
                 ),
               ),
-              GestureDetector(
-                onTap: onClose,
-                child: const Icon(Icons.close_rounded,
-                    size: 14, color: AppColors.textDim),
+              Tooltip(
+                message: 'Close panel',
+                child: GestureDetector(
+                  onTap: onClose,
+                  child: const Icon(Icons.close_rounded,
+                      size: 14, color: AppColors.textDim),
+                ),
               ),
             ],
           ),

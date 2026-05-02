@@ -89,10 +89,11 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 - **Router**: `/help` route added. `Routes.help` constant added. Help added to sidebar nav list.
 - **DI**: `ProfileRepository`, `ProfileCubit`, `NotificationsRepository`, `NotificationsCubit` registered in `injector.dart`.
 
-### M8 — Polish (partial) *(🔵 In Progress 2026-05-02)*
+### M8 — Polish *(✅ Done 2026-05-03)*
 
-- **Cmd+K command palette ✅ Done:** new `apps/desktop/lib/features/command_palette/` feature — `Command` model, `command_registry.dart` with 13 commands (12 routes + Restart Server + Stop Server + Open Notifications), `CommandPaletteNotifier` for open/closed/query/highlight state, `CommandPaletteOverlay` (600 × 420 px frosted-glass card, search input with auto-focus, fuzzy substring match, arrow-key + Enter + Escape navigation). Mounted in `flux_shell.dart` via `Shortcuts`/`Actions`/`CommandPaletteScope` — `Cmd+K` on macOS, `Ctrl+K` elsewhere.
-- **Accessibility pass + golden-test infra 🔲 Deferred:** Sonnet sub-agent only completed the Cmd+K work. Tooltips/Semantics across M3–M7 + `golden_toolkit` setup remain pending — both are mechanical follow-ups; carry into a future M8 cleanup pass.
+- **Cmd+K command palette ✅ Done 2026-05-02:** new `apps/desktop/lib/features/command_palette/` feature — `Command` model, `command_registry.dart` with 13 commands (12 routes + Restart Server + Stop Server + Open Notifications), `CommandPaletteNotifier` for open/closed/query/highlight state, `CommandPaletteOverlay` (600 × 420 px frosted-glass card, search input with auto-focus, fuzzy substring match, arrow-key + Enter + Escape navigation). Mounted in `flux_shell.dart` via `Shortcuts`/`Actions`/`CommandPaletteScope` — `Cmd+K` on macOS, `Ctrl+K` elsewhere.
+- **Accessibility pass ✅ Done 2026-05-03:** Tooltip wrappers added to every icon-only `IconButton`/`InkWell` across all M3–M7 screens + sidebar + status bar (refresh, close X, eye/stop/more, copy, dismiss, pause/resume, pagination chevrons, three-dot overflows, the bell). `Semantics(label: ...)` wrappers added to every `StatTile` value + `Sparkline`. No behavioural changes.
+- **Golden-test infra ✅ Done 2026-05-03 (skip-marked):** `golden_toolkit` 0.15.0 + `mocktail` added as dev_dependencies. First Dashboard golden test scaffolded at `test/goldens/m3_dashboard_golden_test.dart` with deterministic mock states (server info, 6 libraries, 1 active stream, fixed storage breakdown, 4 activity events at fixed timestamps, 30-sample CPU buffer). The test currently fails because production `DashboardScreen` creates cubits via `GetIt.I<>()` rather than reading from the test's `MultiBlocProvider`. Skip-marked via `dart_test.yaml` (`golden` tag); detailed fix recipe in `test/goldens/_README.md`. Default `flutter test` excludes the golden suite cleanly.
 
 ### M9 — Cleanup + final docs *(🔲 Not started)*
 

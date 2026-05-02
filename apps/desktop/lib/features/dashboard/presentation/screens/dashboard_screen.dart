@@ -175,29 +175,38 @@ class _StatTilesRow extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: StatTile(
-            icon: Icons.folder_outlined,
-            label: 'Libraries',
-            value: '$libraryCount',
-            color: AppColors.violet,
+          child: Semantics(
+            label: 'Libraries $libraryCount',
+            child: StatTile(
+              icon: Icons.folder_outlined,
+              label: 'Libraries',
+              value: '$libraryCount',
+              color: AppColors.violet,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.devices_outlined,
-            label: 'Connected Clients',
-            value: '$approvedCount',
-            color: AppColors.blue,
+          child: Semantics(
+            label: 'Connected Clients $approvedCount',
+            child: StatTile(
+              icon: Icons.devices_outlined,
+              label: 'Connected Clients',
+              value: '$approvedCount',
+              color: AppColors.blue,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.play_circle_outline_rounded,
-            label: 'Active Streams',
-            value: '$activeStreams',
-            color: AppColors.pink,
+          child: Semantics(
+            label: 'Active Streams $activeStreams',
+            child: StatTile(
+              icon: Icons.play_circle_outline_rounded,
+              label: 'Active Streams',
+              value: '$activeStreams',
+              color: AppColors.pink,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
@@ -236,12 +245,16 @@ class _StatTilesRow extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 2),
-                          Text(
-                            '${cpuPercent.toStringAsFixed(0)}%',
-                            style: AppTypography.displayV2.copyWith(
-                              color: AppColors.textBright,
-                              height: 1.1,
-                              letterSpacing: -0.24,
+                          Semantics(
+                            label:
+                                'CPU usage ${cpuPercent.toStringAsFixed(0)} percent',
+                            child: Text(
+                              '${cpuPercent.toStringAsFixed(0)}%',
+                              style: AppTypography.displayV2.copyWith(
+                                color: AppColors.textBright,
+                                height: 1.1,
+                                letterSpacing: -0.24,
+                              ),
                             ),
                           ),
                         ],
@@ -251,10 +264,14 @@ class _StatTilesRow extends StatelessWidget {
                 ),
                 if (cpuSamples.length >= 2) ...[
                   const SizedBox(height: AppSpacing.s8),
-                  Sparkline(
-                    data: cpuSamples,
-                    color: AppColors.amber,
-                    height: 36,
+                  Semantics(
+                    label:
+                        'CPU usage trend over the last 30 seconds',
+                    child: Sparkline(
+                      data: cpuSamples,
+                      color: AppColors.amber,
+                      height: 36,
+                    ),
                   ),
                 ],
               ],

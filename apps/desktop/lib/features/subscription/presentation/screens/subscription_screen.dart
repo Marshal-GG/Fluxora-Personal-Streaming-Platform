@@ -638,49 +638,63 @@ class _BillingContent extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: StatTile(
-                  icon: Icons.credit_card_outlined,
-                  label: 'Total Orders',
-                  value: '${orders.length}',
-                  sub: 'All time',
-                  color: AppColors.violet,
+                child: Semantics(
+                  label: 'Total Orders ${orders.length}',
+                  child: StatTile(
+                    icon: Icons.credit_card_outlined,
+                    label: 'Total Orders',
+                    value: '${orders.length}',
+                    sub: 'All time',
+                    color: AppColors.violet,
+                  ),
                 ),
               ),
               const SizedBox(width: 14),
               Expanded(
-                child: StatTile(
-                  icon: Icons.check_circle_outline,
-                  label: 'Active Licenses',
-                  value: '${orders.length}',
-                  sub: 'Issued',
-                  color: const Color(0xFF10B981),
-                  accent: const Color(0xFF10B981),
+                child: Semantics(
+                  label: 'Active Licenses ${orders.length}',
+                  child: StatTile(
+                    icon: Icons.check_circle_outline,
+                    label: 'Active Licenses',
+                    value: '${orders.length}',
+                    sub: 'Issued',
+                    color: const Color(0xFF10B981),
+                    accent: const Color(0xFF10B981),
+                  ),
                 ),
               ),
               const SizedBox(width: 14),
               Expanded(
-                child: StatTile(
-                  icon: Icons.workspace_premium_outlined,
-                  label: 'Current Tier',
-                  value: orders.isNotEmpty
-                      ? orders.first.tierLabel
-                      : 'Free',
-                  sub: 'Active',
-                  color: const Color(0xFF3B82F6),
-                  accent: AppColors.textMutedV2,
+                child: Semantics(
+                  label:
+                      'Current Tier ${orders.isNotEmpty ? orders.first.tierLabel : "Free"}',
+                  child: StatTile(
+                    icon: Icons.workspace_premium_outlined,
+                    label: 'Current Tier',
+                    value: orders.isNotEmpty
+                        ? orders.first.tierLabel
+                        : 'Free',
+                    sub: 'Active',
+                    color: const Color(0xFF3B82F6),
+                    accent: AppColors.textMutedV2,
+                  ),
                 ),
               ),
               const SizedBox(width: 14),
               Expanded(
-                child: StatTile(
-                  icon: Icons.history_outlined,
-                  label: 'Last Order',
-                  value: orders.isNotEmpty
-                      ? _shortDate(orders.first.processedAt)
-                      : '—',
-                  sub: 'Most recent',
-                  color: const Color(0xFFF59E0B),
-                  accent: AppColors.textMutedV2,
+                child: Semantics(
+                  label:
+                      'Last Order ${orders.isNotEmpty ? _shortDate(orders.first.processedAt) : "none"}',
+                  child: StatTile(
+                    icon: Icons.history_outlined,
+                    label: 'Last Order',
+                    value: orders.isNotEmpty
+                        ? _shortDate(orders.first.processedAt)
+                        : '—',
+                    sub: 'Most recent',
+                    color: const Color(0xFFF59E0B),
+                    accent: AppColors.textMutedV2,
+                  ),
                 ),
               ),
             ],

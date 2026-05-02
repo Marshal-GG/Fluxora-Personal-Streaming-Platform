@@ -128,38 +128,50 @@ class _StatTilesRow extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: StatTile(
-            icon: Icons.memory_outlined,
-            label: 'Active Transcodes',
-            value: '$sessionCount',
-            color: AppColors.violet,
+          child: Semantics(
+            label: 'Active Transcodes $sessionCount',
+            child: StatTile(
+              icon: Icons.memory_outlined,
+              label: 'Active Transcodes',
+              value: '$sessionCount',
+              color: AppColors.violet,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.bolt_outlined,
-            label: 'Hardware Encoder',
-            value: _shortEncoderName(encoderName),
-            color: AppColors.emerald,
+          child: Semantics(
+            label: 'Hardware Encoder ${_shortEncoderName(encoderName)}',
+            child: StatTile(
+              icon: Icons.bolt_outlined,
+              label: 'Hardware Encoder',
+              value: _shortEncoderName(encoderName),
+              color: AppColors.emerald,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
         Expanded(
-          child: StatTile(
-            icon: Icons.monitor_heart_outlined,
-            label: 'Encoder Load',
-            value: gpuLoad,
-            color: AppColors.pink,
+          child: Semantics(
+            label: 'Encoder Load $gpuLoad',
+            child: StatTile(
+              icon: Icons.monitor_heart_outlined,
+              label: 'Encoder Load',
+              value: gpuLoad,
+              color: AppColors.pink,
+            ),
           ),
         ),
         const SizedBox(width: AppSpacing.s14),
-        const Expanded(
-          child: StatTile(
-            icon: Icons.layers_outlined,
-            label: 'Queue Depth',
-            value: '0',
-            color: AppColors.blue,
+        Expanded(
+          child: Semantics(
+            label: 'Queue Depth 0',
+            child: const StatTile(
+              icon: Icons.layers_outlined,
+              label: 'Queue Depth',
+              value: '0',
+              color: AppColors.blue,
+            ),
           ),
         ),
       ],

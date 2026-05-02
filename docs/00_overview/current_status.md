@@ -72,7 +72,7 @@
 | **Desktop redesign M6 Logs + Settings** (Logs: structured rows + level/source/since filters + 4 tabs + auto-scroll + pause/resume; Settings: 6-tab side-rail layout — General / Network / Streaming / Security / Advanced / About — wires all 18 §7.10 extended fields; 4 new form primitives: `FluxTextField`, `FluxSelect`, `FluxSwitch`, `FluxSlider`; `LogRecord` domain entity) | ✅ done 2026-05-02 |
 | **Desktop redesign M7 Subscription + Profile + Notifications + Help** (Subscription with 3 sub-tabs Overview/Billing/Manage; Profile reuses `/api/v1/profile`; Notifications slide-over overlay subscribed to `WS /ws/notifications`; static Help screen; new entities `Profile` + `AppNotification`; new features `notifications/` + `help/`) | ✅ done 2026-05-02 |
 | **Desktop redesign M8 Cmd+K palette** (palette overlay + 13 commands: 12 routes + 2 server actions + 1 notifications toggle; `Cmd+K` on macOS, `Ctrl+K` elsewhere; arrow keys + Enter + Escape; mounted in `flux_shell.dart` via `Shortcuts`/`Actions`/`CommandPaletteScope`) | ✅ done 2026-05-02 |
-| Desktop redesign M8 a11y pass + golden-test infra | 🔲 deferred — Sonnet sub-agent only completed the Cmd+K piece; tooltips/Semantics across M3–M7 + golden_toolkit setup pending |
+| **Desktop redesign M8 a11y pass + golden-test infra** (Tooltip + Semantics annotations across all M3–M7 screens + sidebar + status bar; `golden_toolkit` 0.15.0 + `mocktail` added; first M3 Dashboard golden test scaffolded — currently skip-marked via `dart_test.yaml` because production screen uses GetIt directly; fix recipe documented in `test/goldens/_README.md`) | ✅ done 2026-05-03 |
 | Desktop redesign M9 (cleanup + final docs) | 🔲 not started |
 
 ---

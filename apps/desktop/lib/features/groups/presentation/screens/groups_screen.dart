@@ -129,38 +129,50 @@ class _GroupsLoaded extends StatelessWidget {
                 Row(
                   children: [
                     Expanded(
-                      child: StatTile(
-                        icon: Icons.group_work_outlined,
-                        label: 'Total Groups',
-                        value: '${groups.length}',
-                        color: AppColors.violet,
+                      child: Semantics(
+                        label: 'Total Groups ${groups.length}',
+                        child: StatTile(
+                          icon: Icons.group_work_outlined,
+                          label: 'Total Groups',
+                          value: '${groups.length}',
+                          color: AppColors.violet,
+                        ),
                       ),
                     ),
                     const SizedBox(width: AppSpacing.s14),
                     Expanded(
-                      child: StatTile(
-                        icon: Icons.check_circle_outline_rounded,
-                        label: 'Active Groups',
-                        value: '$activeGroups',
-                        color: AppColors.emerald,
+                      child: Semantics(
+                        label: 'Active Groups $activeGroups',
+                        child: StatTile(
+                          icon: Icons.check_circle_outline_rounded,
+                          label: 'Active Groups',
+                          value: '$activeGroups',
+                          color: AppColors.emerald,
+                        ),
                       ),
                     ),
                     const SizedBox(width: AppSpacing.s14),
                     Expanded(
-                      child: StatTile(
-                        icon: Icons.person_outline_rounded,
-                        label: 'Total Members',
-                        value: '$totalMembers',
-                        color: AppColors.blue,
+                      child: Semantics(
+                        label: 'Total Members $totalMembers',
+                        child: StatTile(
+                          icon: Icons.person_outline_rounded,
+                          label: 'Total Members',
+                          value: '$totalMembers',
+                          color: AppColors.blue,
+                        ),
                       ),
                     ),
                     const SizedBox(width: AppSpacing.s14),
                     Expanded(
-                      child: StatTile(
-                        icon: Icons.people_outline_rounded,
-                        label: 'Avg Members',
-                        value: '$avgMembers',
-                        color: AppColors.amber,
+                      child: Semantics(
+                        label: 'Avg Members $avgMembers',
+                        child: StatTile(
+                          icon: Icons.people_outline_rounded,
+                          label: 'Avg Members',
+                          value: '$avgMembers',
+                          color: AppColors.amber,
+                        ),
                       ),
                     ),
                   ],
@@ -442,15 +454,18 @@ class _GroupRowState extends State<_GroupRow> {
               // Actions
               SizedBox(
                 width: 32,
-                child: FluxButton(
-                  variant: FluxButtonVariant.ghost,
-                  size: FluxButtonSize.sm,
-                  onPressed: () =>
-                      _showDeleteConfirm(context, g),
-                  child: const Icon(
-                    Icons.delete_outline_rounded,
-                    size: 14,
-                    color: AppColors.red,
+                child: Tooltip(
+                  message: 'Delete group',
+                  child: FluxButton(
+                    variant: FluxButtonVariant.ghost,
+                    size: FluxButtonSize.sm,
+                    onPressed: () =>
+                        _showDeleteConfirm(context, g),
+                    child: const Icon(
+                      Icons.delete_outline_rounded,
+                      size: 14,
+                      color: AppColors.red,
+                    ),
                   ),
                 ),
               ),
@@ -542,13 +557,16 @@ class _GroupDetailPanel extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text('Group Details', style: AppTypography.h2),
-                FluxButton(
-                  variant: FluxButtonVariant.ghost,
-                  size: FluxButtonSize.sm,
-                  icon: Icons.edit_outlined,
-                  onPressed: () =>
-                      _showEditDialog(context, group),
-                  child: const SizedBox.shrink(),
+                Tooltip(
+                  message: 'Edit group',
+                  child: FluxButton(
+                    variant: FluxButtonVariant.ghost,
+                    size: FluxButtonSize.sm,
+                    icon: Icons.edit_outlined,
+                    onPressed: () =>
+                        _showEditDialog(context, group),
+                    child: const SizedBox.shrink(),
+                  ),
                 ),
               ],
             ),
@@ -955,14 +973,17 @@ class _MemberRow extends StatelessWidget {
               ],
             ),
           ),
-          FluxButton(
-            variant: FluxButtonVariant.ghost,
-            size: FluxButtonSize.sm,
-            onPressed: () => context
-                .read<GroupsCubit>()
-                .removeMember(groupId, clientId),
-            child: const Icon(Icons.remove_circle_outline_rounded,
-                size: 13, color: AppColors.textDim),
+          Tooltip(
+            message: 'Remove member',
+            child: FluxButton(
+              variant: FluxButtonVariant.ghost,
+              size: FluxButtonSize.sm,
+              onPressed: () => context
+                  .read<GroupsCubit>()
+                  .removeMember(groupId, clientId),
+              child: const Icon(Icons.remove_circle_outline_rounded,
+                  size: 13, color: AppColors.textDim),
+            ),
           ),
         ],
       ),
