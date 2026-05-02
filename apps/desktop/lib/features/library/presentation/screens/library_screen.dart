@@ -289,12 +289,12 @@ class _ErrorBody extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(Icons.cloud_off_outlined,
-              color: AppColors.textMuted, size: 56),
+              color: AppColors.textDim, size: 56),
           const SizedBox(height: 16),
           Text(
             message,
             style:
-                AppTypography.bodyMd.copyWith(color: AppColors.textSecondary),
+                AppTypography.body.copyWith(color: AppColors.textMutedV2),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 20),

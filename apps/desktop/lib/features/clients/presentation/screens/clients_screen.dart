@@ -305,11 +305,11 @@ class _ClientsViewState extends State<_ClientsView> {
             child: Column(
               children: [
                 const Icon(Icons.cloud_off_outlined,
-                    color: AppColors.textMuted, size: 48),
+                    color: AppColors.textDim, size: 48),
                 const SizedBox(height: AppSpacing.s12),
                 Text(message,
-                    style: AppTypography.bodyMd
-                        .copyWith(color: AppColors.textSecondary),
+                    style: AppTypography.body
+                        .copyWith(color: AppColors.textMutedV2),
                     textAlign: TextAlign.center),
                 const SizedBox(height: AppSpacing.s16),
                 FluxButton(
