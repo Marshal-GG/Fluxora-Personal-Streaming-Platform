@@ -17,6 +17,7 @@ venv/
 .vscode/*
 .claude/
 !.vscode/launch.json
+!.vscode/tasks.json
 build/
 
 # Native build caches (per-machine, non-deterministic)

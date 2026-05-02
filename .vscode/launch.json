@@ -79,6 +79,38 @@
                 "uriFormat": "http://localhost:%s/Fluxora%%20Desktop.html",
                 "action": "openExternally"
             }
+        },
+        // ─── Web Landing (Next.js) ────────────────────────────────
+        {
+            "name": "Web Landing (dev)",
+            "type": "node",
+            "request": "launch",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": ["run", "dev"],
+            "cwd": "${workspaceFolder}/apps/web_landing",
+            "console": "integratedTerminal",
+            "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+            "serverReadyAction": {
+                "pattern": "(?:- Local:|Ready in|Local:)\\s+https?://[^:]+:(\\d+)",
+                "uriFormat": "http://localhost:%s",
+                "action": "openExternally"
+            }
+        },
+        {
+            "name": "Web Landing (static export preview)",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "http.server",
+            "args": ["8766"],
+            "cwd": "${workspaceFolder}/apps/web_landing/out",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "preLaunchTask": "web-landing-build",
+            "serverReadyAction": {
+                "pattern": "Serving HTTP on .* port (\\d+)",
+                "uriFormat": "http://localhost:%s/",
+                "action": "openExternally"
+            }
         }
     ],
     "compounds": [
