@@ -89,9 +89,14 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 - **Router**: `/help` route added. `Routes.help` constant added. Help added to sidebar nav list.
 - **DI**: `ProfileRepository`, `ProfileCubit`, `NotificationsRepository`, `NotificationsCubit` registered in `injector.dart`.
 
-### M8–M9 *(not started)*
+### M8 — Polish (partial) *(🔵 In Progress 2026-05-02)*
 
-Pending M7 visual review against prototype.
+- **Cmd+K command palette ✅ Done:** new `apps/desktop/lib/features/command_palette/` feature — `Command` model, `command_registry.dart` with 13 commands (12 routes + Restart Server + Stop Server + Open Notifications), `CommandPaletteNotifier` for open/closed/query/highlight state, `CommandPaletteOverlay` (600 × 420 px frosted-glass card, search input with auto-focus, fuzzy substring match, arrow-key + Enter + Escape navigation). Mounted in `flux_shell.dart` via `Shortcuts`/`Actions`/`CommandPaletteScope` — `Cmd+K` on macOS, `Ctrl+K` elsewhere.
+- **Accessibility pass + golden-test infra 🔲 Deferred:** Sonnet sub-agent only completed the Cmd+K work. Tooltips/Semantics across M3–M7 + `golden_toolkit` setup remain pending — both are mechanical follow-ups; carry into a future M8 cleanup pass.
+
+### M9 — Cleanup + final docs *(🔲 Not started)*
+
+Pending the deferred M8 work + visual review against prototype.
 
 ---
 

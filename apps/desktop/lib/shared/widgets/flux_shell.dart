@@ -24,10 +24,15 @@
 /// truth.
 library;
 
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_desktop/core/di/injector.dart';
+import 'package:fluxora_desktop/features/command_palette/presentation/notifier/command_palette_notifier.dart';
+import 'package:fluxora_desktop/features/command_palette/presentation/widgets/command_palette_overlay.dart';
 import 'package:fluxora_desktop/features/notifications/presentation/cubit/notifications_cubit.dart';
 import 'package:fluxora_desktop/features/notifications/presentation/widgets/notifications_panel.dart';
 import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
@@ -67,52 +72,119 @@ class _ShellBody extends StatefulWidget {
 
 class _ShellBodyState extends State<_ShellBody> {
   final _panelNotifier = NotificationsPanelNotifier();
+  final _paletteNotifier = CommandPaletteNotifier();
 
   @override
   void dispose() {
     _panelNotifier.dispose();
+    _paletteNotifier.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Cmd+K on macOS, Ctrl+K elsewhere.
+    final paletteShortcut = Platform.isMacOS
+        ? LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyK)
+        : LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyK);
+
     return NotificationsPanelScope(
       notifier: _panelNotifier,
-      child: Scaffold(
-        backgroundColor: AppColors.bgRoot,
-        body: SafeArea(
-          child: ValueListenableBuilder<bool>(
-            valueListenable: _panelNotifier,
-            builder: (context, panelOpen, _) {
-              return Stack(
-                children: [
-                  Row(
-                    children: [
-                      const FluxSidebar(),
-                      Expanded(
-                        child: Column(
-                          children: [
-                            Expanded(child: widget.child),
-                            const FluxStatusBar(),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (panelOpen)
-                    Positioned.fill(
-                      child: NotificationsPanel(
-                        onClose: _panelNotifier.close,
-                      ),
-                    ),
-                ],
-              );
+      child: CommandPaletteScope(
+        notifier: _paletteNotifier,
+        child: Shortcuts(
+          shortcuts: <ShortcutActivator, Intent>{
+            paletteShortcut: const _OpenCommandPaletteIntent(),
+          },
+          child: Actions(
+            actions: <Type, Action<Intent>>{
+              _OpenCommandPaletteIntent:
+                  CallbackAction<_OpenCommandPaletteIntent>(
+                onInvoke: (_) {
+                  _paletteNotifier.toggle();
+                  return null;
+                },
+              ),
             },
+            child: Focus(
+              autofocus: true,
+              child: Scaffold(
+                backgroundColor: AppColors.bgRoot,
+                body: SafeArea(
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: _panelNotifier,
+                    builder: (context, panelOpen, _) {
+                      return AnimatedBuilder(
+                        animation: _paletteNotifier,
+                        builder: (context, _) {
+                          return Stack(
+                            children: [
+                              Row(
+                                children: [
+                                  const FluxSidebar(),
+                                  Expanded(
+                                    child: Column(
+                                      children: [
+                                        Expanded(child: widget.child),
+                                        const FluxStatusBar(),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              if (panelOpen)
+                                Positioned.fill(
+                                  child: NotificationsPanel(
+                                    onClose: _panelNotifier.close,
+                                  ),
+                                ),
+                              if (_paletteNotifier.isOpen)
+                                Positioned.fill(
+                                  child: CommandPaletteOverlay(
+                                    notifier: _paletteNotifier,
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
       ),
     );
   }
+}
+
+class _OpenCommandPaletteIntent extends Intent {
+  const _OpenCommandPaletteIntent();
+}
+
+/// Inherited widget so any descendant can toggle the Cmd+K palette
+/// (e.g. a sidebar button or a "Quick search" affordance).
+class CommandPaletteScope extends InheritedWidget {
+  const CommandPaletteScope({
+    super.key,
+    required this.notifier,
+    required super.child,
+  });
+
+  final CommandPaletteNotifier notifier;
+
+  static CommandPaletteNotifier of(BuildContext context) {
+    final scope =
+        context.dependOnInheritedWidgetOfExactType<CommandPaletteScope>();
+    assert(scope != null, 'CommandPaletteScope missing from widget tree');
+    return scope!.notifier;
+  }
+
+  @override
+  bool updateShouldNotify(CommandPaletteScope oldWidget) =>
+      notifier != oldWidget.notifier;
 }
 
 /// Inherited widget that gives any descendant access to the
