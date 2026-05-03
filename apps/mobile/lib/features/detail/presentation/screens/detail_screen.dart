@@ -1,128 +1,191 @@
-/// Title detail screen — hero + actions + synopsis + cast + similar.
+/// Title detail screen — hero + actions + synopsis (real data).
 ///
-/// Pulled by id from `MockData.findById(id)`. For shows, exposes a
-/// "Episodes" entry-point that pushes `/episodes/:id`. For movies the
-/// primary action is "Play" (currently a no-op until M5 player rebuild).
+/// Phase A backfill: replaces `MockData.findById(id)` with a live
+/// [DetailCubit] over `GET /api/v1/files/{id}`.  Quality badge composes
+/// from `width` / `height` / `hdrFormat` (server migration 016 fields)
+/// via the `MediaFile.qualityBadge` extension.
+///
+/// Cast / crew / similar-titles rails and the rich synopsis sit out
+/// Phase A — they need server endpoints that land in Phase C.  The
+/// "Episodes" entry-point also waits for Phase D's
+/// `/shows/{tmdb_show_id}/episodes`.  Until then the screen renders a
+/// movie-style "Play" / "Resume" primary action regardless of kind.
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/fluxora_core.dart';
+import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:fluxora_mobile/core/router/app_router.dart';
-import 'package:fluxora_mobile/shared/data/mock_data.dart';
 
-class DetailScreen extends StatefulWidget {
+import 'package:fluxora_mobile/core/router/app_router.dart';
+import 'package:fluxora_mobile/features/detail/presentation/cubit/detail_cubit.dart';
+import 'package:fluxora_mobile/features/library/domain/repositories/library_repository.dart';
+import 'package:fluxora_mobile/shared/widgets/gradients.dart';
+
+class DetailScreen extends StatelessWidget {
   const DetailScreen({required this.id, super.key});
 
   final String id;
 
   @override
-  State<DetailScreen> createState() => _DetailScreenState();
+  Widget build(BuildContext context) {
+    return BlocProvider<DetailCubit>(
+      create: (_) => DetailCubit(
+        repository: GetIt.I<LibraryRepository>(),
+        fileId: id,
+      )..load(),
+      child: const _DetailBody(),
+    );
+  }
 }
 
-class _DetailScreenState extends State<DetailScreen> {
+class _DetailBody extends StatefulWidget {
+  const _DetailBody();
+
+  @override
+  State<_DetailBody> createState() => _DetailBodyState();
+}
+
+class _DetailBodyState extends State<_DetailBody> {
   bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
-    final item = MockData.findById(widget.id);
-    if (item == null) {
-      return Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: FluxAppBar(
-          title: 'Not found',
-          onBack: () => context.canPop() ? context.pop() : context.go(Routes.home),
-        ),
-        body: const Center(
-          child: Text(
-            'Item not found',
-            style: TextStyle(color: AppColors.textBright),
-          ),
-        ),
-      );
-    }
+    return BlocBuilder<DetailCubit, DetailState>(
+      builder: (context, state) {
+        return switch (state) {
+          DetailLoading() => const _LoadingScaffold(),
+          DetailFailure(:final message) =>
+            _FailureScaffold(message: message),
+          DetailLoaded(:final file) => _LoadedScaffold(
+              file: file,
+              expanded: _expanded,
+              onToggleSynopsis: () =>
+                  setState(() => _expanded = !_expanded),
+            ),
+        };
+      },
+    );
+  }
+}
 
-    final similar = item.similarIds
-        .map(MockData.findById)
-        .whereType<MockMediaItem>()
-        .toList();
+class _LoadingScaffold extends StatelessWidget {
+  const _LoadingScaffold();
 
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
       extendBodyBehindAppBar: true,
       appBar: FluxAppBar(
         transparent: true,
         title: '',
-        onBack: () => context.canPop() ? context.pop() : context.go(Routes.home),
+        onBack: () =>
+            context.canPop() ? context.pop() : context.go(Routes.home),
+      ),
+      body: const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+            color: AppColors.violet,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FailureScaffold extends StatelessWidget {
+  const _FailureScaffold({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      extendBodyBehindAppBar: true,
+      appBar: FluxAppBar(
+        transparent: true,
+        title: '',
+        onBack: () =>
+            context.canPop() ? context.pop() : context.go(Routes.home),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline,
+                  size: 44, color: Color(0xFFF87171)),
+              const SizedBox(height: 12),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: AppTypography.body.copyWith(color: AppColors.textBright),
+              ),
+              const SizedBox(height: 12),
+              FluxButton(
+                variant: FluxButtonVariant.secondary,
+                onPressed: () => context.read<DetailCubit>().load(),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LoadedScaffold extends StatelessWidget {
+  const _LoadedScaffold({
+    required this.file,
+    required this.expanded,
+    required this.onToggleSynopsis,
+  });
+
+  final MediaFile file;
+  final bool expanded;
+  final VoidCallback onToggleSynopsis;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      extendBodyBehindAppBar: true,
+      appBar: FluxAppBar(
+        transparent: true,
+        title: '',
+        onBack: () =>
+            context.canPop() ? context.pop() : context.go(Routes.home),
       ),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 32),
         children: [
-          _Hero(item: item),
+          _Hero(file: file),
           const SizedBox(height: 16),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: _PrimaryActions(item: item),
+            child: _PrimaryActions(file: file),
           ),
           const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: _SecondaryActions(item: item),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20),
+            child: _SecondaryActions(),
           ),
-          if (item.synopsis != null) ...[
+          if (file.overview != null && file.overview!.isNotEmpty) ...[
             const SizedBox(height: 24),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: _Synopsis(
-                text: item.synopsis!,
-                expanded: _expanded,
-                onToggle: () => setState(() => _expanded = !_expanded),
-              ),
-            ),
-          ],
-          if (item.cast.isNotEmpty) ...[
-            const SizedBox(height: 24),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
-              child: FluxSectionHeader(eyebrow: 'Starring', title: 'Cast'),
-            ),
-            const SizedBox(height: 12),
-            _CastRail(members: item.cast),
-          ],
-          if (item.crew.isNotEmpty) ...[
-            const SizedBox(height: 24),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
-              child: FluxSectionHeader(eyebrow: 'Behind', title: 'Crew'),
-            ),
-            const SizedBox(height: 12),
-            _CastRail(members: item.crew),
-          ],
-          if (similar.isNotEmpty) ...[
-            const SizedBox(height: 24),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 20),
-              child: FluxSectionHeader(eyebrow: 'You might like', title: 'Similar titles'),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 174,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                itemCount: similar.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 12),
-                itemBuilder: (context, i) {
-                  final m = similar[i];
-                  return FluxPoster(
-                    title: m.title,
-                    subtitle: m.subtitle,
-                    gradient: m.gradient,
-                    imageUrl: m.imageUrl,
-                    qualityBadge: m.qualityBadge,
-                    onTap: () => context.push('/detail/${m.id}'),
-                  );
-                },
+                text: file.overview!,
+                expanded: expanded,
+                onToggle: onToggleSynopsis,
               ),
             ),
           ],
@@ -133,21 +196,28 @@ class _DetailScreenState extends State<DetailScreen> {
 }
 
 class _Hero extends StatelessWidget {
-  const _Hero({required this.item});
+  const _Hero({required this.file});
 
-  final MockMediaItem item;
+  final MediaFile file;
 
   @override
   Widget build(BuildContext context) {
     final topPadding = MediaQuery.of(context).padding.top;
+    final gradient = AppGradientPlaceholders.forKey(file.id);
+    final badge = file.qualityBadge;
     return SizedBox(
       height: 340 + topPadding,
       child: Stack(
         fit: StackFit.expand,
         children: [
-          DecoratedBox(decoration: BoxDecoration(gradient: item.gradient)),
-          if (item.imageUrl != null)
-            Image.network(item.imageUrl!, fit: BoxFit.cover),
+          DecoratedBox(decoration: BoxDecoration(gradient: gradient)),
+          if (file.posterUrl != null)
+            Image.network(
+              file.posterUrl!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  DecoratedBox(decoration: BoxDecoration(gradient: gradient)),
+            ),
           const DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -170,16 +240,13 @@ class _Hero extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (item.qualityBadge != null)
+                if (badge != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 10),
-                    child: FluxChip(
-                      item.qualityBadge!,
-                      color: FluxChipColor.purple,
-                    ),
+                    child: FluxChip(badge, color: FluxChipColor.purple),
                   ),
                 Text(
-                  item.title,
+                  file.title ?? file.name,
                   style: AppTypography.displayV2.copyWith(
                     color: AppColors.textBright,
                     fontSize: 28,
@@ -188,7 +255,7 @@ class _Hero extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                _MetaRow(item: item),
+                _MetaRow(file: file),
               ],
             ),
           ),
@@ -199,19 +266,21 @@ class _Hero extends StatelessWidget {
 }
 
 class _MetaRow extends StatelessWidget {
-  const _MetaRow({required this.item});
+  const _MetaRow({required this.file});
 
-  final MockMediaItem item;
+  final MediaFile file;
 
   @override
   Widget build(BuildContext context) {
     final parts = <String>[
-      if (item.year != null) item.year!,
-      if (item.rating != null) '★ ${item.rating}',
-      if (item.duration != null) item.duration!,
-      if (item.kind == 'show') 'Series',
-      if (item.kind == 'movie') 'Movie',
+      if (file.durationSec != null) _formatDuration(file.durationSec!),
+      if (file.codecName != null) file.codecName!.toUpperCase(),
+      if (file.tmdbShowId != null && file.seasonNumber != null &&
+          file.episodeNumber != null)
+        'S${file.seasonNumber!.toString().padLeft(2, '0')} ·'
+            ' E${file.episodeNumber!.toString().padLeft(2, '0')}',
     ];
+    if (parts.isEmpty) return const SizedBox.shrink();
     return Text(
       parts.join('  ·  '),
       style: AppTypography.captionV2.copyWith(
@@ -220,43 +289,44 @@ class _MetaRow extends StatelessWidget {
       ),
     );
   }
+
+  static String _formatDuration(double seconds) {
+    final total = seconds.round();
+    final h = total ~/ 3600;
+    final m = (total % 3600) ~/ 60;
+    if (h > 0) return '${h}h ${m}m';
+    return '${m}m';
+  }
 }
 
 class _PrimaryActions extends StatelessWidget {
-  const _PrimaryActions({required this.item});
+  const _PrimaryActions({required this.file});
 
-  final MockMediaItem item;
+  final MediaFile file;
 
   @override
   Widget build(BuildContext context) {
-    final isShow = item.kind == 'show' && (item.seasons?.isNotEmpty ?? false);
+    final hasResume = file.resumeSec > 0;
     return Row(
       children: [
         Expanded(
           child: FluxButton(
             icon: Icons.play_arrow,
-            onPressed: () {},
-            child: Text(item.progress != null ? 'Resume' : 'Play'),
+            onPressed: () {
+              // M5 player wiring — push the player route with the file.
+              // Phase A doesn't change playback semantics.
+              context.push(Routes.player, extra: file);
+            },
+            child: Text(hasResume ? 'Resume' : 'Play'),
           ),
         ),
-        if (isShow) ...[
-          const SizedBox(width: 10),
-          FluxButton(
-            variant: FluxButtonVariant.secondary,
-            onPressed: () => context.push('/episodes/${item.id}'),
-            icon: Icons.list_rounded,
-            child: const Text('Episodes'),
-          ),
-        ],
       ],
     );
   }
 }
 
 class _SecondaryActions extends StatelessWidget {
-  const _SecondaryActions({required this.item});
-
-  final MockMediaItem item;
+  const _SecondaryActions();
 
   @override
   Widget build(BuildContext context) {
@@ -348,75 +418,6 @@ class _Synopsis extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _CastRail extends StatelessWidget {
-  const _CastRail({required this.members});
-
-  final List<MockCastMember> members;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 110,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        itemCount: members.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 14),
-        itemBuilder: (context, i) {
-          final m = members[i];
-          return SizedBox(
-            width: 80,
-            child: Column(
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    gradient: m.gradient,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: AppColors.borderSubtle),
-                  ),
-                  alignment: Alignment.center,
-                  child: Text(
-                    m.name.split(' ').map((s) => s[0]).take(2).join(),
-                    style: const TextStyle(
-                      fontFamily: 'Inter',
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  m.name,
-                  style: AppTypography.captionV2.copyWith(
-                    color: AppColors.textBright,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  m.role,
-                  style: AppTypography.captionV2.copyWith(
-                    color: AppColors.textDim,
-                    fontSize: 10,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          );
-        },
-      ),
     );
   }
 }

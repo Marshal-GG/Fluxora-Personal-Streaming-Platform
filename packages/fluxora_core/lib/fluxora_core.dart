@@ -2,6 +2,7 @@ export 'entities/activity_event.dart';
 export 'entities/app_notification.dart';
 export 'entities/profile.dart';
 export 'entities/client.dart';
+export 'entities/client_profile.dart';
 export 'entities/group.dart';
 export 'entities/transcoding_status.dart';
 export 'entities/client_list_item.dart';

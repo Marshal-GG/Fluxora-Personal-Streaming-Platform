@@ -38,10 +38,13 @@ class _SearchScreenState extends State<SearchScreen> {
   List<MockMediaItem> get _results {
     final q = _query.trim().toLowerCase();
     if (q.isEmpty) return const [];
+    // Phase B replaces this client-side filter with `GET /files/search`;
+    // the `recentlyAdded` source is gone (now a real Home rail) so search
+    // pulls only from the still-mock continue-watching + trending pools
+    // until Phase B lands.
     final pool = [
       ...MockData.continueWatching,
       ...MockData.trending,
-      ...MockData.recentlyAdded,
     ];
     final seen = <String>{};
     return pool

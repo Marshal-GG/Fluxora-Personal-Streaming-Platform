@@ -36,4 +36,26 @@ class LibraryRepositoryImpl implements LibraryRepository {
           .toList(),
     );
   }
+
+  @override
+  Future<List<MediaFile>> listRecentFiles({int limit = 20}) async {
+    _log.d('Fetching recent files (limit=$limit)');
+    return _apiClient.get<List<MediaFile>>(
+      Endpoints.filesRecent,
+      queryParameters: {'limit': limit},
+      fromJson: (data) => (data as List<dynamic>)
+          .map((item) =>
+              MediaFile.fromJson(item as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  @override
+  Future<MediaFile> getFile(String fileId) async {
+    _log.d('Fetching file $fileId');
+    return _apiClient.get<MediaFile>(
+      Endpoints.fileById(fileId),
+      fromJson: (data) => MediaFile.fromJson(data as Map<String, dynamic>),
+    );
+  }
 }

@@ -1,4 +1,5 @@
 import 'package:logger/logger.dart';
+import 'package:fluxora_core/entities/client_profile.dart';
 import 'package:fluxora_core/entities/server_info.dart';
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/network/endpoints.dart';
@@ -22,6 +23,7 @@ class AuthRepositoryImpl implements AuthRepository {
     required String deviceName,
     required String platform,
     required String appVersion,
+    String? email,
   }) async {
     _log.i('Requesting pair: $deviceName ($platform)');
     await _apiClient.post<dynamic>(
@@ -31,7 +33,18 @@ class AuthRepositoryImpl implements AuthRepository {
         'device_name': deviceName,
         'platform': platform,
         'app_version': appVersion,
+        if (email != null && email.isNotEmpty) 'email': email,
       },
+    );
+  }
+
+  @override
+  Future<ClientProfile> getMe() async {
+    _log.d('Fetching /clients/me');
+    return _apiClient.get<ClientProfile>(
+      Endpoints.authClientsMe,
+      fromJson: (data) =>
+          ClientProfile.fromJson(data as Map<String, dynamic>),
     );
   }
 

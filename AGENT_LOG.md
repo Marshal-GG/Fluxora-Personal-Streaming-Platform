@@ -787,3 +787,166 @@ Three intertwined fixes triggered by visual smoke-testing the Library screen on 
 - [x] No git-history rewrites.
 ---
 
+---
+## [2026-05-04] — Real glass on Library popups + dialogs (`FluxGlassDialog` + `FluxGlassMenu`)
+**Phase:** Phase 5 — desktop redesign polish
+**Status:** Complete
+
+### What Was Done
+
+Earlier the same day I'd swept all desktop `surfaceGlass` chrome to opaque `bgRaised` because translucent-without-blur reads as broken. Owner clarified they actually wanted glass — they'd assumed the original translucent appearance was a bug. So this entry restores **real glass** (rgba + `BackdropFilter`) on the Library screen's floating chrome.
+
+Two new shared widgets in `apps/desktop/lib/shared/widgets/`:
+
+1. **`FluxGlassDialog`** — drop-in replacement for `AlertDialog`. Wraps in `Dialog(transparent) → ClipRRect → BackdropFilter(blur 20) → Container(surfaceGlass + 1px border)`. Same blur pattern as `FluxAppBar` / `FluxSidebar` / `FluxBottomTabs`. API mirrors `AlertDialog` (`title`, `content`, `actions`) plus optional `maxWidth` (480) and `blurSigma` (20).
+
+2. **`FluxGlassMenu<T>`** + `showFluxGlassMenu<T>(...)` — drop-in replacement for `PopupMenuButton`. Stock `PopupMenuButton`'s items are independent `Material` descendants, so a single `BackdropFilter` can't span them — that's why the original popup-menu glass attempt (set `color: Colors.transparent`) didn't work. This widget uses a custom `PopupRoute<T>` (subclass of Flutter's same `PopupRoute` that powers `showMenu`) that renders all items inside one `BackdropFilter`. Items are declared as `FluxGlassMenuItem<T>` records (`value`, `label`, `icon?`, `iconColor?`, `destructive`, `selected`). The widget computes the trigger's screen position itself, anchors the menu beneath it, and clamps to the viewport so the menu never falls off-screen.
+
+Library-screen migrations (5 sites total):
+- 3 `AlertDialog`s → `FluxGlassDialog`: Delete confirm, Add/Edit form, Filters dialog
+- 2 `PopupMenuButton`s → `FluxGlassMenu`: `_SortMenu` (toolbar Sort dropdown) and `_CardMenuButton` (per-card 3-dot menu)
+
+Net visual: every floating surface in the Library screen now has true blur-backed glass, the surrounding page actually shows through (defocused), and the chrome reads as glass instead of an opaque dark rectangle.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `apps/desktop/lib/shared/widgets/flux_glass_dialog.dart` |
+| Created | `apps/desktop/lib/shared/widgets/flux_glass_menu.dart` (incl. `_GlassPopupRoute`, `_GlassMenuLayoutDelegate`, `FluxGlassMenuItem`) |
+| Modified | `apps/desktop/lib/features/library/presentation/screens/library_screen.dart` (3 dialog migrations + 2 popup-menu migrations + 2 imports added) |
+
+### Docs Updated
+
+- [`DESIGN.md`](../DESIGN.md) — "Surface Hierarchy" section gained an explicit "Real-glass widgets" table listing all 6 sites that ship rgba+blur (FluxAppBar, FluxBottomTabs, FluxSidebar, FluxGlassDialog, FluxGlassMenu, command palette overlay) plus the rule: floating chrome must commit to either real glass or opaque `bgRaised`; standalone `surfaceGlass` (rgba without blur) is a bug.
+- [`docs/08_frontend/01_frontend_architecture.md`](08_frontend/01_frontend_architecture.md) — Surface-token policy refined to point at the new widgets; documents that `FluxGlassMenu` uses a custom `PopupRoute` because stock `PopupMenuButton` can't host a single blur layer.
+- [`docs/12_guidelines/03_gotchas.md`](12_guidelines/03_gotchas.md) — Translucent-fillColor gotcha rewritten: "Resolved 2026-05-04 (two-pass fix)" — opaque `bgRaised` for theme defaults, real-glass widgets for opt-in floating chrome. Stock `PopupMenuButton` limitation documented inline.
+
+### Decisions Made
+
+- **Real glass for floating chrome over opaque-everything.** Initial earlier-day fix went all-opaque to remove the broken translucent look. Owner clarified they wanted real glass; this is the architecturally cleaner answer because Fluxora's design language depends on glassmorphism. The only catch is `BackdropFilter`'s GPU cost — kept opaque for theme-level defaults (Material `Card` / `AppBar` / `SnackBar` / input fill) where every screen would pay the cost; widgets that opt into glass (FluxGlassDialog, FluxGlassMenu, FluxAppBar, etc.) get real blur per-instance.
+- **Custom `PopupRoute<T>` for `FluxGlassMenu` rather than wrapping `PopupMenuButton`.** Stock `PopupMenuButton` renders each item as a separate `Material` descendant, which means a single `BackdropFilter` cannot span the popup. Subclassing `PopupRoute<T>` gives full control over the menu's render tree at minimal cost (~50 LOC delegate + route subclass).
+- **Items as records (`FluxGlassMenuItem<T>`), not arbitrary widgets.** Forces consumers through the standard label/icon/destructive/selected schema so menu rows stay visually consistent across the app. If a menu needs a non-standard row, the item-builder pattern can be added later.
+
+### Issues Discovered / Reported to User
+
+- **`PopupMenuButton`'s "translucent + transparent color" approach doesn't produce real glass.** Setting `color: Colors.transparent` and providing a custom shape just makes the popup invisible — the items still have their default Material rendering. Documented inline in `flux_glass_menu.dart`'s doc comment so future agents don't waste time trying that approach.
+- **Earlier today's `bgRaised` opaque sweep was directionally right but missed the design intent.** The translucent appearance the user originally complained about was *failed glass* (rgba without blur), not "transparency for the sake of it." The clean architectural answer is real glass — glass is part of the design language. Adopting `bgRaised` opaque is still correct for theme-level defaults where blur cost would multiply.
+
+### Blockers / Open Issues
+
+- **Mobile still pending.** 8 mobile `surfaceGlass` sites + 4 raw `Color(0xFF0F0C24)` literals haven't been migrated. Mobile agent should: (a) sweep mobile `surfaceGlass` to either `FluxGlassDialog`/`FluxGlassMenu` (where it's a popup/dialog) or `bgRaised` (where it's a theme default); (b) migrate raw `#0F0C24` literals to `AppColors.bgRaised` token.
+- **`groups_screen.dart` dialogs** are still on `AlertDialog + bgRaised`. Could be migrated to `FluxGlassDialog` for consistency with library — same one-liner replace as the library dialogs. Not done yet — owner didn't explicitly ask for this and groups is a less-trafficked surface.
+
+### Next Agent Should
+
+1. **Visual smoke-test the Library screen on Windows.** Open the Sort menu — should show real blur of the page behind it. Click any library card's 3-dot — same blur. Open Add Library / Edit / Delete confirm / Filters dialog — same blur with the page defocused behind. No "broken-translucent" appearance anywhere on this screen.
+2. **(Optional) Migrate `groups_screen.dart` dialogs to `FluxGlassDialog`.** 5 sites (delete confirms, create/edit forms). One-line replace each. Visual consistency win.
+3. **(Mobile-agent task)** Build a mobile equivalent. The pattern is portable — `FluxBottomSheet` already does the glass treatment on its own. A `FluxGlassDialog` mobile-friendly variant could sit in `packages/fluxora_core/lib/widgets/` and be shared between desktop and mobile.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()`.
+- [x] No exceptions swallowed.
+- [x] No secrets / hardcoded paths added.
+- [x] No new third-party deps. `dart:ui`'s `ImageFilter` is part of the SDK.
+- [x] No backwards-compat hacks.
+- [x] No mobile files touched (per owner directive).
+- [x] No git-history rewrites.
+---
+
+## [2026-05-04] — Mobile real-data backfill — Phase A — Mobile data wiring
+**Phase:** Phase 5 (mobile real-data backfill — see `docs/10_planning/08_real_data_backfill_plan.md` §9.2 + §9.4 commit 2)
+**Status:** Complete
+
+### What Was Done
+
+The second of three Phase A commits — mobile-side consumers of yesterday's server slice (`ac5051f`).  The Recently-added rail, title-detail screen, library tab, and profile header are now real-data-backed; the mock fixtures that backed them are deleted.  Mock continues to back continue-watching + trending + downloads + search-chrome only — those stay until Phase B / E.
+
+1. **`MediaFile` entity extended** (`packages/fluxora_core/lib/entities/media_file.dart`) with the seven Phase A fields the server now ships — `width`, `height`, `codecName`, `hdrFormat`, `tmdbShowId`, `seasonNumber`, `episodeNumber`. All optional, all nullable; legacy rows scanned before migration 016 deserialize fine. `freezed` + `json_serializable` regenerated via `flutter pub run build_runner build`.
+2. **`MediaFile.qualityBadge` extension** — pure-Dart helper that composes a "4K HDR" / "1080p HLG" / null badge from `height` + `hdrFormat`. Single source of truth for the mobile quality chip — used by Home rail, Library list, Detail hero. Returns null when no resolution is known so audio/document files render no chip.
+3. **`ClientProfile` entity** (`packages/fluxora_core/lib/entities/client_profile.dart`, freezed) for `GET /auth/clients/me`. `displayName` reads from the wire `display_name` field (the existing `clients.name` column renamed only in the API surface). `email` and `pairedAt` are nullable for legacy rows. `tier` deserialises from the existing `SubscriptionTier` enum.
+4. **`Endpoints` extended** with `authClientsMe`, `filesRecent`, and a `fileById(String)` helper.
+5. **`LibraryRepository` gained two methods** — `listRecentFiles({int limit = 20})` and `getFile(String fileId)`. `AuthRepository` gained `getMe()` plus an optional `email` param on `requestPair()` so the mobile pairing-rebuild commit (Phase A commit 3) can wire the email field without further repo changes.
+6. **Three new cubits**, each in its feature folder under `presentation/cubit/`:
+   - `RecentCubit` (`features/home/`) — sealed-state `RecentInitial`/`Loading`/`Loaded(items)`/`Failure(message)`. Singleton in GetIt so re-entering Home doesn't refetch.
+   - `DetailCubit` (`features/detail/`) — instantiated per-screen with the file id; loads on construction.
+   - `ProfileCubit` (`features/profile/`) — singleton, loads on first Profile-tab visit.
+7. **`AppGradientPlaceholders` lifted** from `MockGradients` into `apps/mobile/lib/shared/widgets/gradients.dart`. Same six gradients, plus a deterministic `forKey(String)` helper that hashes a file/library id to a palette entry — keeps placeholder colours stable across rebuilds. The lift was prerequisite to deleting `MockGradients` from `mock_data.dart` (which now imports from `gradients.dart`).
+8. **Home tab rewired** — Recently-added rail consumes `RecentCubit` via `BlocProvider.value`. Loading state shows 4 placeholder tiles; failure surface has Retry; empty surface tells the user "your next library scan will land here." Continue-watching + Trending stay mock until Phase B (per plan §3 row 1, §3 row 2).
+9. **Library tab rewired** — drops `MockData` entirely; consumes `LibraryBloc` (which fetches `GET /api/v1/library` for library *containers* — the v1 server has no aggregated-flat-media endpoint). Filter chips collapse to 5 (`All`/`Movies`/`Shows`/`Music`/`Files`) mapped to `LibraryType`; grid/list toggle stays. Cards show name + filecount + total-size; tap navigates to existing `Routes.libraryFiles(id)` deep-link. Loading + failure + empty states all wired to the bloc.
+10. **Detail screen rewired** — drops `MockData.findById`; uses `DetailCubit` over `getFile(id)`. Hero composes the quality badge from the new fields. Synopsis renders from `MediaFile.overview` (TMDB-enriched). The mock cast / crew / similar-titles / episodes-button / synopsis-rich-text rails are all gone — their server endpoints land in Phase C / D. Primary action is `Play`/`Resume` (driven by `resumeSec`) + the existing 4 secondary `_IconAction`s (Watchlist / Download / Share / Cast — placeholders unchanged).
+11. **Profile screen rewired** — `ProfileCubit` populates the avatar block (display_name + email + tier pill) and the Account/Subscription rows. Failure shows an inline error card with Retry. The stats row (Hours / Movies / Shows) keeps em-dash placeholders until Phase B's `/clients/me/stats` lands — this is deliberate: don't show fake numbers when the server doesn't know yet. Pull-to-refresh re-pings `/auth/clients/me`. Sign-out flow unchanged.
+12. **Episodes screen** (`features/episodes/`) **converted to a Phase D placeholder**. The screen used `MockData.findById` + `MockSeason` / `MockEpisode` — none of which survive Phase A. Until Phase D wires `tmdb_show_id`-grouped SQL + a `/shows/{id}/episodes` endpoint, the screen renders "Episodes — coming soon" instead of mock seasons. The `/episodes/:id` route stays so existing deep-links don't 404.
+13. **Search screen** trimmed to drop the `MockData.recentlyAdded` source from its in-memory pool (it's now a real Home rail with no fixed list to filter against). Comment marks the screen as the Phase B target for `/files/search`.
+14. **`mock_data.dart` shrunk by ~360 lines** — deleted: `MockGradients` class (lifted), `MockMediaItem.recentlyAdded`, `MockMediaItem.findById`, `MockData._details` rich-detail map, `MockCastMember`, `MockSeason`, `MockEpisode`, the optional `year`/`rating`/`duration`/`synopsis`/`cast`/`crew`/`similarIds`/`seasons` fields on `MockMediaItem`. What survives is exactly the Phase B / E removal targets per plan §3.
+15. **Injector** now registers `RecentCubit` + `ProfileCubit` as `lazySingleton`s. `DetailCubit` is created per-screen via `BlocProvider`.
+16. **Mobile tests still 27 passing**; `fluxora_core` tests still 8 passing; `flutter analyze` clean across both packages.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `packages/fluxora_core/lib/entities/client_profile.dart` (+ generated `.freezed.dart` / `.g.dart`) |
+| Modified | `packages/fluxora_core/lib/entities/media_file.dart` (+ regenerated `.freezed.dart` / `.g.dart`) — 7 new optional fields + `qualityBadge` extension |
+| Modified | `packages/fluxora_core/lib/network/endpoints.dart` (added `authClientsMe`, `filesRecent`, `fileById`) |
+| Modified | `packages/fluxora_core/lib/fluxora_core.dart` (export `client_profile`) |
+| Created | `apps/mobile/lib/shared/widgets/gradients.dart` (`AppGradientPlaceholders`) |
+| Created | `apps/mobile/lib/features/home/presentation/cubit/recent_cubit.dart` |
+| Created | `apps/mobile/lib/features/detail/presentation/cubit/detail_cubit.dart` |
+| Created | `apps/mobile/lib/features/profile/presentation/cubit/profile_cubit.dart` |
+| Modified | `apps/mobile/lib/features/library/domain/repositories/library_repository.dart` (+ `listRecentFiles`, `getFile`) |
+| Modified | `apps/mobile/lib/features/library/data/repositories/library_repository_impl.dart` |
+| Modified | `apps/mobile/lib/features/auth/domain/repositories/auth_repository.dart` (+ `getMe`, optional `email` on `requestPair`) |
+| Modified | `apps/mobile/lib/features/auth/data/repositories/auth_repository_impl.dart` |
+| Modified | `apps/mobile/lib/features/home/presentation/screens/home_screen.dart` (Recently-added rail consumes `RecentCubit`) |
+| Modified | `apps/mobile/lib/features/library/presentation/screens/library_screen.dart` (consumes `LibraryBloc`) |
+| Modified | `apps/mobile/lib/features/detail/presentation/screens/detail_screen.dart` (consumes `DetailCubit`) |
+| Modified | `apps/mobile/lib/features/profile/presentation/screens/profile_screen.dart` (consumes `ProfileCubit`) |
+| Modified | `apps/mobile/lib/features/episodes/presentation/screens/episodes_screen.dart` (Phase D placeholder) |
+| Modified | `apps/mobile/lib/features/search/presentation/screens/search_screen.dart` (drop `recentlyAdded` pool) |
+| Modified | `apps/mobile/lib/shared/data/mock_data.dart` (~360 lines deleted; `MockGradients` removed; `MockMediaItem.findById` removed; `_details` map removed) |
+| Modified | `apps/mobile/lib/core/di/injector.dart` (register `RecentCubit` + `ProfileCubit`) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Docs Updated
+- None added in this commit.  API + schema + security + URL inventory all landed alongside the server commit (`ac5051f`); they describe the contract this commit consumes.  `current_status.md` will roll forward when Phase A commit 3 (pairing rebuild) lands so the bullet covers the full Phase A delivery rather than a half-done split.
+
+### Decisions Made
+- **Library tab shows containers, not flat media.** The plan said "rewires to LibraryBloc" — `LibraryBloc.state` is `List<Library>`. The honest path was to drop the 6-filter mock-flat-grid and render library cards.  Filter chips collapse to 5 mapped to `LibraryType`; the existing `/library-files/:id` deep-link still handles flat-file browsing inside a library. Phase B may add a flat-aggregate endpoint (`GET /files?library_id=...&recent=true`) — until then, container-grid is the truthful surface.
+- **Quality badge derived in client, not server.** The badge string ("4K HDR" / "1080p" / null) is composed in `MediaFile.qualityBadge` extension instead of returning a `qualityBadge` field from the server. Two reasons: (1) keeps the server response shape stable (the server returns physics — width/height/hdr_format — not display strings), (2) the same extension serves desktop without a second wire-format change.
+- **Profile stats row keeps placeholders.** Showing "284 hours · 62 movies · 18 shows" hardcoded was fine for the prototype; showing it as real-looking-but-fake numbers in a real-data-wired screen is dishonest. Em-dashes communicate "the server doesn't know" until Phase B's `/clients/me/stats` lands.
+- **`AppGradientPlaceholders.forKey(String)`** — deterministic hash → palette index. Keeps the same poster background across scrolls + rebuilds without storing per-file palette state. Adopted for Library cards (keyed off `library.id`) and Detail hero (keyed off `file.id`).
+- **Episodes screen → Phase D placeholder.** Deleting the `/episodes/:id` route would break existing deep-links; keeping it functional with mock data would require keeping `_details` + `MockSeason` + `MockEpisode` alive. Compromise: keep the route, replace the body with a "Coming soon" panel. Phase D rewires it.
+- **Continue-watching + trending + search-chrome stay mock.** Per plan §3 row 1–2 the deletion of those targets is Phase B work. Phase A's scope is "honest about what's real now" — moving them mid-commit would inflate the diff and steal Phase B's planning headroom.
+
+### Blockers / Open Issues
+- **No `/clients/me/stats` exists yet.** Profile stats row is em-dashes until Phase B ships the endpoint. Acceptable v1.0 surface, but it visually downgrades a polished prototype.
+- **No `/files/search` exists yet.** Search screen still filters a small in-memory pool (continue-watching + trending). Phase B replaces it. Until then, the search affordance is honest-but-narrow.
+- **Library cards aren't a "media grid" anymore.** The Phase A surface shows 4 library containers; the Phase A poster grid was 24+ mock items. This is a real visual downgrade from the demo state — but it's the truthful state until either a flat-aggregate endpoint lands or the `LibraryBloc.state` shape changes. Flagged here so the next session can take a polish pass if desired.
+- **`/auth/clients/me` is bearer-token-required**, which means Profile fails until pairing succeeds.  When the user signs out (clears the bearer), the cubit will fail with 401 — but the screen unmounts before then because `_performSignOut` `context.go(Routes.connect)`s before any rebuild. No race here, but worth noting if a future change holds the screen across the bearer wipe.
+
+### Issues / Sharp Edges Discovered
+- **`Routes.libraryFiles` is a function, not a string.** Initial pass tried `Routes.libraryFiles.replaceAll(':id', library.id)` — Dart's analyser caught it. The right call is `Routes.libraryFiles(library.id)`. Worth documenting because the desktop sibling-pattern uses string templates with `replaceAll`, so the muscle memory is wrong here.
+- **Stale Dart Analysis Server diagnostics during freezed regen.** The IDE flagged "Undefined name 'height'" / "redirected constructor incompatible" between the entity edit and the codegen run; CLI `flutter analyze` after `build_runner` was clean. Pattern observed before — IDE diagnostics are a leading-but-flaky indicator during freezed work; CLI is the source of truth.
+- **No `_pending_tokens` reset between mobile tests.** Carried forward from the server-side commit's open-issue list — flagged again here because the Phase A pairing-rebuild commit will add new `auth_service` tests that touch this state.
+
+### Suggested Next Steps (priority order)
+1. **Phase A — Mobile pairing rebuild** (last of the three Phase A commits per plan §9.4). State-machine UI in `pairing_screen.dart`, optional email field, `Routes.reconnect` lost-token recovery, auth-guard tweak in `app_router.dart`. Wires the `email` param that `requestPair` already accepts.
+2. **Visual smoke-test the rewired screens** on a paired device (or `--dart-define` a bearer at startup): scan a real library → confirm Home Recently-added rail populates, Library cards show real names/sizes, tapping a card → file browser → tapping a file → Detail screen with real poster/quality badge, Profile shows real display_name + tier.
+3. **Hide the Downloads tab in v1** (decision §5 row 4). Standalone tiny commit: remove from `FluxBottomTabs` registry + `Routes.downloads` + the `StatefulShellBranch`. `downloads_screen.dart` stays in-tree.
+4. **Phase B — Continue-watching + Search + Profile stats.** Once Phase A is green, the three remaining mock surfaces are a natural follow-up commit.
+
+### Hard Rules Checklist
+- [x] `git commit` / `git push` not run yet — staged + draft only; owner approves in this session.
+- [x] No AI branding in code, docs, or the upcoming commit message.
+- [x] No `print()` / `debugPrint()`; cubits use the project `Logger` for failures.
+- [x] No silent `except:`; cubits log + emit explicit `*Failure` states.
+- [x] No hardcoded secrets / paths.
+- [x] No new pub deps.
+- [x] No layer-boundary violations (cubit → repo → ApiClient).
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+---
+
+

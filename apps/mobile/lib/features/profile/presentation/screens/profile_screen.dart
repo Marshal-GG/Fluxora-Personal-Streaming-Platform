@@ -1,53 +1,98 @@
 /// Profile tab — avatar block + stats + sectioned settings + sign out.
 ///
-/// Matches the prototype JSX at
-/// `docs/11_design/prototype/app/mobile/screens/profile.jsx`.
-/// Profile data + stats are mocked client-side — the server's `/profile`
-/// endpoint is the *operator* profile (server admin) and doesn't map
-/// cleanly to a per-mobile-client profile. Replacement is its own ticket.
+/// Phase A backfill: header (display name + email + tier pill), the
+/// "Account" sub-row email and the "Subscription" tier pill all consume
+/// `GET /api/v1/auth/clients/me` via [ProfileCubit].  The stats row
+/// (Hours / Movies / Shows) keeps a placeholder dash until Phase B's
+/// `/clients/me/stats` lands — three em-dashes sit in for the legacy
+/// hardcoded `284 / 62 / 18` so the UI is honest about what it knows.
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/fluxora_core.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:fluxora_mobile/core/router/app_router.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
+import 'package:fluxora_mobile/features/profile/presentation/cubit/profile_cubit.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
   @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  late final ProfileCubit _profile;
+
+  @override
+  void initState() {
+    super.initState();
+    _profile = GetIt.I<ProfileCubit>();
+    if (_profile.state is ProfileInitial) {
+      _profile.load();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        bottom: false,
-        child: ListView(
-          padding: const EdgeInsets.only(bottom: 24),
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: [
-            const _Header(),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 4, 16, 0),
-              child: _AvatarBlock(),
+    return BlocProvider<ProfileCubit>.value(
+      value: _profile,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: SafeArea(
+          bottom: false,
+          child: RefreshIndicator(
+            onRefresh: () => _profile.refresh(),
+            color: AppColors.violet,
+            backgroundColor: AppColors.surfaceGlass,
+            child: BlocBuilder<ProfileCubit, ProfileState>(
+              builder: (context, state) {
+                final profile = switch (state) {
+                  ProfileLoaded(:final profile) => profile,
+                  _ => null,
+                };
+                final failureMessage = switch (state) {
+                  ProfileFailure(:final message) => message,
+                  _ => null,
+                };
+
+                return ListView(
+                  padding: const EdgeInsets.only(bottom: 24),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: [
+                    const _Header(),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                      child: _AvatarBlock(profile: profile),
+                    ),
+                    if (failureMessage != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        child: _ProfileFailure(message: failureMessage),
+                      ),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
+                      child: _StatRow(),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+                      child: _SettingsList(profile: profile),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+                      child: _SignOutButton(
+                        onTap: () => _confirmSignOut(context),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: _StatRow(),
-            ),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 14, 16, 0),
-              child: _SettingsList(),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
-              child: _SignOutButton(
-                onTap: () => _confirmSignOut(context),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -160,11 +205,18 @@ class _Header extends StatelessWidget {
 // ── Avatar block (gradient surface + circle avatar + plan pill) ─────────────
 
 class _AvatarBlock extends StatelessWidget {
-  const _AvatarBlock();
+  const _AvatarBlock({required this.profile});
 
-  static const _name = 'Alex Kowalski';
-  static const _email = 'alex@fluxora.io';
-  static const _initials = 'AK';
+  final ClientProfile? profile;
+
+  String get _displayName => profile?.displayName ?? '—';
+  String get _email => profile?.email ?? 'Pairing-only — no email on file';
+  String get _initials {
+    final name = profile?.displayName;
+    if (name == null || name.isEmpty) return '?';
+    final parts = name.split(RegExp(r'\s+')).where((s) => s.isNotEmpty);
+    return parts.take(2).map((s) => s[0]).join().toUpperCase();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -217,7 +269,7 @@ class _AvatarBlock extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  _name,
+                  _displayName,
                   style: AppTypography.h1.copyWith(
                     fontSize: 17,
                     fontWeight: FontWeight.w700,
@@ -233,36 +285,7 @@ class _AvatarBlock extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 7),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.pillBgPurple,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.workspace_premium_outlined,
-                        size: 11,
-                        color: Color(0xFFE9D5FF),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'PLUS MEMBER',
-                        style: AppTypography.eyebrow.copyWith(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.3,
-                          color: const Color(0xFFE9D5FF),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+                _TierPill(tier: profile?.tier),
               ],
             ),
           ),
@@ -272,15 +295,104 @@ class _AvatarBlock extends StatelessWidget {
   }
 }
 
-// ── Stats row (Hours · Movies · Shows) ──────────────────────────────────────
+class _TierPill extends StatelessWidget {
+  const _TierPill({required this.tier});
+
+  final SubscriptionTier? tier;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = switch (tier) {
+      SubscriptionTier.free => 'FREE',
+      SubscriptionTier.plus => 'PLUS MEMBER',
+      SubscriptionTier.pro => 'PRO MEMBER',
+      SubscriptionTier.ultimate => 'ULTIMATE MEMBER',
+      null => '— LOADING',
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 9,
+        vertical: 3,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.pillBgPurple,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.workspace_premium_outlined,
+            size: 11,
+            color: Color(0xFFE9D5FF),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: AppTypography.eyebrow.copyWith(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+              color: const Color(0xFFE9D5FF),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfileFailure extends StatelessWidget {
+  const _ProfileFailure({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0x14EF4444),
+        border: Border.all(color: const Color(0x40EF4444)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.error_outline,
+              size: 18, color: Color(0xFFF87171)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: AppTypography.captionV2
+                  .copyWith(color: const Color(0xFFF87171)),
+            ),
+          ),
+          TextButton(
+            onPressed: () => context.read<ProfileCubit>().refresh(),
+            child: Text(
+              'Retry',
+              style: AppTypography.captionV2.copyWith(
+                color: AppColors.violetTint,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Stats row (Hours · Movies · Shows) — placeholder until Phase B ──────────
 
 class _StatRow extends StatelessWidget {
   const _StatRow();
 
   static const _stats = <(String, String)>[
-    ('284', 'Hours'),
-    ('62', 'Movies'),
-    ('18', 'Shows'),
+    ('—', 'Hours'),
+    ('—', 'Movies'),
+    ('—', 'Shows'),
   ];
 
   @override
@@ -338,49 +450,59 @@ class _StatRow extends StatelessWidget {
 // ── Settings list (FluxRow group with dividers) ─────────────────────────────
 
 class _SettingsList extends StatelessWidget {
-  const _SettingsList();
+  const _SettingsList({required this.profile});
+
+  final ClientProfile? profile;
 
   @override
   Widget build(BuildContext context) {
-    const rows = <Widget>[
+    final accountSub = profile?.email ?? '—';
+    final subscriptionSub = profile == null
+        ? 'Loading…'
+        : _tierSubLabel(profile!.tier);
+    final planPillLabel = profile == null ? null : _tierPillLabel(profile!.tier);
+
+    final rows = <Widget>[
       _SettingsRow(
         icon: Icons.person_outline,
         label: 'Account',
-        sub: 'alex@fluxora.io',
+        sub: accountSub,
       ),
       _SettingsRow(
         icon: Icons.credit_card_outlined,
         label: 'Subscription',
-        sub: 'Plus · renews Jun 21',
-        trailing: _PlanPill(label: 'Plus'),
+        sub: subscriptionSub,
+        trailing: planPillLabel == null
+            ? null
+            : _PlanPill(label: planPillLabel),
       ),
-      _SettingsRow(
+      const _SettingsRow(
         icon: Icons.download_outlined,
         label: 'Downloads',
         sub: 'Quality · auto-delete',
       ),
-      _SettingsRow(
+      const _SettingsRow(
         icon: Icons.wifi_outlined,
         label: 'Playback',
         sub: 'Wi-Fi only · streaming quality',
       ),
-      _SettingsRow(
+      const _SettingsRow(
         icon: Icons.public_outlined,
         label: 'Language & region',
       ),
-      _SettingsRow(
+      const _SettingsRow(
         icon: Icons.notifications_outlined,
         label: 'Notifications',
       ),
-      _SettingsRow(
+      const _SettingsRow(
         icon: Icons.shield_outlined,
         label: 'Privacy & security',
       ),
-      _SettingsRow(
+      const _SettingsRow(
         icon: Icons.help_outline,
         label: 'Help & support',
       ),
-      _SettingsRow(
+      const _SettingsRow(
         icon: Icons.info_outline,
         label: 'About Fluxora',
         sub: 'v1.0.0 · build 482',
@@ -411,6 +533,20 @@ class _SettingsList extends StatelessWidget {
       ),
     );
   }
+
+  String _tierSubLabel(SubscriptionTier tier) => switch (tier) {
+        SubscriptionTier.free => 'Free tier',
+        SubscriptionTier.plus => 'Plus',
+        SubscriptionTier.pro => 'Pro',
+        SubscriptionTier.ultimate => 'Ultimate',
+      };
+
+  String _tierPillLabel(SubscriptionTier tier) => switch (tier) {
+        SubscriptionTier.free => 'Free',
+        SubscriptionTier.plus => 'Plus',
+        SubscriptionTier.pro => 'Pro',
+        SubscriptionTier.ultimate => 'Ultimate',
+      };
 }
 
 class _SettingsRow extends StatelessWidget {

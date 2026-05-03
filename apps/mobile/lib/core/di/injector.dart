@@ -6,6 +6,7 @@ import 'package:fluxora_mobile/features/auth/data/repositories/auth_repository_i
 import 'package:fluxora_mobile/features/auth/domain/repositories/auth_repository.dart';
 import 'package:fluxora_mobile/features/connect/data/repositories/server_discovery_repository_impl.dart';
 import 'package:fluxora_mobile/features/connect/domain/repositories/server_discovery_repository.dart';
+import 'package:fluxora_mobile/features/home/presentation/cubit/recent_cubit.dart';
 import 'package:fluxora_mobile/features/library/data/repositories/library_repository_impl.dart';
 import 'package:fluxora_mobile/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_mobile/features/notifications/data/repositories/notifications_repository_impl.dart';
@@ -14,6 +15,7 @@ import 'package:fluxora_mobile/features/notifications/presentation/cubit/notific
 import 'package:fluxora_mobile/features/player/data/repositories/player_repository_impl.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
+import 'package:fluxora_mobile/features/profile/presentation/cubit/profile_cubit.dart';
 
 final GetIt getIt = GetIt.instance;
 
@@ -82,5 +84,20 @@ Future<void> setupInjector() async {
   // open for unread-count surfacing on the home tab bell).
   getIt.registerLazySingleton<NotificationsCubit>(
     () => NotificationsCubit(repository: getIt<NotificationsRepository>()),
+  );
+
+  // Phase A backfill — Home rail uses a singleton so re-entering the Home
+  // tab does not drop the loaded list.  Pull-to-refresh on the Home tab
+  // calls `RecentCubit.refresh()` to repaint the rail.
+  getIt.registerLazySingleton<RecentCubit>(
+    () => RecentCubit(repository: getIt<LibraryRepository>()),
+  );
+
+  // Profile cubit — singleton so the profile header survives bottom-tab
+  // hops (most expensive piece is the network round-trip; once loaded
+  // the cached `ClientProfile` is fine for the session unless the user
+  // pulls to refresh).
+  getIt.registerLazySingleton<ProfileCubit>(
+    () => ProfileCubit(repository: getIt<AuthRepository>()),
   );
 }

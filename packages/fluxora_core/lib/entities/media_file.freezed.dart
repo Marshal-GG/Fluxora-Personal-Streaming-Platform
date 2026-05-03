@@ -17,7 +17,14 @@ mixin _$MediaFile {
 
  String get id; String get path; String get name; String get extension; int get sizeBytes; double? get durationSec; String? get libraryId; int? get tmdbId;// TMDB-enriched metadata
  String? get title; String? get overview; String? get posterUrl;// Resume playback position
-@JsonKey(name: 'last_progress_sec') double get resumeSec;@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime get createdAt;@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime get updatedAt;
+@JsonKey(name: 'last_progress_sec') double get resumeSec;// FFprobe-derived video metadata (server migration 016).  Null on
+// non-video extensions and on rows scanned before the migration until
+// the next library scan touches them.
+ int? get width; int? get height; String? get codecName;/// 'HDR10' / 'HLG' / 'DolbyVision' / null (SDR).
+ String? get hdrFormat;// TV episode aggregation (server migration 016).  Populated by Phase D's
+// TMDB back-fill — null on movies and on TV files scanned before the
+// back-fill ran.
+ int? get tmdbShowId; int? get seasonNumber; int? get episodeNumber;@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime get createdAt;@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime get updatedAt;
 /// Create a copy of MediaFile
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -30,16 +37,16 @@ $MediaFileCopyWith<MediaFile> get copyWith => _$MediaFileCopyWithImpl<MediaFile>
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is MediaFile&&(identical(other.id, id) || other.id == id)&&(identical(other.path, path) || other.path == path)&&(identical(other.name, name) || other.name == name)&&(identical(other.extension, extension) || other.extension == extension)&&(identical(other.sizeBytes, sizeBytes) || other.sizeBytes == sizeBytes)&&(identical(other.durationSec, durationSec) || other.durationSec == durationSec)&&(identical(other.libraryId, libraryId) || other.libraryId == libraryId)&&(identical(other.tmdbId, tmdbId) || other.tmdbId == tmdbId)&&(identical(other.title, title) || other.title == title)&&(identical(other.overview, overview) || other.overview == overview)&&(identical(other.posterUrl, posterUrl) || other.posterUrl == posterUrl)&&(identical(other.resumeSec, resumeSec) || other.resumeSec == resumeSec)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is MediaFile&&(identical(other.id, id) || other.id == id)&&(identical(other.path, path) || other.path == path)&&(identical(other.name, name) || other.name == name)&&(identical(other.extension, extension) || other.extension == extension)&&(identical(other.sizeBytes, sizeBytes) || other.sizeBytes == sizeBytes)&&(identical(other.durationSec, durationSec) || other.durationSec == durationSec)&&(identical(other.libraryId, libraryId) || other.libraryId == libraryId)&&(identical(other.tmdbId, tmdbId) || other.tmdbId == tmdbId)&&(identical(other.title, title) || other.title == title)&&(identical(other.overview, overview) || other.overview == overview)&&(identical(other.posterUrl, posterUrl) || other.posterUrl == posterUrl)&&(identical(other.resumeSec, resumeSec) || other.resumeSec == resumeSec)&&(identical(other.width, width) || other.width == width)&&(identical(other.height, height) || other.height == height)&&(identical(other.codecName, codecName) || other.codecName == codecName)&&(identical(other.hdrFormat, hdrFormat) || other.hdrFormat == hdrFormat)&&(identical(other.tmdbShowId, tmdbShowId) || other.tmdbShowId == tmdbShowId)&&(identical(other.seasonNumber, seasonNumber) || other.seasonNumber == seasonNumber)&&(identical(other.episodeNumber, episodeNumber) || other.episodeNumber == episodeNumber)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,path,name,extension,sizeBytes,durationSec,libraryId,tmdbId,title,overview,posterUrl,resumeSec,createdAt,updatedAt);
+int get hashCode => Object.hashAll([runtimeType,id,path,name,extension,sizeBytes,durationSec,libraryId,tmdbId,title,overview,posterUrl,resumeSec,width,height,codecName,hdrFormat,tmdbShowId,seasonNumber,episodeNumber,createdAt,updatedAt]);
 
 @override
 String toString() {
-  return 'MediaFile(id: $id, path: $path, name: $name, extension: $extension, sizeBytes: $sizeBytes, durationSec: $durationSec, libraryId: $libraryId, tmdbId: $tmdbId, title: $title, overview: $overview, posterUrl: $posterUrl, resumeSec: $resumeSec, createdAt: $createdAt, updatedAt: $updatedAt)';
+  return 'MediaFile(id: $id, path: $path, name: $name, extension: $extension, sizeBytes: $sizeBytes, durationSec: $durationSec, libraryId: $libraryId, tmdbId: $tmdbId, title: $title, overview: $overview, posterUrl: $posterUrl, resumeSec: $resumeSec, width: $width, height: $height, codecName: $codecName, hdrFormat: $hdrFormat, tmdbShowId: $tmdbShowId, seasonNumber: $seasonNumber, episodeNumber: $episodeNumber, createdAt: $createdAt, updatedAt: $updatedAt)';
 }
 
 
@@ -50,7 +57,7 @@ abstract mixin class $MediaFileCopyWith<$Res>  {
   factory $MediaFileCopyWith(MediaFile value, $Res Function(MediaFile) _then) = _$MediaFileCopyWithImpl;
 @useResult
 $Res call({
- String id, String path, String name, String extension, int sizeBytes, double? durationSec, String? libraryId, int? tmdbId, String? title, String? overview, String? posterUrl,@JsonKey(name: 'last_progress_sec') double resumeSec,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime createdAt,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime updatedAt
+ String id, String path, String name, String extension, int sizeBytes, double? durationSec, String? libraryId, int? tmdbId, String? title, String? overview, String? posterUrl,@JsonKey(name: 'last_progress_sec') double resumeSec, int? width, int? height, String? codecName, String? hdrFormat, int? tmdbShowId, int? seasonNumber, int? episodeNumber,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime createdAt,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime updatedAt
 });
 
 
@@ -67,7 +74,7 @@ class _$MediaFileCopyWithImpl<$Res>
 
 /// Create a copy of MediaFile
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? path = null,Object? name = null,Object? extension = null,Object? sizeBytes = null,Object? durationSec = freezed,Object? libraryId = freezed,Object? tmdbId = freezed,Object? title = freezed,Object? overview = freezed,Object? posterUrl = freezed,Object? resumeSec = null,Object? createdAt = null,Object? updatedAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? path = null,Object? name = null,Object? extension = null,Object? sizeBytes = null,Object? durationSec = freezed,Object? libraryId = freezed,Object? tmdbId = freezed,Object? title = freezed,Object? overview = freezed,Object? posterUrl = freezed,Object? resumeSec = null,Object? width = freezed,Object? height = freezed,Object? codecName = freezed,Object? hdrFormat = freezed,Object? tmdbShowId = freezed,Object? seasonNumber = freezed,Object? episodeNumber = freezed,Object? createdAt = null,Object? updatedAt = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,path: null == path ? _self.path : path // ignore: cast_nullable_to_non_nullable
@@ -81,7 +88,14 @@ as int?,title: freezed == title ? _self.title : title // ignore: cast_nullable_t
 as String?,overview: freezed == overview ? _self.overview : overview // ignore: cast_nullable_to_non_nullable
 as String?,posterUrl: freezed == posterUrl ? _self.posterUrl : posterUrl // ignore: cast_nullable_to_non_nullable
 as String?,resumeSec: null == resumeSec ? _self.resumeSec : resumeSec // ignore: cast_nullable_to_non_nullable
-as double,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
+as double,width: freezed == width ? _self.width : width // ignore: cast_nullable_to_non_nullable
+as int?,height: freezed == height ? _self.height : height // ignore: cast_nullable_to_non_nullable
+as int?,codecName: freezed == codecName ? _self.codecName : codecName // ignore: cast_nullable_to_non_nullable
+as String?,hdrFormat: freezed == hdrFormat ? _self.hdrFormat : hdrFormat // ignore: cast_nullable_to_non_nullable
+as String?,tmdbShowId: freezed == tmdbShowId ? _self.tmdbShowId : tmdbShowId // ignore: cast_nullable_to_non_nullable
+as int?,seasonNumber: freezed == seasonNumber ? _self.seasonNumber : seasonNumber // ignore: cast_nullable_to_non_nullable
+as int?,episodeNumber: freezed == episodeNumber ? _self.episodeNumber : episodeNumber // ignore: cast_nullable_to_non_nullable
+as int?,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
 as DateTime,updatedAt: null == updatedAt ? _self.updatedAt : updatedAt // ignore: cast_nullable_to_non_nullable
 as DateTime,
   ));
@@ -168,10 +182,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String path,  String name,  String extension,  int sizeBytes,  double? durationSec,  String? libraryId,  int? tmdbId,  String? title,  String? overview,  String? posterUrl, @JsonKey(name: 'last_progress_sec')  double resumeSec, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime updatedAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String path,  String name,  String extension,  int sizeBytes,  double? durationSec,  String? libraryId,  int? tmdbId,  String? title,  String? overview,  String? posterUrl, @JsonKey(name: 'last_progress_sec')  double resumeSec,  int? width,  int? height,  String? codecName,  String? hdrFormat,  int? tmdbShowId,  int? seasonNumber,  int? episodeNumber, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime updatedAt)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _MediaFile() when $default != null:
-return $default(_that.id,_that.path,_that.name,_that.extension,_that.sizeBytes,_that.durationSec,_that.libraryId,_that.tmdbId,_that.title,_that.overview,_that.posterUrl,_that.resumeSec,_that.createdAt,_that.updatedAt);case _:
+return $default(_that.id,_that.path,_that.name,_that.extension,_that.sizeBytes,_that.durationSec,_that.libraryId,_that.tmdbId,_that.title,_that.overview,_that.posterUrl,_that.resumeSec,_that.width,_that.height,_that.codecName,_that.hdrFormat,_that.tmdbShowId,_that.seasonNumber,_that.episodeNumber,_that.createdAt,_that.updatedAt);case _:
   return orElse();
 
 }
@@ -189,10 +203,10 @@ return $default(_that.id,_that.path,_that.name,_that.extension,_that.sizeBytes,_
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String path,  String name,  String extension,  int sizeBytes,  double? durationSec,  String? libraryId,  int? tmdbId,  String? title,  String? overview,  String? posterUrl, @JsonKey(name: 'last_progress_sec')  double resumeSec, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime updatedAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String path,  String name,  String extension,  int sizeBytes,  double? durationSec,  String? libraryId,  int? tmdbId,  String? title,  String? overview,  String? posterUrl, @JsonKey(name: 'last_progress_sec')  double resumeSec,  int? width,  int? height,  String? codecName,  String? hdrFormat,  int? tmdbShowId,  int? seasonNumber,  int? episodeNumber, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime updatedAt)  $default,) {final _that = this;
 switch (_that) {
 case _MediaFile():
-return $default(_that.id,_that.path,_that.name,_that.extension,_that.sizeBytes,_that.durationSec,_that.libraryId,_that.tmdbId,_that.title,_that.overview,_that.posterUrl,_that.resumeSec,_that.createdAt,_that.updatedAt);case _:
+return $default(_that.id,_that.path,_that.name,_that.extension,_that.sizeBytes,_that.durationSec,_that.libraryId,_that.tmdbId,_that.title,_that.overview,_that.posterUrl,_that.resumeSec,_that.width,_that.height,_that.codecName,_that.hdrFormat,_that.tmdbShowId,_that.seasonNumber,_that.episodeNumber,_that.createdAt,_that.updatedAt);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -209,10 +223,10 @@ return $default(_that.id,_that.path,_that.name,_that.extension,_that.sizeBytes,_
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String path,  String name,  String extension,  int sizeBytes,  double? durationSec,  String? libraryId,  int? tmdbId,  String? title,  String? overview,  String? posterUrl, @JsonKey(name: 'last_progress_sec')  double resumeSec, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime updatedAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String path,  String name,  String extension,  int sizeBytes,  double? durationSec,  String? libraryId,  int? tmdbId,  String? title,  String? overview,  String? posterUrl, @JsonKey(name: 'last_progress_sec')  double resumeSec,  int? width,  int? height,  String? codecName,  String? hdrFormat,  int? tmdbShowId,  int? seasonNumber,  int? episodeNumber, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime updatedAt)?  $default,) {final _that = this;
 switch (_that) {
 case _MediaFile() when $default != null:
-return $default(_that.id,_that.path,_that.name,_that.extension,_that.sizeBytes,_that.durationSec,_that.libraryId,_that.tmdbId,_that.title,_that.overview,_that.posterUrl,_that.resumeSec,_that.createdAt,_that.updatedAt);case _:
+return $default(_that.id,_that.path,_that.name,_that.extension,_that.sizeBytes,_that.durationSec,_that.libraryId,_that.tmdbId,_that.title,_that.overview,_that.posterUrl,_that.resumeSec,_that.width,_that.height,_that.codecName,_that.hdrFormat,_that.tmdbShowId,_that.seasonNumber,_that.episodeNumber,_that.createdAt,_that.updatedAt);case _:
   return null;
 
 }
@@ -224,7 +238,7 @@ return $default(_that.id,_that.path,_that.name,_that.extension,_that.sizeBytes,_
 @JsonSerializable()
 
 class _MediaFile implements MediaFile {
-  const _MediaFile({required this.id, required this.path, required this.name, required this.extension, required this.sizeBytes, this.durationSec, this.libraryId, this.tmdbId, this.title, this.overview, this.posterUrl, @JsonKey(name: 'last_progress_sec') this.resumeSec = 0.0, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) required this.createdAt, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) required this.updatedAt});
+  const _MediaFile({required this.id, required this.path, required this.name, required this.extension, required this.sizeBytes, this.durationSec, this.libraryId, this.tmdbId, this.title, this.overview, this.posterUrl, @JsonKey(name: 'last_progress_sec') this.resumeSec = 0.0, this.width, this.height, this.codecName, this.hdrFormat, this.tmdbShowId, this.seasonNumber, this.episodeNumber, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) required this.createdAt, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) required this.updatedAt});
   factory _MediaFile.fromJson(Map<String, dynamic> json) => _$MediaFileFromJson(json);
 
 @override final  String id;
@@ -241,6 +255,20 @@ class _MediaFile implements MediaFile {
 @override final  String? posterUrl;
 // Resume playback position
 @override@JsonKey(name: 'last_progress_sec') final  double resumeSec;
+// FFprobe-derived video metadata (server migration 016).  Null on
+// non-video extensions and on rows scanned before the migration until
+// the next library scan touches them.
+@override final  int? width;
+@override final  int? height;
+@override final  String? codecName;
+/// 'HDR10' / 'HLG' / 'DolbyVision' / null (SDR).
+@override final  String? hdrFormat;
+// TV episode aggregation (server migration 016).  Populated by Phase D's
+// TMDB back-fill — null on movies and on TV files scanned before the
+// back-fill ran.
+@override final  int? tmdbShowId;
+@override final  int? seasonNumber;
+@override final  int? episodeNumber;
 @override@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) final  DateTime createdAt;
 @override@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) final  DateTime updatedAt;
 
@@ -257,16 +285,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _MediaFile&&(identical(other.id, id) || other.id == id)&&(identical(other.path, path) || other.path == path)&&(identical(other.name, name) || other.name == name)&&(identical(other.extension, extension) || other.extension == extension)&&(identical(other.sizeBytes, sizeBytes) || other.sizeBytes == sizeBytes)&&(identical(other.durationSec, durationSec) || other.durationSec == durationSec)&&(identical(other.libraryId, libraryId) || other.libraryId == libraryId)&&(identical(other.tmdbId, tmdbId) || other.tmdbId == tmdbId)&&(identical(other.title, title) || other.title == title)&&(identical(other.overview, overview) || other.overview == overview)&&(identical(other.posterUrl, posterUrl) || other.posterUrl == posterUrl)&&(identical(other.resumeSec, resumeSec) || other.resumeSec == resumeSec)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _MediaFile&&(identical(other.id, id) || other.id == id)&&(identical(other.path, path) || other.path == path)&&(identical(other.name, name) || other.name == name)&&(identical(other.extension, extension) || other.extension == extension)&&(identical(other.sizeBytes, sizeBytes) || other.sizeBytes == sizeBytes)&&(identical(other.durationSec, durationSec) || other.durationSec == durationSec)&&(identical(other.libraryId, libraryId) || other.libraryId == libraryId)&&(identical(other.tmdbId, tmdbId) || other.tmdbId == tmdbId)&&(identical(other.title, title) || other.title == title)&&(identical(other.overview, overview) || other.overview == overview)&&(identical(other.posterUrl, posterUrl) || other.posterUrl == posterUrl)&&(identical(other.resumeSec, resumeSec) || other.resumeSec == resumeSec)&&(identical(other.width, width) || other.width == width)&&(identical(other.height, height) || other.height == height)&&(identical(other.codecName, codecName) || other.codecName == codecName)&&(identical(other.hdrFormat, hdrFormat) || other.hdrFormat == hdrFormat)&&(identical(other.tmdbShowId, tmdbShowId) || other.tmdbShowId == tmdbShowId)&&(identical(other.seasonNumber, seasonNumber) || other.seasonNumber == seasonNumber)&&(identical(other.episodeNumber, episodeNumber) || other.episodeNumber == episodeNumber)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,path,name,extension,sizeBytes,durationSec,libraryId,tmdbId,title,overview,posterUrl,resumeSec,createdAt,updatedAt);
+int get hashCode => Object.hashAll([runtimeType,id,path,name,extension,sizeBytes,durationSec,libraryId,tmdbId,title,overview,posterUrl,resumeSec,width,height,codecName,hdrFormat,tmdbShowId,seasonNumber,episodeNumber,createdAt,updatedAt]);
 
 @override
 String toString() {
-  return 'MediaFile(id: $id, path: $path, name: $name, extension: $extension, sizeBytes: $sizeBytes, durationSec: $durationSec, libraryId: $libraryId, tmdbId: $tmdbId, title: $title, overview: $overview, posterUrl: $posterUrl, resumeSec: $resumeSec, createdAt: $createdAt, updatedAt: $updatedAt)';
+  return 'MediaFile(id: $id, path: $path, name: $name, extension: $extension, sizeBytes: $sizeBytes, durationSec: $durationSec, libraryId: $libraryId, tmdbId: $tmdbId, title: $title, overview: $overview, posterUrl: $posterUrl, resumeSec: $resumeSec, width: $width, height: $height, codecName: $codecName, hdrFormat: $hdrFormat, tmdbShowId: $tmdbShowId, seasonNumber: $seasonNumber, episodeNumber: $episodeNumber, createdAt: $createdAt, updatedAt: $updatedAt)';
 }
 
 
@@ -277,7 +305,7 @@ abstract mixin class _$MediaFileCopyWith<$Res> implements $MediaFileCopyWith<$Re
   factory _$MediaFileCopyWith(_MediaFile value, $Res Function(_MediaFile) _then) = __$MediaFileCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String path, String name, String extension, int sizeBytes, double? durationSec, String? libraryId, int? tmdbId, String? title, String? overview, String? posterUrl,@JsonKey(name: 'last_progress_sec') double resumeSec,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime createdAt,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime updatedAt
+ String id, String path, String name, String extension, int sizeBytes, double? durationSec, String? libraryId, int? tmdbId, String? title, String? overview, String? posterUrl,@JsonKey(name: 'last_progress_sec') double resumeSec, int? width, int? height, String? codecName, String? hdrFormat, int? tmdbShowId, int? seasonNumber, int? episodeNumber,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime createdAt,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime updatedAt
 });
 
 
@@ -294,7 +322,7 @@ class __$MediaFileCopyWithImpl<$Res>
 
 /// Create a copy of MediaFile
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? path = null,Object? name = null,Object? extension = null,Object? sizeBytes = null,Object? durationSec = freezed,Object? libraryId = freezed,Object? tmdbId = freezed,Object? title = freezed,Object? overview = freezed,Object? posterUrl = freezed,Object? resumeSec = null,Object? createdAt = null,Object? updatedAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? path = null,Object? name = null,Object? extension = null,Object? sizeBytes = null,Object? durationSec = freezed,Object? libraryId = freezed,Object? tmdbId = freezed,Object? title = freezed,Object? overview = freezed,Object? posterUrl = freezed,Object? resumeSec = null,Object? width = freezed,Object? height = freezed,Object? codecName = freezed,Object? hdrFormat = freezed,Object? tmdbShowId = freezed,Object? seasonNumber = freezed,Object? episodeNumber = freezed,Object? createdAt = null,Object? updatedAt = null,}) {
   return _then(_MediaFile(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,path: null == path ? _self.path : path // ignore: cast_nullable_to_non_nullable
@@ -308,7 +336,14 @@ as int?,title: freezed == title ? _self.title : title // ignore: cast_nullable_t
 as String?,overview: freezed == overview ? _self.overview : overview // ignore: cast_nullable_to_non_nullable
 as String?,posterUrl: freezed == posterUrl ? _self.posterUrl : posterUrl // ignore: cast_nullable_to_non_nullable
 as String?,resumeSec: null == resumeSec ? _self.resumeSec : resumeSec // ignore: cast_nullable_to_non_nullable
-as double,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
+as double,width: freezed == width ? _self.width : width // ignore: cast_nullable_to_non_nullable
+as int?,height: freezed == height ? _self.height : height // ignore: cast_nullable_to_non_nullable
+as int?,codecName: freezed == codecName ? _self.codecName : codecName // ignore: cast_nullable_to_non_nullable
+as String?,hdrFormat: freezed == hdrFormat ? _self.hdrFormat : hdrFormat // ignore: cast_nullable_to_non_nullable
+as String?,tmdbShowId: freezed == tmdbShowId ? _self.tmdbShowId : tmdbShowId // ignore: cast_nullable_to_non_nullable
+as int?,seasonNumber: freezed == seasonNumber ? _self.seasonNumber : seasonNumber // ignore: cast_nullable_to_non_nullable
+as int?,episodeNumber: freezed == episodeNumber ? _self.episodeNumber : episodeNumber // ignore: cast_nullable_to_non_nullable
+as int?,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
 as DateTime,updatedAt: null == updatedAt ? _self.updatedAt : updatedAt // ignore: cast_nullable_to_non_nullable
 as DateTime,
   ));

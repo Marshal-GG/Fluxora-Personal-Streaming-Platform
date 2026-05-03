@@ -1,119 +1,105 @@
-/// Library tab — V2 redesign.
+/// Library tab — V2 redesign, real data (Phase A backfill).
 ///
-/// Filter chips (All / Movies / Shows / Music / Photos / Documents) +
-/// grid/list toggle + sort button + 3-up `FluxPoster` grid. Pull-to-
-/// refresh. Mocked over `MockData` for now since the existing
-/// `LibraryRepository` returns *libraries* (containers) rather than the
-/// flat media list this redesign expects — a future server endpoint will
-/// provide the right shape; until then the legacy `/library-files/:id`
-/// deep-link remains the path to actual file browsing.
+/// Consumes [LibraryBloc] which fetches `GET /api/v1/library` (library
+/// containers, not flat media — the v1 server has no aggregated-media
+/// endpoint).  Filter chips collapse to the four `LibraryType` values
+/// plus All; grid/list toggle stays.  Tapping a library card navigates
+/// to the existing `/library-files/:id` files-browser deep-link.
+///
+/// `MockMediaItem` references are gone — the screen renders zero mock
+/// data per Phase A scope.
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/fluxora_core.dart';
+import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:fluxora_mobile/core/router/app_router.dart';
-import 'package:fluxora_mobile/shared/data/mock_data.dart';
 
-class LibraryScreen extends StatefulWidget {
+import 'package:fluxora_mobile/core/router/app_router.dart';
+import 'package:fluxora_mobile/features/library/domain/repositories/library_repository.dart';
+import 'package:fluxora_mobile/features/library/presentation/bloc/library_bloc.dart';
+import 'package:fluxora_mobile/features/library/presentation/bloc/library_event.dart';
+import 'package:fluxora_mobile/features/library/presentation/bloc/library_state.dart';
+import 'package:fluxora_mobile/shared/widgets/gradients.dart';
+
+class LibraryScreen extends StatelessWidget {
   const LibraryScreen({super.key});
 
   @override
-  State<LibraryScreen> createState() => _LibraryScreenState();
+  Widget build(BuildContext context) {
+    return BlocProvider<LibraryBloc>(
+      create: (_) => LibraryBloc(repository: GetIt.I<LibraryRepository>())
+        ..add(const LibraryStarted()),
+      child: const _LibraryBody(),
+    );
+  }
 }
 
-enum _LibraryFilter { all, movies, shows, music, photos, docs }
-enum _LibraryView { grid, list }
-enum _LibrarySort { recent, az, year, rating }
+enum _LibraryFilter { all, movies, shows, music, files }
 
-class _LibraryScreenState extends State<LibraryScreen> {
+enum _ViewMode { grid, list }
+
+extension on _LibraryFilter {
+  String get label => switch (this) {
+        _LibraryFilter.all => 'All',
+        _LibraryFilter.movies => 'Movies',
+        _LibraryFilter.shows => 'Shows',
+        _LibraryFilter.music => 'Music',
+        _LibraryFilter.files => 'Files',
+      };
+
+  LibraryType? get type => switch (this) {
+        _LibraryFilter.all => null,
+        _LibraryFilter.movies => LibraryType.movies,
+        _LibraryFilter.shows => LibraryType.tv,
+        _LibraryFilter.music => LibraryType.music,
+        _LibraryFilter.files => LibraryType.files,
+      };
+}
+
+class _LibraryBody extends StatefulWidget {
+  const _LibraryBody();
+
+  @override
+  State<_LibraryBody> createState() => _LibraryBodyState();
+}
+
+class _LibraryBodyState extends State<_LibraryBody> {
   _LibraryFilter _filter = _LibraryFilter.all;
-  _LibraryView _view = _LibraryView.grid;
-  _LibrarySort _sort = _LibrarySort.recent;
-
-  static const _filterMeta = {
-    _LibraryFilter.all: ('All', null),
-    _LibraryFilter.movies: ('Movies', 'movie'),
-    _LibraryFilter.shows: ('Shows', 'show'),
-    _LibraryFilter.music: ('Music', 'music'),
-    _LibraryFilter.photos: ('Photos', 'photo'),
-    _LibraryFilter.docs: ('Documents', 'doc'),
-  };
+  _ViewMode _view = _ViewMode.grid;
 
   Future<void> _refresh() async {
-    await Future<void>.delayed(const Duration(milliseconds: 600));
+    context.read<LibraryBloc>().add(const LibraryRefreshed());
   }
 
-  List<MockMediaItem> get _items {
-    final pool = [
-      ...MockData.continueWatching,
-      ...MockData.trending,
-      ...MockData.recentlyAdded,
-    ];
-    final seen = <String>{};
-    final dedup = pool.where((m) => seen.add(m.id)).toList();
-    final kindFilter = _filterMeta[_filter]?.$2;
-    final filtered = kindFilter == null
-        ? dedup
-        : dedup.where((m) => m.kind == kindFilter).toList();
-    switch (_sort) {
-      case _LibrarySort.az:
-        filtered.sort((a, b) => a.title.compareTo(b.title));
-      case _LibrarySort.year:
-        filtered.sort((a, b) => b.subtitle.compareTo(a.subtitle));
-      case _LibrarySort.rating:
-      case _LibrarySort.recent:
-        break;
-    }
-    return filtered;
+  List<Library> _applyFilter(List<Library> all) {
+    final type = _filter.type;
+    if (type == null) return all;
+    return all.where((l) => l.type == type).toList();
   }
 
   @override
   Widget build(BuildContext context) {
-    final items = _items;
-
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: FluxAppBar(
         title: 'Library',
         trailing: [
           IconButton(
-            tooltip: _view == _LibraryView.grid ? 'List view' : 'Grid view',
+            tooltip: _view == _ViewMode.grid ? 'List view' : 'Grid view',
             icon: Icon(
-              _view == _LibraryView.grid
+              _view == _ViewMode.grid
                   ? Icons.view_list_outlined
                   : Icons.grid_view_outlined,
               color: AppColors.textBright,
             ),
             onPressed: () => setState(
-              () => _view = _view == _LibraryView.grid
-                  ? _LibraryView.list
-                  : _LibraryView.grid,
+              () => _view = _view == _ViewMode.grid
+                  ? _ViewMode.list
+                  : _ViewMode.grid,
             ),
             splashRadius: 22,
-          ),
-          PopupMenuButton<_LibrarySort>(
-            tooltip: 'Sort',
-            initialValue: _sort,
-            color: const Color(0xFF0F0C24),
-            icon: const Icon(Icons.sort, color: AppColors.textBright),
-            onSelected: (v) => setState(() => _sort = v),
-            itemBuilder: (context) => [
-              for (final v in _LibrarySort.values)
-                PopupMenuItem(
-                  value: v,
-                  child: Text(
-                    switch (v) {
-                      _LibrarySort.recent => 'Recently added',
-                      _LibrarySort.az => 'A–Z',
-                      _LibrarySort.year => 'Year',
-                      _LibrarySort.rating => 'Rating',
-                    },
-                    style: AppTypography.body
-                        .copyWith(color: AppColors.textBright, fontSize: 14),
-                  ),
-                ),
-            ],
           ),
         ],
       ),
@@ -121,78 +107,95 @@ class _LibraryScreenState extends State<LibraryScreen> {
         onRefresh: _refresh,
         color: AppColors.violet,
         backgroundColor: AppColors.surfaceGlass,
-        child: CustomScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 44,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  itemCount: _LibraryFilter.values.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, i) {
-                    final f = _LibraryFilter.values[i];
-                    final selected = f == _filter;
-                    return _FilterChipButton(
-                      label: _filterMeta[f]!.$1,
-                      selected: selected,
-                      onTap: () => setState(() => _filter = f),
-                    );
-                  },
+        child: BlocBuilder<LibraryBloc, LibraryState>(
+          builder: (context, state) {
+            return CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: 44,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      itemCount: _LibraryFilter.values.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, i) {
+                        final f = _LibraryFilter.values[i];
+                        return _FilterChipButton(
+                          label: f.label,
+                          selected: f == _filter,
+                          onTap: () => setState(() => _filter = f),
+                        );
+                      },
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: 12)),
-            if (items.isEmpty)
-              const SliverFillRemaining(
+                const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                ..._buildContent(state),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildContent(LibraryState state) {
+    return switch (state) {
+      LibraryInitial() || LibraryLoading() => const [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: _LoadingState(),
+          ),
+        ],
+      LibraryFailure(:final message) => [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: _FailureState(message: message),
+          ),
+        ],
+      LibrarySuccess(:final libraries) => () {
+          final filtered = _applyFilter(libraries);
+          if (filtered.isEmpty) {
+            return const [
+              SliverFillRemaining(
                 hasScrollBody: false,
                 child: _EmptyState(),
-              )
-            else if (_view == _LibraryView.grid)
+              ),
+            ];
+          }
+          if (_view == _ViewMode.grid) {
+            return [
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                 sliver: SliverGrid(
                   gridDelegate:
                       const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 116 / 174,
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 14,
+                    crossAxisSpacing: 14,
+                    childAspectRatio: 156 / 184,
                   ),
                   delegate: SliverChildBuilderDelegate(
-                    (context, i) {
-                      final m = items[i];
-                      return FluxPoster(
-                        title: m.title,
-                        subtitle: m.subtitle,
-                        gradient: m.gradient,
-                        imageUrl: m.imageUrl,
-                        size: FluxPosterSize.full,
-                        qualityBadge: m.qualityBadge,
-                        progress: m.progress,
-                        onTap: () => context.push(Routes.detail(m.id)),
-                      );
-                    },
-                    childCount: items.length,
+                    (context, i) => _LibraryCard(library: filtered[i]),
+                    childCount: filtered.length,
                   ),
-                ),
-              )
-            else
-              SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, i) => _ListRow(
-                    item: items[i],
-                    onTap: () => context.push(Routes.detail(items[i].id)),
-                  ),
-                  childCount: items.length,
                 ),
               ),
-          ],
-        ),
-      ),
-    );
+            ];
+          }
+          return [
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, i) => _LibraryListRow(library: filtered[i]),
+                childCount: filtered.length,
+              ),
+            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+          ];
+        }(),
+    };
   }
 }
 
@@ -237,26 +240,111 @@ class _FilterChipButton extends StatelessWidget {
   }
 }
 
-class _ListRow extends StatelessWidget {
-  const _ListRow({required this.item, required this.onTap});
+class _LibraryCard extends StatelessWidget {
+  const _LibraryCard({required this.library});
 
-  final MockMediaItem item;
-  final VoidCallback onTap;
+  final Library library;
 
   @override
   Widget build(BuildContext context) {
+    final gradient = AppGradientPlaceholders.forKey(library.id);
+    final cover = library.coverUrls.isNotEmpty ? library.coverUrls.first : null;
+
     return InkWell(
-      onTap: onTap,
+      onTap: () => context.push(Routes.libraryFiles(library.id)),
+      borderRadius: BorderRadius.circular(14),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            DecoratedBox(decoration: BoxDecoration(gradient: gradient)),
+            if (cover != null)
+              Image.network(
+                cover,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) =>
+                    DecoratedBox(decoration: BoxDecoration(gradient: gradient)),
+              ),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0x00000000), Color(0xCC000000)],
+                  stops: [0.45, 1.0],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 12,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FluxChip(
+                    library.type.label,
+                    color: FluxChipColor.purple,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    library.name,
+                    style: AppTypography.h2.copyWith(
+                      color: AppColors.textBright,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${library.fileCount} ${library.fileCount == 1 ? "item" : "items"}'
+                    ' · ${_formatBytes(library.totalSizeBytes)}',
+                    style: AppTypography.captionV2
+                        .copyWith(color: AppColors.textBody),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LibraryListRow extends StatelessWidget {
+  const _LibraryListRow({required this.library});
+
+  final Library library;
+
+  @override
+  Widget build(BuildContext context) {
+    final gradient = AppGradientPlaceholders.forKey(library.id);
+    final cover = library.coverUrls.isNotEmpty ? library.coverUrls.first : null;
+
+    return InkWell(
+      onTap: () => context.push(Routes.libraryFiles(library.id)),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
         child: Row(
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: Container(
+              child: SizedBox(
                 width: 56,
                 height: 80,
-                decoration: BoxDecoration(gradient: item.gradient),
+                child: cover != null
+                    ? Image.network(
+                        cover,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => DecoratedBox(
+                          decoration: BoxDecoration(gradient: gradient),
+                        ),
+                      )
+                    : DecoratedBox(decoration: BoxDecoration(gradient: gradient)),
               ),
             ),
             const SizedBox(width: 12),
@@ -265,7 +353,7 @@ class _ListRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    item.title,
+                    library.name,
                     style: AppTypography.body.copyWith(
                       color: AppColors.textBright,
                       fontSize: 14,
@@ -276,18 +364,92 @@ class _ListRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    item.subtitle,
+                    '${library.type.label} · ${library.fileCount} items'
+                    ' · ${_formatBytes(library.totalSizeBytes)}',
                     style: AppTypography.captionV2
                         .copyWith(color: AppColors.textMutedV2),
                   ),
-                  if (item.qualityBadge != null) ...[
-                    const SizedBox(height: 6),
-                    FluxChip(item.qualityBadge!, color: FluxChipColor.purple),
-                  ],
                 ],
               ),
             ),
             const Icon(Icons.chevron_right, color: AppColors.textDim),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+extension on LibraryType {
+  String get label => switch (this) {
+        LibraryType.movies => 'Movies',
+        LibraryType.tv => 'Shows',
+        LibraryType.music => 'Music',
+        LibraryType.files => 'Files',
+      };
+}
+
+String _formatBytes(int bytes) {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var i = 0;
+  var v = bytes.toDouble();
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  final formatted = v >= 100 || i == 0
+      ? v.toStringAsFixed(0)
+      : v.toStringAsFixed(1);
+  return '$formatted ${units[i]}';
+}
+
+class _LoadingState extends StatelessWidget {
+  const _LoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: SizedBox(
+        width: 28,
+        height: 28,
+        child: CircularProgressIndicator(
+          strokeWidth: 2.5,
+          color: AppColors.violet,
+        ),
+      ),
+    );
+  }
+}
+
+class _FailureState extends StatelessWidget {
+  const _FailureState({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline,
+                size: 44, color: Color(0xFFF87171)),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: AppTypography.body.copyWith(color: AppColors.textBright),
+            ),
+            const SizedBox(height: 12),
+            FluxButton(
+              variant: FluxButtonVariant.secondary,
+              onPressed: () =>
+                  context.read<LibraryBloc>().add(const LibraryRefreshed()),
+              child: const Text('Retry'),
+            ),
           ],
         ),
       ),
@@ -310,12 +472,12 @@ class _EmptyState extends StatelessWidget {
                 size: 48, color: AppColors.textDim),
             const SizedBox(height: 12),
             Text(
-              'No items in this filter',
+              'No libraries match this filter',
               style: AppTypography.h2.copyWith(color: AppColors.textBright),
             ),
             const SizedBox(height: 4),
             Text(
-              'Try a different category, or pull to refresh.',
+              'Add a library from the desktop control panel, or pick "All" to see what is configured.',
               textAlign: TextAlign.center,
               style: AppTypography.captionV2
                   .copyWith(color: AppColors.textMutedV2),
