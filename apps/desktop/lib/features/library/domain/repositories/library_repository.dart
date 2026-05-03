@@ -5,6 +5,8 @@ abstract interface class LibraryRepository {
   Future<List<Library>> getLibraries();
   Future<List<MediaFile>> getFiles({String? libraryId});
   Future<Library> createLibrary({required String name, required String type, required List<String> rootPaths});
-  Future<void> scanLibrary(String libraryId);
+  Future<Library> updateLibrary({required String libraryId, String? name, List<String>? rootPaths});
+  Future<void> deleteLibrary(String libraryId);
+  Future<int> scanLibrary(String libraryId);
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath});
 }

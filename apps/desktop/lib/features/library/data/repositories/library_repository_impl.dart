@@ -39,8 +39,37 @@ class LibraryRepositoryImpl implements LibraryRepository {
       );
 
   @override
-  Future<void> scanLibrary(String libraryId) =>
-      _apiClient.post<void>('${Endpoints.library}/$libraryId/scan');
+  Future<Library> updateLibrary({
+    required String libraryId,
+    String? name,
+    List<String>? rootPaths,
+  }) {
+    final body = <String, dynamic>{};
+    if (name != null) body['name'] = name;
+    if (rootPaths != null) body['root_paths'] = rootPaths;
+    return _apiClient.patch<Library>(
+      '${Endpoints.library}/$libraryId',
+      body: body,
+      fromJson: (data) => Library.fromJson(data as Map<String, dynamic>),
+    );
+  }
+
+  @override
+  Future<void> deleteLibrary(String libraryId) =>
+      _apiClient.delete('${Endpoints.library}/$libraryId');
+
+  @override
+  Future<int> scanLibrary(String libraryId) => _apiClient.post<int>(
+        '${Endpoints.library}/$libraryId/scan',
+        fromJson: (data) {
+          if (data is Map<String, dynamic>) {
+            final v = data['files_added'];
+            if (v is int) return v;
+            if (v is num) return v.toInt();
+          }
+          return 0;
+        },
+      );
 
   @override
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath}) async {

@@ -2,19 +2,22 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_radii.dart';
 import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_core/entities/enums.dart';
 import 'package:fluxora_core/entities/library.dart';
+import 'package:fluxora_core/entities/media_file.dart';
+import 'package:fluxora_desktop/core/router/app_router.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_cubit.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_state.dart';
 import 'package:fluxora_desktop/features/storage/domain/repositories/storage_repository.dart';
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_cubit.dart';
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_state.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_tab_bar.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
@@ -49,7 +52,6 @@ const _kTabs = [
   FluxTab(id: 'tv', label: 'TV Shows', icon: Icons.tv_outlined),
   FluxTab(id: 'music', label: 'Music', icon: Icons.music_note_outlined),
   FluxTab(id: 'docs', label: 'Documents', icon: Icons.description_outlined),
-  FluxTab(id: 'photos', label: 'Photos', icon: Icons.photo_outlined),
 ];
 
 LibraryType? _typeForTab(String tabId) => switch (tabId) {
@@ -59,6 +61,50 @@ LibraryType? _typeForTab(String tabId) => switch (tabId) {
       'docs' => LibraryType.files,
       _ => null,
     };
+
+// ── Sort / Filter / View-mode types ────────────────────────────────────────────
+
+enum _SortBy {
+  name('Name (A–Z)'),
+  lastScanned('Last Scanned'),
+  fileCount('File Count'),
+  totalSize('Total Size');
+
+  const _SortBy(this.label);
+  final String label;
+}
+
+enum _ViewMode { grid, list }
+
+class _LibraryFilters {
+  const _LibraryFilters({
+    this.enrichedOnly = false,
+    this.withFilesOnly = false,
+    this.recentlyScanned = false,
+  });
+
+  final bool enrichedOnly;
+  final bool withFilesOnly;
+  final bool recentlyScanned;
+
+  bool get isActive => enrichedOnly || withFilesOnly || recentlyScanned;
+
+  int get activeCount =>
+      (enrichedOnly ? 1 : 0) +
+      (withFilesOnly ? 1 : 0) +
+      (recentlyScanned ? 1 : 0);
+
+  _LibraryFilters copyWith({
+    bool? enrichedOnly,
+    bool? withFilesOnly,
+    bool? recentlyScanned,
+  }) =>
+      _LibraryFilters(
+        enrichedOnly: enrichedOnly ?? this.enrichedOnly,
+        withFilesOnly: withFilesOnly ?? this.withFilesOnly,
+        recentlyScanned: recentlyScanned ?? this.recentlyScanned,
+      );
+}
 
 // ── Main view ──────────────────────────────────────────────────────────────────
 
@@ -71,7 +117,10 @@ class _LibraryView extends StatefulWidget {
 
 class _LibraryViewState extends State<_LibraryView> {
   String _activeTab = 'all';
-  Library? _selectedLibrary;
+  String? _selectedLibraryId;
+  _SortBy _sortBy = _SortBy.name;
+  _ViewMode _viewMode = _ViewMode.grid;
+  _LibraryFilters _filters = const _LibraryFilters();
 
   @override
   Widget build(BuildContext context) {
@@ -92,9 +141,18 @@ class _LibraryViewState extends State<_LibraryView> {
                 listener: (context, state) {
                   // Auto-select first library when loaded.
                   if (state is LibraryLoaded &&
-                      _selectedLibrary == null &&
+                      _selectedLibraryId == null &&
                       state.libraries.isNotEmpty) {
-                    setState(() => _selectedLibrary = state.libraries.first);
+                    setState(() =>
+                        _selectedLibraryId = state.libraries.first.id);
+                  }
+                  // Drop selection if the selected library disappeared (e.g. delete).
+                  if (state is LibraryLoaded &&
+                      _selectedLibraryId != null &&
+                      !state.libraries.any((l) => l.id == _selectedLibraryId)) {
+                    setState(() => _selectedLibraryId = state.libraries.isEmpty
+                        ? null
+                        : state.libraries.first.id);
                   }
                 },
                 builder: (context, state) {
@@ -114,13 +172,12 @@ class _LibraryViewState extends State<_LibraryView> {
                               onPressed: state is LibraryLoaded
                                   ? () => context.read<LibraryCubit>().load()
                                   : null,
-                              child: const Text('Scan Library'),
+                              child: const Text('Refresh'),
                             ),
                             const SizedBox(width: AppSpacing.s8),
                             FluxButton(
                               variant: FluxButtonVariant.primary,
                               icon: Icons.add_rounded,
-                              iconRight: Icons.keyboard_arrow_down_rounded,
                               onPressed: () =>
                                   _showAddLibraryDialog(context),
                               child: const Text('Add Library'),
@@ -145,10 +202,21 @@ class _LibraryViewState extends State<_LibraryView> {
                           _LoadedBody(
                             state: state,
                             activeTab: _activeTab,
-                            selectedLibrary: _selectedLibrary,
+                            selectedLibraryId: _selectedLibraryId,
+                            sortBy: _sortBy,
+                            viewMode: _viewMode,
+                            filters: _filters,
                             onSelectLibrary: (lib) =>
-                                setState(() => _selectedLibrary = lib),
+                                setState(() => _selectedLibraryId = lib.id),
                             onAddLibrary: () => _showAddLibraryDialog(context),
+                            onScan: (lib) => _scan(context, lib),
+                            onEdit: (lib) => _showEditLibraryDialog(context, lib),
+                            onRemove: (lib) => _confirmRemove(context, lib),
+                            onSortChanged: (s) => setState(() => _sortBy = s),
+                            onViewModeChanged: (m) =>
+                                setState(() => _viewMode = m),
+                            onFiltersChanged: (f) =>
+                                setState(() => _filters = f),
                           ),
                         LibraryFailure(:final message) =>
                           _ErrorBody(
@@ -167,12 +235,19 @@ class _LibraryViewState extends State<_LibraryView> {
           // ── Right detail panel ─────────────────────────────────────────
           BlocBuilder<LibraryCubit, LibraryState>(
             builder: (context, state) {
-              final lib = _selectedLibrary;
+              if (state is! LibraryLoaded) return const SizedBox.shrink();
+              final lib = state.libraries.cast<Library?>().firstWhere(
+                    (l) => l?.id == _selectedLibraryId,
+                    orElse: () => null,
+                  );
               if (lib == null) return const SizedBox.shrink();
               return _LibraryDetailPanel(
                 library: lib,
-                onScan: () => context.read<LibraryCubit>().scanLibrary(lib.id),
+                onScan: () => _scan(context, lib),
+                onEdit: () => _showEditLibraryDialog(context, lib),
                 onRemove: () => _confirmRemove(context, lib),
+                onOpenFiles: () =>
+                    context.go(Routes.libraryFiles(lib.id)),
               );
             },
           ),
@@ -181,24 +256,174 @@ class _LibraryViewState extends State<_LibraryView> {
     );
   }
 
-  Future<void> _showAddLibraryDialog(BuildContext context) async {
-    final nameController = TextEditingController();
-    String type = 'movies';
-    final cubit = context.read<LibraryCubit>();
+  Future<void> _scan(BuildContext context, Library lib) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final added = await context.read<LibraryCubit>().scanLibrary(lib.id);
+      messenger.showSnackBar(SnackBar(
+        content: Text(added > 0
+            ? 'Scan complete — $added file(s) added to "${lib.name}"'
+            : 'Scan complete — no new files in "${lib.name}"'),
+      ));
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Scan failed: $e')),
+      );
+    }
+  }
 
-    await showDialog<void>(
+  Future<void> _showAddLibraryDialog(BuildContext context) async {
+    final cubit = context.read<LibraryCubit>();
+    final messenger = ScaffoldMessenger.of(context);
+    await _showLibraryFormDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Add Library'),
-          content: Column(
+      title: 'Add Library',
+      submitLabel: 'Create Library',
+      typeEditable: true,
+      onSubmit: (name, type, paths) async {
+        try {
+          await cubit.createLibrary(name, type, paths);
+          messenger.showSnackBar(SnackBar(
+            content: Text('Library "$name" created'),
+          ));
+        } catch (e) {
+          messenger.showSnackBar(SnackBar(
+            content: Text('Could not create library: $e'),
+          ));
+        }
+      },
+    );
+  }
+
+  Future<void> _showEditLibraryDialog(
+      BuildContext context, Library lib) async {
+    final cubit = context.read<LibraryCubit>();
+    final messenger = ScaffoldMessenger.of(context);
+    await _showLibraryFormDialog(
+      context: context,
+      title: 'Edit Library',
+      submitLabel: 'Save Changes',
+      initialName: lib.name,
+      initialType: _typeKey(lib.type),
+      initialPaths: List<String>.from(lib.rootPaths),
+      typeEditable: false,
+      onSubmit: (name, _, paths) async {
+        try {
+          await cubit.updateLibrary(
+            libraryId: lib.id,
+            name: name == lib.name ? null : name,
+            rootPaths: _pathsEqual(paths, lib.rootPaths) ? null : paths,
+          );
+          messenger.showSnackBar(SnackBar(
+            content: Text('Library "$name" updated'),
+          ));
+        } catch (e) {
+          messenger.showSnackBar(SnackBar(
+            content: Text('Could not update library: $e'),
+          ));
+        }
+      },
+    );
+  }
+
+  Future<void> _confirmRemove(BuildContext context, Library lib) async {
+    final cubit = context.read<LibraryCubit>();
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surfaceGlass,
+        title: Text('Remove "${lib.name}"?',
+            style: AppTypography.h2.copyWith(color: AppColors.textBright)),
+        content: Text(
+          'This removes only the library entry and its file index from '
+          'Fluxora. Your files on disk are never deleted by this app.',
+          style: AppTypography.body.copyWith(color: AppColors.textBody),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFEF4444),
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    try {
+      await cubit.deleteLibrary(lib.id);
+      messenger.showSnackBar(SnackBar(
+        content: Text('Library "${lib.name}" removed'),
+      ));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('Could not remove library: $e'),
+      ));
+    }
+  }
+
+  static String _typeKey(LibraryType t) => switch (t) {
+        LibraryType.movies => 'movies',
+        LibraryType.tv => 'tv',
+        LibraryType.music => 'music',
+        LibraryType.files => 'files',
+      };
+
+  static bool _pathsEqual(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+}
+
+// ── Add / Edit shared dialog ───────────────────────────────────────────────────
+
+Future<void> _showLibraryFormDialog({
+  required BuildContext context,
+  required String title,
+  required String submitLabel,
+  required void Function(String name, String type, List<String> paths)
+      onSubmit,
+  String? initialName,
+  String? initialType,
+  List<String>? initialPaths,
+  bool typeEditable = true,
+}) async {
+  final nameController = TextEditingController(text: initialName ?? '');
+  String type = initialType ?? 'movies';
+  final paths = List<String>.from(initialPaths ?? const <String>[]);
+  String? nameError;
+
+  await showDialog<void>(
+    context: context,
+    builder: (dialogCtx) => StatefulBuilder(
+      builder: (dialogCtx, setLocal) => AlertDialog(
+        backgroundColor: AppColors.surfaceGlass,
+        title: Text(title,
+            style: AppTypography.h2.copyWith(color: AppColors.textBright)),
+        content: SizedBox(
+          width: 460,
+          child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TextField(
                 controller: nameController,
-                decoration: const InputDecoration(labelText: 'Library Name'),
+                decoration: InputDecoration(
+                  labelText: 'Library Name',
+                  errorText: nameError,
+                ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: AppSpacing.s14),
               DropdownButtonFormField<String>(
                 initialValue: type,
                 decoration: const InputDecoration(labelText: 'Library Type'),
@@ -208,47 +433,123 @@ class _LibraryViewState extends State<_LibraryView> {
                   DropdownMenuItem(value: 'music', child: Text('Music')),
                   DropdownMenuItem(value: 'files', child: Text('Documents')),
                 ],
-                onChanged: (val) {
-                  if (val != null) setState(() => type = val);
-                },
+                onChanged: typeEditable
+                    ? (val) {
+                        if (val != null) setLocal(() => type = val);
+                      }
+                    : null,
               ),
+              const SizedBox(height: AppSpacing.s18),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Folders',
+                      style: AppTypography.captionV2.copyWith(
+                        color: AppColors.textMutedV2,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    icon: const Icon(Icons.add_rounded, size: 14),
+                    label: const Text('Add folder'),
+                    onPressed: () async {
+                      final picked = await FilePicker.getDirectoryPath();
+                      if (picked != null && !paths.contains(picked)) {
+                        setLocal(() => paths.add(picked));
+                      }
+                    },
+                  ),
+                ],
+              ),
+              if (paths.isEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0x08FFFFFF),
+                    border: Border.all(color: const Color(0x0DFFFFFF)),
+                    borderRadius: BorderRadius.circular(AppRadii.sm),
+                  ),
+                  child: Text(
+                    'No folders selected. Add at least one to continue.',
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.textFaint),
+                  ),
+                )
+              else
+                Column(
+                  children: [
+                    for (var i = 0; i < paths.length; i++)
+                      Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0x08FFFFFF),
+                          border: Border.all(color: const Color(0x0DFFFFFF)),
+                          borderRadius: BorderRadius.circular(AppRadii.sm),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.folder_outlined,
+                                size: 14, color: AppColors.violet),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                paths[i],
+                                style: const TextStyle(
+                                  fontFamily: 'JetBrains Mono',
+                                  fontSize: 12,
+                                  color: AppColors.textBody,
+                                  height: 1.4,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close_rounded, size: 14),
+                              tooltip: 'Remove path',
+                              onPressed: () =>
+                                  setLocal(() => paths.removeAt(i)),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                if (nameController.text.isEmpty) return;
-                final result = await FilePicker.getDirectoryPath();
-                if (result != null) {
-                  if (context.mounted) {
-                    Navigator.of(context).pop();
-                    try {
-                      await cubit.createLibrary(
-                          nameController.text, type, [result]);
-                    } catch (_) {
-                      // cubit already logs
-                    }
-                  }
-                }
-              },
-              child: const Text('Select Folder & Create'),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final name = nameController.text.trim();
+              if (name.isEmpty) {
+                setLocal(() => nameError = 'Name is required');
+                return;
+              }
+              if (paths.isEmpty) {
+                ScaffoldMessenger.of(dialogCtx).showSnackBar(
+                  const SnackBar(content: Text('Add at least one folder.')),
+                );
+                return;
+              }
+              Navigator.of(dialogCtx).pop();
+              onSubmit(name, type, List<String>.from(paths));
+            },
+            child: Text(submitLabel),
+          ),
+        ],
       ),
-    );
-  }
-
-  Future<void> _confirmRemove(BuildContext context, Library lib) async {
-    // No delete method on cubit yet — show a not-implemented snackbar.
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Remove library "${lib.name}" — not implemented yet')),
-    );
-  }
+    ),
+  );
 }
 
 // ── Loading ────────────────────────────────────────────────────────────────────
@@ -316,105 +617,169 @@ class _LoadedBody extends StatelessWidget {
   const _LoadedBody({
     required this.state,
     required this.activeTab,
-    required this.selectedLibrary,
+    required this.selectedLibraryId,
+    required this.sortBy,
+    required this.viewMode,
+    required this.filters,
     required this.onSelectLibrary,
     required this.onAddLibrary,
+    required this.onScan,
+    required this.onEdit,
+    required this.onRemove,
+    required this.onSortChanged,
+    required this.onViewModeChanged,
+    required this.onFiltersChanged,
   });
 
   final LibraryLoaded state;
   final String activeTab;
-  final Library? selectedLibrary;
+  final String? selectedLibraryId;
+  final _SortBy sortBy;
+  final _ViewMode viewMode;
+  final _LibraryFilters filters;
   final ValueChanged<Library> onSelectLibrary;
   final VoidCallback onAddLibrary;
+  final ValueChanged<Library> onScan;
+  final ValueChanged<Library> onEdit;
+  final ValueChanged<Library> onRemove;
+  final ValueChanged<_SortBy> onSortChanged;
+  final ValueChanged<_ViewMode> onViewModeChanged;
+  final ValueChanged<_LibraryFilters> onFiltersChanged;
 
   List<Library> get _visibleLibraries {
+    Iterable<Library> list = state.libraries;
+
     final typeFilter = _typeForTab(activeTab);
-    if (typeFilter == null) return state.libraries;
-    return state.libraries.where((l) => l.type == typeFilter).toList();
+    if (typeFilter != null) list = list.where((l) => l.type == typeFilter);
+
+    if (filters.enrichedOnly) {
+      final enrichedLibIds = state.files
+          .where((f) => f.posterUrl != null)
+          .map((f) => f.libraryId)
+          .toSet();
+      list = list.where((l) => enrichedLibIds.contains(l.id));
+    }
+    if (filters.withFilesOnly) {
+      list = list.where((l) => l.fileCount > 0);
+    }
+    if (filters.recentlyScanned) {
+      final cutoff =
+          DateTime.now().toUtc().subtract(const Duration(days: 7));
+      list = list.where(
+          (l) => l.lastScanned != null && l.lastScanned!.toUtc().isAfter(cutoff));
+    }
+
+    final sorted = list.toList();
+    switch (sortBy) {
+      case _SortBy.name:
+        sorted.sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+      case _SortBy.lastScanned:
+        sorted.sort((a, b) => (b.lastScanned ?? DateTime.utc(0))
+            .compareTo(a.lastScanned ?? DateTime.utc(0)));
+      case _SortBy.fileCount:
+        sorted.sort((a, b) => b.fileCount.compareTo(a.fileCount));
+      case _SortBy.totalSize:
+        sorted.sort((a, b) => b.totalSizeBytes.compareTo(a.totalSizeBytes));
+    }
+    return sorted;
   }
 
   @override
   Widget build(BuildContext context) {
     final isAll = activeTab == 'all';
+    final visible = _visibleLibraries;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Stat tiles (All tab only) ─────────────────────────────────────
         if (isAll) ...[
           _StatTilesRow(state: state),
           const SizedBox(height: AppSpacing.s18),
-
-          // ── View toggle / sort ──────────────────────────────────────────
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // View toggle (grid active by default — grid is the only view)
-              Container(
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(
-                  color: const Color(0x0AFFFFFF),
-                  borderRadius: BorderRadius.circular(AppRadii.sm),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(5),
-                      decoration: BoxDecoration(
-                        color: const Color(0x2DA855F7),
-                        borderRadius: BorderRadius.circular(AppRadii.xs),
-                      ),
-                      child: const Icon(
-                        Icons.grid_view_rounded,
-                        size: 14,
-                        color: AppColors.violetTint,
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(5),
-                      child: const Icon(
-                        Icons.view_list_rounded,
-                        size: 14,
-                        color: AppColors.textFaint,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  FluxButton(
-                    variant: FluxButtonVariant.secondary,
-                    size: FluxButtonSize.sm,
-                    iconRight: Icons.keyboard_arrow_down_rounded,
-                    onPressed: () {},
-                    child: const Text('Sort by: Name'),
-                  ),
-                  const SizedBox(width: AppSpacing.s8),
-                  FluxButton(
-                    variant: FluxButtonVariant.secondary,
-                    size: FluxButtonSize.sm,
-                    icon: Icons.tune_rounded,
-                    onPressed: () {},
-                    child: const Text('Filter'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.s14),
         ],
 
-        // ── Library grid ─────────────────────────────────────────────────
-        _LibraryGrid(
-          libraries: _visibleLibraries,
-          selectedId: selectedLibrary?.id,
-          onSelect: onSelectLibrary,
-          onAddLibrary: onAddLibrary,
+        _ToolbarRow(
+          sortBy: sortBy,
+          viewMode: viewMode,
+          filters: filters,
+          resultCount: visible.length,
+          onSortChanged: onSortChanged,
+          onViewModeChanged: onViewModeChanged,
+          onFiltersChanged: onFiltersChanged,
         ),
+        const SizedBox(height: AppSpacing.s14),
+
+        if (visible.isEmpty && filters.isActive)
+          _FiltersEmptyState(
+            onClear: () => onFiltersChanged(const _LibraryFilters()),
+          )
+        else if (visible.isEmpty && !isAll)
+          _TabEmptyState(activeTab: activeTab, onAdd: onAddLibrary)
+        else if (viewMode == _ViewMode.grid)
+          _LibraryGrid(
+            libraries: visible,
+            selectedId: selectedLibraryId,
+            onSelect: onSelectLibrary,
+            onAddLibrary: onAddLibrary,
+            onScan: onScan,
+            onEdit: onEdit,
+            onRemove: onRemove,
+          )
+        else
+          _LibraryList(
+            libraries: visible,
+            files: state.files,
+            selectedId: selectedLibraryId,
+            onSelect: onSelectLibrary,
+            onScan: onScan,
+            onEdit: onEdit,
+            onRemove: onRemove,
+          ),
       ],
+    );
+  }
+}
+
+class _TabEmptyState extends StatelessWidget {
+  const _TabEmptyState({required this.activeTab, required this.onAdd});
+
+  final String activeTab;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = switch (activeTab) {
+      'movies' => 'movies',
+      'tv' => 'TV shows',
+      'music' => 'music',
+      'docs' => 'documents',
+      _ => 'libraries',
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 60),
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.folder_open_outlined,
+              size: 56, color: AppColors.textFaint),
+          const SizedBox(height: 14),
+          Text('No $label libraries yet',
+              style:
+                  AppTypography.body.copyWith(color: AppColors.textMutedV2)),
+          const SizedBox(height: 6),
+          Text('Add a folder of $label to get started.',
+              style:
+                  AppTypography.bodySmall.copyWith(color: AppColors.textFaint)),
+          const SizedBox(height: 16),
+          FluxButton(
+            variant: FluxButtonVariant.primary,
+            icon: Icons.add_rounded,
+            onPressed: onAdd,
+            child: const Text('Add Library'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -446,14 +811,16 @@ class _StatTilesRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final totalFiles = state.files.length;
+    final totalFiles =
+        state.libraries.fold<int>(0, (acc, l) => acc + l.fileCount);
     final totalLibraries = state.libraries.length;
     final lastScan = _formatLastScanned(state.libraries);
 
     final storageState = context.watch<StorageCubit>().state;
     final totalSizeStr = storageState is StorageLoaded
-        ? _humanBytes(storageState.breakdown.totalBytes)
-        : '—';
+        ? humanBytes(storageState.breakdown.totalBytes)
+        : humanBytes(state.libraries
+            .fold<int>(0, (acc, l) => acc + l.totalSizeBytes));
 
     return Row(
       children: [
@@ -509,23 +876,23 @@ class _StatTilesRow extends StatelessWidget {
       ],
     );
   }
+}
 
-  static String _humanBytes(int bytes) {
-    if (bytes <= 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    var value = bytes.toDouble();
-    var unitIndex = 0;
-    while (value >= 1024 && unitIndex < units.length - 1) {
-      value /= 1024;
-      unitIndex++;
-    }
-    final formatted = value < 10
-        ? value.toStringAsFixed(2)
-        : value < 100
-            ? value.toStringAsFixed(1)
-            : value.toStringAsFixed(0);
-    return '$formatted ${units[unitIndex]}';
+String humanBytes(int bytes) {
+  if (bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var value = bytes.toDouble();
+  var unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex++;
   }
+  final formatted = value < 10
+      ? value.toStringAsFixed(2)
+      : value < 100
+          ? value.toStringAsFixed(1)
+          : value.toStringAsFixed(0);
+  return '$formatted ${units[unitIndex]}';
 }
 
 // ── Library grid ───────────────────────────────────────────────────────────────
@@ -536,12 +903,18 @@ class _LibraryGrid extends StatelessWidget {
     required this.selectedId,
     required this.onSelect,
     required this.onAddLibrary,
+    required this.onScan,
+    required this.onEdit,
+    required this.onRemove,
   });
 
   final List<Library> libraries;
   final String? selectedId;
   final ValueChanged<Library> onSelect;
   final VoidCallback onAddLibrary;
+  final ValueChanged<Library> onScan;
+  final ValueChanged<Library> onEdit;
+  final ValueChanged<Library> onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -554,6 +927,8 @@ class _LibraryGrid extends StatelessWidget {
         const itemWidth = 280.0;
         final cols = (constraints.maxWidth / itemWidth).floor().clamp(1, 3);
         const spacing = AppSpacing.s14;
+        final tileWidth =
+            (constraints.maxWidth - spacing * (cols - 1)) / cols;
 
         return Wrap(
           spacing: spacing,
@@ -561,15 +936,20 @@ class _LibraryGrid extends StatelessWidget {
           children: [
             for (final lib in libraries)
               SizedBox(
-                width: (constraints.maxWidth - spacing * (cols - 1)) / cols,
+                width: tileWidth,
                 child: _LibraryCard(
                   library: lib,
                   isSelected: lib.id == selectedId,
                   onTap: () => onSelect(lib),
+                  onScan: () => onScan(lib),
+                  onEdit: () => onEdit(lib),
+                  onRemove: () => onRemove(lib),
+                  onOpenFiles: () =>
+                      context.go(Routes.libraryFiles(lib.id)),
                 ),
               ),
             SizedBox(
-              width: (constraints.maxWidth - spacing * (cols - 1)) / cols,
+              width: tileWidth,
               child: _AddLibraryPlaceholder(onTap: onAddLibrary),
             ),
           ],
@@ -586,11 +966,19 @@ class _LibraryCard extends StatefulWidget {
     required this.library,
     required this.isSelected,
     required this.onTap,
+    required this.onScan,
+    required this.onEdit,
+    required this.onRemove,
+    required this.onOpenFiles,
   });
 
   final Library library;
   final bool isSelected;
   final VoidCallback onTap;
+  final VoidCallback onScan;
+  final VoidCallback onEdit;
+  final VoidCallback onRemove;
+  final VoidCallback onOpenFiles;
 
   @override
   State<_LibraryCard> createState() => _LibraryCardState();
@@ -643,6 +1031,7 @@ class _LibraryCardState extends State<_LibraryCard> {
   @override
   Widget build(BuildContext context) {
     final accent = _accentFor(widget.library.type);
+    final lib = widget.library;
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -650,12 +1039,13 @@ class _LibraryCardState extends State<_LibraryCard> {
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
         onTap: widget.onTap,
+        onDoubleTap: widget.onOpenFiles,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
-          constraints: const BoxConstraints(minHeight: 130),
+          constraints: const BoxConstraints(minHeight: 168),
           decoration: BoxDecoration(
-            gradient: _gradientFor(widget.library.type),
+            gradient: _gradientFor(lib.type),
             borderRadius: BorderRadius.circular(AppRadii.lg),
             border: Border.all(
               color: widget.isSelected
@@ -685,14 +1075,16 @@ class _LibraryCardState extends State<_LibraryCard> {
             borderRadius: BorderRadius.circular(AppRadii.lg - 1),
             child: Stack(
               children: [
-                // Gradient overlay
+                if (lib.coverUrls.isNotEmpty)
+                  Positioned.fill(child: _PosterMosaic(urls: lib.coverUrls)),
+                // Dark gradient overlay for text legibility
                 const Positioned.fill(
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Colors.transparent, Color(0xB3000000)],
+                        colors: [Color(0x33000000), Color(0xCC000000)],
                         stops: [0.3, 1.0],
                       ),
                     ),
@@ -704,33 +1096,66 @@ class _LibraryCardState extends State<_LibraryCard> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Type icon badge
-                      Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: accent.withValues(alpha: 0.25),
-                          borderRadius: BorderRadius.circular(AppRadii.sm),
-                          boxShadow: [
-                            BoxShadow(
-                              color: accent.withValues(alpha: 0.3),
-                              blurRadius: 12,
-                              offset: const Offset(0, 4),
+                      Row(
+                        children: [
+                          // Type icon badge
+                          Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: accent.withValues(alpha: 0.25),
+                              borderRadius:
+                                  BorderRadius.circular(AppRadii.sm),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: accent.withValues(alpha: 0.3),
+                                  blurRadius: 12,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                        child: Center(
-                          child: Icon(
-                            _iconFor(widget.library.type),
-                            size: 16,
-                            color: Colors.white,
+                            child: Center(
+                              child: Icon(
+                                _iconFor(lib.type),
+                                size: 16,
+                                color: Colors.white,
+                              ),
+                            ),
                           ),
-                        ),
+                          const Spacer(),
+                          // File count pill
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0x66000000),
+                              border: Border.all(
+                                  color: const Color(0x33FFFFFF)),
+                              borderRadius:
+                                  BorderRadius.circular(AppRadii.xs),
+                            ),
+                            child: Text(
+                              '${lib.fileCount} file${lib.fileCount == 1 ? '' : 's'}',
+                              style: const TextStyle(
+                                fontFamily: 'Inter',
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          _CardMenuButton(
+                            onScan: widget.onScan,
+                            onEdit: widget.onEdit,
+                            onRemove: widget.onRemove,
+                            onOpenFiles: widget.onOpenFiles,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 32),
-                      // Name + file count
+                      const Spacer(),
                       Text(
-                        widget.library.name,
+                        lib.name,
                         style: const TextStyle(
                           fontFamily: 'Inter',
                           fontSize: 16,
@@ -742,29 +1167,18 @@ class _LibraryCardState extends State<_LibraryCard> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              widget.library.rootPaths.isNotEmpty
-                                  ? widget.library.rootPaths.first
-                                  : 'No path',
-                              style: const TextStyle(
-                                fontFamily: 'Inter',
-                                fontSize: 11,
-                                color: Color(0xB3FFFFFF),
-                                height: 1.3,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const Icon(
-                            Icons.more_horiz_rounded,
-                            size: 14,
-                            color: Color(0x99FFFFFF),
-                          ),
-                        ],
+                      Text(
+                        lib.rootPaths.isNotEmpty
+                            ? lib.rootPaths.first
+                            : 'No path',
+                        style: const TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 11,
+                          color: Color(0xB3FFFFFF),
+                          height: 1.3,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
@@ -774,6 +1188,137 @@ class _LibraryCardState extends State<_LibraryCard> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _CardMenuButton extends StatelessWidget {
+  const _CardMenuButton({
+    required this.onScan,
+    required this.onEdit,
+    required this.onRemove,
+    required this.onOpenFiles,
+  });
+
+  final VoidCallback onScan;
+  final VoidCallback onEdit;
+  final VoidCallback onRemove;
+  final VoidCallback onOpenFiles;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'More actions',
+      icon: const Icon(Icons.more_horiz_rounded,
+          size: 16, color: Colors.white),
+      iconSize: 16,
+      padding: EdgeInsets.zero,
+      onSelected: (value) {
+        switch (value) {
+          case 'open':
+            onOpenFiles();
+          case 'scan':
+            onScan();
+          case 'edit':
+            onEdit();
+          case 'remove':
+            onRemove();
+        }
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: 'open', child: Text('Open files')),
+        PopupMenuItem(value: 'scan', child: Text('Scan')),
+        PopupMenuItem(value: 'edit', child: Text('Edit')),
+        PopupMenuItem(
+          value: 'remove',
+          child: Text('Remove', style: TextStyle(color: Color(0xFFF87171))),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Poster mosaic (1× hero / 2×2 grid) ────────────────────────────────────────
+
+class _PosterMosaic extends StatelessWidget {
+  const _PosterMosaic({required this.urls});
+
+  final List<String> urls;
+
+  @override
+  Widget build(BuildContext context) {
+    if (urls.length == 1) {
+      return _Poster(url: urls[0]);
+    }
+    final pair = urls.take(4).toList();
+    if (pair.length == 2) {
+      return Row(
+        children: [
+          Expanded(child: _Poster(url: pair[0])),
+          const SizedBox(width: 1),
+          Expanded(child: _Poster(url: pair[1])),
+        ],
+      );
+    }
+    if (pair.length == 3) {
+      return Row(
+        children: [
+          Expanded(child: _Poster(url: pair[0])),
+          const SizedBox(width: 1),
+          Expanded(
+            child: Column(
+              children: [
+                Expanded(child: _Poster(url: pair[1])),
+                const SizedBox(height: 1),
+                Expanded(child: _Poster(url: pair[2])),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+    // 4-up
+    return Column(
+      children: [
+        Expanded(
+          child: Row(
+            children: [
+              Expanded(child: _Poster(url: pair[0])),
+              const SizedBox(width: 1),
+              Expanded(child: _Poster(url: pair[1])),
+            ],
+          ),
+        ),
+        const SizedBox(height: 1),
+        Expanded(
+          child: Row(
+            children: [
+              Expanded(child: _Poster(url: pair[2])),
+              const SizedBox(width: 1),
+              Expanded(child: _Poster(url: pair[3])),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _Poster extends StatelessWidget {
+  const _Poster({required this.url});
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      errorBuilder: (_, _, _) => const ColoredBox(color: Color(0x14000000)),
+      loadingBuilder: (_, child, progress) => progress == null
+          ? child
+          : const ColoredBox(color: Color(0x14000000)),
     );
   }
 }
@@ -803,7 +1348,7 @@ class _AddLibraryPlaceholderState extends State<_AddLibraryPlaceholder> {
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
-          constraints: const BoxConstraints(minHeight: 130),
+          constraints: const BoxConstraints(minHeight: 168),
           decoration: BoxDecoration(
             color: _hovered
                 ? const Color(0x0DA855F7)
@@ -876,12 +1421,16 @@ class _LibraryDetailPanel extends StatelessWidget {
   const _LibraryDetailPanel({
     required this.library,
     required this.onScan,
+    required this.onEdit,
     required this.onRemove,
+    required this.onOpenFiles,
   });
 
   final Library library;
   final VoidCallback onScan;
+  final VoidCallback onEdit;
   final VoidCallback onRemove;
+  final VoidCallback onOpenFiles;
 
   static Color _accentFor(LibraryType type) => switch (type) {
         LibraryType.movies => AppColors.violet,
@@ -908,7 +1457,7 @@ class _LibraryDetailPanel extends StatelessWidget {
         border: Border(
           left: BorderSide(color: Color(0x0DFFFFFF)),
         ),
-        color: Color(0x800D0B1C), // rgba(13,11,28,0.5)
+        color: Color(0x800D0B1C),
       ),
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.s20),
@@ -926,7 +1475,8 @@ class _LibraryDetailPanel extends StatelessWidget {
                     borderRadius: BorderRadius.circular(AppRadii.sm),
                   ),
                   child: Center(
-                    child: Icon(_iconFor(library.type), size: 18, color: accent),
+                    child: Icon(_iconFor(library.type),
+                        size: 18, color: accent),
                   ),
                 ),
                 const SizedBox(width: AppSpacing.s10),
@@ -944,7 +1494,12 @@ class _LibraryDetailPanel extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const Icon(Icons.edit_outlined, size: 14, color: AppColors.textMutedV2),
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined,
+                      size: 14, color: AppColors.textMutedV2),
+                  tooltip: 'Edit library',
+                  onPressed: onEdit,
+                ),
               ],
             ),
             const SizedBox(height: AppSpacing.s16),
@@ -981,29 +1536,17 @@ class _LibraryDetailPanel extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const Icon(Icons.open_in_new_rounded,
-                      size: 12, color: AppColors.textFaint),
                 ],
               ),
             ),
-            const SizedBox(height: AppSpacing.s18),
-
-            // ── Description (no backend field — empty placeholder) ────
-            Text(
-              'Description',
-              style: AppTypography.captionV2.copyWith(
-                  color: AppColors.textMutedV2, fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(height: AppSpacing.s6),
-            Container(
-              constraints: const BoxConstraints(minHeight: 56),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0x08FFFFFF),
-                border: Border.all(color: const Color(0x0DFFFFFF)),
-                borderRadius: BorderRadius.circular(7),
+            if (library.rootPaths.length > 1) ...[
+              const SizedBox(height: 4),
+              Text(
+                '+${library.rootPaths.length - 1} more',
+                style: AppTypography.bodySmall
+                    .copyWith(color: AppColors.textFaint),
               ),
-            ),
+            ],
             const SizedBox(height: AppSpacing.s18),
 
             // ── Statistics ────────────────────────────────────────────
@@ -1012,12 +1555,16 @@ class _LibraryDetailPanel extends StatelessWidget {
               style: AppTypography.h2.copyWith(color: AppColors.textBright),
             ),
             const SizedBox(height: AppSpacing.s10),
-            // TODO: per-library file count + size require adding `fileCount`
-            // and `sizeBytes` to the Library entity in fluxora_core
-            // (server already returns `file_count` from /api/v1/library);
-            // requires a build_runner regen. Tracked for next sprint.
-            const _DetailRow(label: 'Total Files', value: '—', isLast: false),
-            const _DetailRow(label: 'Total Size', value: '—', isLast: false),
+            _DetailRow(
+              label: 'Total Files',
+              value: '${library.fileCount}',
+              isLast: false,
+            ),
+            _DetailRow(
+              label: 'Total Size',
+              value: humanBytes(library.totalSizeBytes),
+              isLast: false,
+            ),
             _DetailRow(
               label: 'Last Scanned',
               value: library.lastScanned != null
@@ -1040,24 +1587,21 @@ class _LibraryDetailPanel extends StatelessWidget {
               onTap: onScan,
             ),
             const SizedBox(height: AppSpacing.s6),
-            const _ActionTile(
-              icon: Icons.auto_awesome_outlined,
-              title: 'Rescan Metadata',
-              sub: 'Refresh all metadata and thumbnails',
-              enabled: false,
-            ),
-            const SizedBox(height: AppSpacing.s6),
             _ActionTile(
               icon: Icons.folder_open_outlined,
               title: 'View Library Files',
               sub: 'Browse all files in this library',
-              onTap: () {},
+              onTap: onOpenFiles,
+            ),
+            const SizedBox(height: AppSpacing.s6),
+            _ActionTile(
+              icon: Icons.edit_outlined,
+              title: 'Edit Library',
+              sub: 'Rename or change folders',
+              onTap: onEdit,
             ),
             const SizedBox(height: AppSpacing.s10),
-            // Remove (danger)
-            _DangerActionTile(
-              onTap: onRemove,
-            ),
+            _DangerActionTile(onTap: onRemove),
           ],
         ),
       ),
@@ -1124,14 +1668,12 @@ class _ActionTile extends StatefulWidget {
     required this.title,
     required this.sub,
     this.onTap,
-    this.enabled = true,
   });
 
   final IconData icon;
   final String title;
   final String sub;
   final VoidCallback? onTap;
-  final bool enabled;
 
   @override
   State<_ActionTile> createState() => _ActionTileState();
@@ -1142,16 +1684,14 @@ class _ActionTileState extends State<_ActionTile> {
 
   @override
   Widget build(BuildContext context) {
-    return Opacity(
-      opacity: widget.enabled ? 1.0 : 0.45,
-      child: MouseRegion(
-        cursor: widget.enabled && widget.onTap != null
-            ? SystemMouseCursors.click
-            : SystemMouseCursors.basic,
-        onEnter: widget.enabled ? (_) => setState(() => _hovered = true) : null,
-        onExit: widget.enabled ? (_) => setState(() => _hovered = false) : null,
-        child: GestureDetector(
-          onTap: widget.enabled ? widget.onTap : null,
+    return MouseRegion(
+      cursor: widget.onTap != null
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -1202,8 +1742,7 @@ class _ActionTileState extends State<_ActionTile> {
             ),
           ),
         ),
-      ),
-    );
+      );
   }
 }
 
@@ -1243,7 +1782,8 @@ class _DangerActionTileState extends State<_DangerActionTile> {
           ),
           child: const Row(
             children: [
-              Icon(Icons.delete_outline_rounded, size: 14, color: Color(0xFFF87171)),
+              Icon(Icons.delete_outline_rounded,
+                  size: 14, color: Color(0xFFF87171)),
               SizedBox(width: AppSpacing.s10),
               Expanded(
                 child: Column(
@@ -1275,6 +1815,655 @@ class _DangerActionTileState extends State<_DangerActionTile> {
           ),
         ),
       ),
+    );
+  }
+}
+
+// ── Toolbar row (Sort · Filters · Grid/List toggle) ────────────────────────────
+
+class _ToolbarRow extends StatelessWidget {
+  const _ToolbarRow({
+    required this.sortBy,
+    required this.viewMode,
+    required this.filters,
+    required this.resultCount,
+    required this.onSortChanged,
+    required this.onViewModeChanged,
+    required this.onFiltersChanged,
+  });
+
+  final _SortBy sortBy;
+  final _ViewMode viewMode;
+  final _LibraryFilters filters;
+  final int resultCount;
+  final ValueChanged<_SortBy> onSortChanged;
+  final ValueChanged<_ViewMode> onViewModeChanged;
+  final ValueChanged<_LibraryFilters> onFiltersChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        _ResultCountLabel(count: resultCount, filtersActive: filters.isActive),
+        const Spacer(),
+        _SortMenu(value: sortBy, onChanged: onSortChanged),
+        const SizedBox(width: AppSpacing.s10),
+        _FiltersButton(
+          filters: filters,
+          onTap: () => _openFiltersDialog(context),
+        ),
+        const SizedBox(width: AppSpacing.s10),
+        _ViewModeToggle(value: viewMode, onChanged: onViewModeChanged),
+      ],
+    );
+  }
+
+  Future<void> _openFiltersDialog(BuildContext context) async {
+    final result = await showDialog<_LibraryFilters>(
+      context: context,
+      builder: (ctx) => _FiltersDialog(initial: filters),
+    );
+    if (result != null) onFiltersChanged(result);
+  }
+}
+
+class _ResultCountLabel extends StatelessWidget {
+  const _ResultCountLabel(
+      {required this.count, required this.filtersActive});
+
+  final int count;
+  final bool filtersActive;
+
+  @override
+  Widget build(BuildContext context) {
+    final base = '$count ${count == 1 ? 'library' : 'libraries'}';
+    return Text(
+      filtersActive ? '$base · filtered' : base,
+      style: AppTypography.bodySmall.copyWith(color: AppColors.textMutedV2),
+    );
+  }
+}
+
+class _SortMenu extends StatelessWidget {
+  const _SortMenu({required this.value, required this.onChanged});
+
+  final _SortBy value;
+  final ValueChanged<_SortBy> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<_SortBy>(
+      tooltip: 'Sort libraries',
+      initialValue: value,
+      onSelected: onChanged,
+      color: AppColors.surfaceGlass,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(AppRadii.md)),
+        side: BorderSide(color: AppColors.borderSubtle),
+      ),
+      itemBuilder: (ctx) => [
+        for (final option in _SortBy.values)
+          PopupMenuItem(
+            value: option,
+            child: Row(
+              children: [
+                Icon(
+                  option == value
+                      ? Icons.check_rounded
+                      : Icons.remove_rounded,
+                  size: 16,
+                  color: option == value
+                      ? AppColors.violet
+                      : Colors.transparent,
+                ),
+                const SizedBox(width: 8),
+                Text(option.label,
+                    style: AppTypography.body
+                        .copyWith(color: AppColors.textBright)),
+              ],
+            ),
+          ),
+      ],
+      child: _ToolbarChip(
+        icon: Icons.sort_rounded,
+        label: 'Sort: ${value.label}',
+      ),
+    );
+  }
+}
+
+class _FiltersButton extends StatelessWidget {
+  const _FiltersButton({required this.filters, required this.onTap});
+
+  final _LibraryFilters filters;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadii.md),
+      child: _ToolbarChip(
+        icon: Icons.tune_rounded,
+        label: filters.isActive
+            ? 'Filters · ${filters.activeCount}'
+            : 'Filters',
+        accent: filters.isActive,
+      ),
+    );
+  }
+}
+
+class _ToolbarChip extends StatelessWidget {
+  const _ToolbarChip({
+    required this.icon,
+    required this.label,
+    this.accent = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool accent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: accent
+            ? AppColors.violet.withValues(alpha: 0.12)
+            : AppColors.surfaceGlass,
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        border: Border.all(
+          color: accent ? AppColors.violet : AppColors.borderSubtle,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon,
+              size: 16,
+              color: accent ? AppColors.violet : AppColors.textMutedV2),
+          const SizedBox(width: 6),
+          Text(label,
+              style: AppTypography.bodySmall.copyWith(
+                color: accent ? AppColors.violet : AppColors.textBright,
+                fontWeight: FontWeight.w500,
+              )),
+        ],
+      ),
+    );
+  }
+}
+
+class _ViewModeToggle extends StatelessWidget {
+  const _ViewModeToggle({required this.value, required this.onChanged});
+
+  final _ViewMode value;
+  final ValueChanged<_ViewMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surfaceGlass,
+        borderRadius: BorderRadius.circular(AppRadii.md),
+        border: Border.all(color: AppColors.borderSubtle),
+      ),
+      padding: const EdgeInsets.all(2),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ViewModeButton(
+            icon: Icons.grid_view_rounded,
+            tooltip: 'Grid view',
+            selected: value == _ViewMode.grid,
+            onTap: () => onChanged(_ViewMode.grid),
+          ),
+          _ViewModeButton(
+            icon: Icons.view_list_rounded,
+            tooltip: 'List view',
+            selected: value == _ViewMode.list,
+            onTap: () => onChanged(_ViewMode.list),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ViewModeButton extends StatelessWidget {
+  const _ViewModeButton({
+    required this.icon,
+    required this.tooltip,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadii.sm),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected
+                ? AppColors.violet.withValues(alpha: 0.18)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadii.sm),
+          ),
+          child: Icon(
+            icon,
+            size: 16,
+            color: selected ? AppColors.violet : AppColors.textMutedV2,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Filters dialog ─────────────────────────────────────────────────────────────
+
+class _FiltersDialog extends StatefulWidget {
+  const _FiltersDialog({required this.initial});
+  final _LibraryFilters initial;
+
+  @override
+  State<_FiltersDialog> createState() => _FiltersDialogState();
+}
+
+class _FiltersDialogState extends State<_FiltersDialog> {
+  late _LibraryFilters _draft = widget.initial;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppColors.surfaceGlass,
+      title: Text('Filter libraries',
+          style: AppTypography.h2.copyWith(color: AppColors.textBright)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FilterCheckbox(
+            label: 'Enriched only',
+            description: 'Libraries that have at least one TMDB-matched file',
+            value: _draft.enrichedOnly,
+            onChanged: (v) =>
+                setState(() => _draft = _draft.copyWith(enrichedOnly: v)),
+          ),
+          _FilterCheckbox(
+            label: 'With files',
+            description: 'Libraries that have one or more files indexed',
+            value: _draft.withFilesOnly,
+            onChanged: (v) =>
+                setState(() => _draft = _draft.copyWith(withFilesOnly: v)),
+          ),
+          _FilterCheckbox(
+            label: 'Recently scanned',
+            description: 'Scanned in the last 7 days',
+            value: _draft.recentlyScanned,
+            onChanged: (v) =>
+                setState(() => _draft = _draft.copyWith(recentlyScanned: v)),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () =>
+              Navigator.of(context).pop(const _LibraryFilters()),
+          child: const Text('Clear all'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.violet),
+          onPressed: () => Navigator.of(context).pop(_draft),
+          child: const Text('Apply'),
+        ),
+      ],
+    );
+  }
+}
+
+class _FilterCheckbox extends StatelessWidget {
+  const _FilterCheckbox({
+    required this.label,
+    required this.description,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String description;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      borderRadius: BorderRadius.circular(AppRadii.sm),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: Checkbox(
+                value: value,
+                onChanged: (v) => onChanged(v ?? false),
+                activeColor: AppColors.violet,
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: AppTypography.body
+                          .copyWith(color: AppColors.textBright)),
+                  const SizedBox(height: 2),
+                  Text(description,
+                      style: AppTypography.bodySmall
+                          .copyWith(color: AppColors.textMutedV2)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Filters empty-state ────────────────────────────────────────────────────────
+
+class _FiltersEmptyState extends StatelessWidget {
+  const _FiltersEmptyState({required this.onClear});
+
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 60),
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.filter_alt_off_outlined,
+              size: 56, color: AppColors.textFaint),
+          const SizedBox(height: 14),
+          Text('No libraries match the current filters',
+              style:
+                  AppTypography.body.copyWith(color: AppColors.textMutedV2)),
+          const SizedBox(height: 16),
+          FluxButton(
+            variant: FluxButtonVariant.secondary,
+            icon: Icons.clear_rounded,
+            onPressed: onClear,
+            child: const Text('Clear filters'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Library list view ──────────────────────────────────────────────────────────
+
+class _LibraryList extends StatelessWidget {
+  const _LibraryList({
+    required this.libraries,
+    required this.files,
+    required this.selectedId,
+    required this.onSelect,
+    required this.onScan,
+    required this.onEdit,
+    required this.onRemove,
+  });
+
+  final List<Library> libraries;
+  final List<MediaFile> files;
+  final String? selectedId;
+  final ValueChanged<Library> onSelect;
+  final ValueChanged<Library> onScan;
+  final ValueChanged<Library> onEdit;
+  final ValueChanged<Library> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surfaceGlass,
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+        border: Border.all(color: AppColors.borderSubtle),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < libraries.length; i++)
+            _LibraryListRow(
+              library: libraries[i],
+              isSelected: libraries[i].id == selectedId,
+              isFirst: i == 0,
+              isLast: i == libraries.length - 1,
+              onTap: () => onSelect(libraries[i]),
+              onOpenFiles: () =>
+                  context.go(Routes.libraryFiles(libraries[i].id)),
+              onScan: () => onScan(libraries[i]),
+              onEdit: () => onEdit(libraries[i]),
+              onRemove: () => onRemove(libraries[i]),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LibraryListRow extends StatelessWidget {
+  const _LibraryListRow({
+    required this.library,
+    required this.isSelected,
+    required this.isFirst,
+    required this.isLast,
+    required this.onTap,
+    required this.onOpenFiles,
+    required this.onScan,
+    required this.onEdit,
+    required this.onRemove,
+  });
+
+  final Library library;
+  final bool isSelected;
+  final bool isFirst;
+  final bool isLast;
+  final VoidCallback onTap;
+  final VoidCallback onOpenFiles;
+  final VoidCallback onScan;
+  final VoidCallback onEdit;
+  final VoidCallback onRemove;
+
+  static IconData _iconFor(LibraryType t) => switch (t) {
+        LibraryType.movies => Icons.movie_outlined,
+        LibraryType.tv => Icons.tv_outlined,
+        LibraryType.music => Icons.music_note_outlined,
+        LibraryType.files => Icons.folder_outlined,
+      };
+
+  static Color _accentFor(LibraryType t) => switch (t) {
+        LibraryType.movies => AppColors.violet,
+        LibraryType.tv => AppColors.blue,
+        LibraryType.music => AppColors.pink,
+        LibraryType.files => AppColors.cyan,
+      };
+
+  static String _formatLastScanned(DateTime? ts) {
+    if (ts == null) return 'Never';
+    final diff = DateTime.now().toUtc().difference(ts.toUtc());
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = _accentFor(library.type);
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.vertical(
+        top: isFirst
+            ? const Radius.circular(AppRadii.lg)
+            : Radius.zero,
+        bottom: isLast
+            ? const Radius.circular(AppRadii.lg)
+            : Radius.zero,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isSelected
+              ? accent.withValues(alpha: 0.08)
+              : Colors.transparent,
+          border: Border(
+            bottom: isLast
+                ? BorderSide.none
+                : const BorderSide(color: AppColors.borderSubtle),
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s14, vertical: AppSpacing.s12),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+              ),
+              child: Icon(_iconFor(library.type), size: 18, color: accent),
+            ),
+            const SizedBox(width: AppSpacing.s12),
+            Expanded(
+              flex: 3,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    library.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTypography.body.copyWith(
+                      color: AppColors.textBright,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    library.rootPaths.isEmpty
+                        ? 'No paths'
+                        : library.rootPaths.join(' · '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.textMutedV2),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Text(
+                '${library.fileCount} files',
+                style: AppTypography.bodySmall
+                    .copyWith(color: AppColors.textBody),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                humanBytes(library.totalSizeBytes),
+                style: AppTypography.bodySmall
+                    .copyWith(color: AppColors.textBody),
+              ),
+            ),
+            Expanded(
+              child: Text(
+                _formatLastScanned(library.lastScanned),
+                style: AppTypography.bodySmall
+                    .copyWith(color: AppColors.textMutedV2),
+              ),
+            ),
+            _ListRowAction(
+              icon: Icons.folder_open_outlined,
+              tooltip: 'Open files',
+              onPressed: onOpenFiles,
+            ),
+            _ListRowAction(
+              icon: Icons.refresh_rounded,
+              tooltip: 'Scan',
+              onPressed: onScan,
+            ),
+            _ListRowAction(
+              icon: Icons.edit_outlined,
+              tooltip: 'Edit',
+              onPressed: onEdit,
+            ),
+            _ListRowAction(
+              icon: Icons.delete_outline_rounded,
+              tooltip: 'Remove',
+              onPressed: onRemove,
+              destructive: true,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ListRowAction extends StatelessWidget {
+  const _ListRowAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      icon: Icon(
+        icon,
+        size: 18,
+        color: destructive
+            ? const Color(0xFFEF4444)
+            : AppColors.textMutedV2,
+      ),
+      visualDensity: VisualDensity.compact,
+      splashRadius: 18,
     );
   }
 }

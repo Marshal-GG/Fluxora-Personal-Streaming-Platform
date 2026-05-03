@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
+import 'package:fluxora_core/entities/library.dart';
 import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_state.dart';
@@ -27,6 +28,28 @@ class LibraryCubit extends Cubit<LibraryState> {
     }
   }
 
+  /// Refresh quietly: re-fetches without flipping back to [LibraryLoading],
+  /// so the UI doesn't flash a spinner after every mutation.
+  Future<void> _refresh() async {
+    try {
+      final libraries = await _repository.getLibraries();
+      final files = await _repository.getFiles();
+      emit(LibraryLoaded(
+        libraries: libraries,
+        files: files,
+        selectedLibraryId: state is LibraryLoaded
+            ? (state as LibraryLoaded).selectedLibraryId
+            : null,
+      ));
+    } on ApiException catch (e, st) {
+      _log.e('Library refresh failed', error: e, stackTrace: st);
+      rethrow;
+    } catch (e, st) {
+      _log.e('Library refresh failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
   void selectLibrary(String? libraryId) {
     final current = state;
     if (current is! LibraryLoaded) return;
@@ -37,10 +60,19 @@ class LibraryCubit extends Cubit<LibraryState> {
     ));
   }
 
-  Future<void> createLibrary(String name, String type, List<String> rootPaths) async {
+  Future<Library> createLibrary(
+    String name,
+    String type,
+    List<String> rootPaths,
+  ) async {
     try {
-      await _repository.createLibrary(name: name, type: type, rootPaths: rootPaths);
-      await load();
+      final lib = await _repository.createLibrary(
+        name: name,
+        type: type,
+        rootPaths: rootPaths,
+      );
+      await _refresh();
+      return lib;
     } on ApiException catch (e, st) {
       _log.e('Create library failed', error: e, stackTrace: st);
       rethrow;
@@ -50,10 +82,60 @@ class LibraryCubit extends Cubit<LibraryState> {
     }
   }
 
-  Future<void> scanLibrary(String libraryId) async {
+  Future<Library> updateLibrary({
+    required String libraryId,
+    String? name,
+    List<String>? rootPaths,
+  }) async {
     try {
-      await _repository.scanLibrary(libraryId);
-      await load();
+      final lib = await _repository.updateLibrary(
+        libraryId: libraryId,
+        name: name,
+        rootPaths: rootPaths,
+      );
+      await _refresh();
+      return lib;
+    } on ApiException catch (e, st) {
+      _log.e('Update library failed', error: e, stackTrace: st);
+      rethrow;
+    } catch (e, st) {
+      _log.e('Update library failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  Future<void> deleteLibrary(String libraryId) async {
+    try {
+      await _repository.deleteLibrary(libraryId);
+      final current = state;
+      if (current is LibraryLoaded) {
+        final remaining =
+            current.libraries.where((l) => l.id != libraryId).toList();
+        final remainingFiles =
+            current.files.where((f) => f.libraryId != libraryId).toList();
+        emit(LibraryLoaded(
+          libraries: remaining,
+          files: remainingFiles,
+          selectedLibraryId: current.selectedLibraryId == libraryId
+              ? null
+              : current.selectedLibraryId,
+        ));
+      }
+    } on ApiException catch (e, st) {
+      _log.e('Delete library failed', error: e, stackTrace: st);
+      rethrow;
+    } catch (e, st) {
+      _log.e('Delete library failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  /// Returns the count of files added by the scan.
+  Future<int> scanLibrary(String libraryId) async {
+    try {
+      final added = await _repository.scanLibrary(libraryId);
+      await _refresh();
+      return added;
     } on ApiException catch (e, st) {
       _log.e('Scan library failed', error: e, stackTrace: st);
       rethrow;
@@ -65,8 +147,9 @@ class LibraryCubit extends Cubit<LibraryState> {
 
   Future<void> uploadFile(String libraryId, String filePath) async {
     try {
-      await _repository.uploadFileToLibrary(libraryId: libraryId, filePath: filePath);
-      await load(); // Reload to show the new file
+      await _repository.uploadFileToLibrary(
+          libraryId: libraryId, filePath: filePath);
+      await _refresh();
     } on ApiException catch (e, st) {
       _log.e('Upload file failed', error: e, stackTrace: st);
       rethrow;

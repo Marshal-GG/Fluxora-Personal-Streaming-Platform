@@ -4,6 +4,7 @@ import 'package:fluxora_desktop/features/activity/presentation/screens/activity_
 import 'package:fluxora_desktop/features/clients/presentation/screens/clients_screen.dart';
 import 'package:fluxora_desktop/features/dashboard/presentation/screens/dashboard_screen.dart';
 import 'package:fluxora_desktop/features/groups/presentation/screens/groups_screen.dart';
+import 'package:fluxora_desktop/features/library/presentation/screens/library_files_screen.dart';
 import 'package:fluxora_desktop/features/library/presentation/screens/library_screen.dart';
 import 'package:fluxora_desktop/features/logs/presentation/screens/logs_screen.dart';
 import 'package:fluxora_desktop/features/help/presentation/screens/help_screen.dart';
@@ -20,6 +21,7 @@ class Routes {
 
   static const String dashboard = '/';
   static const String library = '/library';
+  static String libraryFiles(String id) => '/library/$id/files';
   static const String clients = '/clients';
   static const String groups = '/groups';
   static const String activity = '/activity';
@@ -56,6 +58,11 @@ final appRouter = GoRouter(
         GoRoute(
           path: Routes.library,
           builder: (_, _) => const LibraryScreen(),
+        ),
+        GoRoute(
+          path: '/library/:id/files',
+          builder: (_, state) =>
+              LibraryFilesScreen(libraryId: state.pathParameters['id']!),
         ),
         GoRoute(
           path: Routes.clients,
