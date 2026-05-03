@@ -11,12 +11,21 @@ class LibraryResponse(BaseModel):
     last_scanned: str | None
     created_at: str
     file_count: int = 0
+    total_size_bytes: int = 0
+    cover_urls: list[str] = []
 
 
 class CreateLibraryBody(BaseModel):
     name: str
     type: Literal["movies", "tv", "music", "files"]
     root_paths: list[str]
+
+
+class UpdateLibraryBody(BaseModel):
+    """Partial update — every field is optional. At least one must be set."""
+
+    name: str | None = None
+    root_paths: list[str] | None = None
 
 
 class StorageByType(BaseModel):

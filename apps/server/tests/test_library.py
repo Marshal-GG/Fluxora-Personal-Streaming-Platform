@@ -61,6 +61,8 @@ async def test_create_library(client: AsyncClient, monkeypatch):
     assert data["type"] == "movies"
     assert data["root_paths"] == ["/media/movies", "/nas/movies"]
     assert data["file_count"] == 0
+    assert data["total_size_bytes"] == 0
+    assert data["cover_urls"] == []
     assert data["last_scanned"] is None
     assert "id" in data
     assert "created_at" in data
@@ -132,4 +134,111 @@ async def test_delete_library_not_found(client: AsyncClient, monkeypatch):
     headers = {"Authorization": f"Bearer {token}"}
 
     response = await client.delete("/api/v1/library/nonexistent-id", headers=headers)
+    assert response.status_code == 404
+
+
+# ── PATCH /api/v1/library/{id} ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_patch_library_rename(client: AsyncClient, monkeypatch):
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = (
+        await client.post("/api/v1/library", json=CREATE_BODY, headers=headers)
+    ).json()
+    library_id = created["id"]
+
+    response = await client.patch(
+        f"/api/v1/library/{library_id}",
+        json={"name": "Renamed Movies"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["name"] == "Renamed Movies"
+    assert response.json()["root_paths"] == ["/media/movies", "/nas/movies"]
+
+
+@pytest.mark.asyncio
+async def test_patch_library_change_roots(client: AsyncClient, monkeypatch):
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = (
+        await client.post("/api/v1/library", json=CREATE_BODY, headers=headers)
+    ).json()
+    library_id = created["id"]
+
+    response = await client.patch(
+        f"/api/v1/library/{library_id}",
+        json={"root_paths": ["/new/movies"]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["root_paths"] == ["/new/movies"]
+    assert response.json()["name"] == "My Movies"
+
+
+@pytest.mark.asyncio
+async def test_patch_library_empty_body(client: AsyncClient, monkeypatch):
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = (
+        await client.post("/api/v1/library", json=CREATE_BODY, headers=headers)
+    ).json()
+
+    response = await client.patch(
+        f"/api/v1/library/{created['id']}",
+        json={},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_patch_library_empty_name(client: AsyncClient, monkeypatch):
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = (
+        await client.post("/api/v1/library", json=CREATE_BODY, headers=headers)
+    ).json()
+
+    response = await client.patch(
+        f"/api/v1/library/{created['id']}",
+        json={"name": "  "},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_patch_library_empty_roots(client: AsyncClient, monkeypatch):
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    created = (
+        await client.post("/api/v1/library", json=CREATE_BODY, headers=headers)
+    ).json()
+
+    response = await client.patch(
+        f"/api/v1/library/{created['id']}",
+        json={"root_paths": []},
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_patch_library_not_found(client: AsyncClient, monkeypatch):
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = await client.patch(
+        "/api/v1/library/nonexistent-id",
+        json={"name": "x"},
+        headers=headers,
+    )
     assert response.status_code == 404

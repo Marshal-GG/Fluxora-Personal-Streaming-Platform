@@ -10,6 +10,7 @@ from models.library import (
     LibraryResponse,
     StorageBreakdownResponse,
     StorageByType,
+    UpdateLibraryBody,
 )
 from routers.deps import validate_token_or_local
 from services import activity_service, library_service
@@ -28,6 +29,8 @@ def _parse_library(row: dict) -> LibraryResponse:
         last_scanned=row.get("last_scanned"),
         created_at=row["created_at"],
         file_count=row.get("file_count", 0),
+        total_size_bytes=row.get("total_size_bytes", 0),
+        cover_urls=row.get("cover_urls", []),
     )
 
 
@@ -90,6 +93,57 @@ async def get_library(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Library not found"
         )
+    return _parse_library(row)
+
+
+@router.patch("/{library_id}", response_model=LibraryResponse)
+async def update_library(
+    library_id: str,
+    body: UpdateLibraryBody,
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> LibraryResponse:
+    if body.name is None and body.root_paths is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one field (name or root_paths) must be provided",
+        )
+    if body.name is not None and not body.name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="name cannot be empty",
+        )
+    if body.root_paths is not None and len(body.root_paths) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="root_paths cannot be empty",
+        )
+    row = await library_service.update_library(
+        db,
+        library_id,
+        name=body.name,
+        root_paths=body.root_paths,
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Library not found"
+        )
+    try:
+        await activity_service.record(
+            db,
+            type="library.update",
+            summary=f"Library '{row['name']}' updated",
+            actor_kind="client" if _client else "operator",
+            actor_id=_client["id"] if _client else None,
+            target_kind="library",
+            target_id=library_id,
+            payload={
+                "renamed": body.name is not None,
+                "roots_changed": body.root_paths is not None,
+            },
+        )
+    except Exception:
+        logger.warning("Failed to record library.update activity event", exc_info=True)
     return _parse_library(row)
 
 

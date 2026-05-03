@@ -122,22 +122,61 @@ async def get_storage_breakdown(db: aiosqlite.Connection) -> dict:
     }
 
 
+async def _library_aggregates(
+    db: aiosqlite.Connection, library_id: str
+) -> tuple[int, int, list[str]]:
+    """Return (file_count, total_size_bytes, cover_urls) for a library.
+
+    `cover_urls` is up to 4 of the most recently-updated `poster_url` values
+    among the library's enriched media files. Empty list if none enriched.
+    """
+    async with db.execute(
+        """
+        SELECT COUNT(*) AS cnt,
+               COALESCE(SUM(size_bytes), 0) AS total
+          FROM media_files
+         WHERE library_id = ?
+        """,
+        (library_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    file_count = int(row["cnt"]) if row else 0
+    total_size = int(row["total"]) if row else 0
+
+    async with db.execute(
+        """
+        SELECT poster_url
+          FROM media_files
+         WHERE library_id = ? AND poster_url IS NOT NULL AND poster_url != ''
+         ORDER BY updated_at DESC
+         LIMIT 4
+        """,
+        (library_id,),
+    ) as cur:
+        cover_rows = await cur.fetchall()
+    cover_urls = [r["poster_url"] for r in cover_rows]
+
+    return file_count, total_size, cover_urls
+
+
 async def list_libraries(db: aiosqlite.Connection) -> list[dict]:
     async with db.execute("SELECT * FROM libraries ORDER BY created_at") as cur:
         rows = await cur.fetchall()
 
     result = []
     for row in rows:
-        async with db.execute(
-            "SELECT COUNT(*) FROM media_files WHERE library_id = ?", (row["id"],)
-        ) as count_cur:
-            count_row = await count_cur.fetchone()
-        file_count = count_row[0] if count_row else 0
-
+        file_count, total_size, cover_urls = await _library_aggregates(db, row["id"])
         lib_dict = dict(row)
         if "root_paths" in lib_dict and isinstance(lib_dict["root_paths"], str):
             lib_dict["root_paths"] = json.loads(lib_dict["root_paths"])
-        result.append({**lib_dict, "file_count": file_count})
+        result.append(
+            {
+                **lib_dict,
+                "file_count": file_count,
+                "total_size_bytes": total_size,
+                "cover_urls": cover_urls,
+            }
+        )
     return result
 
 
@@ -147,15 +186,52 @@ async def get_library(db: aiosqlite.Connection, library_id: str) -> dict | None:
     if row is None:
         return None
 
-    async with db.execute(
-        "SELECT COUNT(*) FROM media_files WHERE library_id = ?", (library_id,)
-    ) as count_cur:
-        count_row = await count_cur.fetchone()
-    file_count = count_row[0] if count_row else 0
+    file_count, total_size, cover_urls = await _library_aggregates(db, library_id)
     lib_dict = dict(row)
     if "root_paths" in lib_dict and isinstance(lib_dict["root_paths"], str):
         lib_dict["root_paths"] = json.loads(lib_dict["root_paths"])
-    return {**lib_dict, "file_count": file_count}
+    return {
+        **lib_dict,
+        "file_count": file_count,
+        "total_size_bytes": total_size,
+        "cover_urls": cover_urls,
+    }
+
+
+async def update_library(
+    db: aiosqlite.Connection,
+    library_id: str,
+    *,
+    name: str | None = None,
+    root_paths: list[str] | None = None,
+) -> dict | None:
+    """Partial update of a library. Returns the refreshed row or None if not found."""
+    if name is None and root_paths is None:
+        return await get_library(db, library_id)
+
+    async with db.execute(
+        "SELECT id FROM libraries WHERE id = ?", (library_id,)
+    ) as cur:
+        if await cur.fetchone() is None:
+            return None
+
+    sets: list[str] = []
+    params: list[object] = []
+    if name is not None:
+        sets.append("name = ?")
+        params.append(name)
+    if root_paths is not None:
+        sets.append("root_paths = ?")
+        params.append(json.dumps(root_paths))
+
+    params.append(library_id)
+    await db.execute(
+        f"UPDATE libraries SET {', '.join(sets)} WHERE id = ?",
+        tuple(params),
+    )
+    await db.commit()
+    logger.info("Library updated: %s", library_id)
+    return await get_library(db, library_id)
 
 
 async def create_library(
@@ -186,6 +262,8 @@ async def create_library(
         "last_scanned": None,
         "created_at": now,
         "file_count": 0,
+        "total_size_bytes": 0,
+        "cover_urls": [],
     }
 
 
