@@ -5,19 +5,28 @@ import 'dart:math';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
 import 'package:fluxora_core/network/api_exception.dart';
+import 'package:fluxora_core/storage/secure_storage.dart';
 import 'package:fluxora_mobile/features/auth/domain/repositories/auth_repository.dart';
 import 'package:fluxora_mobile/features/auth/presentation/cubit/pair_state.dart';
 import 'package:fluxora_mobile/features/connect/domain/entities/discovered_server.dart';
 
+/// Drives both the initial-pair and re-pair flows (Phase A backfill plan
+/// §9.2 / §9.4 commit 3).
+///
+/// The cubit owns the pairing state machine; UI screens are pure render
+/// surfaces.  See `pair_state.dart` for the state transitions.
 class PairCubit extends Cubit<PairState> {
   PairCubit({
     required AuthRepository repository,
+    SecureStorage? secureStorage,
     Duration pollInterval = const Duration(seconds: 3),
   })  : _repository = repository,
+        _secureStorage = secureStorage,
         _pollInterval = pollInterval,
         super(const PairInitial());
 
   final AuthRepository _repository;
+  final SecureStorage? _secureStorage;
   final Duration _pollInterval;
   static final _log = Logger();
 
@@ -25,17 +34,70 @@ class PairCubit extends Cubit<PairState> {
   String? _pendingClientId;
   String? _pendingServerUrl;
 
-  Future<void> startPairing(DiscoveredServer server) async {
-    emit(const PairRequesting());
+  /// Initial-pair entry: park on the email-collection step before sending
+  /// the request.  The screen drives `submitEmail()` once the user taps
+  /// either Continue or Skip.
+  void prepare(DiscoveredServer server) {
+    emit(PairCollectEmail(server: server));
+  }
+
+  /// Initial-pair: actually send the request-pair body.  Called by the
+  /// pairing screen with whatever the user typed in the email field
+  /// (`null` for "Skip").  Generates a fresh `client_id` UUID.
+  Future<void> submitEmail({
+    required DiscoveredServer server,
+    String? email,
+  }) async {
     _pendingServerUrl = server.url;
     _pendingClientId = _generateClientId();
+    await _request(email: email);
+  }
 
+  /// Re-pair entry: pulls the previously-saved `client_id` + `server_url`
+  /// out of secure storage and re-uses them.  The server's
+  /// `auth_service.create_pair_request` resets the existing row to
+  /// `pending` (Phase A backfill plan §8.5 bug 1), so once the operator
+  /// approves the request again the new token replaces the dead one.
+  ///
+  /// If either credential is missing, the cubit emits [PairError] —
+  /// callers should fall back to the full `/connect` flow.
+  Future<void> reconnect() async {
+    final storage = _secureStorage;
+    if (storage == null) {
+      emit(const PairError('Reconnect requires secure storage.'));
+      return;
+    }
+    emit(const PairRequesting());
+    try {
+      final serverUrl = await storage.getServerUrl();
+      final clientId = await storage.getClientId();
+      if (serverUrl == null || clientId == null) {
+        emit(const PairError(
+          'No saved server to reconnect to. Pair from scratch instead.',
+        ));
+        return;
+      }
+      _pendingServerUrl = serverUrl;
+      _pendingClientId = clientId;
+      await _request(email: null);
+    } on ApiException catch (e, st) {
+      _log.e('reconnect read storage failed', error: e, stackTrace: st);
+      emit(PairError(e.message));
+    } catch (e, st) {
+      _log.e('reconnect unexpected error', error: e, stackTrace: st);
+      emit(const PairError('Could not reconnect to your server.'));
+    }
+  }
+
+  Future<void> _request({String? email}) async {
+    if (state is! PairRequesting) emit(const PairRequesting());
     try {
       await _repository.requestPair(
         clientId: _pendingClientId!,
         deviceName: _deviceName(),
         platform: _platformName(),
         appVersion: '0.1.0',
+        email: email,
       );
       emit(const PairPending());
       _startPolling();

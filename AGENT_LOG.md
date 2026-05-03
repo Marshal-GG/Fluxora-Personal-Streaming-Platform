@@ -949,4 +949,101 @@ The second of three Phase A commits — mobile-side consumers of yesterday's ser
 - [x] No edits to past migrations.
 ---
 
+## [2026-05-04] — Mobile real-data backfill — Phase A — Pairing UX rebuild + lost-token recovery
+**Phase:** Phase 5 (mobile real-data backfill — see `docs/10_planning/08_real_data_backfill_plan.md` §9.2 + §9.4 commit 3 — **Phase A close-out**)
+**Status:** Complete
+
+### What Was Done
+
+The third and final Phase A commit. Initial-pair flow becomes a state-machine UI with the optional email field. New `/reconnect` route handles lost-token recovery, hooked to a global 401 trigger via a stream on `ApiClient` so a dead bearer mid-session reroutes the user automatically.
+
+1. **`PairState` extended** with a new `PairCollectEmail(server)` state — pre-request UI step. Existing states (`PairInitial`, `PairRequesting`, `PairPending`, `PairApproved`, `PairRejected`, `PairError`) unchanged. Doc comment at the top of the file describes both the initial-pair and re-pair traversals through the machine.
+2. **`PairCubit` rewritten with a two-step entry plus a reconnect entry**:
+   - `prepare(server)` — emits `PairCollectEmail` (no network call). Replaces the old eager `startPairing` that fired `request-pair` immediately.
+   - `submitEmail({server, email})` — generates a fresh client_id UUID, hits `requestPair` with the optional email, transitions to `PairPending` on success, polls `/auth/status/{client_id}` for approval.
+   - `reconnect()` — reads `client_id` + `server_url` out of secure storage and re-fires `requestPair` against the same client_id (server now resets the row to `pending` per migration 016 + the §8.5 bug 1 fix). On approval the new token replaces the dead one. If storage is empty, emits `PairError` with a "pair from scratch" pointer.
+   - Cubit constructor gained an optional `secureStorage` so reconnect can be unit-tested in isolation.
+3. **`pairing_screen.dart` rewired** to the new V2-styled state machine:
+   - `PairCollectEmail` → 64 px violet-tinted devices icon + server name/IP + `FluxTextField` for email (typed with `.emailAddress` keyboard) + `Continue` / `Skip` buttons. Client-side email shape check (`^[^\s@]+@[^\s@]+\.[^\s@]+$`) with a friendly "doesn't look like an email" inline error. Empty + Skip both resolve to `email: null`.
+   - `PairRequesting` / `PairApproved` → centered violet spinner + status string.
+   - `PairPending` → 64 px hourglass icon + "Waiting for approval" + sub-spinner + Cancel button (returns to `/connect`).
+   - `PairRejected` → amber `block_rounded` icon + "Pairing rejected" + reason + "Try another server" button.
+   - `PairError` → red `error_outline_rounded` icon + "Couldn't pair" + message + "Try again" (which re-enters the `PairCollectEmail` step so the user can edit the email).
+   - All surfaces use V2 tokens (`AppColors.{violet,textBright,textBody,textMutedV2,borderSubtle}` + `AppTypography.{h1,body,captionV2,eyebrow}`). `FluxAppBar` with transparent variant + back arrow that pops or falls back to `/connect`.
+4. **`reconnect_screen.dart`** (new) — separate screen at `/reconnect` for lost-token recovery. Reuses `PairCubit` with `reconnect()` as the entry point so the same state-machine renders the same surfaces, with two differences: (a) loading copy reads "Reconnecting to your server…" and the pending panel says "Waiting for re-approval"; (b) error / rejected panels offer **two** buttons — "Try again" and "Sign out and pair from scratch" (the latter clears the bearer + secure storage and routes to `/connect`).
+5. **`Routes.reconnect = '/reconnect'`** added to `Routes` + a `GoRoute` registered for it. Auth-guard updated:
+   - Public-route list now includes `reconnect` so unauthenticated users can land on it (the screen handles the "no saved credentials" case itself).
+   - The "authenticated user → bounce to /home" redirect is scoped to `/connect` and `/pairing` only — `/reconnect` is exempt so an authenticated user opting to re-pair (e.g. via the new Profile setting) doesn't get reflected back to `/home` before the screen can re-fire the request.
+6. **Global 401 trigger** wired in `packages/fluxora_core/lib/network/api_client.dart`:
+   - New `unauthorizedStream` (`Stream<void>`, broadcast). The Dio `onError` interceptor emits to it whenever a request returns HTTP 401 *with* an `Authorization` header attached — silent on unauthenticated 401s (which are legitimate "please pair" surfaces).
+   - On 401, the bearer token is also cleared locally so subsequent requests don't re-trip the same loop.
+   - `setupRouterUnauthorizedBridge()` (new) in `app_router.dart` subscribes to the stream once at app start (called from `main.dart` after `setupInjector()`). On emission, it calls `appRouter.go(Routes.reconnect)` — except when the user is already on `/connect`, `/pairing`, or `/reconnect`, where credential state is already being handled by the screen.
+   - `ApiClient` gets a test-only `dispose()` that closes the stream controller; production code never calls it because `ApiClient` is a GetIt singleton that lives the lifetime of the app.
+7. **Profile screen gains a "Reconnect to server" sub-row** — tap → `context.go(Routes.reconnect)`. Discovers the recovery flow before the user gets stuck on a 401-spinning surface. Sub-copy: "Use if your token was revoked." Sits between Help & support and About Fluxora.
+8. **`_SettingsRow` extended with optional `onTap`** (was hardcoded `() {}`). Existing rows fall through to the no-op default; the new Reconnect row supplies a navigator-go closure.
+9. **Auth-repository `requestPair` test contract updated** for the new `email` named parameter — Mocktail's `any(named: 'email')` matcher works fine with the optional. New tests:
+   - `prepare()` emits `PairCollectEmail` with the server.
+   - Initial-pair flow now expects `[CollectEmail, Requesting, Pending]` (was `[Requesting, Pending]`).
+   - Email-forwarding test: passes `'alex@fluxora.io'` through `submitEmail` and verifies it reached `requestPair`.
+   - Reconnect-with-saved-credentials test: stubs `getServerUrl` + `getClientId`; verifies the persisted client_id is what hits `requestPair` (not a freshly generated UUID).
+   - Reconnect-with-empty-storage test: verifies `[Requesting, Error]` transition.
+10. **Tests: 27 mobile + 8 core → 31 mobile + 8 core**, all passing. `flutter analyze` clean across both packages.
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `apps/mobile/lib/features/auth/presentation/screens/reconnect_screen.dart` |
+| Modified | `apps/mobile/lib/features/auth/presentation/screens/pairing_screen.dart` (rebuild — V2 state-machine UI + email field) |
+| Modified | `apps/mobile/lib/features/auth/presentation/cubit/pair_state.dart` (added `PairCollectEmail`) |
+| Modified | `apps/mobile/lib/features/auth/presentation/cubit/pair_cubit.dart` (`prepare` / `submitEmail` / `reconnect` entry points + secure-storage dependency) |
+| Modified | `apps/mobile/lib/features/profile/presentation/screens/profile_screen.dart` (new "Reconnect to server" row; `_SettingsRow.onTap` parameter) |
+| Modified | `apps/mobile/lib/core/router/app_router.dart` (`Routes.reconnect`; route registration; auth-guard branch; `setupRouterUnauthorizedBridge`) |
+| Modified | `apps/mobile/lib/main.dart` (call `setupRouterUnauthorizedBridge()` after `setupInjector`) |
+| Modified | `packages/fluxora_core/lib/network/api_client.dart` (`unauthorizedStream` broadcast controller + 401 detection in interceptor + test-only `dispose()`) |
+| Modified | `apps/mobile/test/features/auth/pair_cubit_test.dart` (rewrite for new state machine + reconnect coverage; 5 → 9 cases) |
+| Modified | `docs/00_overview/current_status.md` (Phase A close-out + test count 27→31; "What's next" reordered) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Docs Updated
+- `docs/00_overview/current_status.md` — Phase A close-out noted; test count 27 → 31; "What's next" leads with Phase B now that A is complete; mobile section header updated.
+- API contracts + security docs already documented `email` on `request-pair`, the re-pair semantics, and `/auth/clients/me` in commit `ac5051f`. Nothing to add this commit — the URL surface didn't change.
+
+### Decisions Made
+- **State-machine entry is two-step (`prepare` → `submitEmail`).** The pre-request `PairCollectEmail` step is the right place for the optional email UI — putting it after the request would mean we'd have to either skip-and-PATCH (server has no PATCH on clients yet) or hold the request open while the user types. Pre-request is cleanest.
+- **Email validation is "looks like an email", not RFC 5322.** Server treats the field as advisory (echoes it back, never authenticates against it). Strict validation would either accept a regex too lax to be meaningful or reject valid edge-case addresses (`+`, IDN, etc.). The lightweight `^[^\s@]+@[^\s@]+\.[^\s@]+$` rejects obvious typos and is honest about what it's checking.
+- **Reconnect uses the saved `client_id`.** This is the entire premise of the §8.5 bug 1 fix: reusing the existing client_id resets the row instead of creating a new one. Re-approving on the server keeps the operator's familiar device row + the original `paired_at` timestamp.
+- **401 detection is global, not per-cubit.** Putting the 401-handler in every cubit would mean each one needs to know about routing — wrong layer. Putting it in `ApiClient` lets the router observe the stream and decide once. The stream pattern also means the dev tools / a future telemetry sink can subscribe too.
+- **Auth-guard exempts `/reconnect` from the "authenticated → /home" reflection.** When 401 fires on the home screen and the bridge calls `appRouter.go(Routes.reconnect)`, the user is *technically* still authenticated (token in storage hasn't been cleared yet — `clearBearerToken` only nulls the in-memory copy). Without the exemption, the guard would bounce them right back to `/home` where the next request would 401 again. Exemption breaks the loop.
+- **No new pip / pub deps.** `dart:async`'s `StreamController.broadcast()` is stdlib; no new packages.
+
+### Blockers / Open Issues
+- **AGENT_LOG.md is at ~1100 lines after this entry** — over the 1000-line rotation threshold per CLAUDE.md. Next session should rotate to `docs/logs/AGENT_LOG_archive_06.md` and start fresh with a summary of Phase A close-out at the top.
+- **Reconnect path doesn't yet cache the in-flight email**, so a re-pair via Reconnect always sends `email: null`. Server's `COALESCE(excluded.email, clients.email)` clause preserves the previously-saved email, so this is correct behaviour — but it does mean a user re-pairing from a different device cannot update their email through the Reconnect flow. Out of v1 scope; flagged for a future "edit email" affordance on Profile.
+- **No `/connect → /reconnect` discoverability.** The Reconnect screen is reachable via the global 401 trigger, the new Profile setting, and direct deep-link, but not from `/connect` itself. If a user hard-quits during the dead-token window and lands on `/connect`, they may try to pair from scratch instead of reconnecting. Acceptable for v1 — the new client_id will succeed and the operator just sees the device twice. Would tighten with a "I've paired before — reconnect instead" link on `/connect`.
+- **Visual smoke-test pending.** All flutter analyze + tests are green, but the actual UI on a paired Android / iOS device hasn't been exercised. Phase A pairing flow walks: (1) discovery → server tile → (2) `PairCollectEmail` panel → email or skip → (3) `PairPending` → operator approves → (4) `/home`. Reconnect flow walks: dead token → 401 fires → router redirect → `/reconnect` `PairPending` → operator re-approves → `/home`. Owner-driven QA needed before claiming v1-shipping.
+
+### Issues / Sharp Edges Discovered
+- **`StreamController.broadcast()` triggers `close_sinks` lint** — the controller is intentionally never closed because `ApiClient` is a singleton that lives for the entire app lifecycle. Suppressed with `// ignore: close_sinks` on the field declaration; documented in the surrounding doc comment so future maintainers know it's deliberate. The test-only `dispose()` exists for symmetry but isn't used in production code paths.
+- **`FluxTextField` uses `hint:`, not `hintText:`** — initial pass tried `hintText: 'you@example.com'`. The widget API doesn't follow Material's `InputDecoration.hintText`; doc this so future agents don't repeat the mistake. Also no `textInputAction:` parameter — soft keyboard's "Done" affordance is auto-derived from the underlying `TextField`'s default.
+- **Test runner reports red logger output as "errors"** when `bloc_test` runs the cubit through its expected-fail paths. Each `[Requesting, Error]` test logs an "Exception: network error" via `Logger().e(...)` to stderr. Tests still pass (`+9: All tests passed!`); the red text is cosmetic noise from the assertion path. Worth knowing because at-a-glance the output looks alarming.
+- **`_SettingsRow` had a hardcoded `onTap: () {}`** — Phase A commit 2 left it that way because every row was a stub. Adding the optional `onTap` parameter unblocked the new Reconnect row without breaking the eight existing rows that still want a no-op.
+
+### Suggested Next Steps (priority order)
+1. **Rotate `AGENT_LOG.md`.** It's over 1000 lines after this entry. `cp AGENT_LOG.md docs/logs/AGENT_LOG_archive_06.md`; write a fresh `AGENT_LOG.md` with a Phase A close-out summary at the top + this entry's "Next Agent Should" pointers.
+2. **Phase B — Continue-watching + Search + Profile stats.** The three remaining mock surfaces. Plan §3 row 1–3. Each is a separate endpoint on the server side; mobile mostly mirrors the Phase A patterns (cubit + repo method + screen rewire + delete the corresponding mock fixture).
+3. **Hide Downloads tab in v1** (decision §5 row 4). Tiny standalone commit. Could land before Phase B or alongside it.
+4. **Visual QA pass on Phase A.** Walk a paired device through the new pairing UX + the reconnect flow (revoke token from desktop, watch redirect happen). Confirm copy + layout + transitions.
+
+### Hard Rules Checklist
+- [x] `git commit` / `git push` not run yet — staged + draft only; owner approves in-session.
+- [x] No AI branding in code, docs, or commit message.
+- [x] No `print()` / `debugPrint()`; logger used throughout.
+- [x] No silent `except:`; cubits emit explicit `*Error` states + log via `Logger`.
+- [x] No hardcoded secrets / paths.
+- [x] No new pub deps. `StreamController.broadcast()` is stdlib `dart:async`.
+- [x] No layer-boundary violations (cubit → repo → ApiClient; router → ApiClient stream is one-way observation).
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+---
+
 

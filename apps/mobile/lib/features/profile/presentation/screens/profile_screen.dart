@@ -502,6 +502,12 @@ class _SettingsList extends StatelessWidget {
         icon: Icons.help_outline,
         label: 'Help & support',
       ),
+      _SettingsRow(
+        icon: Icons.refresh_rounded,
+        label: 'Reconnect to server',
+        sub: 'Use if your token was revoked',
+        onTap: () => context.go(Routes.reconnect),
+      ),
       const _SettingsRow(
         icon: Icons.info_outline,
         label: 'About Fluxora',
@@ -555,12 +561,14 @@ class _SettingsRow extends StatelessWidget {
     required this.label,
     this.sub,
     this.trailing,
+    this.onTap,
   });
 
   final IconData icon;
   final String label;
   final String? sub;
   final Widget? trailing;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -568,7 +576,7 @@ class _SettingsRow extends StatelessWidget {
       icon: icon,
       label: label,
       sub: sub,
-      onTap: () {},
+      onTap: onTap ?? () {},
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [

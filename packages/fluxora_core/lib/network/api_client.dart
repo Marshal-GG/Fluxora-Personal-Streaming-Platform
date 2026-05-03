@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:logger/logger.dart';
@@ -46,6 +48,21 @@ class ApiClient {
 
   static final _log = Logger();
 
+  /// Broadcast stream that emits each time a request comes back with HTTP
+  /// `401 Unauthorized` while a bearer token *was* attached.  The router
+  /// listens to this so a dead token mid-session can redirect the user
+  /// straight to `/reconnect` (Phase A backfill plan §9.2).  Never emits
+  /// for unauthenticated requests — those are expected 401s on
+  /// `/auth/clients/me` etc. before pairing.
+  ///
+  /// `ApiClient` is a registered GetIt singleton that lives for the
+  /// entire app lifecycle, so the controller is intentionally never
+  /// closed.  [dispose] is provided for tests that need a clean shutdown.
+  // ignore: close_sinks
+  final StreamController<void> _unauthorizedController =
+      StreamController<void>.broadcast();
+  Stream<void> get unauthorizedStream => _unauthorizedController.stream;
+
   String? get localBaseUrl => _localBaseUrl;
   String? get remoteBaseUrl => _remoteBaseUrl;
 
@@ -87,6 +104,14 @@ class ApiClient {
   void clearBearerToken() {
     _bearerToken = null;
     _setupInterceptors();
+  }
+
+  /// Test-only — closes the unauthorized stream so test runners don't
+  /// report dangling subscriptions. Production code never calls this:
+  /// the singleton lives for the entire app lifecycle.
+  @visibleForTesting
+  Future<void> dispose() async {
+    await _unauthorizedController.close();
   }
 
   /// Test-only access to the smart-path resolver.
@@ -141,6 +166,22 @@ class ApiClient {
               error: error,
               stackTrace: error.stackTrace,
             );
+            // 401 with a bearer attached = the saved token is dead.
+            // Clear it locally + signal the router so the user lands on
+            // /reconnect instead of being stuck on a screen that keeps
+            // refetching against an expired credential.  401s on calls
+            // that never carried an Authorization header (e.g. the
+            // server is fine but pairing hasn't happened yet) are
+            // legitimate "please pair" surfaces — those don't reach
+            // here with a token attached so they're naturally skipped.
+            if (error.response?.statusCode == 401 &&
+                error.requestOptions.headers
+                    .containsKey('Authorization')) {
+              _bearerToken = null;
+              if (!_unauthorizedController.isClosed) {
+                _unauthorizedController.add(null);
+              }
+            }
             handler.next(error);
           },
         ),

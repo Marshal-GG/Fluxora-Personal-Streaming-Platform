@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fluxora_core/entities/media_file.dart';
+import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
 import 'package:fluxora_mobile/features/auth/presentation/screens/pairing_screen.dart';
+import 'package:fluxora_mobile/features/auth/presentation/screens/reconnect_screen.dart';
 import 'package:fluxora_mobile/features/connect/domain/entities/discovered_server.dart';
 import 'package:fluxora_mobile/features/connect/presentation/screens/connect_screen.dart';
 import 'package:fluxora_mobile/features/detail/presentation/screens/detail_screen.dart';
@@ -28,6 +32,13 @@ abstract class Routes {
   static const String connect = '/connect';
   static const String pairing = '/pairing';
 
+  /// Lost-token recovery (Phase A backfill plan §9.2). Reached when the
+  /// bearer token is dead but `client_id` + `server_url` are still in
+  /// secure storage. The screen re-fires `POST /auth/request-pair`
+  /// against the saved server; the operator approves it again and a
+  /// fresh token replaces the dead one.
+  static const String reconnect = '/reconnect';
+
   static const String home = '/home';
   static const String library = '/library';
   static const String search = '/search';
@@ -47,6 +58,31 @@ abstract class Routes {
   static String episodes(String id) => '/episodes/$id';
 }
 
+/// Listens to [ApiClient.unauthorizedStream] so a dead token triggered by
+/// any in-flight request mid-session bumps the user to `/reconnect`.
+/// Initialised by `setupRouterUnauthorizedBridge()` after `setupInjector()`
+/// completes; safe to call once at app start.
+StreamSubscription<void>? _unauthorizedSub;
+
+void setupRouterUnauthorizedBridge() {
+  if (_unauthorizedSub != null) return;
+  final client = GetIt.I<ApiClient>();
+  _unauthorizedSub = client.unauthorizedStream.listen((_) {
+    final loc = appRouter.routerDelegate.currentConfiguration.uri.path;
+    // Don't yank the user out of pairing flows — the user is already
+    // dealing with credential state on those screens.  /home and the
+    // five tab routes (and any deep-link route) are the surfaces where
+    // a dead token surprises the user mid-action; redirect those.
+    const pairingFlows = {
+      Routes.connect,
+      Routes.pairing,
+      Routes.reconnect,
+    };
+    if (pairingFlows.contains(loc)) return;
+    appRouter.go(Routes.reconnect);
+  });
+}
+
 final GoRouter appRouter = GoRouter(
   initialLocation: Routes.connect,
   redirect: _guardRedirect,
@@ -61,6 +97,10 @@ final GoRouter appRouter = GoRouter(
         final server = state.extra as DiscoveredServer;
         return PairingScreen(server: server);
       },
+    ),
+    GoRoute(
+      path: Routes.reconnect,
+      builder: (context, state) => const ReconnectScreen(),
     ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) =>
@@ -151,10 +191,19 @@ Future<String?> _guardRedirect(
   final serverUrl = await storage.getServerUrl();
 
   final onPublicRoute = state.matchedLocation == Routes.connect ||
-      state.matchedLocation == Routes.pairing;
+      state.matchedLocation == Routes.pairing ||
+      state.matchedLocation == Routes.reconnect;
   final isAuthenticated = token != null && serverUrl != null;
 
-  if (isAuthenticated && onPublicRoute) return Routes.home;
+  // Authenticated users hitting /connect or /pairing get bounced to /home.
+  // /reconnect is exempt — an authenticated user opting to re-pair (after
+  // an explicit "Reconnect to server" tap, say) shouldn't be reflected
+  // back to /home before the screen can re-fire the request.
+  if (isAuthenticated &&
+      (state.matchedLocation == Routes.connect ||
+          state.matchedLocation == Routes.pairing)) {
+    return Routes.home;
+  }
   if (!isAuthenticated && !onPublicRoute) return Routes.connect;
   return null;
 }

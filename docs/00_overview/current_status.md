@@ -2,7 +2,7 @@
 
 > Snapshot of what's done / in-progress / not-started across the codebase. Update on every significant milestone landing. The roadmap (`docs/10_planning/01_roadmap.md`) tracks future planning; this doc tracks shipped state.
 
-**As of 2026-05-04.** Phases 1–4 complete; Phase 5 in progress (hardware encoding + advanced desktop modules + desktop redesign — M10 custom window chrome shipped 2026-05-03; library-screen P0+P1 close-out shipped 2026-05-03; **mobile real-data backfill Phase A server-side shipped 2026-05-04** — migration 016 adds FFprobe + episode aggregation + per-client email/paired_at, new `GET /files/recent` + `GET /auth/clients/me`, same-`client_id` re-pair fix, ffprobe-at-scan persistence).
+**As of 2026-05-04.** Phases 1–4 complete; Phase 5 in progress (hardware encoding + advanced desktop modules + desktop redesign — M10 custom window chrome shipped 2026-05-03; library-screen P0+P1 close-out shipped 2026-05-03; **mobile real-data backfill Phase A complete 2026-05-04** — server slice + mobile data wiring + pairing UX rebuild all shipped: migration 016 adds FFprobe + episode aggregation + per-client email/paired_at; new `GET /files/recent` + `GET /auth/clients/me`; same-`client_id` re-pair fix; ffprobe-at-scan persistence; mobile Library / Detail / Home-Recent rail / Profile all consume real data; new state-machine pairing UX with optional email field + lost-token recovery via `/reconnect` route + auto-redirect on 401).
 
 ---
 
@@ -35,7 +35,7 @@
 
 ---
 
-## `apps/mobile` — Phases 1–4 UI complete (27 passing tests); redesign M0–M9 landed 2026-05-03
+## `apps/mobile` — Phases 1–4 UI complete (31 passing tests); redesign M0–M9 landed 2026-05-03; Phase A real-data backfill complete 2026-05-04
 
 | Feature | Status |
 |---------|--------|
@@ -111,9 +111,9 @@
 
 See `AGENT_LOG.md` "Next Agent Should" section for the prioritised list. As of 2026-05-04:
 
-1. **Mobile real-data backfill — Phase A mobile commit** (server-side landed 2026-05-04). Wire `library_screen` to `LibraryBloc`, build `DetailCubit` + `RecentCubit`, point Profile at `GET /auth/clients/me`. Plan §9.2 in `docs/10_planning/08_real_data_backfill_plan.md`.
-2. **Mobile real-data backfill — Phase A pairing rebuild** (third commit per plan §9.4). State-machine pairing UI + lost-token-recovery `Routes.reconnect` route.
-3. **Mobile app redesign — M10** (X-Ray panel + Group Watch shell + Offline state — UI shells only). Plan in `docs/11_design/mobile_redesign_plan.md` §7. Lower priority than the backfill phases since real data is the honesty gate for v1 ship.
+1. **Phase B — Continue-watching + Search + Profile stats** (next logical commit after Phase A close-out). Plan §3 row 1–3 in `docs/10_planning/08_real_data_backfill_plan.md`. Continue-watching needs a new `/clients/me/continue-watching` endpoint; search wants `/files/search` (SQL `LIKE` is fine for v1); profile-stats backs the still-em-dashed Hours / Movies / Shows row via `/clients/me/stats`.
+2. **Hide Downloads tab in v1** (decision §5 row 4). Tiny standalone commit: remove from `FluxBottomTabs` registry + `Routes.downloads` + the `StatefulShellBranch`. Could land before or after Phase B.
+3. **Mobile app redesign — M10** (X-Ray panel + Group Watch shell + Offline state — UI shells only). Plan in `docs/11_design/mobile_redesign_plan.md` §7. Lower priority than Phase B since the M10 surfaces are largely cosmetic.
 4. **macOS / Linux desktop runners** — Windows-only today. When generating other-platform runners, port the M10 shell-integration: `WindowOptions.titleBarStyle: hidden` already works cross-platform via `window_manager`; native equivalents needed for `WM_GETMINMAXINFO` (window-size floor), `SetCurrentProcessExplicitAppUserModelID`, and `WNDCLASSEX hIconSm`. Caption-button glyphs need a `Platform.isWindows` swap to `CustomPainter` paths or a vendored TTF since Segoe Fluent Icons / Segoe MDL2 Assets are Windows-only.
 5. **Phase 6 routing hardening** — operator-driven Cloudflare config (Access policies, WAF rules, tunnel-health alerts, TURN evaluation).
 6. **Dependabot triage** — Dart 3.9 floor bump may have unstuck PRs blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`.
