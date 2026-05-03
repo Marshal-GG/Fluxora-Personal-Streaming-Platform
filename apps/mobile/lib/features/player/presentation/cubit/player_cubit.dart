@@ -40,6 +40,11 @@ class PlayerCubit extends Cubit<PlayerState> {
   // ---------------------------------------------------------------------------
 
   Future<void> startStream(String fileId, String fileName, double resumeSec) async {
+    // M7: when the cubit is a long-lived singleton, a second `startStream`
+    // must clean up the previous session before opening the next one.
+    // First-call (no prior session) is cheap — every dispose is null-guarded.
+    await _disposeCurrentSession();
+
     emit(const PlayerLoading());
     try {
       final response = await _repository.startStream(fileId);
@@ -206,20 +211,44 @@ class PlayerCubit extends Cubit<PlayerState> {
   // Cleanup
   // ---------------------------------------------------------------------------
 
-  @override
-  Future<void> close() async {
+  /// Tear down the current playback session (timer / progress / signaling /
+  /// `Player`) and clear the local references. Safe to call when nothing is
+  /// playing — every step is null-guarded. Used by both `startStream`
+  /// (when a long-lived singleton replaces an existing session) and
+  /// [dismiss] (explicit "stop and forget" from the mini-player X button).
+  Future<void> _disposeCurrentSession() async {
     _progressTimer?.cancel();
-    // Report final position before closing
-    await _reportProgress();
+    _progressTimer = null;
     if (_sessionId != null) {
+      // Best-effort final progress report; swallow per the original
+      // close() behaviour.
+      await _reportProgress();
       try {
         await _repository.stopStream(_sessionId!);
       } catch (e, st) {
-        _log.w('Failed to stop stream on close', error: e, stackTrace: st);
+        _log.w('Failed to stop stream on dispose', error: e, stackTrace: st);
       }
+      _sessionId = null;
     }
     await _signaling?.close();
+    _signaling = null;
     await _player?.dispose();
+    _player = null;
+    _controller = null;
+  }
+
+  /// Explicitly end the active stream and reset to [PlayerInitial]. Called
+  /// from the mini-player's close (X) button. Distinct from [close] which
+  /// is the cubit's own end-of-life — `dismiss` keeps the cubit alive
+  /// (because it's a singleton) and just stops the stream.
+  Future<void> dismiss() async {
+    await _disposeCurrentSession();
+    if (state is! PlayerInitial) emit(const PlayerInitial());
+  }
+
+  @override
+  Future<void> close() async {
+    await _disposeCurrentSession();
     await super.close();
   }
 }

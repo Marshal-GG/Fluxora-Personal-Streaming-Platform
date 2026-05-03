@@ -10,6 +10,7 @@ import 'package:fluxora_mobile/features/library/data/repositories/library_reposi
 import 'package:fluxora_mobile/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_mobile/features/player/data/repositories/player_repository_impl.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
+import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
 
 final GetIt getIt = GetIt.instance;
 
@@ -57,5 +58,15 @@ Future<void> setupInjector() async {
 
   getIt.registerLazySingleton<PlayerRepository>(
     () => PlayerRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+
+  // M7: PlayerCubit doubles as the `PlaybackProvider` per plan §9.2 —
+  // singleton scope so playback survives the fullscreen player popping
+  // and the mini-player can subscribe to the same state.
+  getIt.registerLazySingleton<PlayerCubit>(
+    () => PlayerCubit(
+      repository: getIt<PlayerRepository>(),
+      secureStorage: getIt<SecureStorage>(),
+    ),
   );
 }

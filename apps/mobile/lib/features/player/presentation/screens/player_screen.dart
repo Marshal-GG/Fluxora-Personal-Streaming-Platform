@@ -1,59 +1,66 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
-import 'package:media_kit/media_kit.dart' show AudioTrack, SubtitleTrack;
-import 'package:media_kit_video/media_kit_video.dart'
-    show
-        Video,
-        VideoController,
-        MaterialVideoControls,
-        MaterialVideoControlsTheme,
-        MaterialVideoControlsThemeData,
-        MaterialCustomButton;
-import 'package:fluxora_core/constants/app_colors.dart';
-import 'package:fluxora_core/constants/app_typography.dart';
-import 'package:fluxora_core/entities/media_file.dart';
-import 'package:fluxora_core/storage/secure_storage.dart';
-import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
+import 'package:go_router/go_router.dart';
+import 'package:media_kit_video/media_kit_video.dart' show Video, VideoController;
+import 'package:fluxora_core/fluxora_core.dart';
+import 'package:fluxora_mobile/features/player/presentation/controllers/player_controls_controller.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.dart';
+import 'package:fluxora_mobile/features/player/presentation/widgets/flux_player_controls.dart';
 import 'package:fluxora_mobile/features/upgrade/presentation/screens/upgrade_screen.dart';
 
+/// Fullscreen player route. Two entry points:
+///
+/// * `PlayerScreen(file: ...)` — pushed from a poster tap; calls
+///   `cubit.startStream(...)` on the long-lived singleton cubit.
+/// * `const PlayerScreen.resume()` — pushed from the mini-player; does
+///   *not* call `startStream` since the singleton cubit is already
+///   in [PlayerReady] state.
 class PlayerScreen extends StatelessWidget {
-  const PlayerScreen({required this.file, super.key});
+  const PlayerScreen({required MediaFile this.file, super.key})
+      : _resume = false;
 
-  final MediaFile file;
+  const PlayerScreen.resume({super.key})
+      : file = null,
+        _resume = true;
+
+  final MediaFile? file;
+  final bool _resume;
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<PlayerCubit>(
-      create: (_) => PlayerCubit(
-        repository: GetIt.I<PlayerRepository>(),
-        secureStorage: GetIt.I<SecureStorage>(),
-      )..startStream(file.id, file.title ?? file.name, file.resumeSec),
-      child: _PlayerView(file: file),
+    final cubit = GetIt.I<PlayerCubit>();
+    if (!_resume && file != null) {
+      // Fire-and-forget — the cubit is a singleton, this just (re)attaches
+      // a stream session. `_disposeCurrentSession` cleans up any prior.
+      cubit.startStream(file!.id, file!.title ?? file!.name, file!.resumeSec);
+    }
+    return BlocProvider<PlayerCubit>.value(
+      value: cubit,
+      child: const _PlayerView(),
     );
   }
 }
 
 class _PlayerView extends StatefulWidget {
-  const _PlayerView({required this.file});
-
-  final MediaFile file;
+  const _PlayerView();
 
   @override
   State<_PlayerView> createState() => _PlayerViewState();
 }
 
 class _PlayerViewState extends State<_PlayerView> {
+  final PlayerControlsController _controlsController =
+      PlayerControlsController();
   bool _showResumeBanner = false;
   bool _showTransportBadge = false;
-  // Tracks whether the player has become ready at least once so the resume
-  // banner is not re-shown if the transport badge updates due to ICE degradation.
   bool _readyOnce = false;
+
+  // Drag-down-to-minimize state.
+  double _dragOffset = 0.0;
+  static const double _dismissThreshold = 150.0;
 
   @override
   void initState() {
@@ -68,52 +75,121 @@ class _PlayerViewState extends State<_PlayerView> {
 
   @override
   void dispose() {
+    _controlsController.dispose();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
+  void _onMinimizeUpdate(DragUpdateDetails d) {
+    if (d.delta.dy <= 0) return;
+    setState(() => _dragOffset = (_dragOffset + d.delta.dy).clamp(0, 600));
+  }
+
+  void _onMinimizeEnd(DragEndDetails _) {
+    if (_dragOffset >= _dismissThreshold) {
+      // Pop the route — the singleton cubit keeps streaming, mini-player
+      // picks it up.
+      context.pop();
+    } else {
+      setState(() => _dragOffset = 0);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final scale = (1.0 - (_dragOffset / 1200)).clamp(0.85, 1.0);
+    final opacity = (1.0 - (_dragOffset / 400)).clamp(0.4, 1.0);
+
     return Scaffold(
-      backgroundColor: Colors.black,
-      body: BlocConsumer<PlayerCubit, PlayerState>(
-        listenWhen: (_, current) => current is PlayerReady,
-        listener: (context, state) {
-          if (state is PlayerReady) {
-            // Resume banner — only on the first Ready transition.
-            if (!_readyOnce) {
-              _readyOnce = true;
-              if (state.resumeSec > 0) {
-                setState(() => _showResumeBanner = true);
-                Future.delayed(const Duration(seconds: 4), () {
-                  if (mounted) setState(() => _showResumeBanner = false);
+      backgroundColor: Colors.black.withValues(alpha: opacity),
+      body: Transform.translate(
+        offset: Offset(0, _dragOffset),
+        child: Transform.scale(
+          scale: scale,
+          child: BlocConsumer<PlayerCubit, PlayerState>(
+            listenWhen: (_, current) => current is PlayerReady,
+            listener: (context, state) {
+              if (state is PlayerReady) {
+                if (!_readyOnce) {
+                  _readyOnce = true;
+                  if (state.resumeSec > 0) {
+                    setState(() => _showResumeBanner = true);
+                    Future.delayed(const Duration(seconds: 4), () {
+                      if (mounted) setState(() => _showResumeBanner = false);
+                    });
+                  }
+                }
+                setState(() => _showTransportBadge = true);
+                Future.delayed(const Duration(seconds: 5), () {
+                  if (mounted) setState(() => _showTransportBadge = false);
                 });
               }
-            }
-            // Transport badge on every Ready transition (initial start +
-            // any subsequent path change due to ICE degradation).
-            setState(() => _showTransportBadge = true);
-            Future.delayed(const Duration(seconds: 5), () {
-              if (mounted) setState(() => _showTransportBadge = false);
-            });
-          }
-        },
-        builder: (context, state) => switch (state) {
-          PlayerInitial() || PlayerLoading() => const _LoadingView(),
-          PlayerReady(:final controller, :final fileName, :final streamPath) =>
-              Stack(
-                children: [
-                  _VideoView(controller: controller, fileName: fileName),
-                  if (_showResumeBanner && state.resumeSec > 0)
-                    _ResumeBanner(resumeSec: state.resumeSec),
-                  if (_showTransportBadge)
-                    _TransportBadge(streamPath: streamPath),
-                ],
+            },
+            builder: (context, state) => switch (state) {
+              PlayerInitial() || PlayerLoading() => const _LoadingView(),
+              PlayerReady(:final controller, :final fileName, :final streamPath) =>
+                  Stack(
+                    children: [
+                      _VideoView(
+                        controller: controller,
+                        fileName: fileName,
+                        controlsController: _controlsController,
+                      ),
+                      _MinimizeHandle(
+                        onUpdate: _onMinimizeUpdate,
+                        onEnd: _onMinimizeEnd,
+                      ),
+                      if (_showResumeBanner && state.resumeSec > 0)
+                        _ResumeBanner(resumeSec: state.resumeSec),
+                      if (_showTransportBadge)
+                        _TransportBadge(streamPath: streamPath),
+                    ],
+                  ),
+              PlayerTierLimit() => const _TierLimitView(),
+              PlayerFailure(:final message) => _ErrorView(message: message),
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Small drag affordance at the very top of the player. Listens only for
+/// vertical drags, leaves all other gestures (tap, double-tap, long-press
+/// inside `FluxPlayerControls`) untouched.
+class _MinimizeHandle extends StatelessWidget {
+  const _MinimizeHandle({required this.onUpdate, required this.onEnd});
+
+  final ValueChanged<DragUpdateDetails> onUpdate;
+  final ValueChanged<DragEndDetails> onEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        bottom: false,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onVerticalDragUpdate: onUpdate,
+          onVerticalDragEnd: onEnd,
+          child: Container(
+            height: 24,
+            alignment: Alignment.center,
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(2),
               ),
-          PlayerTierLimit() => const _TierLimitView(),
-          PlayerFailure(:final message) => _ErrorView(message: message),
-        },
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -128,11 +204,11 @@ class _LoadingView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          CircularProgressIndicator(color: AppColors.primary),
+          CircularProgressIndicator(color: AppColors.violet),
           SizedBox(height: 16),
           Text(
             'Starting stream…',
-            style: TextStyle(color: AppColors.textSecondary),
+            style: TextStyle(color: AppColors.textMutedV2),
           ),
         ],
       ),
@@ -141,202 +217,33 @@ class _LoadingView extends StatelessWidget {
 }
 
 class _VideoView extends StatelessWidget {
-  const _VideoView({required this.controller, required this.fileName});
+  const _VideoView({
+    required this.controller,
+    required this.fileName,
+    required this.controlsController,
+  });
 
   final VideoController controller;
   final String fileName;
+  final PlayerControlsController controlsController;
 
   @override
   Widget build(BuildContext context) {
-    final themeData = MaterialVideoControlsThemeData(
-      displaySeekBar: true,
-      automaticallyImplySkipNextButton: false,
-      automaticallyImplySkipPreviousButton: false,
-      topButtonBar: [
-        const SizedBox(width: 8),
-        IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          tooltip: 'Back',
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            fileName,
-            style: AppTypography.headingMd.copyWith(color: Colors.white),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+    return Stack(
+      children: [
+        Center(
+          child: Video(
+            controller: controller,
+            controls: (state) => const SizedBox.shrink(),
           ),
         ),
-        _SettingsButton(controller: controller),
-        const SizedBox(width: 8),
+        FluxPlayerControls(
+          player: controller.player,
+          controller: controlsController,
+          title: fileName,
+          onBack: () => Navigator.of(context).pop(),
+        ),
       ],
-    );
-
-    return MaterialVideoControlsTheme(
-      normal: themeData,
-      fullscreen: themeData,
-      child: Center(
-        child: Video(
-          controller: controller,
-          controls: MaterialVideoControls,
-        ),
-      ),
-    );
-  }
-}
-
-class _SettingsButton extends StatelessWidget {
-  const _SettingsButton({required this.controller});
-
-  final VideoController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialCustomButton(
-      onPressed: () {
-        showModalBottomSheet<void>(
-          context: context,
-          backgroundColor: AppColors.surface,
-          builder: (context) => _SettingsSheet(controller: controller),
-        );
-      },
-      icon: const Icon(Icons.settings, color: Colors.white),
-    );
-  }
-}
-
-class _SettingsSheet extends StatefulWidget {
-  const _SettingsSheet({required this.controller});
-
-  final VideoController controller;
-
-  @override
-  State<_SettingsSheet> createState() => _SettingsSheetState();
-}
-
-class _SettingsSheetState extends State<_SettingsSheet> {
-  late double _currentRate;
-  late AudioTrack _currentAudioTrack;
-  late SubtitleTrack _currentSubtitleTrack;
-  late List<AudioTrack> _audioTracks;
-  late List<SubtitleTrack> _subtitleTracks;
-
-  static const List<double> _speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
-
-  @override
-  void initState() {
-    super.initState();
-    _currentRate = widget.controller.player.state.rate;
-    _currentAudioTrack = widget.controller.player.state.track.audio;
-    _currentSubtitleTrack = widget.controller.player.state.track.subtitle;
-    _audioTracks = widget.controller.player.state.tracks.audio;
-    _subtitleTracks = widget.controller.player.state.tracks.subtitle;
-  }
-
-  void _setRate(double rate) {
-    widget.controller.player.setRate(rate);
-    setState(() => _currentRate = rate);
-    Navigator.of(context).pop();
-  }
-
-  void _setAudioTrack(AudioTrack track) {
-    widget.controller.player.setAudioTrack(track);
-    setState(() => _currentAudioTrack = track);
-    Navigator.of(context).pop();
-  }
-
-  void _setSubtitleTrack(SubtitleTrack track) {
-    widget.controller.player.setSubtitleTrack(track);
-    setState(() => _currentSubtitleTrack = track);
-    Navigator.of(context).pop();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: DefaultTabController(
-        length: 3,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const TabBar(
-              indicatorColor: AppColors.primary,
-              labelColor: AppColors.primary,
-              unselectedLabelColor: AppColors.textSecondary,
-              tabs: [
-                Tab(text: 'Speed'),
-                Tab(text: 'Audio'),
-                Tab(text: 'Subtitles'),
-              ],
-            ),
-            SizedBox(
-              height: 250,
-              child: TabBarView(
-                children: [
-                  // Playback Speed
-                  ListView.builder(
-                    itemCount: _speeds.length,
-                    itemBuilder: (context, index) {
-                      final speed = _speeds[index];
-                      final isSelected = _currentRate == speed;
-                      return ListTile(
-                        title: Text('${speed}x',
-                            style: AppTypography.bodyMd.copyWith(
-                                color: isSelected
-                                    ? AppColors.primary
-                                    : AppColors.textPrimary)),
-                        trailing: isSelected
-                            ? const Icon(Icons.check, color: AppColors.primary)
-                            : null,
-                        onTap: () => _setRate(speed),
-                      );
-                    },
-                  ),
-                  // Audio Tracks
-                  ListView.builder(
-                    itemCount: _audioTracks.length,
-                    itemBuilder: (context, index) {
-                      final track = _audioTracks[index];
-                      final isSelected = _currentAudioTrack == track;
-                      return ListTile(
-                        title: Text(track.title ?? track.language ?? 'Track $index',
-                            style: AppTypography.bodyMd.copyWith(
-                                color: isSelected
-                                    ? AppColors.primary
-                                    : AppColors.textPrimary)),
-                        trailing: isSelected
-                            ? const Icon(Icons.check, color: AppColors.primary)
-                            : null,
-                        onTap: () => _setAudioTrack(track),
-                      );
-                    },
-                  ),
-                  // Subtitle Tracks
-                  ListView.builder(
-                    itemCount: _subtitleTracks.length,
-                    itemBuilder: (context, index) {
-                      final track = _subtitleTracks[index];
-                      final isSelected = _currentSubtitleTrack == track;
-                      return ListTile(
-                        title: Text(track.title ?? track.language ?? 'Subtitle $index',
-                            style: AppTypography.bodyMd.copyWith(
-                                color: isSelected
-                                    ? AppColors.primary
-                                    : AppColors.textPrimary)),
-                        trailing: isSelected
-                            ? const Icon(Icons.check, color: AppColors.primary)
-                            : null,
-                        onTap: () => _setSubtitleTrack(track),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -357,7 +264,7 @@ class _ResumeBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Positioned(
-      bottom: 72,
+      bottom: 96,
       left: 0,
       right: 0,
       child: Center(
@@ -366,10 +273,15 @@ class _ResumeBanner extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.black.withValues(alpha: 0.7),
             borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: AppColors.borderSubtle),
           ),
           child: Text(
             'Resumed from $_formatted',
-            style: AppTypography.bodyMd.copyWith(color: Colors.white),
+            style: AppTypography.body.copyWith(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ),
       ),
@@ -388,15 +300,16 @@ class _ErrorView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.error_outline, color: AppColors.error, size: 48),
+          const Icon(Icons.error_outline, color: AppColors.red, size: 48),
           const SizedBox(height: 16),
           Text(
             message,
-            style: AppTypography.bodyMd.copyWith(color: AppColors.textSecondary),
+            style: AppTypography.body.copyWith(color: AppColors.textMutedV2),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
-          ElevatedButton(
+          FluxButton(
+            variant: FluxButtonVariant.secondary,
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Go Back'),
           ),
@@ -406,8 +319,6 @@ class _ErrorView extends StatelessWidget {
   }
 }
 
-/// Shown when the server returns 429 — the account has reached its concurrent
-/// stream limit.  Prompts the user to free a slot or see upgrade plans.
 class _TierLimitView extends StatelessWidget {
   const _TierLimitView();
 
@@ -422,7 +333,7 @@ class _TierLimitView extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(16),
               decoration: const BoxDecoration(
-                gradient: AppColors.brandGradient,
+                gradient: AppGradients.brand,
                 shape: BoxShape.circle,
               ),
               child: const Icon(
@@ -434,47 +345,40 @@ class _TierLimitView extends StatelessWidget {
             const SizedBox(height: 24),
             Text(
               'Stream Limit Reached',
-              style: AppTypography.headingLg
-                  .copyWith(color: AppColors.textPrimary),
+              style: AppTypography.displayV2
+                  .copyWith(color: AppColors.textBright),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
             Text(
               'Your current plan only allows a limited number of simultaneous '
               'streams. Free a slot or upgrade to stream on more devices.',
-              style: AppTypography.bodyMd
-                  .copyWith(color: AppColors.textSecondary),
+              style: AppTypography.body.copyWith(color: AppColors.textMutedV2),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 28),
             SizedBox(
               width: double.infinity,
-              child: FilledButton.icon(
+              child: FluxButton(
+                fullWidth: true,
+                icon: Icons.workspace_premium,
                 onPressed: () => Navigator.of(context).push(
                   MaterialPageRoute<void>(
                     builder: (_) => const UpgradeScreen(),
                   ),
                 ),
-                icon: const Icon(Icons.workspace_premium, size: 18),
-                label: const Text('Upgrade Plan'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
+                child: const Text('Upgrade Plan'),
               ),
             ),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
-              child: OutlinedButton.icon(
+              child: FluxButton(
+                variant: FluxButtonVariant.secondary,
+                fullWidth: true,
+                icon: Icons.arrow_back,
                 onPressed: () => Navigator.of(context).pop(),
-                icon: const Icon(Icons.arrow_back, size: 18),
-                label: const Text('Go Back'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.textSecondary,
-                  side: const BorderSide(color: AppColors.surfaceRaised),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
+                child: const Text('Go Back'),
               ),
             ),
           ],
@@ -484,9 +388,6 @@ class _TierLimitView extends StatelessWidget {
   }
 }
 
-/// A small, auto-dismissed chip that indicates which transport is active.
-///
-/// Shown briefly when the player first becomes ready, then fades out.
 class _TransportBadge extends StatelessWidget {
   const _TransportBadge({required this.streamPath});
 
@@ -496,7 +397,7 @@ class _TransportBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final isWebRtc = streamPath == StreamPath.webRtc;
     return Positioned(
-      bottom: 80,
+      top: 80,
       right: 16,
       child: AnimatedOpacity(
         opacity: 1.0,
@@ -505,11 +406,13 @@ class _TransportBadge extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
             color: isWebRtc
-                ? Colors.deepPurple.withValues(alpha: 0.85)
-                : Colors.black54,
+                ? AppColors.violet.withValues(alpha: 0.85)
+                : Colors.black.withValues(alpha: 0.7),
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: isWebRtc ? Colors.deepPurpleAccent : Colors.white24,
+              color: isWebRtc
+                  ? AppColors.violetTint
+                  : AppColors.borderSubtle,
               width: 1,
             ),
           ),
@@ -524,7 +427,7 @@ class _TransportBadge extends StatelessWidget {
               const SizedBox(width: 5),
               Text(
                 isWebRtc ? 'WebRTC' : 'HLS',
-                style: AppTypography.label.copyWith(
+                style: AppTypography.captionV2.copyWith(
                   color: Colors.white,
                   fontWeight: FontWeight.w600,
                 ),
