@@ -213,17 +213,19 @@
 - **Dependencies:** JSON log file (`~/.fluxora/logs/server.log`); `python-json-logger` (for structured file output)
 
 ### Flutter Client — Presentation Layer
-- **Responsibility:** UI screens (Home, Connect, Browser, Player, Settings)
-- **State Management:** BLoC or Riverpod
+- **Responsibility:** UI screens (Home, Connect, Browser, Player, Settings, plus the M2–M8 redesign surfaces — Discover/Library/Search/Notifications/Detail/Episodes/Downloads/Profile + the M5–M7 player chrome + mini-player)
+- **State Management:** BLoC (Cubit / Bloc) — no Riverpod
+- **Singleton cubits (mobile, post-M7+M8):** `PlayerCubit` (doubles as the `PlaybackProvider` per mobile redesign plan §9.2 — fullscreen player + mini-player consume the same instance) and `NotificationsCubit` (live-tail must survive screen back-pops to feed the Home tab bell badge). Registered as `GetIt.lazySingleton`s; consumed via `BlocProvider.value`.
 - **Dependencies:** Domain use cases
 
 ### Flutter Client — Domain Layer
 - **Use Cases:** `StreamFileUseCase`, `BrowseFilesUseCase`, `DiscoverServerUseCase`, `AuthUseCase`
+- **Repositories:** `LibraryRepository`, `PlayerRepository`, `AuthRepository`, `ServerDiscoveryRepository`, `NotificationsRepository` (M8 — added on mobile to mirror the existing desktop pattern; both clients call `/api/v1/notifications` via 5-second REST polling. WS migration deferred until a shared HMAC-bearer `WebSocketClient` wrapper lands in `fluxora_core` — both repos carry `// TODO(WS):` markers.)
 - **Pure Dart** — no framework dependencies
 
 ### Flutter Client — Data Layer
-- **Repositories:** `FileRepository`, `StreamRepository`, `ServerDiscoveryRepository`
-- **Sources:** HTTP (Dio), mDNS (Dart Zeroconf), WebRTC (flutter_webrtc)
+- **Repositories:** `FileRepository`, `StreamRepository`, `ServerDiscoveryRepository`, `NotificationsRepositoryImpl` (5-second poll loop yielding previously-unseen `AppNotification` IDs)
+- **Sources:** HTTP (Dio via `fluxora_core/network/api_client.dart`), mDNS (Dart `multicast_dns`), WebRTC (`flutter_webrtc`)
 
 ### PC Control Panel (Flutter Desktop)
 - **Responsibility:** Server-side dashboard — live system health, client pairing management, library + file upload, transcoding settings, license retrieval (Polar orders), live log viewer, active session monitor.

@@ -248,6 +248,17 @@ and immediately broadcast to every active WebSocket subscriber:
         GET /api/v1/notifications?unread=true to populate the list
 ```
 
+### Client consumers (REST polling, not WS — transitional)
+
+Both the desktop slide-over panel and the mobile notifications screen consume notifications via **REST polling** of `/api/v1/notifications` every 5 seconds, not via the WS endpoint. Each client's repository carries an explicit `// TODO(WS):` comment for the eventual migration. The blocker is that mobile + desktop need a **shared `WebSocketClient` wrapper** in `fluxora_core` that handles HMAC-bearer auth the same way the server's `get_current_user_ws` dependency expects (the existing `WebRtcSignalingService` covers signaling but isn't generic). Until that wrapper lands, both clients sit on REST polling.
+
+| Client | File | Pattern |
+|--------|------|---------|
+| Desktop | `apps/desktop/lib/features/notifications/data/repositories/notifications_repository_impl.dart` | `liveStream()` — `Future.delayed(5s)` loop yielding new IDs not seen by client |
+| Mobile (M8) | `apps/mobile/lib/features/notifications/data/repositories/notifications_repository_impl.dart` | Same shape, mirrored from desktop. Both carry `// TODO(WS):` markers. |
+
+When the shared WS wrapper lands, both repos cut over together; the cubit + screen layers don't change because they only consume `Stream<AppNotification>` from `liveStream()`.
+
 ### Emitter catalogue and de-dupe rules
 
 | Emitter | Trigger | Type | Category | De-dupe |

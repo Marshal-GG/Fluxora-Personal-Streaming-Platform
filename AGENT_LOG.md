@@ -458,3 +458,77 @@ Then ran the full doc-update protocol — every affected file touched.
 - [x] No layer-boundary violations. Theme literal stays in `apps/mobile/lib/shared/theme/`; widget literal stays in `apps/mobile/lib/shared/widgets/`.
 ---
 
+## [2026-05-03] — Doc sync — M8 + M9 + M9-followup propagated across all affected docs
+**Phase:** Phase 5 (Mobile redesign — Plan in `docs/11_design/mobile_redesign_plan.md` §7)
+**Status:** Complete — followed `docs/12_guidelines/02_documentation_update_protocol.md` Steps 1–5.
+
+### What Was Done
+
+Ran the documentation update protocol after the M8/M9/M9-followup work landed. Step 1 identified 8 affected docs; Step 2 cross-reference Grep across `docs/**/*.md` flagged 4 files with V1-token mentions (3 are historical narrative in archives/plans — left untouched per the append-only rule for archives + the "describes what was done" rule for plans; 1 was the mobile redesign plan §8 file map which had stale future-tense for M9). Step 3 stale-section self-check covered current_status, folder_structure, tech_stack, roadmap, gotchas. Step 4 consistency check: every milestone status in `01_roadmap.md` now matches `current_status.md` and `mobile_redesign_plan.md`. Step 5 verified — every doc in Step 1 updated, every cross-reference resolved or deliberately left as historical.
+
+**Per-doc edits:**
+
+- **`docs/08_frontend/01_frontend_architecture.md`** — Status header date bumped + M9-summary line. "Theming (mobile)" rewritten — now documents the V2-pure cutover + the `Color(0xFF0F0C24)` opaque InputDecorationTheme fillColor (with rationale + cross-link to plan §4 row 2). "Tokens" line rewritten — V2-only; line-range references removed (`lines 43-94` etc. are stale after the V1 deletion). "Screen / Route Map — Flutter Mobile" fully rewritten for the post-M9 5-tab `StatefulShellRoute.indexedStack` layout: 5 tab routes + 4 outside-shell deep-link routes (`/detail/:id`, `/episodes/:id`, `/library-files/:id`, `/player`, `/player/resume`, `/notifications`) + 2 auth-gate routes; Sign-out flow paragraph added with the exact teardown order. "Flutter Mobile Project Structure" tree fully rewritten — adds `home/`, `search/`, `notifications/`, `detail/`, `episodes/`, `downloads/`, `profile/` features + `shared/data/mock_data.dart` + `shared/widgets/{background_gradient,mobile_shell,flux_mini_player}.dart`; per-feature one-liners cite the milestone that landed each.
+- **`docs/00_overview/folder_structure.md`** — `apps/mobile/` tree fully rewritten to mirror the post-M9 layout (every feature folder + every shared widget, with milestone tags). `packages/fluxora_core/lib/constants/` block annotated with the V2-only deletion note + adds `app_gradients` / `app_radii` / `app_shadows` / `app_spacing` (which were missing from the prior listing).
+- **`docs/12_guidelines/03_gotchas.md`** — 2 new gotchas appended:
+  1. **Translucent fillColor on Material widgets bleeds the background gradient** — explains the `surfaceGlass` rgba issue + the `Color(0xFF0F0C24)` workaround + cross-links to plan §4 row 2's "do not add a token" decision.
+  2. **Cutover claims need a Grep matrix, not a spot check** — captures the M9.5 desktop oversight (one `bodyMd` site survived the spot check, caught only by mobile M9's exhaustive Grep). Documents the matrix pattern future cutovers should run.
+- **`docs/03_data/03_data_flows.md`** — Added a "Client consumers (REST polling, not WS — transitional)" subsection under Flow 7 (Notification Fan-out). Documents the 5 s polling pattern shared by desktop + mobile M8, the `// TODO(WS):` markers, and the blocker (no shared HMAC-bearer `WebSocketClient` wrapper in `fluxora_core` yet).
+- **`docs/02_architecture/03_component_architecture.md`** — Flutter Client Presentation/Domain/Data layers expanded: documents the M7 + M8 singleton-cubit pattern (`PlayerCubit` doubles as `PlaybackProvider`; `NotificationsCubit` outlives screen back-pops to feed the Home bell badge); adds `NotificationsRepository` to the repos list with the polling-vs-WS context.
+- **`docs/10_planning/01_roadmap.md`** — Status header date + 253-test count + mobile M0–M9 summary line. New row in the Phase 5 table for the mobile redesign milestone arc (M0–M9 chronology with key deliverables per milestone + the M9 follow-up's polish fixes).
+- **`docs/06_security/01_security.md`** — New "Sign-out Flow (Mobile, M8)" subsection under the Pairing Flow heading. Documents the exact teardown order (`playerCubit.dismiss` → `clearBearerToken` → `secureStorage.deleteAll` → `context.go(/connect)`) + a server-side note that the operator must `DELETE /api/v1/auth/revoke/{client_id}` from the desktop control panel for full token revocation, since the client-side wipe doesn't tell the server. Calls out a future enhancement: a dedicated `POST /api/v1/auth/sign-out` endpoint that revokes server-side atomically.
+- **`docs/11_design/mobile_redesign_plan.md`** — 2 stale future-tense sentences updated to past tense (the §8 file-map row for `app_theme.dart` and the §8 prose statement "stays at the same path — its body is rewritten at M9"). The §16 changelog already had the M8 + M9 rows from the prior session — no new changelog entries here, just the body cleanup.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `docs/08_frontend/01_frontend_architecture.md` (Status header; "Theming (mobile)"; "Tokens" line; full mobile route table; full mobile project structure tree; sign-out flow paragraph) |
+| Modified | `docs/00_overview/folder_structure.md` (`apps/mobile/` tree rewrite + `packages/fluxora_core/lib/constants/` block annotated for V1 deletion + missing token files added) |
+| Modified | `docs/12_guidelines/03_gotchas.md` (2 new gotchas — translucent Material fill + Grep-matrix cutover validation) |
+| Modified | `docs/03_data/03_data_flows.md` (Flow 7 subsection — REST-polling client consumers) |
+| Modified | `docs/02_architecture/03_component_architecture.md` (Flutter Client layers: singleton cubits, NotificationsRepository) |
+| Modified | `docs/10_planning/01_roadmap.md` (Status header bump + new mobile M0–M9 row) |
+| Modified | `docs/06_security/01_security.md` (Sign-out Flow subsection + server-side revocation note) |
+| Modified | `docs/11_design/mobile_redesign_plan.md` (2 stale future-tense → past-tense edits in §8) |
+
+### Docs Updated
+
+(See "Files Created / Modified" — every doc listed there is a doc update.)
+
+### Decisions Made
+
+- **Archives are not edited.** `docs/logs/AGENT_LOG_archive_04.md` and `_05.md` contain V1-token references in their historical narrative. CLAUDE.md hard rule: archives are append-only history; editing them rewrites the past. The references are accurate to *what was true at the time of writing* — leaving them is the correct call.
+- **`docs/11_design/desktop_redesign_plan.md` line 106 retained verbatim.** That sentence (`scaffoldBackgroundColor` was still `AppColors.background` (`#0F172A` slate)) is the *triggering bug-report description* that motivated the M9.5 cutover — it documents what was broken at the time, not what the system currently is. Editing it would erase the why-this-cutover-happened context.
+- **No new ADR added.** The V2-only / V1-deleted state isn't a new architectural decision — it's the execution of plan §7 row M9 (which has been the locked plan since 2026-05-03). The mobile theme cutover is documented as a *milestone landing*, not a *decision*. ADR-018 would be redundant.
+- **DESIGN.md not touched.** Verified to already be V2-pure; no V1 token references in the spec body. The doc was authored against V2 and never updated to reference V1 (the V1 mobile palette existed in code only as transitional carry-over from pre-redesign — DESIGN.md was already the V2 contract).
+- **`apps/mobile/README.md` not touched.** Grepped for stale path references (`/library`, `/pairing`, `features/connect|library|player|settings`) — zero matches. The README was either already generic enough or was updated earlier; no stale spots needed fixing.
+- **Tier 2 / Tier 3 docs verified clean.** `02_architecture/02_tech_stack.md`, `04_api/01_api_contracts.md`, `05_infrastructure/02_url_inventory.md`, `10_planning/{02_decisions,03_open_questions,04_manual_tasks,05_ship_readiness}.md`, `00_overview/README.md` — none had stale references requiring an update for the M8/M9 work scope. (The mobile NotificationsRepository is a *consumer* of `/notifications` REST; the URL inventory is a *provider-side* doc, so consumer additions don't surface there.)
+
+### Issues Discovered / Reported to User
+
+- **`docs/00_overview/folder_structure.md` was missing `app_gradients`/`app_radii`/`app_shadows`/`app_spacing.dart`** in the `packages/fluxora_core/lib/constants/` listing — these have shipped since the desktop redesign M1 Foundation (2026-05-02) and weren't in the folder-structure tree. Added in this pass; flagged because folder-structure stale-section drift is a recurring doc-protocol failure mode and the "stale section self-check" in step 3 of the protocol catches it only when someone is *looking* for tree drift.
+- **Mobile redesign plan §16 changelog already had M8 + M9 rows** from the prior M8/M9 sessions — checked and confirmed no double-entry would land. The §16 entries cover this work; the §8 stale-line cleanup here is the only plan-doc change in this sweep.
+- **Grep matrix found references in `desktop_redesign_plan.md:106`** that *look* like bugs but are intentional historical narrative. Flagging the false-positive shape: any "bug-report description" inside a plan or ADR will look stale to a code-grep but is correct as historical record. Future doc-sweep agents should distinguish "describes the past" from "describes the present."
+
+### Blockers / Open Issues
+
+- **None.** Doc state is now consistent with code state for everything in scope of M8 + M9 + M9-followup.
+
+### Next Agent Should
+
+1. **Mobile redesign M10 — X-Ray panel + Group Watch shell + Offline state** per plan §7 row M10 (unchanged from M9-followup's "Next Agent Should").
+2. **When M10 docs land,** continue the discipline of running the cross-reference grep + stale-section sweep — the protocol catches drift only when you actually run it.
+3. **Desktop M11 / mobile M11 remain on the roadmap** as next major surfaces (per `docs/10_planning/01_roadmap.md`).
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran. No commits this session — owner has not authorised.
+- [x] No agent / AI branding anywhere in code, docs, or commit messages.
+- [x] No `print()` / `debugPrint()` introduced (no code changes in this entry — docs only).
+- [x] No exceptions swallowed silently.
+- [x] No secrets / hardcoded paths added.
+- [x] No new third-party deps (no code changes).
+- [x] No backwards-compat hacks.
+- [x] No layer-boundary violations. Doc edits stay within `docs/`; the AGENT_LOG.md doc-sync entry stays append-only at the bottom.
+---
+

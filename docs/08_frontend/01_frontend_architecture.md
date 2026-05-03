@@ -128,84 +128,90 @@ Pixel-matched to `docs/11_design/desktop_prototype/app/components/primitives.jsx
 
 ---
 
-## Screen / Route Map — Flutter Mobile (Implemented)
+## Screen / Route Map — Flutter Mobile (Implemented post-M9)
 
-| Route | Screen | State class | Status |
-|-------|--------|-------------|--------|
-| `/` | ConnectScreen | `ConnectCubit` | ✅ Done |
-| `/pairing` | PairingScreen | `PairCubit` | ✅ Done |
-| `/library` | LibraryScreen | `LibraryBloc` | ✅ Done |
-| `/library/:id/files` | FilesScreen | `FilesCubit` | ✅ Done |
-| `/player` | PlayerScreen | `PlayerCubit` | ✅ Done |
-| `/upgrade` (push) | UpgradeScreen | — (stateless) | ✅ Done |
+The redesign reorganised mobile around a 5-tab shell (`StatefulShellRoute.indexedStack`) plus auth-gate + deep-link routes that bypass the shell. Tab branches preserve state across switches; tapping the active tab pops to its branch root.
 
-Auth guard: `go_router` `redirect` callback reads `SecureStorage` — unauthenticated users
-are redirected to `/`, authenticated users skip `/` and `/pairing` directly to `/library`.
+| Route | Screen | State class | Branch / Outside-shell | Status |
+|-------|--------|-------------|------------------------|--------|
+| `/connect` | ConnectScreen | `ConnectCubit` | Outside shell — auth gate | ✅ Done |
+| `/pairing` | PairingScreen | `PairCubit` | Outside shell — auth gate | ✅ Done |
+| `/home` | HomeScreen | — (mock data) | Tab 1 | ✅ Done (M3) |
+| `/library` | LibraryScreen | — (mock data + legacy `LibraryBloc` for the existing files deep-link) | Tab 2 | ✅ Done (M3 — V2 redesign) |
+| `/search` | SearchScreen | — (mock data) | Tab 3 | ✅ Done (M3) |
+| `/downloads` | DownloadsScreen | — (mock data via `MockData.downloads`) | Tab 4 | ✅ Done (M8) |
+| `/profile` | ProfileScreen | — (hardcoded mock) | Tab 5 | ✅ Done (M8) |
+| `/detail/:id` | DetailScreen | — (mock via `MockData.findById`) | Outside shell — full-screen deep link | ✅ Done (M4) |
+| `/episodes/:id` | EpisodesScreen | — (mock) | Outside shell | ✅ Done (M4) |
+| `/library-files/:id` | FilesScreen | `FilesCubit` | Outside shell — legacy deep link | ✅ Done |
+| `/player` | PlayerScreen({file}) | `PlayerCubit` (singleton) | Outside shell | ✅ Done |
+| `/player/resume` | PlayerScreen.resume() | `PlayerCubit` (singleton) | Outside shell — mini-player handoff | ✅ Done (M7) |
+| `/notifications` | NotificationsScreen | `NotificationsCubit` (singleton) | Outside shell — pushed from Home bell icon | ✅ Done (M3 stub → M8 real-data) |
+| `/upgrade` (push) | UpgradeScreen | — (stateless) | Outside shell | ✅ Done |
+
+Auth guard: `go_router` `redirect` callback reads `SecureStorage` — unauthenticated users are redirected to `/connect`; authenticated users skip `/connect` and `/pairing` and land on `/home`.
+
+Sign-out (Profile tab → red-tinted button → confirm dialog → accept) calls `playerCubit.dismiss()` → `apiClient.clearBearerToken()` → `secureStorage.deleteAll()` → `context.go(Routes.connect)`; the redirect guard handles the rest on the next navigation tick.
 
 ---
 
-## Flutter Mobile Project Structure (Implemented)
+## Flutter Mobile Project Structure (Implemented post-M9)
 
 ```
 apps/mobile/lib/
 ├── main.dart                    # setupInjector() → runApp()
-├── app.dart                     # MaterialApp.router — AppTheme.dark + appRouter
+├── app.dart                     # MaterialApp.router — AppTheme.dark + appRouter; BackgroundGradient mounted via builder
 │
 ├── core/
 │   ├── di/
-│   │   └── injector.dart        # get_it registrations; restores credentials on restart
+│   │   └── injector.dart        # get_it: ApiClient, SecureStorage, all repos, PlayerCubit + NotificationsCubit lazy singletons (M7 + M8)
 │   └── router/
-│       └── app_router.dart      # GoRouter + Routes constants + _guardRedirect
+│       └── app_router.dart      # GoRouter — StatefulShellRoute.indexedStack with 5 tab branches + outside-shell deep links
 │
 ├── shared/
-│   └── theme/
-│       └── app_theme.dart       # AppTheme.dark — Material 3 ThemeData from design tokens
+│   ├── theme/
+│   │   └── app_theme.dart       # V2-pure post-M9 cutover; opaque Color(0xFF0F0C24) for InputDecorationTheme.fillColor
+│   ├── data/
+│   │   └── mock_data.dart       # MockMediaItem / MockCastMember / MockSeason / MockEpisode / MockDownload + fixture lists; MockData.findById(id); storage constants
+│   └── widgets/
+│       ├── background_gradient.dart  # M0 two-radial brand gradient over bgRoot — wired via MaterialApp.router builder
+│       ├── mobile_shell.dart         # M2 Scaffold(body: navigationShell, bottomNavigationBar: Column(MiniPlayer + FluxBottomTabs))
+│       ├── flux_mini_player.dart     # M7 64-px persistent bar — visible only on PlayerReady; tap → /player/resume; X → cubit.dismiss
+│       ├── media_card.dart           # legacy (used by /library-files/:id); V2 token migration landed at M9
+│       ├── status_badge.dart         # legacy; V2 token migration landed at M9
+│       └── loading_overlay.dart      # legacy; V2 token migration landed at M9
 │
 └── features/
-    ├── connect/
-    │   ├── domain/entities/
-    │   │   └── discovered_server.dart    # name, ip, port, url getter
-    │   ├── data/repositories/
-    │   │   └── server_discovery_repository_impl.dart  # multicast_dns PTR→SRV→A
-    │   └── presentation/
-    │       ├── cubit/connect_cubit.dart  # startDiscovery() acquires MulticastLock then streams
-    │       └── screens/connect_screen.dart  # auto-discovery list + manual IP entry; configures ApiClient on server select
+    ├── connect/      # mDNS + manual IP — V2 styling post-M9
+    ├── auth/         # pairing flow — V2 styling post-M9
+    ├── upgrade/      # tier comparison + activation guide — V2 + AppGradients.brand header
     │
-    ├── auth/
-    │   ├── domain/repositories/
-    │   │   └── auth_repository.dart      # interface + PairRejectedException
-    │   ├── data/repositories/
-    │   │   └── auth_repository_impl.dart # ApiClient calls, SecureStorage writes
+    ├── home/         # M3 Discover — 3 rails (continue-watching / trending / recently-added), bell → /notifications
+    ├── search/       # M3 — empty/active/no-results states, top-3 rail + sectioned results
+    ├── library/      # M3 redesign — 6 filter chips + grid/list toggle + sort menu; legacy LibraryBloc + /library-files/:id retained
+    ├── notifications/    # M3 stub → M8 real-data (NotificationsRepository + Cubit polling /api/v1/notifications every 5 s)
+    │   ├── domain/repositories/notifications_repository.dart      # list/markRead/markAllRead/dismiss/liveStream
+    │   ├── data/repositories/notifications_repository_impl.dart   # // TODO(WS): migrate to /ws/notifications when shared HMAC-bearer wrapper exists
     │   └── presentation/
-    │       ├── cubit/pair_cubit.dart     # Timer.periodic polling, UUID v4 generation
-    │       ├── cubit/pair_state.dart     # PairInitial/Requesting/Pending/Approved/Rejected/Error
-    │       └── screens/pairing_screen.dart
+    │       ├── cubit/{notifications_cubit.dart,notifications_state.dart}    # singleton-scoped, sealed class state, identity equality
+    │       └── screens/notifications_screen.dart                            # Today/This week/Earlier buckets, category→icon+color, tap-to-markRead
     │
-    ├── library/
-    │   ├── domain/repositories/
-    │   │   └── library_repository.dart   # listLibraries(), listFiles()
-    │   ├── data/repositories/
-    │   │   └── library_repository_impl.dart
-    │   └── presentation/
-    │       ├── bloc/library_bloc.dart    # LibraryStarted, LibraryRefreshed events
-    │       ├── bloc/library_state.dart   # LibraryInitial/Loading/Success/Failure
-    │       ├── screens/library_screen.dart   # 2-column GridView of library cards
-    │       └── screens/files_screen.dart     # ListView of media files; taps push /player
+    ├── detail/       # M4 — hero + Play/Resume + Episodes + 4-up actions + collapsible synopsis + cast/crew/similar rails
+    ├── episodes/     # M4 — season chip selector + episode rows
+    ├── downloads/    # M8 — header storage indicator + Downloading cards + Available offline rows + FluxBottomSheet actions
+    ├── profile/      # M8 — gradient avatar + PLUS pill + 3-stat row + 9 FluxRow sections + red Sign out → confirm → cubit.dismiss + storage.deleteAll + go(/connect)
     │
     └── player/
-        ├── domain/entities/
-        │   └── stream_start_response.dart    # sessionId, fileId, playlistUrl
-        ├── domain/repositories/
-        │   └── player_repository.dart        # startStream(fileId), stopStream(sessionId)
-        ├── data/repositories/
-        │   └── player_repository_impl.dart   # POST /stream/start, DELETE /stream/:id
-        ├── data/services/
-        │   ├── webrtc_signaling_service.dart  # WebSocket SDP/ICE handshake + RTCPeerConnection lifecycle
-        │   └── network_path_detector.dart    # isLan() — RFC-1918 /24 subnet check; LAN→HLS, WAN→WebRTC
+        ├── domain/entities/stream_start_response.dart
+        ├── domain/repositories/player_repository.dart
+        ├── data/repositories/player_repository_impl.dart
+        ├── data/services/{webrtc_signaling_service.dart,network_path_detector.dart}
         └── presentation/
-            ├── cubit/player_cubit.dart   # startStream → LAN check → WebRTC (8 s timeout) → HLS fallback; _handleSignalingDegradation for ICE drop
-            ├── cubit/player_state.dart   # PlayerInitial/Loading/Ready(streamPath)/Failure; StreamPath enum; PlayerReady.copyWith
-            └── screens/player_screen.dart    # Full-screen Video + MaterialVideoControls + _TransportBadge chip; _readyOnce guard; _SettingsSheet (speed, audio track, subtitle track)
+            ├── controllers/player_controls_controller.dart     # M5 ChangeNotifier — visibility / lockMode / fitCover / 3 s auto-hide / drag-HUD scratchpad
+            ├── cubit/{player_cubit.dart,player_state.dart}     # M7 singleton + restart-safe startStream + _disposeCurrentSession + dismiss()
+            ├── widgets/flux_player_controls.dart                # M5 + M6 — top bar / center transport / progress bar / 8-up quick-actions / side rails / lock chip + double-tap ripple / long-press 2× peek / vertical drag brightness+volume / pinch fit / hold-to-unlock progress ring
+            ├── sheets/{audio_subs_sheet,speed_sheet,sleep_sheet,quality_sheet,cast_sheet}.dart   # M6 — 5 bottom sheets via showFluxBottomSheet
+            └── screens/player_screen.dart                       # M7 dual constructors: PlayerScreen({file}) + PlayerScreen.resume(); _MinimizeHandle drag-down → context.pop() ≥ 150 px
 ```
 
 ---

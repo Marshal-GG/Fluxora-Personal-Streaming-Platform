@@ -52,6 +52,32 @@ New Device:
   9.  Client → Shows "Access denied" screen
 ```
 
+### Sign-out Flow (Mobile, M8)
+
+The mobile Profile tab's red-tinted Sign out button (`apps/mobile/lib/features/profile/presentation/screens/profile_screen.dart`) triggers a confirmation dialog; on accept, the client tears down the session and clears credentials atomically:
+
+```
+Mobile Sign Out:
+  1.  User taps Sign out → AlertDialog "Sign out? This unpairs the device."
+  2.  User confirms → _performSignOut(context):
+      a.  await playerCubit.dismiss()           — kills any active stream:
+                                                  cancels progress timer,
+                                                  fires final progress report,
+                                                  calls server DELETE /stream/{id} (best-effort),
+                                                  closes WebRTC signaling, disposes Player.
+      b.  apiClient.clearBearerToken()           — synchronous; subsequent
+                                                  requests send no Authorization header.
+      c.  await secureStorage.deleteAll()        — wipes the entire secure-storage
+                                                  partition (auth token, server URL,
+                                                  remote URL, client ID).
+      d.  context.go(Routes.connect)             — replaces the route stack.
+  3.  Router redirect guard re-evaluates on the next frame:
+        token == null AND serverUrl == null  →  on(/connect) ✓ (no redirect).
+        Future deep links to authed routes redirect back to /connect.
+```
+
+**Server-side note:** sign-out is a *client-side* credential wipe — the server's `clients` table row is **not** deleted. The token remains hash-recorded server-side and can technically be replayed if extracted before `secureStorage.deleteAll()`. For full revocation, the operator must `DELETE /api/v1/auth/revoke/{client_id}` from the desktop control panel (localhost-only endpoint). Future enhancement: a `POST /api/v1/auth/sign-out` endpoint that the client calls before clearing storage, so the server can mark the row revoked atomically.
+
 ---
 
 ## Route Authorization Matrix

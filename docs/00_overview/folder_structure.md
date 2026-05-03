@@ -113,46 +113,59 @@ apps/server/
 
 ---
 
-## `apps/mobile/` — Flutter iOS + Android
+## `apps/mobile/` — Flutter iOS + Android (post-M9 redesign cutover)
 
 ```
 apps/mobile/
-├── pubspec.yaml               # depends on packages/fluxora_core
+├── pubspec.yaml               # depends on packages/fluxora_core; google_fonts, lucide_icons_flutter, screen_brightness, cached_network_image
 ├── analysis_options.yaml
 ├── README.md
 ├── android/
 ├── ios/
-├── test/
+├── test/                      # 27 tests (PlayerCubit + auth + connect + library bloc + placeholder)
 └── lib/
     ├── main.dart
-    ├── app.dart
+    ├── app.dart               # MaterialApp.router — AppTheme.dark + BackgroundGradient via builder
     ├── core/
     │   ├── di/
-    │   │   └── injector.dart
+    │   │   └── injector.dart  # ApiClient, SecureStorage, all repos, PlayerCubit + NotificationsCubit lazy singletons
     │   └── router/
-    │       └── app_router.dart
+    │       └── app_router.dart  # StatefulShellRoute.indexedStack with 5 tab branches + outside-shell deep links
     ├── features/
-    │   ├── connect/
-    │   │   ├── data/
-    │   │   ├── domain/
-    │   │   └── presentation/
-    │   ├── library/
-    │   │   ├── data/
-    │   │   ├── domain/
-    │   │   └── presentation/
-    │   ├── player/
-    │   │   ├── data/
-    │   │   ├── domain/
-    │   │   └── presentation/
-    │   └── settings/
+    │   ├── auth/                  # pairing flow (V2-styled post-M9)
+    │   ├── connect/               # mDNS + manual IP entry (V2-styled post-M9)
+    │   ├── upgrade/               # tier comparison + activation guide; AppGradients.brand header
+    │   ├── home/                  # M3 Discover — 3 rails + bell → /notifications
+    │   ├── search/                # M3 — empty/active/no-results states
+    │   ├── library/               # M3 redesign + legacy LibraryBloc for /library-files/:id deep link
+    │   ├── notifications/         # M3 stub → M8 real-data
+    │   │   ├── domain/repositories/notifications_repository.dart
+    │   │   ├── data/repositories/notifications_repository_impl.dart   # REST polling /api/v1/notifications every 5 s; TODO(WS) for future migration
+    │   │   └── presentation/{cubit,screens}/                          # Today/Week/Earlier buckets; category→icon+color; tap-to-markRead
+    │   ├── detail/                # M4 — hero + Play/Episodes + cast/crew/similar rails
+    │   ├── episodes/              # M4 — season chips + episode rows
+    │   ├── downloads/              # M8 — storage indicator + Downloading cards + Offline rows + FluxBottomSheet actions
+    │   ├── profile/                # M8 — gradient avatar + PLUS pill + 3-stat row + 9 FluxRow sections + Sign out
+    │   └── player/
+    │       ├── domain/, data/      # repository + WebRTC signaling + LAN-vs-WAN smart-path
     │       └── presentation/
+    │           ├── controllers/player_controls_controller.dart   # M5 ChangeNotifier
+    │           ├── cubit/                                       # M7 singleton + restart-safe startStream + dismiss()
+    │           ├── widgets/flux_player_controls.dart            # M5 + M6 — top bar / center transport / progress / quick-actions / gestures
+    │           ├── sheets/                                      # M6 — audio_subs / speed / sleep / quality / cast
+    │           └── screens/player_screen.dart                   # M7 dual constructors + drag-down minimize handle
     └── shared/
+        ├── data/
+        │   └── mock_data.dart    # MockMediaItem/Cast/Season/Episode + MockDownload + fixture lists; MockData.findById; storage constants
         ├── widgets/
-        │   ├── media_card.dart
-        │   ├── status_badge.dart
-        │   └── loading_overlay.dart
+        │   ├── background_gradient.dart   # M0 — two-radial brand gradient over bgRoot
+        │   ├── mobile_shell.dart           # M2 — Scaffold(body, bottomNavigationBar: Column(MiniPlayer + FluxBottomTabs))
+        │   ├── flux_mini_player.dart       # M7 — 64 px persistent bar
+        │   ├── media_card.dart             # legacy (V2 tokens post-M9)
+        │   ├── status_badge.dart           # legacy (V2 tokens post-M9)
+        │   └── loading_overlay.dart        # legacy (V2 tokens post-M9)
         └── theme/
-            └── app_theme.dart
+            └── app_theme.dart             # V2-pure post-M9; opaque Color(0xFF0F0C24) for InputDecorationTheme.fillColor
 ```
 
 ---
@@ -240,9 +253,13 @@ packages/fluxora_core/
     ├── storage/
     │   └── secure_storage.dart # flutter_secure_storage wrapper
     └── constants/
-        ├── app_colors.dart     # Design tokens from DESIGN.md
-        ├── app_typography.dart
-        └── app_sizes.dart
+        ├── app_colors.dart     # V2-only — V1 indigo/slate palette + brandGradient deleted at mobile M9 cutover (2026-05-03)
+        ├── app_typography.dart # V2-only — displayLg/headingLg/bodyMd/caption/label/mono deleted at mobile M9
+        ├── app_gradients.dart  # brand / progress / upgradeCallout / bg radials
+        ├── app_radii.dart      # xs/sm/md/lg/pill
+        ├── app_shadows.dart    # cardGlow / buttonGlow / dotGlow(color)
+        ├── app_spacing.dart    # locked s2 … s32 scale
+        └── app_sizes.dart      # legacy mobile sizes (still consumed by connect/upgrade screens)
 ```
 
 ---
