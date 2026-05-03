@@ -163,3 +163,115 @@ async def test_list_clients_blocked_from_lan(test_db):
     ) as lan:
         resp = await lan.get("/api/v1/auth/clients")
     assert resp.status_code == 403
+
+
+# ── Re-pair from the same client_id (Phase A — backfill plan §8.5 bug 1) ────
+
+
+@pytest.mark.asyncio
+async def test_request_pair_accepts_optional_email(client: AsyncClient, test_db):
+    body = dict(PAIR_BODY, email="alex@fluxora.io")
+    resp = await client.post("/api/v1/auth/request-pair", json=body)
+    assert resp.status_code == 200
+
+    async with test_db.execute(
+        "SELECT email FROM clients WHERE id = ?", (PAIR_BODY["client_id"],)
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["email"] == "alex@fluxora.io"
+
+
+@pytest.mark.asyncio
+async def test_repair_after_approval_resets_to_pending(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """After a client is approved, a fresh request-pair must reset the row to
+    pending and invalidate the prior auth_token. Otherwise a re-installed app
+    would hit the 409 from POST /approve and the operator would have to
+    revoke + re-add manually."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    status_resp = await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")
+    first_token = status_resp.json()["auth_token"]
+    assert first_token
+
+    # Same client_id pairs again — re-installed app, restored from backup, etc.
+    repair_body = dict(PAIR_BODY, device_name="Test Phone (renamed)")
+    resp = await client.post("/api/v1/auth/request-pair", json=repair_body)
+    assert resp.status_code == 200
+
+    async with test_db.execute(
+        "SELECT name, status, is_trusted, auth_token FROM clients WHERE id = ?",
+        (PAIR_BODY["client_id"],),
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["status"] == "pending"
+    assert row["is_trusted"] == 0
+    assert row["auth_token"] == ""
+    assert row["name"] == "Test Phone (renamed)"
+
+    # Old token must no longer authenticate any bearer-protected endpoint.
+    files_resp = await client.get(
+        "/api/v1/files",
+        headers={
+            "Authorization": f"Bearer {first_token}",
+            "CF-Connecting-IP": "1.2.3.4",  # force token validation path
+        },
+    )
+    assert files_resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_repair_after_rejection_resets_to_pending(client: AsyncClient, test_db):
+    """Rejected clients must be able to re-request pairing without operator
+    intervention — the pre-fix code only re-opened from rejected, not from
+    approved, so this test pins the rejected→pending behaviour we still want."""
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/reject/{PAIR_BODY['client_id']}")
+
+    resp = await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    assert resp.status_code == 200
+
+    async with test_db.execute(
+        "SELECT status FROM clients WHERE id = ?", (PAIR_BODY["client_id"],)
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["status"] == "pending"
+
+
+# ── GET /clients/me ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_clients_me_returns_profile(client: AsyncClient, monkeypatch, test_db):
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    body = dict(PAIR_BODY, email="alex@fluxora.io")
+    await client.post("/api/v1/auth/request-pair", json=body)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    resp = await client.get(
+        "/api/v1/auth/clients/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == PAIR_BODY["client_id"]
+    assert data["display_name"] == PAIR_BODY["device_name"]
+    assert data["email"] == "alex@fluxora.io"
+    assert data["platform"] == PAIR_BODY["platform"]
+    assert data["paired_at"] is not None
+    assert data["tier"] == "free"
+
+
+@pytest.mark.asyncio
+async def test_clients_me_requires_token(client: AsyncClient):
+    resp = await client.get(
+        "/api/v1/auth/clients/me",
+        headers={"CF-Connecting-IP": "1.2.3.4"},  # force token validation
+    )
+    assert resp.status_code == 401

@@ -11,6 +11,29 @@ from services import activity_service, notification_service
 logger = logging.getLogger(__name__)
 
 
+# In-memory store for raw tokens awaiting first /auth/status poll.
+#
+# Lives in the service layer (not the router) so that create_pair_request can
+# clear the entry when a previously-approved client re-pairs from the same
+# client_id — otherwise an attacker who held the old raw token could pop it
+# off the queue between the operator approving and the legitimate device
+# polling.  The hash in the DB is already invalidated by the re-pair flow;
+# clearing this dict makes the raw token unrecoverable too.
+_pending_tokens: dict[str, str] = {}
+
+
+def store_pending_token(client_id: str, raw_token: str) -> None:
+    _pending_tokens[client_id] = raw_token
+
+
+def consume_pending_token(client_id: str) -> str | None:
+    return _pending_tokens.pop(client_id, None)
+
+
+def clear_pending_token(client_id: str) -> None:
+    _pending_tokens.pop(client_id, None)
+
+
 def generate_token() -> str:
     return secrets.token_urlsafe(32)
 
@@ -30,22 +53,37 @@ async def create_pair_request(
     device_name: str,
     platform: str,
     app_version: str,
+    email: str | None = None,
 ) -> None:
+    """Insert a fresh pending pair request, or reset an existing client.
+
+    Same-client_id re-pair semantics (Phase A backfill plan §8.5 bug 1):
+    if a row with this client_id already exists in any status, the row is
+    reset to `status = 'pending'` with `is_trusted = 0` and a cleared
+    `auth_token` so the previously-issued bearer is dead the instant the
+    request lands. Any in-memory pending raw token for this client_id is
+    dropped too.
+    """
     now = datetime.now(UTC).isoformat()
     await db.execute(
         """
         INSERT INTO clients (
-            id, name, platform, last_seen, is_trusted, auth_token, status
-        ) VALUES (?, ?, ?, ?, 0, '', 'pending')
+            id, name, platform, last_seen, is_trusted, auth_token, status,
+            email, paired_at
+        ) VALUES (?, ?, ?, ?, 0, '', 'pending', ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name       = excluded.name,
             platform   = excluded.platform,
             last_seen  = excluded.last_seen,
-            status     = CASE WHEN status = 'rejected' THEN 'pending' ELSE status END
+            email      = COALESCE(excluded.email, clients.email),
+            is_trusted = 0,
+            auth_token = '',
+            status     = 'pending'
         """,
-        (client_id, device_name, platform, now),
+        (client_id, device_name, platform, now, email, now),
     )
     await db.commit()
+    clear_pending_token(client_id)
     logger.info(
         "Pair request from %s (%s) — client_id=%s", device_name, platform, client_id
     )
@@ -85,7 +123,13 @@ async def get_client(db: aiosqlite.Connection, client_id: str) -> aiosqlite.Row 
 async def approve_client(
     db: aiosqlite.Connection, client_id: str, hmac_key: str
 ) -> str:
-    """Approve a pending client. Returns the raw bearer token to send once."""
+    """Approve a pending client. Returns the raw bearer token to send once.
+
+    Stamps `paired_at` only on the first approval (re-pair leaves the
+    original timestamp in place so the desktop's "Paired Mar 15" label
+    reflects when the user originally trusted the device, not the most
+    recent re-pair).
+    """
     raw_token = generate_token()
     token_hash = hash_token(raw_token, hmac_key)
     now = datetime.now(UTC).isoformat()
@@ -93,10 +137,11 @@ async def approve_client(
     await db.execute(
         """
         UPDATE clients
-        SET is_trusted = 1, auth_token = ?, status = 'approved', last_seen = ?
+        SET is_trusted = 1, auth_token = ?, status = 'approved', last_seen = ?,
+            paired_at = COALESCE(paired_at, ?)
         WHERE id = ?
         """,
-        (token_hash, now, client_id),
+        (token_hash, now, now, client_id),
     )
     await db.commit()
     logger.info("Client approved: %s", client_id)

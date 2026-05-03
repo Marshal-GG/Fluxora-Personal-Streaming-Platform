@@ -9,6 +9,7 @@ from pathlib import Path
 import aiosqlite
 from fastapi import UploadFile
 
+from services.ffmpeg_service import probe_video
 from services.tmdb_service import TmdbService
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,20 @@ _MEDIA_EXTENSIONS = {
     ".epub",
     ".cbz",
     ".cbr",
+}
+
+# Subset of _MEDIA_EXTENSIONS that ffprobe can extract video stream metadata
+# for. Audio/document extensions are skipped — running ffprobe on a PDF
+# wastes a subprocess and yields nothing useful.
+_PROBEABLE_EXTENSIONS = {
+    ".mp4",
+    ".mkv",
+    ".avi",
+    ".mov",
+    ".wmv",
+    ".flv",
+    ".webm",
+    ".m4v",
 }
 
 
@@ -295,6 +310,20 @@ async def list_files(
     return [dict(row) for row in rows]
 
 
+async def list_recent_files(db: aiosqlite.Connection, limit: int = 20) -> list[dict]:
+    """Most-recently-added media files, newest first.
+
+    Backs the mobile Home "Recently added" rail. `limit` is clamped at the
+    router boundary to [1, 50]; this layer trusts whatever it is handed.
+    """
+    async with db.execute(
+        "SELECT * FROM media_files ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(row) for row in rows]
+
+
 async def get_file(db: aiosqlite.Connection, file_id: str) -> dict | None:
     async with db.execute("SELECT * FROM media_files WHERE id = ?", (file_id,)) as cur:
         row = await cur.fetchone()
@@ -395,6 +424,7 @@ async def scan_library(
             )
             added += 1
             new_file_ids.append((file_id, file_path.stem))
+            await _persist_probe(db, file_id, file_path)
             if added % 50 == 0:
                 await asyncio.sleep(0)
 
@@ -427,6 +457,42 @@ async def scan_library(
         await _enrich_with_tmdb(db, new_file_ids, tmdb_api_key)
 
     return added
+
+
+async def _persist_probe(
+    db: aiosqlite.Connection, file_id: str, file_path: Path
+) -> None:
+    """Probe the file via ffprobe and persist width/height/codec/hdr.
+
+    No-op for non-video extensions or when ffprobe returns nothing useful.
+    Best-effort — failures are logged and swallowed so they cannot abort a
+    library scan.
+    """
+    if file_path.suffix.lower() not in _PROBEABLE_EXTENSIONS:
+        return
+    try:
+        info = await probe_video(str(file_path))
+    except Exception:
+        logger.warning("ffprobe raised for %s", file_path, exc_info=True)
+        return
+    if info is None:
+        return
+    await db.execute(
+        """
+        UPDATE media_files
+           SET width = ?, height = ?, codec_name = ?, hdr_format = ?,
+               updated_at = ?
+         WHERE id = ?
+        """,
+        (
+            info["width"],
+            info["height"],
+            info["codec_name"],
+            info["hdr_format"],
+            datetime.now(UTC).isoformat(),
+            file_id,
+        ),
+    )
 
 
 async def _enrich_with_tmdb(
@@ -559,6 +625,9 @@ async def upload_file_to_library(
                 now,
             ),
         )
+        await db.commit()
+
+        await _persist_probe(db, file_id, file_path)
         await db.commit()
 
         # Best-effort TMDB enrichment

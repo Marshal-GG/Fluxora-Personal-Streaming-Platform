@@ -143,3 +143,93 @@ async def test_get_file_not_found(client: AsyncClient, monkeypatch):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 404
+
+
+# ── GET /api/v1/files/recent ─────────────────────────────────────────────────
+
+
+async def _insert_file_at(test_db, name: str, created_at: str) -> str:
+    """Insert a media_files row with an explicit created_at; return file id."""
+    file_id = str(uuid.uuid4())
+    await test_db.execute(
+        """
+        INSERT INTO media_files
+            (id, path, name, extension, size_bytes, duration_sec,
+             library_id, tmdb_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_id,
+            f"/media/movies/{file_id}.mp4",
+            name,
+            ".mp4",
+            1024,
+            None,
+            None,
+            None,
+            created_at,
+            created_at,
+        ),
+    )
+    await test_db.commit()
+    return file_id
+
+
+@pytest.mark.asyncio
+async def test_recent_files_orders_newest_first(
+    client: AsyncClient, monkeypatch, test_db
+):
+    token = await _get_token(client, monkeypatch)
+    await _insert_file_at(test_db, "old.mp4", "2024-01-01T00:00:00Z")
+    await _insert_file_at(test_db, "mid.mp4", "2025-06-15T00:00:00Z")
+    await _insert_file_at(test_db, "new.mp4", "2026-05-01T00:00:00Z")
+
+    resp = await client.get(
+        "/api/v1/files/recent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    rows = resp.json()
+    assert [r["name"] for r in rows] == ["new.mp4", "mid.mp4", "old.mp4"]
+
+
+@pytest.mark.asyncio
+async def test_recent_files_respects_limit(client: AsyncClient, monkeypatch, test_db):
+    token = await _get_token(client, monkeypatch)
+    for i in range(5):
+        await _insert_file_at(test_db, f"f{i}.mp4", f"2026-05-0{i + 1}T00:00:00Z")
+
+    resp = await client.get(
+        "/api/v1/files/recent?limit=2",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2
+
+
+@pytest.mark.asyncio
+async def test_recent_files_clamps_oversized_limit(client: AsyncClient, monkeypatch):
+    await _get_token(client, monkeypatch)
+    # FastAPI's Query(le=50) returns 422 for limit > 50; the mobile client
+    # must not be able to ask for an unbounded recent feed.
+    resp = await client.get(
+        "/api/v1/files/recent?limit=999",
+        headers={"Authorization": "Bearer x"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_recent_files_does_not_match_file_id_route(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """Sanity: `/files/recent` must hit list_recent_files, not get_file with
+    file_id="recent". Route order in files.py guarantees this."""
+    token = await _get_token(client, monkeypatch)
+    resp = await client.get(
+        "/api/v1/files/recent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    # Returns a list, not a single object — proves the recent route won.
+    assert isinstance(resp.json(), list)

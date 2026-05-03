@@ -41,12 +41,14 @@ All paths are under the base `http://{server_ip}:8080` on LAN or `https://fluxor
 | `POST` | `/api/v1/auth/reject/{client_id}` | Localhost only | Reject pending pair request |
 | `DELETE` | `/api/v1/auth/revoke/{client_id}` | Localhost only | Revoke an approved client (operator action) |
 | `GET` | `/api/v1/auth/clients` | Localhost only | List all paired clients |
+| `GET` | `/api/v1/auth/clients/me` | Token required | Calling client's own profile (mobile profile screen) |
 
 ### `files` router
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
 | `GET` | `/api/v1/files` | Token or localhost | List indexed media files (optional `?library_id=`) |
+| `GET` | `/api/v1/files/recent` | Token or localhost | Most-recently-added files (mobile Home rail; `?limit=N` clamped to [1,50]) |
 | `GET` | `/api/v1/files/{file_id}` | Token or localhost | Get single file by ID |
 | `POST` | `/api/v1/files/upload` | Token or localhost | Upload a file to a library |
 | `DELETE` | `/api/v1/files/{file_id}` | Token or localhost | Remove file from index (does not delete from disk) |

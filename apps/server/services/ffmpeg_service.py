@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import shutil
 import sys
@@ -25,6 +26,88 @@ def _ffmpeg_bin() -> str:
             "FFmpeg not found. Install it and ensure it is on PATH."
         )
     return found
+
+
+def _ffprobe_bin() -> str | None:
+    """Return ffprobe path or None if unavailable. Probing is best-effort —
+    a missing ffprobe must never break library scans."""
+    if getattr(sys, "frozen", False):
+        for name in ("ffprobe", "ffprobe.exe"):
+            bundled = Path(sys._MEIPASS) / name  # type: ignore[attr-defined]
+            if bundled.exists():
+                return str(bundled)
+    return shutil.which("ffprobe")
+
+
+def _detect_hdr_format(stream: dict) -> str | None:
+    """Return "HDR10" / "HLG" / "DolbyVision" or None for SDR.
+
+    Detection priority is Dolby Vision first (it travels as side-data on top
+    of an HDR10 base layer, so transfer-function inspection alone would
+    misclassify a DV file as HDR10).
+    """
+    side_data = stream.get("side_data_list") or []
+    for entry in side_data:
+        kind = (entry.get("side_data_type") or "").lower()
+        if "dolby vision" in kind:
+            return "DolbyVision"
+    transfer = (stream.get("color_transfer") or "").lower()
+    if transfer in ("smpte2084", "pq"):
+        return "HDR10"
+    if transfer in ("arib-std-b67", "hlg"):
+        return "HLG"
+    return None
+
+
+async def probe_video(file_path: str) -> dict | None:
+    """Run ffprobe on the first video stream; return width/height/codec/hdr.
+
+    Returns None when ffprobe is not installed, the file is not a decodable
+    video, or the stream list is empty. Callers must treat the response as
+    advisory — scan completion never depends on probe success.
+    """
+    ffprobe = _ffprobe_bin()
+    if ffprobe is None:
+        return None
+    cmd = [
+        ffprobe,
+        "-v",
+        "error",
+        "-print_format",
+        "json",
+        "-show_streams",
+        "-select_streams",
+        "v:0",
+        file_path,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+    except (OSError, FileNotFoundError):
+        logger.warning("ffprobe failed for %s", file_path, exc_info=True)
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(stdout.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    streams = data.get("streams") or []
+    if not streams:
+        return None
+    stream = streams[0]
+    width = stream.get("width")
+    height = stream.get("height")
+    return {
+        "width": int(width) if isinstance(width, int) else None,
+        "height": int(height) if isinstance(height, int) else None,
+        "codec_name": stream.get("codec_name"),
+        "hdr_format": _detect_hdr_format(stream),
+    }
 
 
 async def start_stream(

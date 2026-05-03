@@ -2,7 +2,7 @@
 
 > Snapshot of what's done / in-progress / not-started across the codebase. Update on every significant milestone landing. The roadmap (`docs/10_planning/01_roadmap.md`) tracks future planning; this doc tracks shipped state.
 
-**As of 2026-05-03.** Phases 1–4 complete; Phase 5 in progress (hardware encoding + advanced desktop modules + desktop redesign — M10 custom window chrome shipped 2026-05-03; library-screen P0+P1 close-out shipped 2026-05-03 — full edit/delete/files-browser/sort/filter/list-view, per-library `total_size_bytes`, ADR-016/017).
+**As of 2026-05-04.** Phases 1–4 complete; Phase 5 in progress (hardware encoding + advanced desktop modules + desktop redesign — M10 custom window chrome shipped 2026-05-03; library-screen P0+P1 close-out shipped 2026-05-03; **mobile real-data backfill Phase A server-side shipped 2026-05-04** — migration 016 adds FFprobe + episode aggregation + per-client email/paired_at, new `GET /files/recent` + `GET /auth/clients/me`, same-`client_id` re-pair fix, ffprobe-at-scan persistence).
 
 ---
 
@@ -13,12 +13,12 @@
 
 ---
 
-## `apps/server` — Phases 1–5 partially complete (253 passing tests; ruff + black clean)
+## `apps/server` — Phases 1–5 partially complete (262 passing tests; ruff + black clean)
 
 - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured JSON logging (`python-json-logger`), rotating log file
-- **Routers:** info (+ healthz), auth, files (upload/delete), library, stream (sessions/progress), ws, signal, settings (transcoding + 18 extended fields), orders (paginated + portal-url), groups, notifications, activity, profile, webhook, transcoding (status), logs (REST + WS)
-- **Services:** auth, library, discovery, ffmpeg (HWA), webrtc, settings, tmdb, license, webhook, system_stats, group_service, notification_service, activity_service, profile_service, transcoding_service, log_service
-- **Migrations:** 001–015 applied on startup
+- **Routers:** info (+ healthz), auth (`/auth/clients/me` profile per Phase A backfill), files (upload/delete/recent), library, stream (sessions/progress), ws, signal, settings (transcoding + 18 extended fields), orders (paginated + portal-url), groups, notifications, activity, profile, webhook, transcoding (status), logs (REST + WS)
+- **Services:** auth (in-memory pending-token store moved here so re-pair can invalidate), library (FFprobe-at-scan persistence via `_persist_probe`), discovery, ffmpeg (HWA + `probe_video` ffprobe wrapper), webrtc, settings, tmdb, license, webhook, system_stats, group_service, notification_service, activity_service, profile_service, transcoding_service, log_service
+- **Migrations:** 001–016 applied on startup (016 adds FFprobe quality fields + TV episode aggregation columns + per-client `email`/`paired_at`)
 - **Hardware encoding:** `ffmpeg_service.py` reads `transcoding_encoder/preset/crf` from DB; supports libx264, h264_nvenc, h264_qsv, h264_vaapi
 - **Public routing v1:** Cloudflare Tunnel live (`fluxora-api.marshalx.dev`); `RealIPMiddleware`, `HLSBlockOverTunnelMiddleware`, `/healthz`, `remote_url` on `/info`, admin endpoints reject tunneled requests. Phase 6 hardening (Cloudflare Access, WAF, tunnel-health alerts, TURN) tracked as operator manual tasks.
 
@@ -109,9 +109,11 @@
 
 ## What's next
 
-See `AGENT_LOG.md` "Next Agent Should" section for the prioritised list. As of 2026-05-03:
+See `AGENT_LOG.md` "Next Agent Should" section for the prioritised list. As of 2026-05-04:
 
-1. **Mobile app redesign** — M0–M9 landed 2026-05-03. Next is **M10 — X-Ray panel + Group Watch shell + Offline state** (UI shells only — no live X-Ray ML, no Group Watch sync engine; plan §1 row 4). Plan in `docs/11_design/mobile_redesign_plan.md` §7.
-2. **macOS / Linux desktop runners** — Windows-only today. When generating other-platform runners, port the M10 shell-integration: `WindowOptions.titleBarStyle: hidden` already works cross-platform via `window_manager`; native equivalents needed for `WM_GETMINMAXINFO` (window-size floor), `SetCurrentProcessExplicitAppUserModelID`, and `WNDCLASSEX hIconSm`. Caption-button glyphs need a `Platform.isWindows` swap to `CustomPainter` paths or a vendored TTF since Segoe Fluent Icons / Segoe MDL2 Assets are Windows-only.
-3. **Phase 6 routing hardening** — operator-driven Cloudflare config (Access policies, WAF rules, tunnel-health alerts, TURN evaluation).
-4. **Dependabot triage** — Dart 3.9 floor bump may have unstuck PRs blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`.
+1. **Mobile real-data backfill — Phase A mobile commit** (server-side landed 2026-05-04). Wire `library_screen` to `LibraryBloc`, build `DetailCubit` + `RecentCubit`, point Profile at `GET /auth/clients/me`. Plan §9.2 in `docs/10_planning/08_real_data_backfill_plan.md`.
+2. **Mobile real-data backfill — Phase A pairing rebuild** (third commit per plan §9.4). State-machine pairing UI + lost-token-recovery `Routes.reconnect` route.
+3. **Mobile app redesign — M10** (X-Ray panel + Group Watch shell + Offline state — UI shells only). Plan in `docs/11_design/mobile_redesign_plan.md` §7. Lower priority than the backfill phases since real data is the honesty gate for v1 ship.
+4. **macOS / Linux desktop runners** — Windows-only today. When generating other-platform runners, port the M10 shell-integration: `WindowOptions.titleBarStyle: hidden` already works cross-platform via `window_manager`; native equivalents needed for `WM_GETMINMAXINFO` (window-size floor), `SetCurrentProcessExplicitAppUserModelID`, and `WNDCLASSEX hIconSm`. Caption-button glyphs need a `Platform.isWindows` swap to `CustomPainter` paths or a vendored TTF since Segoe Fluent Icons / Segoe MDL2 Assets are Windows-only.
+5. **Phase 6 routing hardening** — operator-driven Cloudflare config (Access policies, WAF rules, tunnel-health alerts, TURN evaluation).
+6. **Dependabot triage** — Dart 3.9 floor bump may have unstuck PRs blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`.

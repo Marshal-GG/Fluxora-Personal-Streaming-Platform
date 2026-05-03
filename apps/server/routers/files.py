@@ -78,6 +78,21 @@ async def list_files(
     return [MediaFileResponse(**row) for row in rows]
 
 
+@router.get("/recent", response_model=list[MediaFileResponse])
+async def list_recent_files(
+    limit: int = Query(default=20, ge=1, le=50),
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> list[MediaFileResponse]:
+    """Most-recently-added media files — backs the mobile Home "Recently
+    added" rail (Phase A backfill plan §9.1).  Sorted by `created_at DESC`.
+    Route is registered before `/{file_id}` so FastAPI does not treat
+    "recent" as a literal id.
+    """
+    rows = await library_service.list_recent_files(db, limit=limit)
+    return [MediaFileResponse(**row) for row in rows]
+
+
 @router.get("/{file_id}", response_model=MediaFileResponse)
 async def get_file(
     file_id: str,

@@ -11,10 +11,11 @@ from models.client import (
     AuthStatusResponse,
     ClientListItem,
     ClientListResponse,
+    ClientMeResponse,
     PairRequestBody,
     PairResponse,
 )
-from routers.deps import require_local_caller
+from routers.deps import require_local_caller, validate_token
 from services import activity_service, auth_service
 
 limiter = Limiter(key_func=get_remote_address)
@@ -59,6 +60,7 @@ async def request_pair(
         device_name=body.device_name,
         platform=body.platform,
         app_version=body.app_version,
+        email=body.email,
     )
     return PairResponse(client_id=body.client_id, status="pending_approval")
 
@@ -77,7 +79,7 @@ async def auth_status(
     client_status = client["status"]
 
     if client_status == "approved":
-        raw_token = _get_pending_token(client_id)
+        raw_token = auth_service.consume_pending_token(client_id)
         return AuthStatusResponse(status="approved", auth_token=raw_token)
 
     if client_status == "rejected":
@@ -106,7 +108,7 @@ async def approve_client(
     raw_token = await auth_service.approve_client(
         db, client_id, settings.token_hmac_key
     )
-    _store_pending_token(client_id, raw_token)
+    auth_service.store_pending_token(client_id, raw_token)
     return PairResponse(client_id=client_id, status="approved")
 
 
@@ -152,16 +154,28 @@ async def revoke_client(
         logger.warning("Failed to record client.revoke activity event", exc_info=True)
 
 
-# In-memory store for tokens pending first poll.
-# The raw token is generated on approve and returned once on the next
-# GET /auth/status poll. After that it is discarded from memory — the client
-# must store it securely. The server only ever holds the HMAC hash.
-_pending_tokens: dict[str, str] = {}
+@router.get("/clients/me", response_model=ClientMeResponse)
+async def get_me(
+    me: aiosqlite.Row = Depends(validate_token),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> ClientMeResponse:
+    """Return the calling client's profile (Phase A backfill plan §9.1).
 
-
-def _store_pending_token(client_id: str, raw_token: str) -> None:
-    _pending_tokens[client_id] = raw_token
-
-
-def _get_pending_token(client_id: str) -> str | None:
-    return _pending_tokens.pop(client_id, None)
+    The bearer token resolves to a single client row via `validate_token`;
+    `tier` is read live from `user_settings` so a freshly-applied license
+    upgrade is reflected on the next mobile profile refresh.
+    """
+    async with db.execute(
+        "SELECT subscription_tier FROM user_settings WHERE id = 1"
+    ) as cur:
+        settings_row = await cur.fetchone()
+    tier = settings_row["subscription_tier"] if settings_row else "free"
+    return ClientMeResponse(
+        id=me["id"],
+        display_name=me["name"],
+        email=me["email"] if "email" in me.keys() else None,
+        platform=me["platform"],
+        paired_at=me["paired_at"] if "paired_at" in me.keys() else None,
+        last_seen=me["last_seen"],
+        tier=tier,
+    )

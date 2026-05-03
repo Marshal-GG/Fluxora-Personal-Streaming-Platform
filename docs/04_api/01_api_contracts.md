@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-03 (library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017). 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
+> **Status:** Active - Updated 2026-05-04 (Phase A real-data backfill: new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
 
 ---
 
@@ -33,7 +33,7 @@ Authorization: Bearer {auth_token}
 
 | Mode | Dependency | Used by |
 |------|-----------|---------|
-| Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints |
+| Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints, `GET /auth/clients/me` |
 | Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /info/stats`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity`, `GET /logs` — desktop control panel needs no token |
 | Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /info/restart`, `POST /info/stop`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
 | No auth | — | `/info`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
@@ -130,7 +130,7 @@ Authorization: Bearer {auth_token}
 ---
 
 ### `POST /api/v1/auth/request-pair`
-**Description:** Client initiates pairing. Creates a pending client record on the server.  
+**Description:** Client initiates pairing. Creates a pending client record on the server, or — if a row with this `client_id` already exists — resets it back to `pending` and clears any previously-issued bearer token. Same-`client_id` re-pair is the supported recovery path for re-installed apps and restored device backups; it intentionally invalidates the prior token immediately so a stolen token cannot survive a re-pair.  
 **Auth:** None required.  
 **Status:** ✅ Implemented
 
@@ -140,9 +140,12 @@ Authorization: Bearer {auth_token}
   "client_id": "uuid-generated-by-client",
   "device_name": "Pixel 8 Pro",
   "platform": "android",
-  "app_version": "0.1.0"
+  "app_version": "0.1.0",
+  "email": "alex@fluxora.io"
 }
 ```
+
+`email` is optional. Captured during the mobile pairing flow's optional contact step (Phase A backfill plan §9.1); echoed back to the operator via `GET /auth/clients/me` and used solely for surfacing in the profile screen — it is never used as an identity key.
 
 **Response:**
 ```json
@@ -186,7 +189,7 @@ Authorization: Bearer {auth_token}
 { "client_id": "uuid", "status": "approved" }
 ```
 
-**Errors:** `403` not from localhost · `404` client not found · `409` client already approved/rejected
+**Errors:** `403` not from localhost · `404` client not found · `409` client already approved/rejected (a fresh `POST /auth/request-pair` from the same `client_id` resets the row back to `pending` and resolves the 409 — the operator does not have to revoke + re-add)
 
 ---
 
@@ -237,6 +240,30 @@ Authorization: Bearer {auth_token}
 
 ---
 
+### `GET /api/v1/auth/clients/me`
+**Description:** Per-client profile surface — the calling client's display name, optional email, platform, pair timestamp, last-seen, and the operator's current subscription tier. Backs the mobile profile screen (Phase A backfill plan §9.1).  
+**Auth:** Bearer token required (`validate_token`). The bearer resolves to a single client row; there is no `client_id` parameter — clients can only see their own profile.  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "id": "uuid",
+  "display_name": "Alex's iPhone",
+  "email": "alex@fluxora.io",
+  "platform": "ios",
+  "paired_at": "2026-03-15T10:14:22.123Z",
+  "last_seen": "2026-05-04T08:30:00.000Z",
+  "tier": "plus"
+}
+```
+
+`email` and `paired_at` may be `null` for clients paired before the migration-016 columns existed. `display_name` reads from the existing `clients.name` column — `name` doubles as display name; the API field is renamed for clarity. `tier` is read live from `user_settings.subscription_tier` so a freshly-applied license upgrade is reflected on the next mobile profile refresh.
+
+**Errors:** `401` missing/invalid bearer
+
+---
+
 ### `GET /api/v1/files`
 **Description:** List indexed media files. Optionally filter by library.  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
@@ -263,14 +290,39 @@ Authorization: Bearer {auth_token}
     "overview": "A thief who steals corporate secrets through...",
     "poster_url": "https://image.tmdb.org/t/p/w500/9gk7adHYeDvHkCSEqAvQNLV5Uge.jpg",
     "resume_sec": 342.5,
+    "width": 3840,
+    "height": 2160,
+    "codec_name": "hevc",
+    "hdr_format": "HDR10",
+    "tmdb_show_id": null,
+    "season_number": null,
+    "episode_number": null,
     "created_at": "2026-04-27T10:00:00+00:00",
     "updated_at": "2026-04-27T10:00:00+00:00"
   }
 ]
 ```
 
-> **Note:** `title`, `overview`, `poster_url` are `null` until the library has been enriched via TMDB.  
-> `resume_sec` defaults to `0.0` until the client reports playback progress via WebSocket.
+> **Notes:**
+> - `title`, `overview`, `poster_url` are `null` until the library has been enriched via TMDB.
+> - `resume_sec` defaults to `0.0` until the client reports playback progress via WebSocket.
+> - `width`, `height`, `codec_name`, `hdr_format` are populated by ffprobe at scan time (migration 016). They remain `null` for non-video extensions and on rows scanned before the migration until the next scan touches them. `hdr_format` is one of `"HDR10"` / `"HLG"` / `"DolbyVision"` / `null` (SDR).
+> - `tmdb_show_id` / `season_number` / `episode_number` are populated for TV episode files; `null` on movies. Phase D back-fills these via TMDB on the next library scan.
+
+---
+
+### `GET /api/v1/files/recent`
+**Description:** Most-recently-added media files, newest first (sorted by `created_at DESC`). Backs the mobile Home "Recently added" rail (Phase A backfill plan §9.1).  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Query Params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | int (1-50) | `20` | Max rows to return; clamped at 50 by the route |
+
+**Response:** Array of `MediaFileResponse` objects with the same shape as `GET /files`.  
+**Errors:** `401` invalid bearer · `422` `limit` outside `[1, 50]`
 
 ---
 

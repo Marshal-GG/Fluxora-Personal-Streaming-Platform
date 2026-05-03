@@ -616,3 +616,174 @@ Ran the documentation update protocol after the M8/M9/M9-followup work landed. S
 - [x] No layer-boundary violations. Plan doc lives under `docs/10_planning/`. AGENT_LOG entry stays append-only at the bottom.
 ---
 
+## [2026-05-04] — Mobile real-data backfill — Phase A — Server side
+**Phase:** Phase 5 (mobile real-data backfill — see `docs/10_planning/08_real_data_backfill_plan.md` §9.1)
+**Status:** Complete (server slice). Phase A mobile commits (data wiring + pairing rebuild) deferred to next session.
+
+### What Was Done
+
+The first of three Phase A commits per the locked plan §9.4 — server-only changes that unblock the mobile data-wiring + pairing-rebuild commits that follow.
+
+1. **Migration 016 (`016_media_quality_episodes_client_email.sql`)** — three independent additions, one schema bump:
+   - **FFprobe-derived video metadata** on `media_files`: `width`, `height`, `codec_name`, `hdr_format` (the quality-badge composition fields + Phase G direct-play allowlist).
+   - **TV episode aggregation columns** on `media_files`: `tmdb_show_id`, `season_number`, `episode_number`, plus a covering index `idx_media_files_tmdb_show_id`. Pre-folded for Phase D so the schema doesn't bump again — episodes stay regular `media_files` rows; "show" is just `WHERE tmdb_show_id = ?`.
+   - **Per-client profile fields** on `clients`: `email` (optional, captured during the mobile pairing flow's optional contact step) and `paired_at` (ISO timestamp of first approval). `paired_at` is back-filled to the migration-apply time for already-paired rows so the desktop's "Paired Mar 15" label never shows blank.
+
+2. **FFprobe persistence at scan time** — `services/ffmpeg_service.py` gained `_ffprobe_bin()` (PyInstaller-aware), `_detect_hdr_format()` (Dolby Vision side-data first → smpte2084/PQ → arib-std-b67/HLG → null), and `probe_video()` (async wrapper that runs `ffprobe -v error -print_format json -show_streams -select_streams v:0 <path>`). `services/library_service.py` adds `_persist_probe()` and a new `_PROBEABLE_EXTENSIONS` subset (the 8 video extensions); both `scan_library()` and `upload_file_to_library()` invoke probe-and-persist after the insert. Probe failures are best-effort logged + swallowed — they cannot abort a scan.
+
+3. **Same-`client_id` re-pair fix** (plan §8.5 bug 1) — `services/auth_service.create_pair_request()` rewritten:
+   - In-memory pending-token store (`_pending_tokens` dict) **moved from `routers/auth.py` into `services/auth_service.py`** so the service can `clear_pending_token(client_id)` on re-pair. Router now uses `auth_service.store_pending_token()` / `consume_pending_token()`.
+   - `INSERT … ON CONFLICT(id) DO UPDATE` now resets `is_trusted = 0`, `auth_token = ''`, `status = 'pending'`, refreshes `name` + `platform` + `last_seen`, and merges `email` (preserves existing if new request omits it). Prior status (approved / rejected) no longer matters — re-pair always resets to pending.
+   - `approve_client()` stamps `paired_at` only on first approval (`COALESCE(paired_at, now)`), so the desktop "Paired Mar 15" label reflects the original trust event, not the most recent re-pair.
+   - **Security improvement (already documented in `docs/06_security/01_security.md`):** a stolen token whose owner reinstalls the app cannot survive a re-pair — the legitimate device's request invalidates the prior token immediately, before the operator clicks "Approve" again.
+
+4. **`PairRequestBody` extended with optional `email: str | None = None`** — wire field unchanged; passes through `routers/auth.py::request_pair` into `auth_service.create_pair_request(..., email=...)`. Email is plain `str` (not `EmailStr`) because pulling in `email-validator` for a single optional field violates CLAUDE.md hard prohibition #6 — the field is only echoed back to the operator + profile screen, never used as an identity key.
+
+5. **New `GET /api/v1/files/recent`** — bearer-or-localhost auth; `?limit=N` clamped to `[1, 50]` at the route boundary (returns 422 on overflow); SQL is `SELECT * FROM media_files ORDER BY created_at DESC LIMIT ?`. Route is registered **before** `/{file_id}` in `routers/files.py` so FastAPI doesn't treat "recent" as a literal id.
+
+6. **New `GET /api/v1/auth/clients/me`** — bearer-required (`validate_token`). Resolves the client from the bearer, joins live `subscription_tier` from `user_settings`, returns `{id, display_name, email, platform, paired_at, last_seen, tier}`. `display_name` is `clients.name` renamed in the API surface only — no DB rename. Uses the existing `auth` router so the path is `/api/v1/auth/clients/me`; the plan said `/api/v1/clients/me` but the namespace is the only thing that changed (auth router is the right home for "who am I").
+
+7. **`MediaFileResponse` extended** with the seven new optional fields (`width`, `height`, `codec_name`, `hdr_format`, `tmdb_show_id`, `season_number`, `episode_number`). All nullable defaults, so legacy rows scanned before the migration return 200 OK with nulls. Switched the model_config to `ConfigDict(populate_by_name=True, extra="ignore")` so future column additions don't silently 500 the response.
+
+8. **Tests** — added 9 new test cases covering the new endpoints + re-pair semantics; total server suite **253 → 262 passing** (3.5 s for the touched files; full suite 48 s).
+   - `test_request_pair_accepts_optional_email`
+   - `test_repair_after_approval_resets_to_pending` (proves the prior token returns 401 after re-pair)
+   - `test_repair_after_rejection_resets_to_pending` (pins existing rejected→pending behaviour)
+   - `test_clients_me_returns_profile`
+   - `test_clients_me_requires_token`
+   - `test_recent_files_orders_newest_first`
+   - `test_recent_files_respects_limit`
+   - `test_recent_files_clamps_oversized_limit` (asserts 422 on `limit=999`)
+   - `test_recent_files_does_not_match_file_id_route` (sanity for the route-order trap)
+
+### Files Created / Modified
+| Action | Path |
+|--------|------|
+| Created | `apps/server/database/migrations/016_media_quality_episodes_client_email.sql` |
+| Modified | `apps/server/services/ffmpeg_service.py` (added `_ffprobe_bin`, `_detect_hdr_format`, `probe_video`) |
+| Modified | `apps/server/services/library_service.py` (added `_PROBEABLE_EXTENSIONS`, `_persist_probe`, `list_recent_files`; threaded probe into `scan_library` + `upload_file_to_library`) |
+| Modified | `apps/server/services/auth_service.py` (moved `_pending_tokens` here; added `store_pending_token` / `consume_pending_token` / `clear_pending_token`; rewrote `create_pair_request` for re-pair semantics; `approve_client` stamps `paired_at`) |
+| Modified | `apps/server/routers/auth.py` (drop local pending-token dict; use moved helpers; pass `email` through; new `GET /clients/me`) |
+| Modified | `apps/server/routers/files.py` (new `GET /recent` route registered before `/{file_id}`) |
+| Modified | `apps/server/models/client.py` (added optional `email` to `PairRequestBody`; new `ClientMeResponse` model) |
+| Modified | `apps/server/models/media_file.py` (added 7 optional FFprobe + episode fields; `extra="ignore"` for forward compatibility) |
+| Modified | `apps/server/tests/test_auth.py` (+5 cases) |
+| Modified | `apps/server/tests/test_files.py` (+4 cases) |
+| Modified | `docs/00_overview/current_status.md` (test count 253 → 262; migration range 015 → 016; backfill server slice noted) |
+| Modified | `docs/03_data/02_database_schema.md` (migration 016 row + index row; updated `media_files` + `clients` schema blocks) |
+| Modified | `docs/04_api/01_api_contracts.md` (`request-pair` body + re-pair semantics; new `/files/recent` and `/auth/clients/me` sections; `MediaFileResponse` shape; auth-mode table updated for `/clients/me`) |
+| Modified | `docs/05_infrastructure/02_url_inventory.md` (added `/auth/clients/me` + `/files/recent` rows) |
+| Modified | `docs/06_security/01_security.md` (Pairing-Flow re-pair sub-section; route matrix row for `/clients/me`; pair-flow request body documents `email?`) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Docs Updated
+- `docs/00_overview/current_status.md` — test count, migration high-water mark, "What's next" reordered (Phase A mobile + pairing rebuild promoted to top of the queue).
+- `docs/03_data/02_database_schema.md` — `media_files` + `clients` schema blocks reflect the seven new columns; new index row; new migration row.
+- `docs/04_api/01_api_contracts.md` — `request-pair` documents the optional `email` and re-pair semantics; new `/files/recent` + `/auth/clients/me` endpoint sections; `MediaFileResponse` JSON shape extended; auth-mode summary updated.
+- `docs/05_infrastructure/02_url_inventory.md` — two new endpoint rows.
+- `docs/06_security/01_security.md` — re-pair sub-section under Pairing Flow + route-matrix row + pair-body field list.
+
+### Decisions Made
+- **`email` as plain `str | None`, not `EmailStr`.** Adding `email-validator` for a single optional contact field that's only ever displayed back is a poor trade. Validation deferred to mobile-side; server doesn't care if it's malformed.
+- **`/clients/me` lives on the `auth` router** (full path `/api/v1/auth/clients/me`) instead of the proposed `/api/v1/clients/me`. Symmetry with the existing `GET /auth/clients` (operator-side list of all clients) — "who am I" is identity, identity is auth.
+- **In-memory pending tokens moved to the service layer.** The router used to own this dict; the service couldn't clear it on re-pair without circular imports. Service-layer ownership cleans up the boundary and lets `create_pair_request` invalidate raw tokens that haven't been polled yet.
+- **`paired_at` stamped on first approval, not first pair-request.** `paired_at` reflects when the operator chose to trust the device, not when the device first asked. Re-pair preserves the original timestamp via `COALESCE(paired_at, now)`.
+- **No `email_validator` (CLAUDE.md #6).** No new pip dep added in this commit. New imports limited to stdlib + already-vendored packages.
+
+### Blockers / Open Issues
+- **Pending tokens still in-memory only.** A server restart between approve and the first /auth/status poll loses the raw token; the client never gets it. Same-tenant single-operator home server — re-approve in the desktop UI fixes it. Persisting the raw token to disk is its own threat-model question (encrypted-at-rest, retention, replay window) and is deliberately out of scope for v1. Flag stays in plan §8.5 bug 2 for `04_manual_tasks.md`.
+- **FFprobe-at-scan increases scan wall time** by one subprocess per video file. On large libraries (10k+ files) this could be noticeable on first scan. The probe is async and yields the event loop, so it doesn't block other coroutines, but the first-scan-wall-time hit isn't measured. If users complain, batch `probe_video` calls in parallel via `asyncio.gather` with a small concurrency cap.
+- **Phase A back-fill not yet wired for episode columns.** Migration 016 adds `tmdb_show_id` / `season_number` / `episode_number` but the TMDB scan code doesn't yet write to them — that's Phase D's TMDB-client extension. Phase A only ensures the columns exist; rows scanned now stay null on those three until Phase D ships.
+
+### Issues / Sharp Edges Discovered
+- **Route ordering trap in `routers/files.py`.** FastAPI resolves routes in registration order; `/recent` had to be added **before** `/{file_id}` or it'd resolve as a literal id-of-`recent` lookup → 404. Caught at design-time but worth documenting — `test_recent_files_does_not_match_file_id_route` pins the contract.
+- **`MediaFileResponse` was a pydantic v1 dict-syntax `model_config`.** That sets `populate_by_name=True` but doesn't override Pydantic v2's defaults — including the new (correct) `extra="ignore"` default. Switching to `ConfigDict(populate_by_name=True, extra="ignore")` is explicit and forward-compatible; future column adds will not 500 the API.
+- **No `_pending_tokens` reset between tests** in `conftest.py`. The dict is module-level in `services.auth_service`. The existing tests have all worked because each consumes its own entry, but a future test that does `approve` without `status` could leak across runs. Not a blocker today; flag for the next agent if a flaky pairing test pops up.
+
+### Suggested Next Steps (priority order)
+1. **Phase A — Mobile data wiring** (next commit per plan §9.4 commit 2). `library_screen.dart` rewires to `LibraryBloc`, new `DetailCubit` consuming `LibraryRepository.getFile(id)`, new `RecentCubit` consuming `GET /files/recent`, profile screen reads from `GET /auth/clients/me`. Delete `MockMediaItem.recentlyAdded` and `MockMediaItem.findById`. 27 mobile tests stay green.
+2. **Phase A — Mobile pairing rebuild** (plan §9.4 commit 3). `pairing_screen.dart` state-machine UI + new `Routes.reconnect` + auth-guard tweak in `app_router.dart`. The display_name + optional-email field UI lands here.
+3. **Hide Downloads tab in v1** (decision §5 row 4). Can land alongside Phase A or as its own polish commit. Tiny diff: `FluxBottomTabs` registry shrinks to 4 tabs + delete `Routes.downloads`.
+4. **Phase B (Continue-watching + Search + Profile stats)** after Phase A is green. SQL `LIKE` search per decision §5 row 1 — endpoint contract is locked, FTS5 is a v2 swap.
+
+### Hard Rules Checklist
+- [x] `git commit` / `git push` not run yet — staged + draft only; owner approves in this session.
+- [x] No AI branding in code, docs, or the upcoming commit message.
+- [x] No `print()` / `debugPrint()`; service+router code uses the project logger.
+- [x] No silent `except: pass`; FFprobe failures + activity-event errors all log via `logger.warning(..., exc_info=True)`.
+- [x] No hardcoded secrets / paths.
+- [x] No new pip deps (consciously chose plain `str` over `EmailStr` to avoid `email-validator`).
+- [x] Bearer tokens still HMAC-SHA256-hashed in DB; raw tokens only ever held in-memory between approve and first poll.
+- [x] No layer-boundary violations.
+- [x] No migration file edited or deleted (only new file `016_*.sql` added).
+---
+
+---
+## [2026-05-04] — Library screen layout fix + `bgRaised` opaque-surface token + desktop `surfaceGlass` sweep
+**Phase:** Phase 5 — desktop redesign polish (post-library P0+P1)
+**Status:** Complete
+
+### What Was Done
+
+Three intertwined fixes triggered by visual smoke-testing the Library screen on Windows desktop:
+
+1. **Fixed catastrophic layout collapse on the Library screen.** Root cause: the library refactor added two `Spacer()` calls inside the card's `Column` — but the Column lives as a non-Positioned child of a `Stack` (default `StackFit.loose`), so it received unbounded height. `Spacer` requires bounded height to flex; with unbounded constraints the whole layout pass cascade-failed (`!_debugDoingThisLayout` on `_LibraryGrid`'s `LayoutBuilder`, propagating up through `_LoadedBody.Column` and the parent `Column`). Symptom: `PageHeader`, `FluxTabBar`, stat tiles, and toolbar pills all painted at the same y-coordinate, piled on top of each other in a single broken band. Fix: wrapped the card body in `SizedBox(height: 168, child: ClipRRect(child: Stack(fit: StackFit.expand, ...)))` — explicit height + `StackFit.expand` give the inner Column tight constraints so `Spacer` can flex. The original M4 card had **zero Spacers** in this Column; the regression was visible by diffing against `0d02b00`. Codified as a hard gotcha so a future agent doesn't re-introduce it.
+
+2. **Added the `AppColors.bgRaised` opaque-surface token** (`#0F0C24`) to `packages/fluxora_core/lib/constants/app_colors.dart`. The value is the prototype's canonical raised-surface hex — already used in three mobile sites (`FluxBottomSheet`, mobile theme `InputDecorationTheme.fillColor`, mobile screens) as raw literals, and in one desktop site (`clients_screen.dart`'s `_FilterDropdown`) as a different raw literal `#1A1830`. Initial token attempt at `#1A1830` (matching the existing clients literal) was wrong — the prototype canonical is `#0F0C24`. Corrected, and migrated `clients_screen`'s two PopupMenu sites from raw literal to token. Mobile sites still use the raw `#0F0C24` literal pending the mobile agent's eventual token-pickup.
+
+3. **Swept every desktop `surfaceGlass` misuse to `bgRaised`** (13 source-code call sites): 5 dialogs in `groups_screen.dart`, 5 desktop-theme defaults in `apps/desktop/lib/shared/theme/app_theme.dart` (`colorScheme.surface`, `cardColor`, `appBarTheme`, `cardTheme`, `snackBarTheme`), 1 hover card in `help_screen.dart`, 2 sites in `flux_card.dart`, plus 8 sites in `library_screen.dart`. **Net policy now:** `bgRaised` for any popup / dialog / sheet / AppBar / SnackBar / Material `Card` chrome; `surfaceGlass` reserved for on-page glass cards (`FluxCard`, `FluxPoster` overlays). The translucent token survives only because mobile still references it.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `packages/fluxora_core/lib/constants/app_colors.dart` (+ `bgRaised` token) |
+| Modified | `apps/desktop/lib/features/library/presentation/screens/library_screen.dart` (Stack/Spacer fix + 8 colour migrations + `_CardMenuButton` clients-pattern adoption) |
+| Modified | `apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart` (2 raw-literal `#1A1830` sites → `bgRaised` token) |
+| Modified | `apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart` (5 dialog backgrounds) |
+| Modified | `apps/desktop/lib/features/help/presentation/screens/help_screen.dart` (1 hover card) |
+| Modified | `apps/desktop/lib/shared/theme/app_theme.dart` (5 theme defaults) |
+| Modified | `apps/desktop/lib/shared/widgets/flux_card.dart` (background + doc comment) |
+
+### Docs Updated
+
+- `DESIGN.md` — split "Surface Hierarchy" into two families: **Translucent glass** and **Opaque raised** (`bgRaised`). Added explicit policy: any floating chrome must use `bgRaised`.
+- `docs/08_frontend/01_frontend_architecture.md` — token table now lists `bgRaised`. New "Surface-token policy (added 2026-05-04)" line replaces the stale "no opaque mid-tier color *token*" sentence.
+- `docs/12_guidelines/03_gotchas.md` — rewrote the "translucent fillColor" gotcha to reference the new token resolution. Earlier in the same file, also added a separate gotcha for "`Spacer()` inside a `Column` that's a non-Positioned child of a `Stack`".
+
+### Decisions Made
+
+- **`bgRaised` value = `#0F0C24`, not `#1A1830`.** Prototype canonical wins; clients_screen's literal was the deviation. Token now matches `FluxBottomSheet` + mobile theme.
+- **Surface tokens are now a two-family system.** On-page chrome stays translucent (`surfaceGlass`); floating chrome is opaque (`bgRaised`). Permanent, not transitional.
+- **Stack-with-Spacer is a layout antipattern.** Bound the Stack first via `SizedBox(height: ...)` or `fit: StackFit.expand` before placing a Column-with-Spacer inside it. Codified in gotchas.md.
+
+### Issues Discovered / Reported to User
+
+- **Hot reload silently does not apply structural Dart changes.** New top-level classes added during the session caused stale builds despite saved on-disk fixes — stack traces kept pointing at removed `LayoutBuilder` lines. Resolution: hot **restart** (`R`) or `flutter clean && flutter run`.
+- **`surfaceGlass` was being used as a generic raised-surface colour by 13 desktop sites that should have been opaque.** Slow-rotting design-system bug — the original M4 ship paired it with the radial-gradient backdrop where it looks correct, but every popup/dialog inherited the same fill and looked subtly broken.
+- **`clients_screen.dart` already deviated** from the design system with a raw `#1A1830` literal. Reconciled via the new token.
+
+### Blockers / Open Issues
+
+- **Mobile `surfaceGlass` references are still translucent.** 8 mobile source files reference `AppColors.surfaceGlass` directly. Per owner directive ("don't touch mobile"), they remain unchanged. The mobile agent should sweep these to `bgRaised`.
+- **`bgRaised` raw literals still exist in mobile** (`FluxBottomSheet`, mobile theme `InputDecorationTheme.fillColor`, two mobile screens). Should migrate to `AppColors.bgRaised` token for symmetry.
+
+### Next Agent Should
+
+1. **Visual smoke-test the desktop Library screen** at 1440×900 and 1100×700 (the minimum content width). Confirm cards render at 280 px wide with name/path pushed to the bottom; popup menu opens with opaque `#0F0C24`; Sort menu, Filters dialog, Delete confirm all opaque. No layout-recursion errors in the console.
+2. **Visual-test the wider desktop screens** that consumed the theme-default change. Material `Card`s without custom decoration now render at `#0F0C24` instead of translucent. Most surfaces own their own `BoxDecoration`, so the delta should be small — verify on Activity, Logs, Subscription screens.
+3. **(Mobile-agent task)** Sweep `apps/mobile/lib/**/*.dart` for `AppColors.surfaceGlass` and inline `Color(0xFF0F0C24)` literals; migrate them to `AppColors.bgRaised`.
+4. **Once mobile is migrated**, evaluate deleting the `surfaceGlass` token entirely. Its two intentional consumers (`FluxCard`, `FluxPoster`) could move to a renamed `cardGlass` token or inline the rgba with a comment.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran. Working tree has uncommitted changes from this session — owner will commit when ready.
+- [x] No agent / AI branding in any code, doc, or commit message.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No exceptions swallowed.
+- [x] No secrets / hardcoded paths added — and removed several existing hardcoded colour literals by routing them through the new token.
+- [x] No new third-party deps.
+- [x] No backwards-compat hacks. Old `surfaceGlass` token remains usable; no shim layer added.
+- [x] No mobile files touched (per owner directive). Mobile sweep is flagged for the mobile agent.
+- [x] No git-history rewrites.
+---
+

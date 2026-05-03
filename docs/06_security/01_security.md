@@ -2,7 +2,7 @@
 
 > **Category:** Security  
 > **Status:** Active  
-> **Last Updated:** 2026-05-01 (added Cloudflare Tunnel threat model + admin-route hardening)
+> **Last Updated:** 2026-05-04 (Phase A backfill plan §8.5 bug 1 fix — same-`client_id` re-pair now resets the row to `pending` and invalidates the prior token; new bearer-protected `GET /auth/clients/me`). 2026-05-01 added Cloudflare Tunnel threat model + admin-route hardening
 
 ---
 
@@ -34,12 +34,13 @@ it can access any protected API endpoint.
 New Device:
   1.  Client generates UUID client_id (stored in secure storage)
   2.  Client → POST /auth/request-pair
-            { client_id, device_name, platform, app_version }
+            { client_id, device_name, platform, app_version, email? }
   3.  Server → Creates client record  (is_trusted = false)
   4.  Control Panel → Shows "New pair request: {device_name} [{platform}]"
   5.  Owner → Approves or Rejects in Control Panel UI
       If Approved:
-  6.  Server → Sets is_trusted = true, generates auth_token, stores hash
+  6.  Server → Sets is_trusted = true, generates auth_token, stores hash,
+              stamps paired_at on first approval
   7.  Client → Polls GET /auth/status/{client_id}
   8.  Server → Returns { status: "approved", auth_token: "..." }
   9.  Client → Stores token in flutter_secure_storage
@@ -51,6 +52,12 @@ New Device:
   8.  Server → Returns { status: "rejected" }
   9.  Client → Shows "Access denied" screen
 ```
+
+### Re-pair from the same `client_id` (migration 016, Phase A)
+
+A `POST /auth/request-pair` for an existing `client_id` resets the row back to `pending`, sets `is_trusted = 0`, clears the stored `auth_token` hash, and drops any in-memory raw token waiting on first poll. The behaviour is the same regardless of the prior status (`approved` / `rejected`).
+
+This is the supported recovery path for re-installed apps and restored device backups. It is also a security improvement: a stolen token whose owner reinstalls the app cannot survive a re-pair — the legitimate device's request invalidates the prior token immediately, before the operator clicks "Approve" again. The previously-issued bearer is dead the moment the request lands; the new token is only issued after the operator re-approves through the desktop Clients screen.
 
 ### Sign-out Flow (Mobile, M8)
 
@@ -86,10 +93,11 @@ Mobile Sign Out:
 |--------------|--------------|-------|
 | `GET /api/v1/info` | ❌ Public | Server identity only — no sensitive data |
 | `GET /api/v1/info/stats` | 🟡 Token OR localhost | `validate_token_or_local` — earlier versions had no auth, leaking CPU / RAM / lan_ip / public_address over the public tunnel; tightened to match `/ws/stats`. |
-| `POST /api/v1/auth/request-pair` | ❌ Public | Pairing initiation |
+| `POST /api/v1/auth/request-pair` | ❌ Public | Pairing initiation; same-`client_id` re-pair resets the row to `pending` and invalidates the prior token (see "Re-pair from the same `client_id`" above) |
 | `GET /api/v1/auth/status/{id}` | ❌ Public | Polling endpoint — token returned once on first approved poll |
 | `POST /api/v1/auth/approve/{id}` | 🔒 Localhost only | `require_local_caller` dep — 403 if `request.client.host` not in `{127.0.0.1, ::1, localhost}` |
 | `POST /api/v1/auth/reject/{id}` | 🔒 Localhost only | Same `require_local_caller` restriction |
+| `GET /api/v1/auth/clients/me` | 🔑 Token required | `validate_token` — returns the calling client's profile (name/email/tier/paired_at/last_seen). Mobile profile screen, Phase A. |
 | `DELETE /api/v1/auth/revoke/{id}` | 🔒 Localhost only | `require_local_caller` — operator action surfaced from desktop Clients screen. Earlier versions accepted any bearer token, which let one client revoke another (privilege escalation); tightened to localhost-only. |
 | `GET /api/v1/files` | ✅ Bearer token | List indexed media files |
 | `GET /api/v1/files/{id}` | ✅ Bearer token | Single file lookup |

@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-02 (migrations 004-015; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10)
+> **Status:** Active - Updated 2026-05-04 (migrations 004-016; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at)
 
 ---
 
@@ -41,6 +41,13 @@ CREATE TABLE media_files (
     overview          TEXT,              -- migration 004: TMDB overview/synopsis
     poster_url        TEXT,              -- migration 004: TMDB poster URL
     last_progress_sec REAL NOT NULL DEFAULT 0.0,  -- migration 005: resume position
+    width             INTEGER,           -- migration 016: ffprobe video width
+    height            INTEGER,           -- migration 016: ffprobe video height
+    codec_name        TEXT,              -- migration 016: ffprobe video codec
+    hdr_format        TEXT,              -- migration 016: 'HDR10' | 'HLG' | 'DolbyVision' | NULL (SDR)
+    tmdb_show_id      INTEGER,           -- migration 016: parent show TMDB id (TV episodes only)
+    season_number     INTEGER,           -- migration 016: TV episodes only
+    episode_number    INTEGER,           -- migration 016: TV episodes only
     created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -48,12 +55,14 @@ CREATE TABLE media_files (
 -- Clients table (auth_token = HMAC-SHA256 hash of raw token — never stored in plain)
 CREATE TABLE clients (
     id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
+    name        TEXT NOT NULL,         -- doubles as display_name (mobile pairing flow)
     platform    TEXT NOT NULL CHECK(platform IN ('android','ios','windows','macos','linux')),
     last_seen   TIMESTAMP NOT NULL,
     is_trusted  BOOLEAN NOT NULL DEFAULT 0,
     auth_token  TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'pending'  -- added by migration 003
+    status      TEXT NOT NULL DEFAULT 'pending', -- added by migration 003
+    email       TEXT,                  -- migration 016: optional contact captured at pair time
+    paired_at   TEXT                   -- migration 016: ISO timestamp of first approval
 );
 -- status values: 'pending' | 'approved' | 'rejected'
 
@@ -199,6 +208,7 @@ CREATE INDEX IF NOT EXISTS idx_activity_type_created
 | `media_files` | `library_id` | B-Tree | Fast library → files lookup |
 | `media_files` | `path` | Unique | Prevent duplicate indexing |
 | `media_files` | `tmdb_id` | B-Tree | Metadata join |
+| `media_files` | `tmdb_show_id` | B-Tree (`idx_media_files_tmdb_show_id`) | Phase D show → episodes aggregate query (`WHERE tmdb_show_id = ? ORDER BY season_number, episode_number`) |
 | `stream_sessions` | `client_id` | B-Tree | Client history lookup |
 | `stream_sessions` | `file_id` | B-Tree | File stream history |
 | `stream_sessions` | `ended_at` | B-Tree | Active session queries (WHERE ended_at IS NULL) |
@@ -235,3 +245,4 @@ CREATE INDEX IF NOT EXISTS idx_activity_type_created
 | `013_notifications.sql` | Creates `notifications` table (id UUID PK, type/category with CHECK constraints, title, message, related_kind?, related_id?, created_at, read_at?, dismissed_at?); adds `idx_notifications_unread` on `(read_at, dismissed_at, created_at DESC)`. |
 | `014_activity_events.sql` | Creates `activity_events` table (id UUID PK, type, actor_kind?, actor_id?, target_kind?, target_id?, summary, payload JSON?, created_at); adds `idx_activity_created` on `(created_at DESC)` and `idx_activity_type_created` on `(type, created_at DESC)`. |
 | `015_extended_settings.sql` | Adds 18 columns to `user_settings` (skips `max_concurrent_streams` which already exists from 001): General — `language`, `auto_start_on_boot`, `auto_restart_on_crash`, `minimize_to_system_tray`, `theme_accent`, `default_library_view`, `scan_libraries_on_startup`, `generate_thumbnails`; Network — `preferred_mode`, `enable_mdns`, `enable_webrtc`, `relay_server_url`; Streaming — `default_quality`, `ai_segment_duration_seconds`; Security — `enable_pairing_required`, `session_timeout_minutes`; Advanced — `enable_log_export`, `custom_server_url`. |
+| `016_media_quality_episodes_client_email.sql` | Three independent additions for Phase A of the real-data backfill: (a) FFprobe-derived `width`, `height`, `codec_name`, `hdr_format` on `media_files` (quality badges + Phase G direct-play allowlist); (b) TV episode aggregation columns `tmdb_show_id`, `season_number`, `episode_number` on `media_files` plus `idx_media_files_tmdb_show_id` (Phase D ships pure-SQL show endpoints — no new `episodes` table); (c) `email` and `paired_at` on `clients` for the new `GET /auth/clients/me` profile endpoint. `paired_at` is back-filled to migration-apply time for already-paired rows so the desktop's "Paired Mar 15" label never shows blank. |
