@@ -11,9 +11,9 @@ class StatusBadge extends StatelessWidget {
   final BadgeStatus status;
 
   Color get _color => switch (status) {
-        BadgeStatus.online => AppColors.success,
-        BadgeStatus.idle => AppColors.warning,
-        BadgeStatus.offline => AppColors.textMuted,
+        BadgeStatus.online => AppColors.emerald,
+        BadgeStatus.idle => AppColors.amber,
+        BadgeStatus.offline => AppColors.textDim,
       };
 
   String get _label => switch (status) {
@@ -45,7 +45,7 @@ class StatusBadge extends StatelessWidget {
           const SizedBox(width: AppSizes.s1),
           Text(
             _label,
-            style: AppTypography.label.copyWith(color: _color),
+            style: AppTypography.eyebrow.copyWith(color: _color),
           ),
         ],
       ),

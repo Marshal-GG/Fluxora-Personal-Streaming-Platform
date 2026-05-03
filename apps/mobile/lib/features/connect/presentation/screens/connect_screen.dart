@@ -56,11 +56,11 @@ class _ConnectViewState extends State<_ConnectView> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const SizedBox(height: AppSizes.s8),
-                const Text('Fluxora', style: AppTypography.displayMd),
+                const Text('Fluxora', style: AppTypography.displayV2),
                 const SizedBox(height: AppSizes.s1),
                 const Text(
                   'Connect to your server',
-                  style: AppTypography.bodyLg,
+                  style: AppTypography.body,
                 ),
                 const SizedBox(height: AppSizes.s10),
                 Expanded(child: _buildBody(context, state)),
@@ -102,7 +102,7 @@ class _ConnectViewState extends State<_ConnectView> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text('Manual connection', style: AppTypography.headingMd),
+        const Text('Manual connection', style: AppTypography.h2),
         const SizedBox(height: AppSizes.s3),
         Row(
           children: [
@@ -162,7 +162,7 @@ class _SearchingView extends StatelessWidget {
           SizedBox(height: AppSizes.s4),
           Text(
             'Scanning your network for Fluxora servers…',
-            style: AppTypography.bodyMd,
+            style: AppTypography.body,
             textAlign: TextAlign.center,
           ),
         ],
@@ -181,7 +181,7 @@ class _ServerListView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Servers found', style: AppTypography.headingSm),
+        const Text('Servers found', style: AppTypography.h2),
         const SizedBox(height: AppSizes.s3),
         Expanded(
           child: ListView.separated(
@@ -212,9 +212,9 @@ class _ServerTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(AppSizes.s4),
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: AppColors.surfaceGlass,
           borderRadius: BorderRadius.circular(AppSizes.radiusLg),
-          border: Border.all(color: AppColors.surfaceRaised),
+          border: Border.all(color: AppColors.borderSubtle),
         ),
         child: Row(
           children: [
@@ -222,12 +222,12 @@ class _ServerTile extends StatelessWidget {
               width: 44,
               height: 44,
               decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.1),
+                color: AppColors.violet.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(AppSizes.radiusMd),
               ),
               child: const Icon(
                 Icons.dns_outlined,
-                color: AppColors.primary,
+                color: AppColors.violet,
                 size: 20,
               ),
             ),
@@ -236,17 +236,17 @@ class _ServerTile extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(server.name, style: AppTypography.headingMd),
+                  Text(server.name, style: AppTypography.h2),
                   Text(
                     '${server.ip}:${server.port}',
-                    style: AppTypography.caption,
+                    style: AppTypography.captionV2,
                   ),
                 ],
               ),
             ),
             const Icon(
               Icons.arrow_forward_ios,
-              color: AppColors.textMuted,
+              color: AppColors.textDim,
               size: 16,
             ),
           ],
@@ -270,13 +270,13 @@ class _ErrorView extends StatelessWidget {
         children: [
           const Icon(
             Icons.wifi_off_outlined,
-            color: AppColors.textMuted,
+            color: AppColors.textDim,
             size: 48,
           ),
           const SizedBox(height: AppSizes.s4),
           Text(
             message,
-            style: AppTypography.bodyMd,
+            style: AppTypography.body,
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: AppSizes.s4),

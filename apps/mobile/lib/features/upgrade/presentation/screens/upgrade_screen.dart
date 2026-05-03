@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:fluxora_core/constants/app_colors.dart';
+import 'package:fluxora_core/constants/app_gradients.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
 
 /// Shown when the user hits a tier limit (PlayerTierLimit state / 429 response).
@@ -12,12 +13,12 @@ class UpgradeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: AppColors.bgRoot,
       appBar: AppBar(
-        backgroundColor: AppColors.surface,
+        backgroundColor: AppColors.surfaceGlass,
         title: const Text('Upgrade Your Plan'),
         leading: BackButton(
-          color: AppColors.textPrimary,
+          color: AppColors.textBright,
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
@@ -58,7 +59,7 @@ class _GradientHeader extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        gradient: AppColors.brandGradient,
+        gradient: AppGradients.brand,
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
@@ -67,14 +68,14 @@ class _GradientHeader extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             'Unlock More Streams',
-            style: AppTypography.headingLg.copyWith(color: Colors.white),
+            style: AppTypography.h1.copyWith(color: Colors.white),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
           Text(
             'You\'ve reached your plan\'s concurrent stream limit.\n'
             'Upgrade to stream to more devices simultaneously.',
-            style: AppTypography.bodyMd.copyWith(
+            style: AppTypography.body.copyWith(
               color: Colors.white.withValues(alpha: 0.85),
             ),
             textAlign: TextAlign.center,
@@ -112,7 +113,7 @@ const _kTiers = [
     price: '\$0',
     streams: '1 concurrent stream',
     features: ['File browser', 'Basic HLS streaming', 'LAN only'],
-    color: AppColors.textMuted,
+    color: AppColors.textDim,
   ),
   _TierData(
     name: 'Plus',
@@ -124,7 +125,7 @@ const _kTiers = [
       'Playback resume',
       'Internet streaming (WebRTC)',
     ],
-    color: AppColors.info,
+    color: AppColors.blue,
     isPopular: true,
   ),
   _TierData(
@@ -136,7 +137,7 @@ const _kTiers = [
       'Hardware transcoding (NVENC/VAAPI)',
       'Priority support',
     ],
-    color: AppColors.primary,
+    color: AppColors.violetDeep,
   ),
   _TierData(
     name: 'Ultimate',
@@ -147,7 +148,7 @@ const _kTiers = [
       'AI file organisation',
       'Family sharing',
     ],
-    color: AppColors.accentPurple,
+    color: AppColors.violet,
   ),
 ];
 
@@ -163,10 +164,10 @@ class _TierCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: AppColors.surfaceGlass,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: tier.isPopular ? tier.color : AppColors.surfaceRaised,
+          color: tier.isPopular ? tier.color : AppColors.borderSubtle,
           width: tier.isPopular ? 2 : 1,
         ),
       ),
@@ -184,7 +185,7 @@ class _TierCard extends StatelessWidget {
               children: [
                 Text(
                   tier.name,
-                  style: AppTypography.headingMd.copyWith(color: tier.color),
+                  style: AppTypography.h2.copyWith(color: tier.color),
                 ),
                 if (tier.isPopular) ...[
                   const SizedBox(width: 8),
@@ -197,7 +198,7 @@ class _TierCard extends StatelessWidget {
                     ),
                     child: Text(
                       'POPULAR',
-                      style: AppTypography.label.copyWith(
+                      style: AppTypography.eyebrow.copyWith(
                         color: Colors.white,
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
@@ -211,13 +212,13 @@ class _TierCard extends StatelessWidget {
                   children: [
                     Text(
                       tier.price,
-                      style: AppTypography.headingMd
-                          .copyWith(color: AppColors.textPrimary),
+                      style: AppTypography.h2
+                          .copyWith(color: AppColors.textBright),
                     ),
                     Text(
                       tier.streams,
-                      style: AppTypography.label
-                          .copyWith(color: AppColors.textSecondary),
+                      style: AppTypography.eyebrow
+                          .copyWith(color: AppColors.textMutedV2),
                     ),
                   ],
                 ),
@@ -240,8 +241,8 @@ class _TierCard extends StatelessWidget {
                             Expanded(
                               child: Text(
                                 f,
-                                style: AppTypography.bodySm.copyWith(
-                                    color: AppColors.textSecondary),
+                                style: AppTypography.bodySmall.copyWith(
+                                    color: AppColors.textMutedV2),
                               ),
                             ),
                           ],
@@ -266,9 +267,9 @@ class _ActivationInstructions extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: AppColors.surfaceGlass,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.surfaceRaised),
+        border: Border.all(color: AppColors.borderSubtle),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -276,12 +277,12 @@ class _ActivationInstructions extends StatelessWidget {
           Row(
             children: [
               const Icon(Icons.info_outline,
-                  color: AppColors.primary, size: 20),
+                  color: AppColors.violet, size: 20),
               const SizedBox(width: 8),
               Text(
                 'How to Activate',
-                style: AppTypography.headingMd
-                    .copyWith(color: AppColors.textPrimary),
+                style: AppTypography.h2
+                    .copyWith(color: AppColors.textBright),
               ),
             ],
           ),
@@ -320,12 +321,12 @@ class _Step extends StatelessWidget {
             height: 24,
             alignment: Alignment.center,
             decoration: const BoxDecoration(
-              color: AppColors.primary,
+              color: AppColors.violet,
               shape: BoxShape.circle,
             ),
             child: Text(
               '$number',
-              style: AppTypography.label.copyWith(
+              style: AppTypography.eyebrow.copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.w700,
                 fontSize: 12,
@@ -339,7 +340,7 @@ class _Step extends StatelessWidget {
               child: Text(
                 text,
                 style:
-                    AppTypography.bodySm.copyWith(color: AppColors.textSecondary),
+                    AppTypography.bodySmall.copyWith(color: AppColors.textMutedV2),
               ),
             ),
           ),

@@ -36,7 +36,7 @@ class _PairingView extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocListener<PairCubit, PairState>(
       listener: (context, state) {
-        if (state is PairApproved) context.go(Routes.library);
+        if (state is PairApproved) context.go(Routes.home);
       },
       child: Scaffold(
         body: SafeArea(
@@ -89,7 +89,7 @@ class _LoadingView extends StatelessWidget {
           const SizedBox(height: AppSizes.s6),
           Text(
             message,
-            style: AppTypography.bodyLg,
+            style: AppTypography.body,
             textAlign: TextAlign.center,
           ),
         ],
@@ -110,24 +110,24 @@ class _PendingView extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(AppSizes.s6),
             decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.1),
+              color: AppColors.violet.withValues(alpha: 0.1),
               shape: BoxShape.circle,
             ),
             child: const Icon(
               Icons.devices_outlined,
-              color: AppColors.primary,
+              color: AppColors.violet,
               size: 48,
             ),
           ),
           const SizedBox(height: AppSizes.s6),
           const Text(
             'Waiting for approval',
-            style: AppTypography.headingLg,
+            style: AppTypography.h1,
           ),
           const SizedBox(height: AppSizes.s3),
           const Text(
             'Open the Fluxora Control Panel on your\nserver and approve this device.',
-            style: AppTypography.bodyMd,
+            style: AppTypography.body,
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: AppSizes.s6),
@@ -157,13 +157,13 @@ class _ErrorView extends StatelessWidget {
         children: [
           const Icon(
             Icons.error_outline,
-            color: AppColors.error,
+            color: AppColors.red,
             size: 48,
           ),
           const SizedBox(height: AppSizes.s4),
           Text(
             message,
-            style: AppTypography.bodyMd,
+            style: AppTypography.body,
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: AppSizes.s6),

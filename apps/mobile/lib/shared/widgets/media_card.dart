@@ -22,9 +22,9 @@ class MediaCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(AppSizes.s4),
         decoration: BoxDecoration(
-          color: AppColors.surface,
+          color: AppColors.surfaceGlass,
           borderRadius: BorderRadius.circular(AppSizes.radiusLg),
-          border: Border.all(color: AppColors.surfaceRaised),
+          border: Border.all(color: AppColors.borderSubtle),
         ),
         child: Row(
           children: [
@@ -36,7 +36,7 @@ class MediaCard extends StatelessWidget {
                 children: [
                   Text(
                     file.title ?? file.name,
-                    style: AppTypography.headingMd,
+                    style: AppTypography.h2,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -44,7 +44,7 @@ class MediaCard extends StatelessWidget {
                     const SizedBox(height: AppSizes.s1),
                     Text(
                       file.overview!,
-                      style: AppTypography.caption,
+                      style: AppTypography.captionV2,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -52,7 +52,7 @@ class MediaCard extends StatelessWidget {
                     const SizedBox(height: AppSizes.s1),
                     Text(
                       _subtitle,
-                      style: AppTypography.caption,
+                      style: AppTypography.captionV2,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -68,7 +68,7 @@ class MediaCard extends StatelessWidget {
             ),
             const Icon(
               Icons.chevron_right,
-              color: AppColors.textMuted,
+              color: AppColors.textDim,
               size: 20,
             ),
           ],
@@ -123,12 +123,12 @@ class _Thumbnail extends StatelessWidget {
         width: 44,
         height: 44,
         decoration: BoxDecoration(
-          color: AppColors.surfaceRaised,
+          color: AppColors.surfaceGlass,
           borderRadius: BorderRadius.circular(AppSizes.radiusMd),
         ),
         child: const Icon(
           Icons.movie_outlined,
-          color: AppColors.textSecondary,
+          color: AppColors.textMutedV2,
           size: 20,
         ),
       );
@@ -150,8 +150,10 @@ class _ResumeBar extends StatelessWidget {
         child: LinearProgressIndicator(
           value: progress,
           minHeight: 3,
-          backgroundColor: AppColors.surfaceRaised,
-          valueColor: const AlwaysStoppedAnimation<Color>(AppColors.primary),
+          // White-8% — matches the FluxPlayerControls progress-track shade
+          // (`borderSubtle` at 6% was too faint to read as a duration cue).
+          backgroundColor: const Color(0x14FFFFFF),
+          valueColor: const AlwaysStoppedAnimation<Color>(AppColors.violet),
         ),
       ),
     );

@@ -81,13 +81,13 @@ class _FilesView extends StatelessWidget {
                 children: [
                   const Icon(
                     Icons.error_outline,
-                    color: AppColors.error,
+                    color: AppColors.red,
                     size: 48,
                   ),
                   const SizedBox(height: AppSizes.s4),
                   Text(
                     message,
-                    style: AppTypography.bodyMd,
+                    style: AppTypography.body,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: AppSizes.s4),
@@ -118,17 +118,17 @@ class _EmptyView extends StatelessWidget {
           Icon(
             Icons.folder_open_outlined,
             size: 64,
-            color: AppColors.textMuted,
+            color: AppColors.textDim,
           ),
           SizedBox(height: AppSizes.s4),
           Text(
             'No files in this library',
-            style: AppTypography.headingMd,
+            style: AppTypography.h2,
           ),
           SizedBox(height: AppSizes.s2),
           Text(
             'Trigger a scan from the Control Panel\nto index your files.',
-            style: AppTypography.bodyMd,
+            style: AppTypography.body,
             textAlign: TextAlign.center,
           ),
         ],

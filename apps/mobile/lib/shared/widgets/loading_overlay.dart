@@ -11,7 +11,7 @@ class LoadingOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
-      color: AppColors.background.withValues(alpha: 0.85),
+      color: AppColors.bgRoot.withValues(alpha: 0.85),
       child: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -20,7 +20,7 @@ class LoadingOverlay extends StatelessWidget {
             const SizedBox(height: AppSizes.s4),
             Text(
               message,
-              style: AppTypography.bodyMd,
+              style: AppTypography.body,
               textAlign: TextAlign.center,
             ),
           ],

@@ -10,47 +10,47 @@ class AppTheme {
         useMaterial3: true,
         brightness: Brightness.dark,
         colorScheme: const ColorScheme.dark(
-          primary: AppColors.primary,
-          secondary: AppColors.accent,
-          surface: AppColors.surface,
-          error: AppColors.error,
-          onPrimary: AppColors.textPrimary,
-          onSecondary: AppColors.background,
-          onSurface: AppColors.textPrimary,
-          onError: AppColors.textPrimary,
+          primary: AppColors.violet,
+          secondary: AppColors.cyan,
+          surface: AppColors.surfaceGlass,
+          error: AppColors.red,
+          onPrimary: AppColors.textBright,
+          onSecondary: AppColors.bgRoot,
+          onSurface: AppColors.textBright,
+          onError: AppColors.textBright,
         ),
-        scaffoldBackgroundColor: AppColors.background,
-        cardColor: AppColors.surface,
-        dividerColor: AppColors.surfaceRaised,
+        scaffoldBackgroundColor: AppColors.bgRoot,
+        cardColor: AppColors.surfaceGlass,
+        dividerColor: AppColors.borderSubtle,
         textTheme: const TextTheme(
-          displayLarge: AppTypography.displayLg,
-          displayMedium: AppTypography.displayMd,
-          headlineLarge: AppTypography.headingLg,
-          headlineMedium: AppTypography.headingMd,
-          headlineSmall: AppTypography.headingSm,
-          bodyLarge: AppTypography.bodyLg,
-          bodyMedium: AppTypography.bodyMd,
-          bodySmall: AppTypography.bodySm,
-          labelLarge: AppTypography.label,
-          labelSmall: AppTypography.caption,
+          displayLarge: AppTypography.displayV2,
+          displayMedium: AppTypography.displayV2,
+          headlineLarge: AppTypography.h1,
+          headlineMedium: AppTypography.h2,
+          headlineSmall: AppTypography.h2,
+          bodyLarge: AppTypography.body,
+          bodyMedium: AppTypography.body,
+          bodySmall: AppTypography.bodySmall,
+          labelLarge: AppTypography.eyebrow,
+          labelSmall: AppTypography.captionV2,
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.textPrimary,
+          backgroundColor: AppColors.surfaceGlass,
+          foregroundColor: AppColors.textBright,
           elevation: 0,
           centerTitle: false,
-          titleTextStyle: AppTypography.headingMd,
+          titleTextStyle: AppTypography.h2,
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primary,
-            foregroundColor: AppColors.textPrimary,
+            backgroundColor: AppColors.violet,
+            foregroundColor: AppColors.textBright,
             shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.all(
                 Radius.circular(AppSizes.radiusMd),
               ),
             ),
-            textStyle: AppTypography.headingMd,
+            textStyle: AppTypography.h2,
             padding: const EdgeInsets.symmetric(
               horizontal: AppSizes.s6,
               vertical: AppSizes.s4,
@@ -59,14 +59,14 @@ class AppTheme {
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.textPrimary,
-            side: const BorderSide(color: AppColors.surfaceRaised),
+            foregroundColor: AppColors.textBright,
+            side: const BorderSide(color: AppColors.borderSubtle),
             shape: const RoundedRectangleBorder(
               borderRadius: BorderRadius.all(
                 Radius.circular(AppSizes.radiusMd),
               ),
             ),
-            textStyle: AppTypography.headingMd,
+            textStyle: AppTypography.h2,
             padding: const EdgeInsets.symmetric(
               horizontal: AppSizes.s6,
               vertical: AppSizes.s4,
@@ -74,28 +74,33 @@ class AppTheme {
           ),
         ),
         inputDecorationTheme: const InputDecorationTheme(
-          fillColor: AppColors.surface,
+          // Opaque equivalent of surfaceGlass over bgRoot — V2 has no
+          // mid-tier opaque surface token (plan §4: do not add one), but
+          // a translucent fill on a Material TextField bleeds the radial
+          // gradient through the input chrome. This matches the prototype's
+          // bgRaised value used in FluxBottomSheet.
+          fillColor: Color(0xFF0F0C24),
           filled: true,
           border: OutlineInputBorder(
-            borderSide: BorderSide(color: AppColors.surfaceRaised),
+            borderSide: BorderSide(color: AppColors.borderSubtle),
             borderRadius:
                 BorderRadius.all(Radius.circular(AppSizes.radiusMd)),
           ),
           enabledBorder: OutlineInputBorder(
-            borderSide: BorderSide(color: AppColors.surfaceRaised),
+            borderSide: BorderSide(color: AppColors.borderSubtle),
             borderRadius:
                 BorderRadius.all(Radius.circular(AppSizes.radiusMd)),
           ),
           focusedBorder: OutlineInputBorder(
-            borderSide: BorderSide(color: AppColors.primary),
+            borderSide: BorderSide(color: AppColors.violet),
             borderRadius:
                 BorderRadius.all(Radius.circular(AppSizes.radiusMd)),
           ),
-          labelStyle: AppTypography.bodyMd,
-          hintStyle: AppTypography.bodyMd,
+          labelStyle: AppTypography.body,
+          hintStyle: AppTypography.body,
         ),
         cardTheme: const CardThemeData(
-          color: AppColors.surface,
+          color: AppColors.surfaceGlass,
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius:
@@ -103,13 +108,18 @@ class AppTheme {
           ),
           margin: EdgeInsets.zero,
         ),
-        iconTheme: const IconThemeData(color: AppColors.textSecondary),
+        iconTheme: const IconThemeData(color: AppColors.textMutedV2),
         progressIndicatorTheme: const ProgressIndicatorThemeData(
-          color: AppColors.primary,
+          color: AppColors.violet,
         ),
         snackBarTheme: const SnackBarThemeData(
-          backgroundColor: AppColors.surfaceRaised,
-          contentTextStyle: AppTypography.bodyMd,
+          backgroundColor: AppColors.surfaceGlass,
+          contentTextStyle: AppTypography.body,
+        ),
+        dividerTheme: const DividerThemeData(
+          color: AppColors.borderSubtle,
+          thickness: 1,
+          space: 0,
         ),
       );
 }
