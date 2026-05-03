@@ -15,7 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$Library {
 
- String get id; String get name; LibraryType get type; List<String> get rootPaths;@JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson) DateTime? get lastScanned;@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime get createdAt;
+ String get id; String get name; LibraryType get type; List<String> get rootPaths;@JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson) DateTime? get lastScanned;@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime get createdAt; int get fileCount; int get totalSizeBytes; List<String> get coverUrls;
 /// Create a copy of Library
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +28,16 @@ $LibraryCopyWith<Library> get copyWith => _$LibraryCopyWithImpl<Library>(this as
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Library&&(identical(other.id, id) || other.id == id)&&(identical(other.name, name) || other.name == name)&&(identical(other.type, type) || other.type == type)&&const DeepCollectionEquality().equals(other.rootPaths, rootPaths)&&(identical(other.lastScanned, lastScanned) || other.lastScanned == lastScanned)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Library&&(identical(other.id, id) || other.id == id)&&(identical(other.name, name) || other.name == name)&&(identical(other.type, type) || other.type == type)&&const DeepCollectionEquality().equals(other.rootPaths, rootPaths)&&(identical(other.lastScanned, lastScanned) || other.lastScanned == lastScanned)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.fileCount, fileCount) || other.fileCount == fileCount)&&(identical(other.totalSizeBytes, totalSizeBytes) || other.totalSizeBytes == totalSizeBytes)&&const DeepCollectionEquality().equals(other.coverUrls, coverUrls));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,name,type,const DeepCollectionEquality().hash(rootPaths),lastScanned,createdAt);
+int get hashCode => Object.hash(runtimeType,id,name,type,const DeepCollectionEquality().hash(rootPaths),lastScanned,createdAt,fileCount,totalSizeBytes,const DeepCollectionEquality().hash(coverUrls));
 
 @override
 String toString() {
-  return 'Library(id: $id, name: $name, type: $type, rootPaths: $rootPaths, lastScanned: $lastScanned, createdAt: $createdAt)';
+  return 'Library(id: $id, name: $name, type: $type, rootPaths: $rootPaths, lastScanned: $lastScanned, createdAt: $createdAt, fileCount: $fileCount, totalSizeBytes: $totalSizeBytes, coverUrls: $coverUrls)';
 }
 
 
@@ -48,7 +48,7 @@ abstract mixin class $LibraryCopyWith<$Res>  {
   factory $LibraryCopyWith(Library value, $Res Function(Library) _then) = _$LibraryCopyWithImpl;
 @useResult
 $Res call({
- String id, String name, LibraryType type, List<String> rootPaths,@JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson) DateTime? lastScanned,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime createdAt
+ String id, String name, LibraryType type, List<String> rootPaths,@JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson) DateTime? lastScanned,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime createdAt, int fileCount, int totalSizeBytes, List<String> coverUrls
 });
 
 
@@ -65,7 +65,7 @@ class _$LibraryCopyWithImpl<$Res>
 
 /// Create a copy of Library
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? name = null,Object? type = null,Object? rootPaths = null,Object? lastScanned = freezed,Object? createdAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? name = null,Object? type = null,Object? rootPaths = null,Object? lastScanned = freezed,Object? createdAt = null,Object? fileCount = null,Object? totalSizeBytes = null,Object? coverUrls = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
@@ -73,7 +73,10 @@ as String,type: null == type ? _self.type : type // ignore: cast_nullable_to_non
 as LibraryType,rootPaths: null == rootPaths ? _self.rootPaths : rootPaths // ignore: cast_nullable_to_non_nullable
 as List<String>,lastScanned: freezed == lastScanned ? _self.lastScanned : lastScanned // ignore: cast_nullable_to_non_nullable
 as DateTime?,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
-as DateTime,
+as DateTime,fileCount: null == fileCount ? _self.fileCount : fileCount // ignore: cast_nullable_to_non_nullable
+as int,totalSizeBytes: null == totalSizeBytes ? _self.totalSizeBytes : totalSizeBytes // ignore: cast_nullable_to_non_nullable
+as int,coverUrls: null == coverUrls ? _self.coverUrls : coverUrls // ignore: cast_nullable_to_non_nullable
+as List<String>,
   ));
 }
 
@@ -158,10 +161,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String name,  LibraryType type,  List<String> rootPaths, @JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson)  DateTime? lastScanned, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String name,  LibraryType type,  List<String> rootPaths, @JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson)  DateTime? lastScanned, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt,  int fileCount,  int totalSizeBytes,  List<String> coverUrls)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _Library() when $default != null:
-return $default(_that.id,_that.name,_that.type,_that.rootPaths,_that.lastScanned,_that.createdAt);case _:
+return $default(_that.id,_that.name,_that.type,_that.rootPaths,_that.lastScanned,_that.createdAt,_that.fileCount,_that.totalSizeBytes,_that.coverUrls);case _:
   return orElse();
 
 }
@@ -179,10 +182,10 @@ return $default(_that.id,_that.name,_that.type,_that.rootPaths,_that.lastScanned
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String name,  LibraryType type,  List<String> rootPaths, @JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson)  DateTime? lastScanned, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String name,  LibraryType type,  List<String> rootPaths, @JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson)  DateTime? lastScanned, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt,  int fileCount,  int totalSizeBytes,  List<String> coverUrls)  $default,) {final _that = this;
 switch (_that) {
 case _Library():
-return $default(_that.id,_that.name,_that.type,_that.rootPaths,_that.lastScanned,_that.createdAt);case _:
+return $default(_that.id,_that.name,_that.type,_that.rootPaths,_that.lastScanned,_that.createdAt,_that.fileCount,_that.totalSizeBytes,_that.coverUrls);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -199,10 +202,10 @@ return $default(_that.id,_that.name,_that.type,_that.rootPaths,_that.lastScanned
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String name,  LibraryType type,  List<String> rootPaths, @JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson)  DateTime? lastScanned, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String name,  LibraryType type,  List<String> rootPaths, @JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson)  DateTime? lastScanned, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)  DateTime createdAt,  int fileCount,  int totalSizeBytes,  List<String> coverUrls)?  $default,) {final _that = this;
 switch (_that) {
 case _Library() when $default != null:
-return $default(_that.id,_that.name,_that.type,_that.rootPaths,_that.lastScanned,_that.createdAt);case _:
+return $default(_that.id,_that.name,_that.type,_that.rootPaths,_that.lastScanned,_that.createdAt,_that.fileCount,_that.totalSizeBytes,_that.coverUrls);case _:
   return null;
 
 }
@@ -214,7 +217,7 @@ return $default(_that.id,_that.name,_that.type,_that.rootPaths,_that.lastScanned
 @JsonSerializable()
 
 class _Library implements Library {
-  const _Library({required this.id, required this.name, required this.type, required final  List<String> rootPaths, @JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson) this.lastScanned, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) required this.createdAt}): _rootPaths = rootPaths;
+  const _Library({required this.id, required this.name, required this.type, required final  List<String> rootPaths, @JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson) this.lastScanned, @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) required this.createdAt, this.fileCount = 0, this.totalSizeBytes = 0, final  List<String> coverUrls = const <String>[]}): _rootPaths = rootPaths,_coverUrls = coverUrls;
   factory _Library.fromJson(Map<String, dynamic> json) => _$LibraryFromJson(json);
 
 @override final  String id;
@@ -229,6 +232,15 @@ class _Library implements Library {
 
 @override@JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson) final  DateTime? lastScanned;
 @override@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) final  DateTime createdAt;
+@override@JsonKey() final  int fileCount;
+@override@JsonKey() final  int totalSizeBytes;
+ final  List<String> _coverUrls;
+@override@JsonKey() List<String> get coverUrls {
+  if (_coverUrls is EqualUnmodifiableListView) return _coverUrls;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(_coverUrls);
+}
+
 
 /// Create a copy of Library
 /// with the given fields replaced by the non-null parameter values.
@@ -243,16 +255,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Library&&(identical(other.id, id) || other.id == id)&&(identical(other.name, name) || other.name == name)&&(identical(other.type, type) || other.type == type)&&const DeepCollectionEquality().equals(other._rootPaths, _rootPaths)&&(identical(other.lastScanned, lastScanned) || other.lastScanned == lastScanned)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Library&&(identical(other.id, id) || other.id == id)&&(identical(other.name, name) || other.name == name)&&(identical(other.type, type) || other.type == type)&&const DeepCollectionEquality().equals(other._rootPaths, _rootPaths)&&(identical(other.lastScanned, lastScanned) || other.lastScanned == lastScanned)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.fileCount, fileCount) || other.fileCount == fileCount)&&(identical(other.totalSizeBytes, totalSizeBytes) || other.totalSizeBytes == totalSizeBytes)&&const DeepCollectionEquality().equals(other._coverUrls, _coverUrls));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,name,type,const DeepCollectionEquality().hash(_rootPaths),lastScanned,createdAt);
+int get hashCode => Object.hash(runtimeType,id,name,type,const DeepCollectionEquality().hash(_rootPaths),lastScanned,createdAt,fileCount,totalSizeBytes,const DeepCollectionEquality().hash(_coverUrls));
 
 @override
 String toString() {
-  return 'Library(id: $id, name: $name, type: $type, rootPaths: $rootPaths, lastScanned: $lastScanned, createdAt: $createdAt)';
+  return 'Library(id: $id, name: $name, type: $type, rootPaths: $rootPaths, lastScanned: $lastScanned, createdAt: $createdAt, fileCount: $fileCount, totalSizeBytes: $totalSizeBytes, coverUrls: $coverUrls)';
 }
 
 
@@ -263,7 +275,7 @@ abstract mixin class _$LibraryCopyWith<$Res> implements $LibraryCopyWith<$Res> {
   factory _$LibraryCopyWith(_Library value, $Res Function(_Library) _then) = __$LibraryCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String name, LibraryType type, List<String> rootPaths,@JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson) DateTime? lastScanned,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime createdAt
+ String id, String name, LibraryType type, List<String> rootPaths,@JsonKey(fromJson: utcDateTimeOrNullFromJson, toJson: utcDateTimeOrNullToJson) DateTime? lastScanned,@JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson) DateTime createdAt, int fileCount, int totalSizeBytes, List<String> coverUrls
 });
 
 
@@ -280,7 +292,7 @@ class __$LibraryCopyWithImpl<$Res>
 
 /// Create a copy of Library
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? name = null,Object? type = null,Object? rootPaths = null,Object? lastScanned = freezed,Object? createdAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? name = null,Object? type = null,Object? rootPaths = null,Object? lastScanned = freezed,Object? createdAt = null,Object? fileCount = null,Object? totalSizeBytes = null,Object? coverUrls = null,}) {
   return _then(_Library(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
@@ -288,7 +300,10 @@ as String,type: null == type ? _self.type : type // ignore: cast_nullable_to_non
 as LibraryType,rootPaths: null == rootPaths ? _self._rootPaths : rootPaths // ignore: cast_nullable_to_non_nullable
 as List<String>,lastScanned: freezed == lastScanned ? _self.lastScanned : lastScanned // ignore: cast_nullable_to_non_nullable
 as DateTime?,createdAt: null == createdAt ? _self.createdAt : createdAt // ignore: cast_nullable_to_non_nullable
-as DateTime,
+as DateTime,fileCount: null == fileCount ? _self.fileCount : fileCount // ignore: cast_nullable_to_non_nullable
+as int,totalSizeBytes: null == totalSizeBytes ? _self.totalSizeBytes : totalSizeBytes // ignore: cast_nullable_to_non_nullable
+as int,coverUrls: null == coverUrls ? _self._coverUrls : coverUrls // ignore: cast_nullable_to_non_nullable
+as List<String>,
   ));
 }
 

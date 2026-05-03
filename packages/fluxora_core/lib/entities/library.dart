@@ -19,6 +19,9 @@ abstract class Library with _$Library {
     DateTime? lastScanned,
     @JsonKey(fromJson: utcDateTimeFromJson, toJson: utcDateTimeToJson)
     required DateTime createdAt,
+    @Default(0) int fileCount,
+    @Default(0) int totalSizeBytes,
+    @Default(<String>[]) List<String> coverUrls,
   }) = _Library;
 
   factory Library.fromJson(Map<String, dynamic> json) =>

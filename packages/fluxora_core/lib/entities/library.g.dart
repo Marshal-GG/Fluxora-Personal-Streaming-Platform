@@ -15,6 +15,13 @@ _Library _$LibraryFromJson(Map<String, dynamic> json) => _Library(
       .toList(),
   lastScanned: utcDateTimeOrNullFromJson(json['last_scanned'] as String?),
   createdAt: utcDateTimeFromJson(json['created_at'] as String),
+  fileCount: (json['file_count'] as num?)?.toInt() ?? 0,
+  totalSizeBytes: (json['total_size_bytes'] as num?)?.toInt() ?? 0,
+  coverUrls:
+      (json['cover_urls'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList() ??
+      const <String>[],
 );
 
 Map<String, dynamic> _$LibraryToJson(_Library instance) => <String, dynamic>{
@@ -24,6 +31,9 @@ Map<String, dynamic> _$LibraryToJson(_Library instance) => <String, dynamic>{
   'root_paths': instance.rootPaths,
   'last_scanned': utcDateTimeOrNullToJson(instance.lastScanned),
   'created_at': utcDateTimeToJson(instance.createdAt),
+  'file_count': instance.fileCount,
+  'total_size_bytes': instance.totalSizeBytes,
+  'cover_urls': instance.coverUrls,
 };
 
 const _$LibraryTypeEnumMap = {
