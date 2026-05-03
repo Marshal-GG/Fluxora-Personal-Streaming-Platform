@@ -107,6 +107,47 @@ class MockEpisode {
   final double? progress;
 }
 
+enum MockDownloadStatus { downloading, completed }
+
+class MockDownload {
+  const MockDownload({
+    required this.id,
+    required this.title,
+    required this.gradient,
+    required this.size,
+    required this.status,
+    this.episodes,
+    this.qualityBadge,
+    this.speed,
+    this.progress,
+    this.expires,
+  });
+
+  final String id;
+  final String title;
+  final Gradient gradient;
+
+  /// Display string. For downloading: "0.8 / 4.5 GB". For completed: "8.4 GB".
+  final String size;
+
+  final MockDownloadStatus status;
+
+  /// Optional — only set on TV-show downloads.
+  final String? episodes;
+
+  /// Optional — "1080p", "4K", "HDR". Rendered next to size in the meta row.
+  final String? qualityBadge;
+
+  /// Only for [MockDownloadStatus.downloading]. e.g. "12.4 MB/s".
+  final String? speed;
+
+  /// Only for [MockDownloadStatus.downloading]. 0.0–1.0.
+  final double? progress;
+
+  /// Only for [MockDownloadStatus.completed]. e.g. "in 28 days" or "—".
+  final String? expires;
+}
+
 /// Static gradients matching the prototype's mock-data colour names.
 class MockGradients {
   static const violetCyan = LinearGradient(
@@ -433,4 +474,71 @@ class MockData {
     return null;
   }
 
+  // ── Downloads (mock) ──────────────────────────────────────────────────
+
+  /// Combined storage indicator — used / total in GB.
+  static const double storageUsedGb = 26.3;
+  static const double storageTotalGb = 64.0;
+
+  static List<MockDownload> downloads = const [
+    MockDownload(
+      id: 'dl-1',
+      title: 'Velvet Horizon',
+      gradient: MockGradients.violetDeep,
+      size: '5.4 / 8.4 GB',
+      status: MockDownloadStatus.downloading,
+      qualityBadge: '4K',
+      speed: '12.4 MB/s',
+      progress: 0.64,
+    ),
+    MockDownload(
+      id: 'dl-2',
+      title: 'Echoes of Tomorrow',
+      gradient: MockGradients.violetCyan,
+      size: '0.8 / 4.5 GB',
+      status: MockDownloadStatus.downloading,
+      episodes: 'S1 E2',
+      qualityBadge: 'HDR',
+      speed: '8.1 MB/s',
+      progress: 0.18,
+    ),
+    MockDownload(
+      id: 'dl-3',
+      title: 'Quantum Drift',
+      gradient: MockGradients.emeraldBlue,
+      size: '8.4 GB',
+      status: MockDownloadStatus.completed,
+      qualityBadge: '1080p',
+      expires: 'in 28 days',
+    ),
+    MockDownload(
+      id: 'dl-4',
+      title: 'The Last Signal',
+      gradient: MockGradients.emeraldBlue,
+      size: '2.1 GB',
+      status: MockDownloadStatus.completed,
+      episodes: '5 of 10 eps',
+      qualityBadge: '1080p',
+      expires: 'in 12 days',
+    ),
+    MockDownload(
+      id: 'dl-5',
+      title: 'Solar Tides',
+      gradient: MockGradients.amberRose,
+      size: '11.2 GB',
+      status: MockDownloadStatus.completed,
+      qualityBadge: '4K',
+      expires: 'in 30 days',
+    ),
+    MockDownload(
+      id: 'dl-6',
+      title: 'Aurora Drift',
+      gradient: MockGradients.indigoCyan,
+      size: '4.6 GB',
+      status: MockDownloadStatus.completed,
+      episodes: 'all eps',
+      qualityBadge: '1080p',
+      expires: '—',
+    ),
+  ];
 }

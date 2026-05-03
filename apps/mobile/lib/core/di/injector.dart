@@ -8,6 +8,9 @@ import 'package:fluxora_mobile/features/connect/data/repositories/server_discove
 import 'package:fluxora_mobile/features/connect/domain/repositories/server_discovery_repository.dart';
 import 'package:fluxora_mobile/features/library/data/repositories/library_repository_impl.dart';
 import 'package:fluxora_mobile/features/library/domain/repositories/library_repository.dart';
+import 'package:fluxora_mobile/features/notifications/data/repositories/notifications_repository_impl.dart';
+import 'package:fluxora_mobile/features/notifications/domain/repositories/notifications_repository.dart';
+import 'package:fluxora_mobile/features/notifications/presentation/cubit/notifications_cubit.dart';
 import 'package:fluxora_mobile/features/player/data/repositories/player_repository_impl.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
@@ -68,5 +71,16 @@ Future<void> setupInjector() async {
       repository: getIt<PlayerRepository>(),
       secureStorage: getIt<SecureStorage>(),
     ),
+  );
+
+  getIt.registerLazySingleton<NotificationsRepository>(
+    () => NotificationsRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+
+  // Singleton so the notifications screen's poll loop keeps running across
+  // back-pops (the screen pushes off the stack but the live tail must stay
+  // open for unread-count surfacing on the home tab bell).
+  getIt.registerLazySingleton<NotificationsCubit>(
+    () => NotificationsCubit(repository: getIt<NotificationsRepository>()),
   );
 }
