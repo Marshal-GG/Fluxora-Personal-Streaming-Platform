@@ -6,21 +6,29 @@
 
 ---
 
-## Current State Summary (From Archive 04)
-**Archived:** 2026-05-02
-**Contents:** Public-routing v1 close-out (Phases 1–5) · Dart 3.9 floor bump · M0 desktop-redesign backend chunks §7.5–§7.7 · M1 Foundation tokens + primitives + brand widgets · Web landing page redesign + SEO push · Doc sweeps after each.
+## Current State Summary (From Archive 05)
+**Archived:** 2026-05-03
+**Contents:** M0 backend close-out (8 chunks) · V2 theme cutover (M9.5) · M10 desktop custom window chrome + Fluxora app icon + Aero Peek · CI golden exclusions · Mobile redesign M0–M7 (foundation → mini-player + drag-down minimize).
 
-* **Public routing v1 (Phases 1–5):** Cloudflare Tunnel topology live (`fluxora-api.marshalx.dev`); `RealIPMiddleware`, `HLSBlockOverTunnelMiddleware`, `/healthz`, `remote_url` on `/info`, dual-base `ApiClient` (LAN + remote routing via `NetworkPathDetector`), mobile pairing persists `remote_url`, desktop Dashboard "Remote: on/off" pill + Settings Remote Access section with on-demand `/healthz` probe. Phase 6 hardening (TURN, Cloudflare Access, WAF, tunnel-health alerts) folded into operator-driven manual tasks.
-* **Dart 3.9 floor bump:** SDK floor `>=3.8.0` → `>=3.9.0` in all three pubspecs; CI Flutter pinned 3.32 → 3.41.3; dropped `json_annotation`, `json_serializable`, `build_runner`, `go_router` ceilings. `.devcontainer/Dockerfile` updated.
-* **M0 backend chunks §7.5–§7.7:** library storage breakdown (`/library/storage-breakdown`), live system stats (`/info/stats` REST + `/ws/stats`), restart/stop endpoints (`/info/restart`, `/info/stop`).
-* **Desktop redesign M1 Foundation:** v2 design tokens (`bgRoot=#08061A`, `primary=#A855F7`, glassmorphic surfaces, 7-pill semantics) + 11 primitive widgets in `apps/desktop/lib/shared/widgets/` + brand widgets (FluxoraMark, FluxoraWordmark, BrandLoader, EmptyState) in `fluxora_core` + 4 animated SMIL SVGs + hi-fi logo PNGs. `/showcase` route renders every primitive. `flutter_svg 2.2.4` added.
-* **M2 Shell:** redesigned 232px `flux_sidebar.dart` (logo + 9 nav items + System Status block + Upgrade card + user footer), 28px `flux_status_bar.dart` strip, new routes (`/dashboard`, `/library`, `/clients`, `/groups`, `/activity`, `/transcoding`, `/logs`, `/settings`, `/subscription`, `/profile`, `/help`), `SystemStatsCubit` consuming `/ws/stats`.
-* **Web landing redesign:** full v2 violet brand on `apps/web_landing/`; 6 new components (PopularMovies, LibraryTiles, TierComparison, FAQ, AboutStrip, FinalCta); 7 modified (Navbar, Hero, Features, HowItWorks, Pricing, Platforms, Footer); SEO push (JSON-LD `Organization` + `WebSite` + `SoftwareApplication` + `FAQPage`, OpenGraph, Twitter card, robots.ts + sitemap.ts + manifest.json). Production build green; 7 routes prerendered for Cloudflare Pages.
+* **M0 backend close-out (2026-05-02):** Eight chunks shipped end-to-end (groups + restrictions, profile, notifications, activity, transcoding-status, structured logs + WS tail, settings extension, orders pagination). Migrations 011–015. Server suite 149 → 240 passing. New URL inventory at `docs/05_infrastructure/02_url_inventory.md`.
+* **V2 theme cutover (M9.5, 2026-05-03):** Desktop redesign reached the breaking-PR cutover — `apps/desktop/lib/shared/theme/app_theme.dart` body rewritten to consume V2 tokens (`bgRoot`, `violet`, `surfaceGlass`, `textBright`, `h2`, `body`, etc.). Legacy `AppColors.primary` (indigo) and the old text styles removed. Both apps now share the V2 desktop palette via `fluxora_core/lib/constants/`.
+* **Desktop M10 — custom window chrome (2026-05-03):** `bitsdojo_window` integration + sidebar logo removal + custom title bar across Win/Mac/Linux. Fluxora app icon shipped (`.ico` for Win + `.icns` for Mac); MSI/DMG version metadata wired; Aero Peek + jump list shell integration on Windows.
+* **Docs sync + CI hardening (2026-05-03):** Documentation rolled forward to reflect M8 a11y, golden enable, M10 titlebar, Aero Peek. Golden tests excluded from CI run via `--exclude-tags=golden`.
+* **Mobile redesign M0 — Foundation (2026-05-03):** No new theme tokens. Added `google_fonts: ^8.1.0`, `lucide_icons_flutter: ^3.1.13`, bumped `cached_network_image: ^3.3.1 → ^3.4.1`. New `background_gradient.dart` mounts the prototype's two-radial brand gradient app-wide; existing screens unchanged (still opaque scaffolds → gradient hidden until M2).
+* **Mobile branding pass (2026-05-03):** Adaptive launcher icons + iOS app icon set + splash + GeneratedPluginRegistrant updates synced from the brand assets in `/assets/brand/`.
+* **Mobile M1 — Shared widgets lift (2026-05-03):** `FluxButton` + `FluxChip` (renamed from `Pill`) lifted from desktop into `fluxora_core`; 7 new core widgets: `FluxAppBar`, `FluxBottomTabs`, `FluxBottomSheet` + `showFluxBottomSheet()`, `FluxPoster`, `FluxRow`, `FluxSectionHeader`. 13 desktop call-sites migrated to import from `fluxora_core`.
+* **Mobile M2 — Tab shell (2026-05-03):** `MobileShell` wraps `StatefulNavigationShell` with `FluxBottomTabs`. `app_router.dart` rewritten as `StatefulShellRoute.indexedStack`. 5 tab routes (`/home`, `/library`, `/search`, `/downloads`, `/profile`). Auth gates + deep-link routes bypass the shell.
+* **Mobile M3 — Discover surfaces (2026-05-03):** New `mock_data.dart` (continue-watching / trending / recently-added / search / notifications). New screens: `home_screen` (3 rails), `search_screen` (active/empty/no-results), `notifications_screen` (Today/Week/Earlier buckets). `library_screen` rewritten with 6 filter chips + grid/list toggle.
+* **Mobile M4 — Title detail + episodes (2026-05-03):** `mock_data.dart` extended with detail-rich variants (`MockCastMember` / `MockSeason` / `MockEpisode` + `findById`). New `detail_screen.dart` (hero + Play/Episodes + 4-up actions + collapsible synopsis + cast/crew/similar rails). New `episodes_screen.dart` (season chips + episode rows). Top-level `/detail/:id` and `/episodes/:id` routes.
+* **Mobile M5 — Player chrome rebuild (2026-05-03):** `_VideoView` body now `Stack(Video + FluxPlayerControls)`. New `PlayerControlsController(ChangeNotifier)` + `FluxPlayerControls` widget (top bar, center transport, progress bar, 8-up quick-actions, side rails, lock chip). All 25 PlayerCubit tests still pass — cubit interface untouched.
+* **Mobile M6 — Player gestures + 5 bottom sheets (2026-05-03):** `screen_brightness ^2.1.7` added. Sheets: audio_subs / speed / sleep / quality (stub) / cast (stub). Gestures: double-tap seek ± 10 s + ripple, long-press 2× peek, vertical drag = brightness/volume + HUD pill, pinch = fit toggle. Hold-to-unlock circular progress ring (1.2 s).
+* **Mobile M7 — Mini-player + drag-down minimize (2026-05-03):** `PlayerCubit` promoted to `GetIt.lazySingleton` (the `PlaybackProvider` per plan §9.2); refactored with `_disposeCurrentSession` + restart-safe `startStream` + new `dismiss()`. New `flux_mini_player.dart` (64 px, mounted in `MobileShell.bottomNavigationBar` above `FluxBottomTabs`). New `Routes.playerResume` + `PlayerScreen.resume()` constructor. Drag-down handle (24 px top strip) accumulates `_dragOffset`; release ≥ 150 px pops the route, springs back otherwise. The carried-forward M7 entry below has the full detail.
 
 **Next Immediate Steps:**
-1. **M0 backend §7.1–§7.4 + §7.8–§7.11** — six remaining chunks (groups, profile, notifications, activity, transcoding-status, logs-structured, settings-extension, orders-pagination).
-2. **Desktop redesign M3 Dashboard** — pixel-verified Dashboard with live-tick wiring, sparkline, donut.
-3. **Operator tasks** for Phase 6 routing hardening (Cloudflare Access on `/orders` + `/info/logs`, WAF rules, tunnel-health alerts, TURN evaluation) — track in `docs/10_planning/04_manual_tasks.md`.
+1. **Mobile M9 — theme cutover.** Delete legacy `AppColors.primary` (indigo `#6366F1`) and superseded styles; rewrite `apps/mobile/lib/shared/theme/app_theme.dart` body to consume V2 tokens. Per plan §7 row M9 — the breaking PR for mobile.
+2. **Mobile M10 — X-Ray panel + Group Watch shell + Offline state.** UI shells only per plan §1 row 4.
+3. **Visual smoke test the M5–M8 chain** on a physical Android + iOS device (poster tap → drag-down → mini-player → tap to resume → close X tearing down the stream).
+4. **macOS / Linux desktop runners** for the M10 custom window chrome — Win shell integration shipped, the other platforms are pending.
 
 ---
 
@@ -66,888 +74,387 @@
 
 ---
 
-## [2026-05-02] — M0 backend close-out (§7.1–§7.4, §7.8–§7.11) + URL inventory
-**Phase:** Phase 5 — Desktop redesign M0 (backend prerequisites)
-**Status:** Complete — M0 backend milestone fully shipped; only desktop UI work remains for the redesign.
-
-### What Was Done
-
-Eight M0 chunks shipped end-to-end (code + tests + docs). Server suite **149 → 240 passing**. Migrations **001–010 → 001–015**. Routers added: `groups`, `profile`, `notifications`, `activity`, `transcoding`, `logs`. New URL inventory doc.
-
-#### §7.1 Client groups + stream-gate restriction enforcement (commit `44f9948`)
-- Migration 011: 3 tables (`groups`, `group_members`, `group_restrictions`) + cascading FKs + `idx_group_members_client`.
-- 8 endpoints under `/api/v1/groups/`. GETs allow LAN-with-token; mutations are localhost-only.
-- `services/group_service.py` — CRUD + members + `get_effective_restrictions()` (intersects across every active group: allowed-libraries → set intersection, time-windows → AND-combined, bandwidth → min, rating → advisory).
-- Stream-gate hook in `routers/stream.py:start_stream` calls `reason_to_deny(restrictions, library_id, now)` before the tier check; 403s on library-not-allowed or outside-time-window. Bandwidth and rating advisory in v1.
-- 16 tests in `tests/test_groups.py`.
-
-#### §7.2 Operator profile (commit `4026f3c`)
-- Migration 012: 5 nullable columns on `user_settings` (display_name, email, avatar_path, profile_created_at, last_login_at).
-- `GET /PATCH /api/v1/profile` — localhost only.
-- `avatar_letter` computed server-side: first non-whitespace of display_name, else first char of email local-part, else `'F'`.
-- `update_profile` semantics: empty string clears, None preserves.
-- POST /password and POST /avatar deferred (Fluxora has no operator-password concept; multipart deferred).
-- 9 tests in `tests/test_profile.py`.
-
-#### §7.3 Notifications (commits `f742b3d` + `72662b2`)
-- Migration 013: `notifications` table (type/category CHECKs, read_at/dismissed_at, idx_notifications_unread).
-- 4 REST endpoints under `/api/v1/notifications/` + WS route `/api/v1/ws/notifications`.
-- In-process pub/sub (`subscribe()`/`unsubscribe()`/`broadcast()`) — slow consumers drop frames, 100-frame queue cap.
-- 4 emitter integrations wired with try/except logging-only (so notification-write never breaks underlying flow): auth.create_pair_request → `client/info`; license.emit_license_expiry_warnings (called from main.py lifespan, 1-day cooldown de-dupe) → `license/error|warning`; stream.start_stream FFmpeg-fail → `transcode/error`; library.get_storage_breakdown >90% → `storage/warning`.
-- 12 tests in `tests/test_notifications.py`.
-
-#### §7.4 Activity event log (commit `958ce20`)
-- Migration 014: `activity_events` table + 2 indexes (created DESC, type+created DESC).
-- `GET /api/v1/activity?limit=&since=&type=` — token or localhost. type is a prefix (`stream.` matches start + end).
-- 6 producer call sites wired: stream.start_stream → `stream.start`; stream.stop_stream → `stream.end`; auth.create_pair_request → `client.pair`; auth.approve_client → `client.approve`; auth.reject_client → `client.reject`; library.scan_library → `library.scan` (only when added > 0).
-- All emitters try/except logging-only.
-- 12 tests in `tests/test_activity.py`.
-
-#### §7.8 Transcoding status (commit `7bd85d5`)
-- `GET /api/v1/transcoding/status` — localhost only. Returns active_encoder, available_encoders (intersection of known × `ffmpeg -encoders`), encoder_loads (per-encoder active sessions + GPU probe for active encoder), active_sessions (joined with media_files + clients + clamped progress).
-- `_detect_available_encoders()` runs `ffmpeg -encoders` once per process, caches.
-- `_probe_nvidia()` — best-effort `nvidia-smi --query-gpu=utilization.gpu,memory.used`. Returns (None, None) on any failure (binary missing / timeout / parse fail). 1.5s timeout. QSV/VAAPI probes skipped — too distro-specific.
-- 6 tests in `tests/test_transcoding.py`.
-
-#### §7.9 Structured /logs + WS live tail (commit `76ca854`)
-- File handler in `main.py` switched to JSON-line format (python-json-logger). Console formatter unchanged in dev; unchanged in prod (was already JSON).
-- `GET /api/v1/logs?level=&source=&since=&until=&q=&limit=&cursor=` — localhost only. Returns `{items, next_cursor}`. limit 1..1000 default 200; source is prefix; q is case-insensitive.
-- WS `/api/v1/ws/logs` — frame format `{"type":"log","data":{ts,level,source,message}}`.
-- `BroadcastHandler` attached at startup fans every record out to subscribed asyncio queues.
-- Legacy `/api/v1/info/logs` stays — DEPRECATED.
-- 15 tests in `tests/test_logs.py`.
-
-#### §7.10 Settings extension (commit `5438a33`)
-- Migration 015: 18 ALTER COLUMN on `user_settings` (skipped `max_concurrent_streams` — already in 001). General (8) / Network (4) / Streaming (2) / Security (2) / Advanced (2). `theme_accent` nullable / no default — locked brand to violet by Decision #4 of redesign plan, kept as forward-compat.
-- Models extended with all 18 fields. `Literal[]` guards on `default_library_view`, `preferred_mode`, `default_quality`. Bounds on `session_timeout_minutes` (1..1440) and `ai_segment_duration_seconds`.
-- `update_settings` refactored to dynamic SET-list (only kwargs explicitly passed touch the DB). Tier→`max_concurrent_streams` side-effect preserved.
-- Router PATCH does `**body.model_dump(exclude_none=True)` so adding fields requires no handler change.
-- 16 tests in `tests/test_settings_extended.py`.
-
-#### §7.11 Orders pagination + Polar customer-portal URL (commit `823d6a8`)
-- `GET /api/v1/orders?limit=&cursor=` — limit 1..200 default 20, cursor 0-based row offset. Response gains `total_all` + `next_cursor`.
-- `GET /api/v1/orders/portal-url` — localhost only. Returns `{"url": <FLUXORA_POLAR_PORTAL_URL>}` or 404 when env unset. Polar authorises portal session via magic-link email — no per-customer token.
-- New config: `polar_portal_url` (env: `FLUXORA_POLAR_PORTAL_URL`).
-- 5 tests added to `tests/test_orders.py`.
-
-#### Doc sweeps (commits `93ec4aa`, `6a13a50`, `0654f95`)
-- Three documentation sync commits — paired feature commits with their data-models / schema / API-contracts / backend-arch / component-arch / public-routing / security / data-flows / roadmap / folder-structure / CLAUDE.md / README.md updates.
-- **New canonical URL inventory** at `docs/05_infrastructure/02_url_inventory.md` (created this session): 6 sections covering every server REST endpoint (48), all WS routes (5), hosted public URLs (5), third-party URLs we depend on (8), future / TBD URLs (10) with trigger conditions, and cross-references.
-
-#### Sub-agent leverage
-~6 Sonnet 4.6 sub-agents handled the doc sweeps + the §7.10 settings extension implementation + the §7.4 activity emitters + tests. Main thread retained schema design, service interface design, integration-point identification, subprocess mocking (transcoding tests), and the bug-fix in §7.3 lifespan license-key query (Sonnet had treated `user_settings` as key/value when it's actually singleton). Saved feedback memory tightening the delegation rule: "quality first, delegation second".
-
-### Files Created / Modified
-
-**Server — code (new):**
-| Action | Path |
-|--------|------|
-| Created | `apps/server/database/migrations/011_groups.sql`, `012_profile_fields.sql`, `013_notifications.sql`, `014_activity_events.sql`, `015_extended_settings.sql` |
-| Created | `apps/server/models/group.py`, `profile.py`, `notification.py`, `activity.py`, `transcoding.py`, `log_record.py` |
-| Created | `apps/server/services/group_service.py`, `profile_service.py`, `notification_service.py`, `activity_service.py`, `transcoding_service.py`, `log_service.py` |
-| Created | `apps/server/routers/groups.py`, `profile.py`, `notifications.py`, `activity.py`, `transcoding.py`, `logs.py` |
-| Created | `apps/server/tests/test_groups.py` (16), `test_profile.py` (9), `test_notifications.py` (12), `test_activity.py` (12), `test_transcoding.py` (6), `test_logs.py` (15), `test_settings_extended.py` (16) |
-
-**Server — code (modified):**
-| Action | Path |
-|--------|------|
-| Modified | `apps/server/main.py` — registered 6 new routers; `_setup_logging` attaches `BroadcastHandler`; lifespan step 8a calls `emit_license_expiry_warnings`; file handler swapped to `json` formatter |
-| Modified | `apps/server/config.py` — `polar_portal_url` |
-| Modified | `apps/server/routers/stream.py` — group-restriction gate hook + transcode-fail notification + stream.start/stream.end activity emitters |
-| Modified | `apps/server/routers/orders.py` — pagination + portal-url endpoint |
-| Modified | `apps/server/routers/settings.py` — dynamic field-list update via `**body.model_dump(exclude_none=True)`; `_to_response` rebuilt as field-driven dict comprehension |
-| Modified | `apps/server/routers/ws.py` — `/notifications` and `/logs` WS routes |
-| Modified | `apps/server/services/auth_service.py` — pair-request notification + 3 client.* activity emitters |
-| Modified | `apps/server/services/library_service.py` — storage-warning notification + library.scan activity emitter |
-| Modified | `apps/server/services/license_service.py` — `emit_license_expiry_warnings()` |
-| Modified | `apps/server/services/settings_service.py` — refactored to dynamic SET; `_defaults` covers all 18 new columns |
-| Modified | `apps/server/models/settings.py` — 18 new fields; `Literal[]` guards |
-| Modified | `apps/server/models/order.py` — `total_all`, `next_cursor`, `PortalUrlResponse` |
-| Modified | `apps/server/tests/test_orders.py` — 5 new pagination + portal-url tests |
-
-### Docs Updated
-
-| Action | Path |
-|--------|------|
-| Created | `docs/05_infrastructure/02_url_inventory.md` (new canonical URL reference) |
-| Modified | `docs/03_data/01_data_models.md` — Group, GroupMember, GroupRestrictions, Notification, ActivityEvent, LogRecord; 18 new UserSettings columns; 3 new enums |
-| Modified | `docs/03_data/02_database_schema.md` — migrations 011–015, 5 new tables / 18 columns + indexes |
-| Modified | `docs/03_data/03_data_flows.md` — Stream-Gate Group Enforcement (Flow 6), Notification Fan-out (Flow 7), Activity Recording (Flow 8), Log Pipeline (Flow 9) |
-| Modified | `docs/04_api/01_api_contracts.md` — 8 group + 2 profile + 4 notification REST + 1 notification WS + 1 activity + 1 transcoding-status + 1 logs REST + 1 logs WS + 1 portal-url + paginated orders + 18 PATCH /settings fields. `/info/logs` marked DEPRECATED |
-| Modified | `docs/05_infrastructure/03_public_routing.md` — routing matrix updated for every new endpoint |
-| Modified | `docs/06_security/01_security.md` — auth matrix rows for every new endpoint; ADR-014 + ADR-015 referenced; auth-relevant settings (`enable_pairing_required`, `session_timeout_minutes`) documented |
-| Modified | `docs/02_architecture/03_component_architecture.md` — Group / Profile / Notification / Activity / Transcoding / Log service blocks |
-| Modified | `docs/02_architecture/01_system_overview.md` — Client Groups capability |
-| Modified | `docs/09_backend/01_backend_architecture.md` — full project tree + service map updates; test count 120 → 240; logging strategy section updated for JSON-line file format |
-| Modified | `docs/10_planning/01_roadmap.md` — M0 §7.1/§7.2/§7.3/§7.4/§7.8/§7.9/§7.10/§7.11 marked done; M0 milestone closed |
-| Modified | `docs/10_planning/02_decisions.md` — ADR-014 (stream-gate enforcement location), ADR-015 (multi-group restriction intersection) |
-| Modified | `docs/00_overview/folder_structure.md` — every new file added to `apps/server/` tree |
-| Modified | `docs/00_overview/README.md` — Quick Link to URL inventory |
-| Modified | `CLAUDE.md` — Current Status server line bumped 149 → 240 tests, 001–010 → 001–015 migrations, 6 new routers / 6 new services listed; `polar_portal_url` env var noted |
-| Modified | `README.md` — FastAPI server status row similarly bumped; new feature list |
-
-### Commits This Session
-- `44f9948` feat(server): client groups + stream-gate restriction enforcement
-- `4026f3c` feat(server): operator profile endpoints
-- `93ec4aa` docs: sync to client groups + operator profile (M0 §7.1 + §7.2)
-- `f742b3d` feat(server): notification service + REST + WS pubsub
-- `72662b2` feat(server): wire notification emitters from auth, license, ffmpeg, library
-- `958ce20` feat(server): activity event log + emitter wirings
-- `6a13a50` docs: sync to notifications + activity event log (M0 §7.3 + §7.4)
-- `7bd85d5` feat(server): transcoding status endpoint with NVIDIA GPU probe
-- `76ca854` feat(server): structured /api/v1/logs + WS live tail (JSON-line format)
-- `5438a33` feat(server): extend user_settings with 18 operator-tunable fields
-- `823d6a8` feat(server): orders pagination + Polar customer portal URL
-- `0654f95` docs: M0 close-out — sync §7.8/§7.9/§7.10/§7.11 + URL inventory
-
-### Decisions Made
-
-- **Three-commit pattern per feature pair:** code-only commits keep `git bisect` clean (each commit's tests pass, each commit is self-coherent), then a paired doc-sync commit ships the full doc protocol. Adapted from the existing project history (`c63c5ab`, `56fdae3`).
-- **Notification emitters wrap try/except logging-only.** A failed audit row must never break the underlying flow (pair, transcode, scan, license-validate). Same rule applies to activity emitters.
-- **Notification pubsub is in-process only.** Single-server install — Redis/NATS adds operational weight not worth paying. A clustered deployment would need real pubsub.
-- **Group restrictions intersect across active groups.** Most-restrictive wins on Booleans/lists/numbers; advisory on max_rating (no rating column on `media_files` yet).
-- **Bandwidth cap and max-rating recorded but advisory in v1.** FFmpeg-side throttling and rating metadata are out of scope; columns persist for forward-compat.
-- **Operator-password concept rejected.** Single-owner localhost admin model has no login; POST /password from the redesign plan deferred indefinitely.
-- **Activity feed is its own log, not derived from notifications.** Notifications are user-actionable alerts; activity is the audit trail of everything the server did. Different lifecycles (notifications dismiss; activity is append-only).
-- **Log file format switched to JSON-line.** Enables structured filtering without a parsing layer per query. Legacy `/info/logs` deprecated rather than removed — backwards-compat for v1.
-- **NVIDIA-only GPU probe in §7.8.** QSV (`intel_gpu_top`) and VAAPI (`radeontop`) probes vary too much by distro; deferred until a user reports they need them.
-- **Settings PATCH refactor to dynamic SET-list.** Going from 7 explicit kwargs to 25 (with §7.10's 18 additions) made the static-kwarg approach unwieldy. Now adding a column requires only a model field — no service or router change.
-- **Polar portal URL is a configured landing page, not an SDK call.** Polar customer portal authorises sessions via magic-link email; no per-customer token to encode. `FLUXORA_POLAR_PORTAL_URL` config is sufficient.
-- **URL inventory is a new canonical doc.** `04_domains_and_subdomains.md` covers hostnames, `03_public_routing.md` covers Cloudflare topology, `01_api_contracts.md` covers contracts — but no doc enumerates every URL surface (REST + WS + third-party + future TBDs) in one place. New `02_url_inventory.md` fills that gap.
-
-### Issues Discovered / Reported to User
-
-- **`legacy /info/logs` lacks `require_local_caller`** — pre-existing condition, not introduced this session. The endpoint returns the raw log file contents to any caller (token or not). Marked DEPRECATED in this session's doc updates and the new `/api/v1/logs` is correctly localhost-only. Recommend adding `require_local_caller` to the legacy endpoint as a one-line follow-up before the public URL is announced externally.
-- **§7.3 lifespan license-key query bug (caught and fixed):** Sonnet sub-agent had emitted `SELECT value FROM user_settings WHERE key = 'license_key'` — but `user_settings` is a singleton with `license_key` as a column, not a key/value table. Fixed in main thread before commit. Documents the importance of the "quality first, delegation second" review pattern.
-- **`test_endpoint_since_filter` URL-encoding bug:** `+` in the timezone offset was being decoded as a space when passed via `f"...?since={ts}"`. Fixed by switching to httpx `params=` which URL-encodes properly. Saved as a gotcha; pattern is "always use `params=` for query params containing `+` or other reserved chars".
-- **Date-boundary flake in `test_stream_blocked_outside_time_window`:** my service's `_in_window` was falling back to all-week when `days=[]` because `or` truthiness substituted the empty list. Fixed by checking explicitly `is not None`.
-
-### Blockers / Open Issues
-
-- **M0 backend complete but desktop UI not yet consuming it.** All 11 chunks shipped server-side; the redesigned Settings / Activity / Logs / Transcoding / Subscription / Notifications screens still need to wire up to these APIs as part of M3+ desktop work.
-- **`FLUXORA_POLAR_PORTAL_URL` unset by default** — `/orders/portal-url` returns 404 until configured. Tracked in `docs/10_planning/04_manual_tasks.md` as an operator follow-up.
-- **`_in_window` could improve.** Time-window comparison is hour-precision, not minute. Fine for v1 (operator gates streams to "evenings only") but if a use case needs `start_h=18.5`, the column type and parser need to change.
-- **§7.4 activity-feed surface area is small in v1.** Covers stream + client + library only; doesn't include `file.upload` or `settings.change` events from the redesign plan. Easy to extend — pattern is established.
-- **Legacy `/info/logs` should grow `require_local_caller`** before the public URL is announced. Currently any tunneled caller could fetch the raw log file. Tracked here.
-- **Test runtime is climbing.** 240 tests in 28–35s on Windows; not yet a problem but the SQLite-backed `test_db` fixture is the bottleneck. If we cross 400 tests we should evaluate parallel pytest-xdist.
-
-### Next Agent Should
-
-1. **Add `require_local_caller` to legacy `/info/logs`** — one-line patch, zero behavioural risk for the desktop (it already only calls from localhost), closes a real attack surface before the public URL is announced.
-2. **Resume desktop redesign M3 — Dashboard.** All M0 backend dependencies are now in place. Pixel-verify the Dashboard against `docs/11_design/desktop_prototype/Fluxora Desktop.html` at 1440 × 900: SystemStatsCard wired to `/ws/stats`; sparklines accumulate the last 30 ticks; storage donut consumes `/library/storage-breakdown`; recent-activity widget consumes `/api/v1/activity?limit=4`; remote-access pill (already shipped) stays.
-3. **Process the Phase 6 operator entries in `docs/10_planning/04_manual_tasks.md`** — Cloudflare Access policies on `/api/v1/orders` and `/info/logs`, WAF custom rule blocking non-CF traffic to admin paths, tunnel-health alerting via Cloudflare email/PagerDuty, self-hosted TURN evaluation. None of these are code-side; all are dashboard config or external-account decisions. Should land before the public URL is announced externally.
-4. **Run the Dependabot PR queue.** The Dart 3.9 floor bump from the prior session may have unblocked PRs that were stuck on `json_annotation 4.11+`, `go_router 17.x`, or `json_serializable 6.13+`.
-5. **(Optional)** Extend §7.4 activity emitters to cover `file.upload` (`routers/files.py:upload_file`) and `settings.change` (`routers/settings.py:update_settings`) per the original redesign plan. Pattern is established; mechanical work.
-
-### Hard Rules Checklist
-- [x] No `git commit` / `git push` ran without explicit per-action OK (each commit was authorised individually).
-- [x] No agent / AI branding anywhere in code, docs, or commit messages.
-- [x] No `print()` / `debugPrint()` introduced.
-- [x] No exceptions swallowed silently — emitters use try/except + `logger.warning(..., exc_info=True)`.
-- [x] No secrets / hardcoded paths added (Polar portal URL is configurable; license-secret was already in env).
-- [x] All new third-party deps reviewed (none added — only existing libs leveraged).
-- [x] No backwards-compat hacks (legacy `/info/logs` kept as already-shipped surface, not as code shim).
----
-
-## [2026-05-02] — Web Landing Page Gap-Fix Round (38 fixes) + full doc sync
-**Agent:** Claude (Sonnet 4.6)
-**Phase:** Phase 5 — web landing track (post-implementation hardening)
-**Status:** Implemented end-to-end; TypeScript exit 0; all 10 routes generate clean
-
-### What Was Done
-- **Critical-thinking gap analysis** of the prior session's web-landing redesign — categorised 38 issues across 🔴 critical (5: legal/conversion-breaking), 🟠 high (9: a11y / UX broken), 🟡 medium (9: polish), 🔵 consistency (3), ⚪ performance (5), 🟢 missing high-conversion (7).
-- **Fixed all 38 in one PR.** Highlights:
-  - **Removed all fabricated social proof** — `10K+ self-hosters`, `4.9★ / 247 reviews` in Hero, AboutStrip stats, JSON-LD `aggregateRating`. Each was either a Google rich-result policy violation or a misleading-advertising risk under ASCI / FTC. Replaced with provable signals: GitHub source-link pill in Hero, `MIT / 100% / 5 / 0` in AboutStrip.
-  - **Wired Free CTA to a real destination** — was `Hero "Get Started Free" → #pricing → "Download Now" → #how-it-works → dead-end`. Now links to GitHub repo. Conversion is no longer a deadlock.
-  - **Built `/privacy` and `/terms` full-content pages** via shared `LegalLayout`. DPDP-aware boilerplate with reviewed-by-lawyer disclaimer.
-  - **Added TMDB API attribution band** in Footer per TMDB ToS — required when serving images from `image.tmdb.org`.
-  - **Built `Screenshots.tsx`** — pure-CSS 6-tab gallery of desktop control-panel surfaces (Dashboard / Library / Clients / Groups / Settings / Logs). Zero JS, full keyboard accessibility. Copied 6 screenshots into `apps/web_landing/public/screenshots/`.
-  - **Auto-generated 1200×630 OG card** via `app/opengraph-image.tsx` (`ImageResponse` with `dynamic = 'force-static'`). Replaces missing `og.png`.
-  - **Switched to `next/font/google`** self-hosted Inter — eliminates render-blocking external font request.
-  - **Skip-to-content keyboard a11y link** + scoped `prefers-reduced-motion` (only kills wave SVG drift; preserves hover transitions).
-  - **Tier comparison table** wrapped in `tier-table-scroll` — fixes mobile overflow that was forcing horizontal scroll on the entire page.
-  - **Rewrote `/success` page** — was using uninstalled Tailwind classes that silently no-op'd, leaving raw text. Now uses project's `manage-*` CSS classes; matches `/manage` look.
-  - Smaller fixes: Navbar collapsed 3 duplicate-anchor nav links to 5 distinct ones; removed non-functional Search; replaced Sign-In with GitHub link; logo `href="#"` → `<Link href="/">`; LibraryTiles fake counts → feature captions (`Up to 4K HDR`, `Lossless FLAC + AAC`, `EXIF-aware sorting`); Pricing `/once` → `/lifetime`; Footer mailto → GitHub Discussions/Issues; HeroWaves `z-index: 0` → `-1`; mobile pricing-grid `gap: 1.75rem`; Hero subtitle rewritten; Plex compare lines removed; AboutStrip `5+` → `5`; sitemap extended.
-- **Final verification:** `npx tsc --noEmit` exit 0. `next build` compile + typecheck + page-generate all pass; only fails at the final `rmdir out/` step due to a non-CLI Windows file-handle (cosmetic — code is verified clean). Killed two leftover python `http.server` processes from earlier preview sessions.
-
-### Files Created / Modified
-
-**Components (modified):**
-| Action | Path |
-|--------|------|
-| Modified | `apps/web_landing/src/components/Hero.tsx` |
-| Modified | `apps/web_landing/src/components/Navbar.tsx` |
-| Modified | `apps/web_landing/src/components/Pricing.tsx` |
-| Modified | `apps/web_landing/src/components/LibraryTiles.tsx` |
-| Modified | `apps/web_landing/src/components/Footer.tsx` |
-| Modified | `apps/web_landing/src/components/AboutStrip.tsx` |
-| Modified | `apps/web_landing/src/components/TierComparison.tsx` |
-
-**Components (new):**
-| Action | Path |
-|--------|------|
-| Created | `apps/web_landing/src/components/Screenshots.tsx` |
-| Created | `apps/web_landing/src/components/LegalLayout.tsx` |
-
-**Routes:**
-| Action | Path |
-|--------|------|
-| Created | `apps/web_landing/src/app/privacy/page.tsx` |
-| Created | `apps/web_landing/src/app/terms/page.tsx` |
-| Created | `apps/web_landing/src/app/opengraph-image.tsx` |
-| Modified | `apps/web_landing/src/app/page.tsx` (Screenshots section added to flow) |
-| Modified | `apps/web_landing/src/app/layout.tsx` (next/font/google, skip-to-content, removed fake aggregateRating, simplified theme-color) |
-| Modified | `apps/web_landing/src/app/sitemap.ts` (added /privacy + /terms) |
-| Modified | `apps/web_landing/src/app/success/page.tsx` (rewritten — was using uninstalled Tailwind) |
-
-**Tokens / styles:**
-| Action | Path |
-|--------|------|
-| Modified | `apps/web_landing/src/app/globals.css` (skip-to-content, tier-table-scroll, footer-attribution, screenshots gallery, legal-page, github-pill, mobile pricing-grid gap, scoped reduced-motion, HeroWaves z-index) |
-
-**Assets:**
-| Action | Path |
-|--------|------|
-| Created | `apps/web_landing/public/screenshots/{dashboard,library,clients,groups,settings,logs}.png` |
-
-### Docs Updated
-- `docs/11_design/web_landing_redesign_plan.md` — IA table now lists §9.5 Screenshots and §14 Privacy/Terms; appended change-log entry 3 with the 38-fix breakdown; updated §15 manual tasks (footer links partial; new §15.4 Polar checkout URLs).
-- `docs/10_planning/04_manual_tasks.md` — TMDB poster task updated (attribution now in place); footer-links task marked 🔵 Partial with explicit done-vs-pending list; new task "Wire Polar checkout URLs in landing-page Pricing component" added with 🔲 Pending.
-- `docs/02_architecture/02_tech_stack.md` — status note extended with `next/font/google` + auto-generated `opengraph-image` route + gap-fix hardening signal.
-- `CLAUDE.md` — Current Status `apps/web_landing` block extended: 7 new components (Screenshots added), Privacy/Terms routes, OG generator, skip-to-content, next/font, scoped reduced-motion, fabricated-rating removed, route count 7 → 10.
-- `AGENT_LOG.md` — this entry (parallel agent had already rotated the prior log to `archive_04.md` and started this fresh file).
-
-### Decisions Made
-- **Removed every fabricated trust signal even though they help conversion.** Google rich-result policy + ASCI / FTC misleading-advertising rules apply once the site charges INR. Real signals (GitHub source-link, MIT badge) are weaker but defensible. Faking it short-term costs trust long-term.
-- **Built `/privacy` + `/terms` as full real pages, not stubs.** Site takes payment; in-place "Coming soon" for legal pages is unacceptable for a paid product. Added explicit "not legal advice; consult a lawyer for jurisdiction-specific obligations" disclaimer at the bottom of each.
-- **Pure-CSS Screenshots gallery via `<input type="radio">` + `:checked` siblings** — zero-JS, native keyboard a11y. Trade-off: adding a 7th screen requires both a new `<input>` and a new CSS rule for that screen's id; 6 is the practical cap before refactoring to a JS state machine.
-- **Auto-generated OG card via `app/opengraph-image.tsx`** — `next/og`'s `ImageResponse` runs at build time under `output: 'export'` with `dynamic = 'force-static'`. Requires no manual asset; can be replaced with a real composite when desktop M3 ships.
-- **Free-tier "Get Started" CTA points at the GitHub repo** — until Fluxora server has shipped binaries (PyInstaller releases), the GitHub repo with install-from-source instructions is the only real download destination. Will swap to a `/releases` URL once the first binary release is cut.
-
-### Blockers / Open Issues
-- **Polar checkout URLs still placeholder** — `apps/web_landing/src/components/Pricing.tsx` lines 6–9. Owner needs to paste real share-links from the Polar dashboard before public launch. Blocks public ship for paid tiers.
-- **Hero mockup is still the placeholder ref-image** — swap once desktop redesign M3 (Dashboard) lands. Tracked in `docs/10_planning/04_manual_tasks.md`.
-- **`out/` rebuild lock on Windows** — `next build` succeeds at compile/typecheck/page-generate but fails at the final `rmdir out/` step due to a non-CLI Windows file-handle (likely Search Indexer). Cosmetic — code is verified clean. Resolves after a reboot.
-
-### Next Agent Should
-1. **Visual QA the landing page locally**: F5 → "Web Landing (dev)". Hit every section + scroll-to-anchor link + click every CTA + tab through the page. Compare against `docs/11_design/ref images/web/web_landing_hero.png` at 1440×900 and 768×1024.
-2. **Verify `/privacy` and `/terms` legal-content pages** — make sure code blocks (`<code>...</code>`) and inline links look correct in the violet theme.
-3. **Owner: paste real Polar checkout URLs** in `Pricing.tsx` before announcing the marketing site publicly.
-4. Continue desktop redesign **M2 → M3** per `docs/11_design/desktop_redesign_plan.md` §9.
-
-### Hard Rules Checklist
-- [x] No `git commit` / `git push` ran during this session.
-- [x] No agent branding in any file.
-- [x] No `print()` / `console.log()` introduced.
-- [x] No exceptions swallowed.
-- [x] No secrets / hardcoded paths added (Polar URLs were already placeholder TODOs; not introduced this session).
-- [x] No new third-party JS / TS deps pulled in. `next/font/google` is built into Next.js core.
-- [x] TMDB attribution added to Footer per TMDB API ToS.
-- [x] Reduced-motion + skip-to-content + ARIA labels respected throughout.
-- [x] Removed misleading-advertising risk signals (`10K+ users`, `4.9★ / 247 reviews`).
----
-
-## [2026-05-02] — Background animation polish + brand asset consolidation
-**Agent:** Claude (Sonnet 4.6)
-**Phase:** Phase 5 — web landing + desktop redesign track (post-hardening polish)
-**Status:** Implemented end-to-end; TypeScript exit 0; both `fluxora_core` and `apps/desktop` `flutter analyze` clean
-
-### What Was Done
-- **Background animation polish** on the web landing page — addressed owner feedback "make bg interesting, its flat":
-  - Three floating gradient orbs (violet / cyan / pink, 24/30/28 s alternating drift, blurred to soft 380–540 px blobs) sit at fixed position behind everything via `z-index: -1`. `will-change: transform` so the compositor promotes them off the main thread.
-  - Subtle dot-grid texture (28×28 px dots, alpha 0.06) with radial-mask fade at the edges so it doesn't compete with content.
-  - Animated hero title gradient flow — `Anywhere.` text now cycles `violet-tint → violet → cyan → violet → violet-tint` over 8 s via animated `background-position` on a 200%-sized linear gradient.
-  - Featured pricing card breathing glow — 5 s `box-shadow` loop fading the violet halo 0.10 → 0.20.
-  - Scroll-driven entry animations on every card / tile / FAQ item / table / section header using CSS `animation-timeline: view()` (Chromium 115+ / Safari 17.4+); diagonal stagger inside multi-card rows (Features / Libraries / Pricing / Platforms) via `:nth-child()` `animation-range` offsets at 6/12/18/24 % entry. `@supports not (animation-timeline: view())` fallback shows content normally on older browsers — page never starts invisible.
-  - All ambient animations + scroll fades disabled under `prefers-reduced-motion: reduce`; hover transitions deliberately kept (user-driven feedback).
-- **Brand asset consolidation** — owner provided refined `logo_wordmark_horizontal_v2_dark.png` (integrated F + FLUXORA in one image, 3D-style F):
-  - Pillow-processed (alpha-from-brightness, same routine as previous logos) → `1687×295` transparent PNG.
-  - Written to **two paths** so web + Flutter share the asset: `apps/web_landing/public/brand/logo-wordmark-h.png` and `packages/fluxora_core/assets/brand/logo-wordmark-h.png`.
-  - Web Navbar / Footer dropped the separate `<img logo-icon>` since the new wordmark contains the F integrated; Navbar wordmark sized to 26 px (was 16 px) per follow-up. Nav tabs now `justify-content: center` per follow-up.
-  - Flutter `FluxoraWordmark` widget repointed at `logo-wordmark-h.png` (was `logo-wordmark.png`, the legacy stacked version); default height 22 → 28 px.
-  - Flutter `FluxoraLogo` composite simplified — when `withWordmark: true`, renders only the wordmark (+ optional tagline below); when `false`, falls back to standalone `FluxoraMark`. Never renders both side-by-side (would double the F).
-  - Desktop sidebar header (`flux_sidebar.dart`) restructured to `Column(FluxoraWordmark + Tagline)` instead of `Row(FluxoraMark + Column(FluxoraWordmark + Tagline))`.
-  - `logo-icon.png` and legacy stacked `logo-wordmark.png` retained in the brand folders for any standalone-F use case (favicon source, app icon, brand-card slot).
-- **Reorganised 4 newly-dropped reference images** into `docs/11_design/ref images/{brand,web}/` with descriptive names:
-  - `web_landing_hero_v2.png` (new hero mockup)
-  - `web_landing_full_v2.png` (full-page mockup, lighter palette)
-  - `web_landing_full_v3.png` (full-page mockup, darker palette)
-  - `logo_wordmark_horizontal_v2_dark.png` (the new integrated-F wordmark used in this round)
-
-### Files Created / Modified
-
-**Web landing — animations:**
-| Action | Path |
-|--------|------|
-| Modified | `apps/web_landing/src/app/globals.css` (added: bg-orb-1/2/3 + drift keyframes, bg-grid texture, hero title gradient-shift, featured-card breathing, scroll-driven fade-up + stagger ranges, expanded reduced-motion guard) |
-| Modified | `apps/web_landing/src/app/layout.tsx` (3 `<div>` orbs + dot-grid added to body) |
-
-**Web landing — brand consolidation:**
-| Action | Path |
-|--------|------|
-| Replaced | `apps/web_landing/public/brand/logo-wordmark-h.png` (was the gradient horizontal version; now the v2 3D-F integrated wordmark) |
-| Modified | `apps/web_landing/src/components/Navbar.tsx` (removed separate icon `<img>`; wordmark only) |
-| Modified | `apps/web_landing/src/components/Footer.tsx` (already wordmark-only — no change this round) |
-| Modified | `apps/web_landing/src/components/Hero.tsx` (removed brief `<img className="hero-wordmark">` block from earlier iteration) |
-| Modified | `apps/web_landing/src/app/globals.css` (`.navbar-brand-mark` removed; `.navbar-brand-wordmark` 16 → 26 px; `.navbar-links` `justify-content: center`; `.hero-wordmark` style removed) |
-
-**Flutter — brand widgets:**
-| Action | Path |
-|--------|------|
-| Created | `packages/fluxora_core/assets/brand/logo-wordmark-h.png` (new integrated wordmark for Flutter use) |
-| Modified | `packages/fluxora_core/lib/widgets/fluxora_logo.dart` (`FluxoraWordmark` asset path → `logo-wordmark-h.png`, default height 22 → 28; `FluxoraLogo` simplified to wordmark-only or mark-only, no side-by-side composition) |
-| Modified | `apps/desktop/lib/shared/widgets/flux_sidebar.dart` (header restructured: dropped `FluxoraMark` line; now `Column(FluxoraWordmark + Tagline)`) |
-
-**Reference images:**
-| Action | Path |
-|--------|------|
-| Reorganised | 4 ChatGPT-export PNGs → `docs/11_design/ref images/{brand,web}/` with descriptive names |
-
-### Docs Updated
-- `docs/11_design/web_landing_redesign_plan.md` — appended change-log entry 4 covering bg animations + brand-asset consolidation in one entry.
-- `docs/11_design/desktop_redesign_plan.md` — sidebar header spec updated (single `FluxoraWordmark(28)` + tagline, no separate `FluxoraMark`); brand assets list extended with the three current files (`logo-icon.png`, `logo-wordmark.png` legacy stacked, `logo-wordmark-h.png` primary horizontal).
-- `docs/08_frontend/01_frontend_architecture.md` — brand-asset table extended to 3 rows distinguishing the standalone mark, the legacy stacked wordmark, and the new primary horizontal wordmark; `fluxora_logo.dart` exports section rewritten with the simplified composite semantics.
-- `CLAUDE.md` — `apps/web_landing` Current Status block extended with the bg animation polish + brand consolidation lines; brand widget description in `apps/desktop` block updated.
-- `AGENT_LOG.md` — this entry.
-
-### Decisions Made
-- **One brand mark across surfaces.** When the owner provided the integrated horizontal wordmark, the right move was unification — every primary nav surface (web Navbar / Footer / desktop sidebar) shows only that asset, no composition with the separate icon. Cuts a class of "F shown twice" bugs the codebase had cycled through twice.
-- **Scroll-driven CSS animations over IntersectionObserver JS.** `animation-timeline: view()` is ~85 % global support today and the `@supports not` fallback is safe — never starts elements invisible. JS-based scroll observers cost more code, more bundle, and more main-thread work for the same visual.
-- **Bg orbs use fixed positioning, not background-attachment.** Fixed `<div>` elements with `will-change: transform` get GPU-promoted; `background-attachment: fixed` is forced to repaint on every scroll on most browsers. Same animation, very different perf.
-- **Reduced-motion guard is scope-narrow.** Kills only the always-running ambient animations + scroll fades. Hover transitions stay because they're user-driven feedback — reduced-motion users want fewer animations, not zero feedback.
-- **Did not delete the legacy stacked wordmark.** `logo-wordmark.png` (F on top of FLUXORA) still ships — useful for any future brand-card slot that wants the stacked layout. The new `logo-wordmark-h.png` is the *primary* asset for inline horizontal use.
-
-### Blockers / Open Issues
-- Same carry-overs as the prior session: real Polar checkout URLs in `Pricing.tsx`, real desktop Dashboard screenshot post-M3, remaining footer placeholder links. No new blockers.
-
-### Next Agent Should
-1. **Visual QA on a real browser** — F5 → "Web Landing (dev)". Watch the bg orbs drift; tab through every section to confirm scroll-driven fade-ups feel smooth (not janky); confirm the new wordmark reads cleanly at 26 px in the navbar and 28 px in the desktop sidebar.
-2. **Continue desktop redesign M2 → M3** per `docs/11_design/desktop_redesign_plan.md` §9.
-3. **Owner: paste real Polar checkout URLs** in `apps/web_landing/src/components/Pricing.tsx` before public launch.
-
-### Hard Rules Checklist
-- [x] No `git commit` / `git push` ran during this session.
-- [x] No agent branding in any file.
-- [x] No `print()` / `console.log()` introduced.
-- [x] No exceptions swallowed.
-- [x] No secrets / hardcoded paths added.
-- [x] No new third-party deps pulled in. All effects use stock CSS + native HTML.
-- [x] Reduced-motion guard expanded — orbs / scroll fades / hero title shift / featured-card breathing all disabled under `prefers-reduced-motion: reduce`.
----
-
-## [2026-05-02] — Post-M0 cleanup: legacy removal · CLAUDE.md trim · auth audit · activity-emitter rounds
-**Phase:** Phase 5 — desktop redesign track + cross-cutting hygiene
-**Status:** Complete. Server suite **240 → 247 passing**. CLAUDE.md trimmed **444 → 97 lines**. URL inventory shipped. Two real auth gaps closed.
-
-### What Was Done
-
-This session ran after the M0 backend close-out. M0 itself (§7.1–§7.11) shipped earlier; this entry covers the cross-cutting hygiene work that followed:
-
-#### 1. Legacy code removal (commit `6d8d548`)
-- Server: deleted `GET /api/v1/info/logs` (was deprecated by `/api/v1/logs` shipped in §7.9; "new product, no users — no need for backwards-compat shim"). Removed unused `from pathlib import Path` import.
-- `routers/logs.py`: removed the "legacy backwards compat" docstring paragraph.
-- `models/settings.py:license_key_format`: corrected stale docstring claiming legacy 4-part keys were accepted (code already rejected them).
-- `packages/fluxora_core/lib/network/api_client.dart`: removed the `@Deprecated('Use localBaseUrl instead') String? baseUrl` constructor + `configure()` argument that aliased to `localBaseUrl` during the dual-base migration. Dual-base has been the only API since the migration completed.
-- `endpoints.dart`: `Endpoints.logs` updated `/info/logs` → `/logs`.
-- `apps/desktop/lib/features/logs/data/repositories/logs_repository_impl.dart`: migrated to consume `/api/v1/logs?limit=1000`, deserializes the structured response, joins records into the same `String` shape the existing `LogsCubit` + `LogsScreen` expect. M6 redesign will rewrite the screen to render structured rows directly; this is the minimal migration that drops the legacy dependency.
-- Removed the `'legacy baseUrl param maps to localBaseUrl'` test from `api_client_test.dart`.
-- 7 doc files swept to drop legacy references: `04_api/01_api_contracts.md`, `04_api/02_versioning_policy.md`, `05_infrastructure/02_url_inventory.md`, `05_infrastructure/03_public_routing.md`, `runbooks/09_monitoring_and_observability.md`, `09_backend/01_backend_architecture.md`, `10_planning/01_roadmap.md`.
-
-#### 2. CLAUDE.md trim (commit `9627ba3`)
-- 444 → 97 lines. Three sections extracted to dedicated docs:
-  - `docs/12_guidelines/02_documentation_update_protocol.md` (74 lines — full 5-step protocol + tables)
-  - `docs/12_guidelines/03_gotchas.md` (was 16 entries; 2 added during this session: URL `+` decoding, Python `or`-on-empty-list)
-  - `docs/00_overview/current_status.md` (91 lines — was the most token-expensive section in CLAUDE.md, rewritten on every milestone landing)
-- Repository Layout (82-line tree), Phase Roadmap, Design System tokens, Detailed Development Guidelines pointer all collapsed to one-line pointers (the underlying canonical docs already existed).
-- What stayed: Mandatory Agent Rules · Hard Prohibitions table · 1-paragraph "What is Fluxora?" · pointer table · Out of Scope one-liner. Nothing else.
-
-#### 3. MCP server cleanup (config-only — no commit)
-- Removed the `dart` MCP server from `~/.claude.json` global `mcpServers` block (was loading ~30 tool schemas on every turn). User reported a fresh-session message was costing 12% of token budget; removing the unused MCP + the CLAUDE.md trim drops the per-turn baseline materially.
-
-#### 4. Two real auth gaps closed + activity-emitter extension round 1 (commit `51169a3`)
-- **`GET /api/v1/info/stats`** was wide-open: anyone with a request URL could pull operator-level metrics (CPU/RAM/network/lan_ip/public_address). Now uses `validate_token_or_local` — matches the `/ws/stats` WebSocket auth pattern.
-- **`DELETE /api/v1/auth/revoke/{client_id}`** was a privilege escalation: any token-holding client could revoke any other client. Now `require_local_caller` (operator-only) — matches `/auth/approve` + `/auth/reject`.
-- Activity emitters wired (extending the §7.4 catalogue): `file.upload` (`routers/files.py:upload_file`), `settings.change` (`routers/settings.py:update_settings` — logs field NAMES, not values, since values may include license keys / URLs with secrets), `client.revoke` (`routers/auth.py:revoke_client`, now operator-only). All wrapped in try/except logging-only.
-- Stale test `test_protected_route_requires_token` renamed to `test_revoke_blocked_from_lan` and updated for the new auth pattern.
-
-#### 5. Activity-emitter extension round 2 (commit `c39e157`)
-- Rounded out the §7.4 catalogue so every admin write surfaces in the audit feed: `library.create`, `library.delete`, `file.delete` (in `routers/library.py` and `routers/files.py`).
-- Both `delete_*` handlers look up the entity name BEFORE deletion so audit summaries are human-readable instead of opaque ids.
-
-#### 6. Doc sync (commits `551bc21`, this commit)
-- API contracts auth-modes table + per-endpoint Auth rows for `info/stats` + `auth/revoke`.
-- Security route-authorization matrix: new `/info/stats` row (with leak history note); `/auth/revoke` row updated to localhost-only with privilege-escalation history called out.
-- URL inventory + public routing matrix: auth columns updated.
-- New gotcha entry: "auth-gate drift on admin endpoints" — audit pattern is `grep "@router\.\(get\|post\|patch\|delete\)" routers/` and confirm every handler has an explicit auth `Depends(...)` since FastAPI's default is no-auth.
-- Test count bumps 240 → 244 → 247.
-
-### Files Created / Modified
-
-**Code (server):**
-| Action | Path |
-|--------|------|
-| Modified | `apps/server/routers/info.py` (deleted legacy `/info/logs`; tightened `/info/stats` to `validate_token_or_local`) |
-| Modified | `apps/server/routers/logs.py` (docstring trim) |
-| Modified | `apps/server/routers/auth.py` (`revoke_client` to localhost-only + `client.revoke` activity emit) |
-| Modified | `apps/server/routers/files.py` (`file.upload` + `file.delete` activity emits) |
-| Modified | `apps/server/routers/library.py` (`library.create` + `library.delete` activity emits) |
-| Modified | `apps/server/routers/settings.py` (`settings.change` activity emit; field-name-only payload) |
-| Modified | `apps/server/models/settings.py` (license_key_format docstring corrected) |
-| Modified | `apps/server/tests/test_auth.py` (renamed + rewrote `test_protected_route_requires_token` → `test_revoke_blocked_from_lan`) |
-| Modified | `apps/server/tests/test_activity.py` (+6 emitter tests) |
-| Modified | `apps/server/tests/test_info_stats.py` (auth-gate test) |
-
-**Code (Dart):**
-| Action | Path |
-|--------|------|
-| Modified | `packages/fluxora_core/lib/network/api_client.dart` (removed `baseUrl:` deprecated alias from constructor + `configure()`) |
-| Modified | `packages/fluxora_core/lib/network/endpoints.dart` (`logs` path) |
-| Modified | `packages/fluxora_core/test/network/api_client_test.dart` (removed legacy alias test) |
-| Modified | `apps/desktop/lib/features/logs/data/repositories/logs_repository_impl.dart` (migrated to `/api/v1/logs?limit=1000`) |
-
-**Docs:**
-| Action | Path |
-|--------|------|
-| Modified | `CLAUDE.md` (444 → 97 lines) |
-| Created | `docs/12_guidelines/02_documentation_update_protocol.md` |
-| Created | `docs/12_guidelines/03_gotchas.md` (added: URL `+` decoding · `or`-on-empty-list · auth-gate drift) |
-| Created | `docs/00_overview/current_status.md` |
-| Modified | `docs/04_api/01_api_contracts.md` (legacy endpoint removed; auth-modes table updated; `/info/stats` + `/auth/revoke` rows updated) |
-| Modified | `docs/04_api/02_versioning_policy.md` (legacy endpoint listing removed) |
-| Modified | `docs/05_infrastructure/02_url_inventory.md` (legacy row removed; `/info/stats` + `/auth/revoke` auth columns updated) |
-| Modified | `docs/05_infrastructure/03_public_routing.md` (matrix + admin-route notes updated) |
-| Modified | `docs/05_infrastructure/runbooks/09_monitoring_and_observability.md` (legacy endpoint replaced) |
-| Modified | `docs/06_security/01_security.md` (new `/info/stats` row + `/auth/revoke` row with privilege-escalation history) |
-| Modified | `docs/09_backend/01_backend_architecture.md` (test count 240 → 247; project tree updated) |
-| Modified | `docs/10_planning/01_roadmap.md` (legacy endpoint historical note rewritten as "removed (no backwards-compat shim)") |
-| Modified | `docs/11_design/desktop_redesign_plan.md` (§7.9 status line: "removed, no shim") |
-| Modified | `docs/00_overview/current_status.md` (test count bumps) |
-
-**Config:**
-| Action | Path |
-|--------|------|
-| Modified | `~/.claude.json` (removed `dart` MCP server from global `mcpServers`) |
-
-### Commits This Session
-- `6d8d548` refactor: remove legacy /info/logs endpoint + ApiClient baseUrl alias
-- `9627ba3` docs(claude): trim CLAUDE.md 444 → 97 lines; extract three sections (note: actual hash may differ; check `git log` if not present)
-- `51169a3` feat(server): close 2 admin auth gaps + extend §7.4 activity emitters
-- `551bc21` docs: sync to auth-gate fixes + activity emitter extension
-- `c39e157` feat(server): activity emitters for library.create / library.delete / file.delete
-
-(Plus the pending doc-patch commit and this AGENT_LOG commit, both yet to be authorized at time of writing.)
-
-### Validation
-- `python -m pytest` — **247 passed** on `apps/server`.
-- `flutter analyze` — clean across `packages/fluxora_core`, `apps/desktop`, `apps/mobile`.
-- `flutter test` — `fluxora_core` 8 ✅ (was 9 — legacy alias test removed), `apps/desktop` 38 ✅, `apps/mobile` unchanged.
-- `ruff check` + `black --check` — clean across every touched file.
-
-### Decisions Made
-
-- **"It's a new product — no users — no backwards-compat shim."** The user explicitly authorized removing `/info/logs` and the Dart `baseUrl:` alias since neither has external consumers yet. Future deprecations should still ship a transition window unless similarly authorized.
-- **Settings.change activity payload logs field NAMES, not values.** PATCH bodies routinely include `license_key`, `relay_server_url`, `custom_server_url`, `tmdb_api_key` — values would leak into the audit log queryable by any token-holding client (since `/api/v1/activity` is `validate_token_or_local`). Field names are sufficient for "operator changed setting X at time Y" audit trail.
-- **`delete_*` handlers capture entity name BEFORE delete.** Audit summary is meant for humans reading the activity feed — `Library 'Movies' deleted` is more useful than `Library a3f7b21e-... deleted`.
-- **Auth gate audit pattern goes in gotchas.md.** New endpoints will keep being added without explicit auth `Depends`. The gotcha codifies the audit step (`grep "@router\.\(...\)" routers/` then confirm each handler has a non-None Depends) so future agents catch the same class of issue.
-- **CLAUDE.md is rules-only now.** Volume content moved out so per-turn prompt cost drops. The "What is Fluxora?" intro stayed because new agents need product framing immediately; "Out of Scope" stayed as a one-liner because the multi-user / cloud-backup boundary comes up frequently.
-- **Single-owner model is product-locked.** User asked the question explicitly; recorded that multi-user is a phase-2 product call needing a `users` table + per-user library scoping + role hierarchy + sub-account UI, not a small refactor.
-
-### Issues Discovered / Reported to User
-
-- **`/info/stats` was no-auth from §7.6 ship date** — leaked CPU/RAM/lan_ip/public_address over the public tunnel. Fixed in `51169a3`.
-- **`/auth/revoke` privilege escalation** — bearer token from any paired client could revoke any other client (handler validated token presence but never ownership). Fixed in `51169a3`.
-- **Settings PATCH activity audit was leaking secrets in payload** (caught during write) — values would have included license keys + URLs with secrets. Fixed before shipping by switching to field-names-only payload.
-- **Stale "legacy 4-part license keys accepted" docstring** — code rejected them but doc claimed otherwise. Misleading for a future developer reading the validator. Fixed.
-- **CLAUDE.md was paying ~12% token budget per-turn for a fresh session** (per user's complaint). Trimmed 444 → 97 lines + removed unused dart MCP. Per-turn baseline should now drop materially.
-
-### Blockers / Open Issues
-
-- **M3 Desktop Dashboard not started.** All M0 backend deps are ready. Next session should pixel-match the redesigned Dashboard against `docs/11_design/desktop_prototype/` at 1440 × 900: SystemStatsCard wired to `/ws/stats`; sparklines accumulate the last 30 ticks; storage donut consumes `/library/storage-breakdown`; recent-activity widget consumes `/api/v1/activity?limit=4`; remote-access pill (already shipped) stays.
-- **Phase 6 routing hardening** — operator-driven Cloudflare config tracked in `docs/10_planning/04_manual_tasks.md`. The `/info/logs` line in those tasks is now stale (endpoint removed); other tasks (Cloudflare Access on `/orders`, WAF rules, tunnel-health alerts, TURN evaluation) still apply.
-- **Dependabot PR queue** — Dart 3.9 floor bump from prior session may have unstuck PRs that were blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`. Worth re-auditing the queue.
-- **`apps/desktop` Logs screen renders text-blob format only.** Repository was migrated to consume the new structured endpoint but the screen still expects a single-string render. M6 will rewrite the screen properly with structured rows + filter UI.
-
-### Next Agent Should
-
-1. **Begin desktop redesign M3 — Dashboard.** All M0 backend deps shipped; the redesigned Dashboard is the highest-impact next chunk. Pixel-match against `docs/11_design/desktop_prototype/Fluxora Desktop.html` at 1440 × 900.
-2. **Process the Phase 6 operator entries** in `docs/10_planning/04_manual_tasks.md`. The `/info/logs` Cloudflare Access entry is stale (endpoint removed) — drop or rewrite that one. The other four (CF Access on `/orders`, WAF rules, tunnel-health alerts, TURN evaluation) all still apply and should land before the public URL is announced externally.
-3. **Re-audit the Dependabot PR queue.** Dart 3.9 floor bump from prior session may have unblocked `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`. Close any ceiling-pin PRs that are now redundant.
-4. **(Mechanical follow-up)** Activity emitter could grow to cover `auth.request_pair` (currently emits `client.pair`, fine) — but `library.scan` only emits when files are added; consider emitting a `library.scan` event with `files_added=0` payload for "scan-found-nothing" runs too, so the audit log records every scan. Low priority.
-
-### Hard Rules Checklist
-- [x] No `git commit` / `git push` ran without explicit per-action OK. Memory rule reinforced this session: even within an authorized arc, ask before each commit ("commit in chunks" ≠ ongoing autopilot). Updated `feedback_no_git_writes_default.md`.
-- [x] No agent / AI branding in any code, doc, or commit message.
-- [x] No `print()` / `debugPrint()` introduced (Dart) or `print()` (Python).
-- [x] No exceptions swallowed silently (every emitter is `try/except` + `logger.warning(..., exc_info=True)`).
-- [x] No secrets / hardcoded paths added (settings.change payload explicitly avoids logging values; license-secret paths unchanged).
-- [x] No new third-party deps (none added; one MCP removed).
-- [x] No backwards-compat hacks left behind — legacy paths and Dart shim deleted outright per "new product" directive.
----
-
----
-## [2026-05-02] — README marketing redesign + canonical /assets/ folder
-**Phase:** Phase 5 — brand consolidation (no functional code changes)
+## [2026-05-03] — Mobile redesign M7 — Mini-player + drag-down minimize + shared PlaybackProvider
+**Phase:** Phase 5 (Mobile redesign — Plan in `docs/11_design/mobile_redesign_plan.md` §7)
 **Status:** Complete
 
 ### What Was Done
 
-1. **README rewritten in marketing structure** (omni_bridge-inspired). Centred animated hero banner with embedded wordmark v2, for-the-badge badges row, quick-link nav, then each section opens with `<h3 align="center">` + small SVG icon + violet→cyan divider. Sections: Why · Tech Stack (with `go-skill-icons.vercel.app`) · Features (2-col table) · Quick Start (`<details>` collapsibles per app) · Pricing · Status (phase chip row) · Docs · License → `capsule-render.vercel.app` footer wave. Single README serves both private and public mirror.
-
-2. **Built animated SVG hero banner.** 1200×320 viewBox, 12 SMIL animations: dark-violet→black bg gradient, 3 floating gradient orbs (violet/cyan/pink, slow drift), dot-grid texture (radial-mask faded), 3 flowing wave lines (stroke-dashoffset drift), pulsing live-indicator dot, animated violet→cyan halo behind the wordmark. **Wordmark v2 embedded as base64 PNG** (1000×174 RGBA, alpha-channel preserved) inside the SVG — required because GitHub's image proxy strips external `<image href>` requests. Total file: 211 KB (mostly the base64).
-
-3. **Created violet/cyan section icons** (7 SVGs, 22×22, all animated): `icon-why` (lightning bolt), `icon-stack` (3 layered tiles), `icon-features` (rising bars), `icon-quick-start` (terminal + blinking cursor), `icon-tiers` (price tag), `icon-roadmap` (milestone with ripple), `icon-docs` (folded doc). Each uses Fluxora's `#A855F7` violet and `#22D3EE` cyan accents — no teal anywhere. Adapted from omni_bridge structural patterns, recoloured throughout.
-
-4. **Created violet→cyan section divider** (`section-divider.svg`, 900×3) that sits under each `<h3>` — small static gradient line, fades at both edges.
-
-5. **Established canonical `/assets/` folder at repo root.** Brand was previously scattered across `docs/11_design/ref images/brand/` (originals), `packages/fluxora_core/assets/brand/` (Flutter runtime), `apps/web_landing/public/brand/` (Next.js runtime). New layout:
-   ```
-   /assets/
-   ├── README.md              ← layout + duplication rationale + sync flow
-   ├── brand/                 ← masters (kebab-case names)
-   │   └── README.md          ← brand colors + do/don't + clear-space
-   ├── banners/               ← README hero + dividers
-   ├── icons/                 ← 7 animated section icons
-   └── screenshots/           ← empty, ready for marketing screenshots post-M3
-   ```
-   Brand masters **renamed to kebab-case** to match runtime copies' naming (`logo-icon.png`, `logo-wordmark-h.png`, `logo-wordmark-stacked.png`, `logo-wordmark-h-v1.png`, `brand-banner-h.png`, `brand-banner-v.png`, `brand-identity-sheet.png`). Originals at `docs/11_design/ref images/brand/` **preserved unchanged** — they remain frozen reference (per user direction "don't remove ref images from docs").
-
-6. **Documented duplication.** `assets/README.md` explains why three locations exist (Flutter `pubspec.yaml` and Next.js `public/` can't share files across packages without a build step we haven't introduced) and which is canonical (the masters). `assets/brand/README.md` codifies the brand color tokens, do/don't usage rules, clear-space rules, and the alpha-from-brightness processing pipeline.
+- **`PlayerCubit` promoted to a long-lived `GetIt.lazySingleton`** in `apps/mobile/lib/core/di/injector.dart`. This is the `PlaybackProvider` of plan §9.2 — both the fullscreen player and the mini-player consume the same singleton via `BlocBuilder<PlayerCubit, PlayerState>` so playback state is shared without a separate provider class.
+- **`PlayerCubit` refactored** for the singleton lifecycle:
+  - Extracted `_disposeCurrentSession()` private method that cancels `_progressTimer`, fires a final `_reportProgress()`, calls `repository.stopStream(_sessionId)` (best-effort, swallowed on error), closes `_signaling`, disposes `_player`, and clears all of `_sessionId` / `_signaling` / `_player` / `_controller`.
+  - `startStream` now `await`s `_disposeCurrentSession()` first so a singleton restart cleans up the previous session before opening the next one.
+  - New public `dismiss()` calls `_disposeCurrentSession()` and emits `PlayerInitial` if not already in that state — used by the mini-player X button.
+  - `close()` keeps the same external behaviour by routing through `_disposeCurrentSession()` then `super.close()`. All 25 `PlayerCubit` unit tests still pass — the cubit's external API (start, close, state-emission sequence) is preserved.
+- **New `apps/mobile/lib/shared/widgets/flux_mini_player.dart`** — `FluxMiniPlayer` (64 px, mobile-only). Subscribes to the singleton via `BlocBuilder<PlayerCubit, PlayerState>(bloc: GetIt.I<PlayerCubit>())`. When `state is PlayerReady`, renders a row with: 48×48 violet-gradient poster placeholder + movie-icon, title (13/600 textBright, 1-line ellipsis), tiny 3-px violet `LinearProgressIndicator` (StreamBuilder over `player.stream.position`/`duration`), play-pause `IconButton` (StreamBuilder over `player.stream.playing`), close X (`onPressed: cubit.dismiss`). Tap on the bar pushes `Routes.playerResume`. When state is anything else, renders a zero-height `SizedBox` — the `AnimatedSize(duration: 200ms)` parent slides it in/out smoothly.
+- **`MobileShell.bottomNavigationBar` rewritten** as `Column(mainAxisSize: min, children: [FluxMiniPlayer(), FluxBottomTabs(...)])`. Tab-switching code unchanged.
+- **`PlayerScreen` rewritten** with two constructors:
+  - `PlayerScreen({required MediaFile this.file})` — pushed from a poster tap. Calls `cubit.startStream(file.id, file.title ?? file.name, file.resumeSec)` once on build. Because the cubit is now a singleton with restart-safe `startStream`, this transparently swaps any previously-active stream.
+  - `const PlayerScreen.resume()` — pushed from the mini-player tap. Does *not* call `startStream`; the singleton is already in `PlayerReady`. Just rebinds the UI.
+  - Both wrap `_PlayerView` in `BlocProvider<PlayerCubit>.value(value: GetIt.I<PlayerCubit>())` (`.value` doesn't auto-close on dispose, which is the correct behaviour for a singleton).
+- **`Routes.playerResume = '/player/resume'`** — new top-level deep-link route in `app_router.dart`. Builder: `(context, state) => const PlayerScreen.resume()`.
+- **Drag-down-to-minimize**:
+  - New `_MinimizeHandle` widget at the top of `_PlayerView` — `Positioned(top: 0)` with `SafeArea(bottom: false)` and a 24-px-tall `GestureDetector(behavior: translucent)` containing a 36×4 white-30% grab pill. Listens only for vertical drags so it doesn't conflict with the controls overlay's tap/double-tap/long-press/pinch gestures.
+  - `_PlayerViewState._dragOffset` accumulates `details.delta.dy` (only positive — downward) clamped to `[0, 600]`. `Transform.translate(offset: Offset(0, _dragOffset))` and `Transform.scale(scale: clamp(1 - offset/1200, 0.85, 1.0))` animate the player while dragging; the scaffold's `backgroundColor` opacity reads `clamp(1 - offset/400, 0.4, 1.0)`.
+  - On `onVerticalDragEnd`: if `_dragOffset >= 150` → `context.pop()` (the route disappears, the singleton cubit keeps streaming, the mini-player picks up). Otherwise spring back to `0`.
+- **Validation**: `flutter analyze` clean × all 3 packages. 27 mobile tests still pass — including the 25 `PlayerCubit` tests that exercise start-stream / stop-stream / close behaviour, all green despite the cubit refactor.
 
 ### Files Created / Modified
 
 | Action | Path |
 |--------|------|
-| Modified | `README.md` (full marketing rewrite; 14 image paths repointed `docs/11_design/banners/` → `assets/{banners,icons}/`) |
-| Created | `assets/README.md` |
-| Created | `assets/brand/README.md` |
-| Created | `assets/brand/{logo-icon,logo-wordmark-h,logo-wordmark-h-v1,logo-wordmark-stacked,brand-banner-h,brand-banner-v,brand-identity-sheet}.png` (copied from `docs/11_design/ref images/brand/` and renamed) |
-| Created | `assets/banners/readme_hero.svg` (211 KB, base64 wordmark embedded) |
-| Created | `assets/banners/divider.svg` |
-| Created | `assets/banners/section-divider.svg` |
-| Created | `assets/banners/wordmark-h.png` (1000×174 sized derivative) |
-| Created | `assets/icons/icon-{why,stack,features,quick-start,tiers,roadmap,docs}.svg` |
-| Removed | `docs/11_design/banners/` (contents migrated to `assets/`) |
+| Modified | `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart` (extracted `_disposeCurrentSession()` private; `startStream` now restart-safe; new public `dismiss()`; `close()` routes through the same path) |
+| Modified | `apps/mobile/lib/core/di/injector.dart` (+`PlayerCubit` lazySingleton registration with the existing repos as deps) |
+| Created | `apps/mobile/lib/shared/widgets/flux_mini_player.dart` |
+| Modified | `apps/mobile/lib/shared/widgets/mobile_shell.dart` (`bottomNavigationBar` now wraps `FluxMiniPlayer + FluxBottomTabs` in a Column) |
+| Modified | `apps/mobile/lib/features/player/presentation/screens/player_screen.dart` (added `PlayerScreen.resume()` constructor; switched to `BlocProvider.value` over the singleton; added `_MinimizeHandle` widget + drag-down accumulator with Transform/scale/opacity animation) |
+| Modified | `apps/mobile/lib/core/router/app_router.dart` (+`Routes.playerResume`, +matching GoRoute) |
 
 ### Docs Updated
 
-- `docs/00_overview/folder_structure.md` — added `assets/` to top-level tree + `apps/web_landing/`; added a footnote explaining the runtime-copies sync model.
-- `assets/README.md` (new) — documents the layout, the duplication rationale, and where each consumer pulls from.
-- `assets/brand/README.md` (new) — brand colors, do/don't, clear-space, alpha-processing pipeline.
+- `docs/00_overview/current_status.md` — apps/mobile table gains "Mobile redesign M7 Mini-player + drag-down minimize + shared PlaybackProvider" row; "What's next" item 1 rewritten to point at M8.
+- `docs/11_design/mobile_redesign_plan.md` — top-of-file Status updated to "M0–M7 landed"; §7 milestone-table M7 row body rewritten and marked ✅ done; §16 changelog gains a new row.
 
 ### Decisions Made
 
-- **`/assets/` lives at repo root, not under `packages/`.** Brand assets are organisation-wide metadata (next to `LICENSE`, `README.md`), not Dart code. `packages/` is for shared code libraries, `apps/` for deployables. Brand fits neither.
-- **Three-location duplication is accepted.** Flutter `pubspec.yaml` only bundles assets co-located with the package, and Next.js `public/` only ships files co-located with the app. Single-source rendering would require a build step that copies + processes on demand — not worth introducing for an asset set this small. Documented the sync flow in `assets/README.md` instead.
-- **Brand masters renamed to kebab-case in `/assets/brand/` only.** Runtime copies were already kebab-case; matching them across master + runtime makes the 1:1 traceability obvious. Originals in `docs/11_design/ref images/brand/` keep their snake_case ChatGPT-export names so the trace from frozen-reference → master is explicit.
-- **Single README serves both private and public repo.** The mirror-public.yml workflow strips `## For AI Agents` + filters AGENT_LOG/CLAUDE.md lines, but the README itself is identical in both — no special-case handling. Confirmed with the user this is the desired model.
-- **Wordmark embedded as base64 inside the hero SVG, not referenced as an external image.** GitHub serves repository SVGs through the `camo` image proxy which sandboxes them and strips `<image href="../path.png">` requests. Inlining as `data:image/png;base64,...` is the only reliable way to ship the wordmark inside an animated README hero. File size cost (~150 KB after Pillow optimisation) is acceptable.
-- **Used external image services (`go-skill-icons.vercel.app`, `capsule-render.vercel.app`, `img.shields.io`) in README despite supply-chain caveat.** Trade-off: each is a third-party Vercel/SaaS app that could rot. Mitigations: shields.io is widely trusted and was already in use; tech-stack table immediately under go-skill-icons serves as visible fallback if the image breaks; capsule-render footer wave is purely decorative (its absence won't degrade the README).
+- **`PlayerCubit` doubles as the `PlaybackProvider`, no separate class.** Plan §9.2 left the choice between Riverpod and Cubit open ("TBD at M7"). Adding a `PlaybackProvider` wrapper around the existing cubit would mean two layers of state for one concern. The cubit already owns the `Player` reference, the session id, the progress timer, the WebRTC signaling — promoting it to singleton scope is the smallest viable change. The cubit's name stays accurate for what it does; only its lifetime changed.
+- **`_disposeCurrentSession()` extraction over inline cleanup.** Reuse across three call sites (`startStream` restart, `dismiss` explicit teardown, `close` end-of-life) plus null-guarding makes the extraction worth the file overhead. The `close()` body shrinks to two lines.
+- **Mini-player resumes via a separate `/player/resume` route, not via `Routes.player` with a stored MediaFile.** The poster-tap path needs a `MediaFile` extra to hand to `startStream`; the mini-player has no `MediaFile` (it only knows the singleton's current state). Two routes is clearer than one route with conditional behaviour. Both render the same `_PlayerView`.
+- **Drag-down handle is a separate widget mounted *over* the controls overlay**, not a wrapping `GestureDetector` around the whole video. Wrapping would intercept the tap/double-tap/long-press/vertical-drag/pinch gestures `FluxPlayerControls` already owns. Putting the handle in a 24-px strip at the top with `behavior: translucent` keeps the rest of the player's gesture vocabulary intact.
+- **Drag-down threshold = 150 px, max-drag = 600 px.** 150 px is roughly a clear thumb-flick on most screens; the 600-px clamp prevents the player from sliding entirely off-screen during a fast flick before the route pops. The `1 - offset/1200` scale + `1 - offset/400` opacity numbers were tuned to feel snappy without being aggressive.
+- **`BlocProvider.value` over the singleton, not `BlocProvider(create: ...)`.** `.create` would close the cubit on the screen's `dispose`, which is exactly what we don't want for a singleton. `.value` is the correct entry point for shared cubits per `flutter_bloc` docs.
+- **Mini-player visibility driven by `BlocBuilder` over `state is PlayerReady`**, not by a separate `bool isPlaying` field. State-class identity is the source of truth — `PlayerInitial` / `PlayerLoading` / `PlayerFailure` / `PlayerTierLimit` all hide the mini-player; only `PlayerReady` shows it.
 
 ### Issues Discovered / Reported to User
 
-- **`logo_wordmark_horizontal_v2_dark.png` source file is RGB (no alpha channel).** Confirmed via `file` command and PIL — the v2 master from the user has a solid dark backdrop. Runtime copies under `packages/fluxora_core/assets/brand/` and `apps/web_landing/public/brand/` are the alpha-processed derivatives (RGBA, transparent). Future re-exports must re-run the Pillow alpha-from-brightness pipeline; documented in `assets/brand/README.md`.
-- **Earlier git-status snapshot at session start showed `apps/server/routers/{auth,files,info,settings}.py` as modified, but the actual working tree had no diff in those files** — likely a cached snapshot from before a previous commit landed. No action needed; mentioning in case it surfaces again.
+- **`AGENT_LOG.md` rotation overdue** — flagged 8 entries in a row. Rotation handled by the M8 session.
+- **The `PlayerScreen({required file})` build path calls `startStream` synchronously on every build.** Restart-safe `startStream` no-ops when the same session is already active. But: pushing the same `MediaFile` twice (poster tap → drag-down → poster tap) tears down + restarts the session. M14 polish: detect "already streaming this id" and short-circuit.
+- **Mini-player poster is a placeholder** since `PlayerReady` doesn't carry the source `MediaFile`'s art URL. Threading it through means adding a field to `PlayerReady` and to `startStream`. Out of scope for M7. Flag for M14 polish.
 
 ### Blockers / Open Issues
 
-- **`/assets/screenshots/` is empty, by design.** Will be populated post-Desktop M3 with real Dashboard captures (1440×900). Manual task §12.1 in `docs/10_planning/04_manual_tasks.md` already tracks this.
-- **External image services in README** are a low-grade rot risk. If go-skill-icons.vercel.app or capsule-render.vercel.app go down, the badges silently break. Reported to user; user kept them since they degrade gracefully.
+- **None for M8.** All M7 plumbing is done.
 
 ### Next Agent Should
 
-1. **Begin desktop redesign M3 — Dashboard** (unchanged from prior session). All M0 backend deps shipped; the redesigned Dashboard is the highest-impact next chunk. Pixel-match against `docs/11_design/desktop_prototype/Fluxora Desktop.html` at 1440 × 900. After M3 captures land, populate `assets/screenshots/` with the marketing screenshots and update README's Features section to reference them inline (currently text-only).
-2. **Process the Phase 6 operator entries** in `docs/10_planning/04_manual_tasks.md` (Cloudflare Access on `/orders`, WAF rules, tunnel-health alerts, TURN evaluation). The `/info/logs` entry there is now stale.
-3. **Optional: inline external image services in README.** If supply-chain risk matters more than easy updates, swap `go-skill-icons.vercel.app` for a static SVG showing the same icons, and `capsule-render.vercel.app` for a custom footer wave. ~15 minutes of work, zero functional change.
+1. **Rotate `AGENT_LOG.md`** before any further work — done by the M8 session.
+2. **Mobile redesign M8 — Downloads + Profile + Notifications wiring** per plan §7 row M8.
+3. **Visual smoke test the M5–M7 player chain** on a physical device.
+4. **macOS / Linux desktop runners** when scoped — Win-specific shell integration items still pending.
 
 ### Hard Rules Checklist
-- [x] No `git commit` / `git push` ran without explicit per-action OK. Commit authorised by user this turn ("update docs and comit"). No push performed.
-- [x] No agent / AI branding in any code, doc, or commit message.
-- [x] No `print()` / `debugPrint()` introduced (no code changed in this entry — assets + docs only).
-- [x] No exceptions swallowed (no exception handling changed).
-- [x] No secrets / hardcoded paths added.
-- [x] No new third-party deps (none added; READme references three external Vercel apps but those are image fetches at view-time, not Node deps).
-- [x] No backwards-compat hacks — old paths in docs were updated, not aliased.
----
-
-## [2026-05-03] — Desktop redesign M3 → M9 complete (7 milestones)
-**Phase:** Phase 5 — Desktop redesign
-**Status:** Complete. Desktop redesign fully shipped end-to-end. M8 a11y/golden cleanup is partial — Sonnet only reached 7 of 15 screens for Tooltip/Semantics; golden tests skip-marked pending GetIt-mock fix (recipe documented).
-
-### What Was Done
-
-This arc shipped every desktop redesign screen on top of the M0 backend that finished earlier in the same session. Work was almost entirely sub-agent-delegated (Sonnet 4.6) per the saved memory rule: main thread designs integration + reviews diffs + runs validation; Sonnet does mechanical translation against the pixel-faithful prototypes in `docs/11_design/desktop_prototype/`.
-
-- **M3 Dashboard** (`bb97ad8`) — replaced v1 Material Dashboard. PageHeader · 4 stat tiles · 2-col Server Info + Quick Access · 2-col Recent Activity + Storage Overview. New entities `ActivityEvent` + `LibraryStorageBreakdown` / `StorageByType`. New features `storage/` + `recent_activity/`. DashboardRepository extended with `restartServer` / `stopServer` / `getLibraryCount`. Two main-thread bug fixes: Restart button was wired to `cubit.load()`; Libraries stat tile hardcoded to 0.
-- **M4 Library + Clients** (`96abd1c`) — Library: PageHeader · `FluxTabBar` (6 tabs) · 4 StatTiles · 3-col gradient `LibraryCard` grid + Add-Library tile · 300 px detail panel. Clients: 7-col custom table inside `FluxCard(padding:zero)` · pagination footer · 300 px detail panel with Disconnect wired to revoke. New M1 primitive: `FluxTabBar`. Two fixes: `FluxButton(onPressed: null)` renders 0.5-opacity disabled; ClientPlatform enum has no tv/tablet so device-filter options for those match nothing in v1.
-- **M5 Groups + Activity + Transcoding + Encoder Settings** — Groups: PageHeader + 4 StatTiles + 2-col GroupCard grid + 300 px detail panel + create/edit/add-member dialogs. Activity: full screen replaced; reuses extended `RecentActivityCubit` (added `loadAll`/`pause`/`resume`). Transcoding: 4 StatTiles + Active Sessions card joining `TranscodingStatus` with legacy `ActivityCubit`. Encoder Settings sub-page at `/transcoding/encoder`. New entities `Group` / `GroupRestrictions` / `TimeWindow` / `GroupStatus`; `TranscodingStatus` / `EncoderLoad` / `ActiveTranscodeSession`.
-- **M6 Logs + Settings** — Logs: structured rows · `FluxTabBar` (All / Errors / Warnings / Info) · Source + Time-Range dropdowns · Live indicator · expandable rows with copy-to-clipboard · auto-scroll · pause/resume. Settings: 220 px side-rail nav + 6 tabs wiring all 18 §7.10 fields + tier-1 fields + dirty-tracking. 4 new form primitives: `FluxTextField`, `FluxSelect`, `FluxSwitch`, `FluxSlider`. New `LogRecord` domain class.
-- **M7 Subscription + Profile + Notifications + Help** (`42e489e`) — Subscription: 3 tabs Overview / Billing / Manage (Manage opens Polar customer portal via `OrdersCubit.openPortal()` → `/orders/portal-url` → `url_launcher`). Profile: 2-col layout with avatar block + form + dirty-tracked Save → PATCH `/api/v1/profile`. Notifications overlay: 380 px slide-in panel from sidebar bell, WS subscription with 5 s polling fallback. Help: static 2-col Quick Links + 5 FAQ. New entities `Profile`, `AppNotification` (Notification reserved by Flutter).
-- **M8 Cmd+K + a11y + golden infra** (`77fc5cb` + `0a8351e`) — `apps/desktop/lib/features/command_palette/` with 13-command registry + 600 × 420 px frosted-glass overlay + `Cmd+K` (macOS) / `Ctrl+K` (else) shortcut. A11y pass added Tooltip + Semantics across 7 of 15 screens. Golden-test infra: `golden_toolkit` 0.15.0 + `mocktail`. First Dashboard golden test scaffolded but skip-marked because production screen uses GetIt directly; fix recipe in `test/goldens/_README.md`.
-- **M9 Cleanup** (this commit) — deleted 4 legacy widgets/screens superseded by M1–M7: `stat_card.dart`, `status_badge.dart`, `data_table.dart`, `licenses_screen.dart`. Verified zero remaining references; analyze + tests stay clean.
-
-### Validation
-- `flutter analyze` — clean across `packages/fluxora_core`, `apps/desktop`. Mobile untouched this arc.
-- `flutter test` — fluxora_core 8/8, desktop 38/38, mobile 27/27 unchanged. Golden tests skip-marked.
-- Server suite — unchanged at 247/247 from the M0 close-out.
-
-### Decisions Made
-- **Sub-agent delegation pattern locked in.** Sonnet 4.6 handles mechanical UI-translation against pixel-faithful prototypes; Opus retains design integration calls and post-review validation. Sub-agents lost shell access mid-run twice (M5 + M7 + M8 truncated reports); main thread caught and finished each. Two real bugs caught in M3 review; zero in M4–M7 — confirms briefs are tight enough.
-- **Material chrome dropped uniformly.** No `Scaffold` / `AppBar` / `Card` / `DataTable` in redesigned screens. Only M1 + M6 form primitives, plus `Material` widgets where genuinely needed (`PopupMenuButton`, `Tooltip`, `Semantics`, `Slider`, the `TextField` inside `FluxTextField`).
-- **Dialogs use Material `AlertDialog` with FluxCard styling as v1 stopgap.** `FluxDialog` primitive deferred — Groups screen has 3 dialogs.
-- **Notifications use polling fallback if WS auth handshake fails.** WS is primary; 5 s polling kicks in if handshake errors. Ship simple, harden later.
-- **Visual review is the user's manual step.** Never launched `flutter run` during this arc.
-
-### Issues Discovered / Reported to User
-- **Sub-agent token exhaustion + truncation.** Three Sonnet runs (M5, M7, M8) returned malformed final reports because sub-agent context budget ran out mid-summary. Main thread cleaned up after each. Future agents: prefer narrower per-screen briefs.
-- **Golden test setup needs a refactor.** Production screens construct cubits via `GetIt.I<>()` inside `MultiBlocProvider.create` — blocks `MultiBlocProvider`-based test mocking. Either refactor screens to accept cubits as constructor params, or register mocks in `GetIt.setUp` per the recipe. Latter is cheaper.
-- **M8 a11y pass is incomplete.** Sonnet only added Tooltip + Semantics to 7 of 15 screens. Logs / Settings / Encoder Settings / Profile / Notifications / Help / sidebar / status bar still need a pass.
-- **`flutter run -d windows` not yet attempted.** Every commit in this arc is build-verified but never visually run.
-
-### Blockers / Open Issues
-- **Visual smoke test pending.** Top priority.
-- **A11y pass for 8 unreached screens.** Mechanical follow-up.
-- **Golden-test GetIt-mock fix.** Once applied, drop the `golden` skip from `dart_test.yaml`.
-- **Server `/ws/notifications` auth handshake.** WS path unverified end-to-end; cubit falls back to 5 s polling.
-- **`FluxDialog` primitive missing.**
-
-### Next Agent Should
-1. **Visual smoke test** — `flutter run -d windows` and walk every redesigned screen + Cmd+K + Notifications overlay against the prototype at 1440 × 900. Single highest-value next step.
-2. **Finish the M8 a11y pass** — add Tooltip + Semantics to the 8 unreached screens.
-3. **Enable golden tests** — apply the fix recipe; drop the `golden` skip from `dart_test.yaml`; regenerate the baseline.
-4. **Mobile player redesign** — gated on desktop M9 per `docs/11_design/mobile_player_redesign_plan.md`. With M9 done, the gate has lifted.
-
-### Hard Rules Checklist
-- [x] No `git commit` / `git push` ran without explicit per-action OK. Every commit got "yes" / "ok" / "comit" authorization. Memory rule reinforced mid-session: "always pause and ask before each commit, even mid-arc."
+- [x] No `git commit` / `git push` ran. No commits this session — owner has not authorised.
 - [x] No agent / AI branding anywhere in code, docs, or commit messages.
 - [x] No `print()` / `debugPrint()` introduced.
-- [x] No exceptions swallowed silently.
+- [x] No exceptions swallowed silently — `_disposeCurrentSession` logs the `stopStream` failure case via `_log.w` (preserved from the original `close()` body).
 - [x] No secrets / hardcoded paths added.
-- [x] All new third-party deps version-checked (`golden_toolkit ^0.15.0`, `mocktail ^1.0.4`).
-- [x] No backwards-compat hacks left behind — M9 deleted the 4 legacy widgets outright.
+- [x] No new third-party deps added in M7. `get_it`, `flutter_bloc`, `media_kit`, `media_kit_video`, `go_router` all already in pubspec.
+- [x] No backwards-compat hacks. Old per-screen cubit was replaced outright by the singleton, no shim left behind. Old `PlayerScreen({required file})` constructor is preserved (still called from poster taps with their `MediaFile.extra`); new `.resume()` is additive.
+- [x] No layer-boundary violations. Mini-player widget lives in `apps/mobile/lib/shared/widgets/`; cubit changes stay within `features/player/presentation/cubit/`; routing change in `core/router/`. `BlocProvider.value` keeps `flutter_bloc` as the only state-management touchpoint — no Riverpod added per the plan §9.2 decision.
 ---
 
-## [2026-05-03] — Mobile redesign plan + Desktop V2 theme cutover (M9.5) + DESIGN.md V2 rewrite + doc sweep
-**Phase:** Phase 5 — Mobile redesign planning + Desktop V2 finalization
+## [2026-05-03] — Mobile redesign M8 — Downloads + Profile + Notifications real-data wiring + log rotation
+**Phase:** Phase 5 (Mobile redesign — Plan in `docs/11_design/mobile_redesign_plan.md` §7)
 **Status:** Complete
 
 ### What Was Done
 
-This session had three tightly-related arcs.
-
-**Arc 1 — Mobile redesign plan (whole-app scope).** A new design prototype bundle was copied into `docs/11_design/prototype/` covering 28 mobile screens + flow diagram. The prior `mobile_player_redesign_plan.md` (drafted earlier the same day, narrowly scoped to the player screen) was rewritten and renamed `mobile_redesign_plan.md` to cover the entire mobile app. 14 milestones (M0 foundation → M14 polish) replace the original 7. The earlier "keep legacy mobile palette" decision (player-only scope) was reversed in §1 row 2: the whole-app redesign forces V2 palette migration. Original player-only sections preserved as §15 for cross-reference. Cleanup: deleted `docs/11_design/prototype/chats/` and `.tmp_design/`.
-
-**Arc 2 — Desktop V2 theme cutover (M9.5 — unplanned).** Owner reported a slate-blue scaffold flash on tab switches. Root cause: `apps/desktop/lib/shared/theme/app_theme.dart` body was still 100 % V1 (26 references) — `scaffoldBackgroundColor: AppColors.background` (#0F172A slate) was painting underneath the V2-painted route bodies during transitions. Rewrote the entire `app_theme.dart` body to consume V2 tokens (kept file path + `AppTheme.dark` getter signature unchanged). Fixed 5 V1 stragglers in feature screens. Verified zero `AppColors.{primary,background,surface,...}` references remain in `apps/desktop/lib/`. `flutter analyze` clean (27.8 s).
-
-**Arc 3 — DESIGN.md V2 rewrite + cross-doc sweep.** Owner directive: "do proper fix" + "dont keep anything legacy". Rewrote DESIGN.md (648 → 727 lines) as V2-only canonical — removed V1 color/typography blocks, dropped the "two coexisting systems" framing, deleted the V1 legacy appendix entirely, stripped all migration / cutover / deprecated wording from prose. Then synced affected docs.
+- **Log rotated.** `AGENT_LOG.md` (1634 lines) copied to `docs/logs/AGENT_LOG_archive_05.md`; this fresh log contains the rules header + Archive-05 summary + the carried-forward M7 entry + this M8 entry (~290 lines total). Rotation was overdue 8 prior milestones — now reset.
+- **M8.1 — Notifications real-data wiring.** Replaced the static `MockData.notifications` list with the existing `/api/v1/notifications` REST endpoint. Mirrored the desktop's polling pattern (its `// TODO(M8)` was to migrate to WS once a shared HMAC-bearer WS wrapper exists; mobile sits on the same path — see new repository's `// TODO(WS)`).
+  - **`features/notifications/domain/repositories/notifications_repository.dart`** new — `list({onlyUnread, limit})` / `markRead` / `markAllRead` / `dismiss` / `liveStream()` interface.
+  - **`features/notifications/data/repositories/notifications_repository_impl.dart`** new — uses `Endpoints.notifications` / `notificationRead` / `notificationsReadAll` / `notificationDismiss` from `fluxora_core`. `liveStream()` polls every 5 s and yields previously-unseen ids.
+  - **`features/notifications/presentation/cubit/notifications_state.dart`** new — sealed class with `Initial` / `Loading` / `Loaded(items, unreadCount)` / `Failure(message)`. No `equatable` dep added — identity equality is fine for an infrequently-updating list and avoids new deps.
+  - **`features/notifications/presentation/cubit/notifications_cubit.dart`** new — `start()` loads + subscribes to live stream; `markRead` / `markAllRead` / `dismiss` mirror the desktop pattern; `_emitLoaded` recomputes `unreadCount`. Cancels the live subscription on `close()`.
+  - **`core/di/injector.dart`** — registers `NotificationsRepository` + `NotificationsCubit` as `lazySingleton`s. Singleton-scoped so the poll loop survives back-pops on the screen.
+  - **`features/notifications/presentation/screens/notifications_screen.dart`** rewritten to consume `NotificationsCubit`. Wraps body in `BlocProvider.value(value: GetIt.I<NotificationsCubit>())` per the M7 singleton-cubit pattern. `start()` is called on first frame when `state is NotificationsInitial`. Bucket render preserved (Today / This week / Earlier) — buckets keyed off `AppNotification.createdAt` parsed via `DateTime.tryParse`. Each row maps `NotificationCategory` → 36×36 colored icon square (system grey, client emerald, license violet, transcode blue, storage amber) using the same color/icon helpers as the desktop. Mark-all-read button calls `cubit.markAllRead`. New states: `_LoadingView` (centered spinner), `_FailureView` (offline icon + message + retry FluxButton), `_EmptyState` (preserved). Tap on an unread row calls `cubit.markRead(id)`.
+  - **`shared/data/mock_data.dart`** — removed unused `MockNotification` class + `MockData.notifications` list (now obsolete — real entity is `AppNotification` from `fluxora_core`).
+- **M8.2 — Downloads tab.** Replaced the placeholder with the prototype's storage-indicator + downloading-rows + offline-rows layout.
+  - **`shared/data/mock_data.dart`** — added `MockDownloadStatus` enum (downloading / completed) + `MockDownload` shape (id / title / gradient / size / status / episodes / qualityBadge / speed / progress / expires) + `MockData.storageUsedGb` (26.3) + `storageTotalGb` (64.0) + `MockData.downloads` fixture (6 entries — 2 downloading, 4 completed).
+  - **`features/downloads/presentation/screens/downloads_screen.dart`** rewritten as `StatefulWidget`. Header (no FluxAppBar — prototype integrates the title with the storage indicator, not as a 52 px app bar): "Downloads" 26/800 + "26.3 GB used · 64 GB available on device" 12.5 muted + 6 px progress bar (white-6% bg + violet→cyan gradient fill at the used-fraction). Body: "DOWNLOADING · N" eyebrow + violet-tinted cards (12 padding, accentSoft border, 12 radius) with 56×80 gradient poster + title 13/700 + meta (episodes · size · speed) + 4 px violet progress bar + "%" 10.5/600 violet + 32 px round pause button. "AVAILABLE OFFLINE · N" eyebrow + flat rows (10 vertical padding, divider) with 50×72 poster + title 13.5/600 + meta + "Expires {expires}" + 32 px round more button. The more button opens a `FluxBottomSheet` with "Play offline" and "Delete download" actions (delete fires `_delete(id)` → `setState(_items.removeWhere(...))`). Empty state when `_items` is empty.
+- **M8.3 — Profile tab.** Replaced the placeholder with the prototype's avatar block + stats row + sectioned settings + sign-out button.
+  - **`features/profile/presentation/screens/profile_screen.dart`** rewritten as `StatelessWidget`. Header row: "Profile" 26/800 + 38 px round settings icon button (top right). Avatar block (radius 16, violet→cyan-radial gradient surface with 14 padding): 64 px circle avatar (violet→pink gradient + "AK" 24/700 + 22 px violet glow shadow) + name 17/700 + email 12 muted + "PLUS MEMBER" pill (10.5/700 with crown icon, violetTint text, pillBgPurple bg). Stats row (3 columns: 284 Hours / 62 Movies / 18 Shows, each with 22/800 value + 10.5/600 uppercase label, vertical dividers): white-3% bg, 12 radius, borderSubtle border. Settings list — 9 `FluxRow`s wrapped in a single rounded container with hairline dividers between: Account / Subscription (with "Plus" pill trailing) / Downloads / Playback / Language & region / Notifications / Privacy & security / Help & support / About Fluxora (v1.0.0 · build 482). Each `FluxRow` has a chevron-right trailing. Below: 14-px-tall "Sign out" button with red-tinted bg (rgba(239,68,68,0.10)) + red-25% border + F87171 text. Tap shows an `AlertDialog` confirm — on accept, dispatches `playerCubit.dismiss()` + `apiClient.clearBearerToken()` + `secureStorage.deleteAll()` + `context.go(Routes.connect)`; the router's redirect guard handles the rest.
+- **Validation:** `flutter analyze` clean × `apps/mobile` and `packages/fluxora_core`. 27 mobile tests still pass (the existing 25 PlayerCubit tests + placeholder + library + connect — no test churn introduced for M8).
 
 ### Files Created / Modified
 
 | Action | Path |
 |--------|------|
-| Created | `docs/11_design/mobile_redesign_plan.md` *(via git mv from `mobile_player_redesign_plan.md` + scope expansion)* |
-| Modified | `apps/desktop/lib/shared/theme/app_theme.dart` *(full body rewrite V1 → V2)* |
-| Modified | `apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart` *(line 503 dropdownColor: surface → bgRoot)* |
-| Modified | `apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart` *(textMuted → textDim, textSecondary → textMutedV2, bodyMd → body)* |
-| Modified | `apps/desktop/lib/features/library/presentation/screens/library_screen.dart` *(same rename pattern)* |
-| Modified | `DESIGN.md` *(full V2 rewrite, no legacy)* |
-| Modified | `docs/00_overview/current_status.md` *(date bump, V2 theme cutover entry, next-steps refresh)* |
-| Modified | `docs/08_frontend/01_frontend_architecture.md` *(Design System section reframed; line 113 showcase wording)* |
-| Modified | `docs/11_design/desktop_redesign_plan.md` *(M9.5 entry added; line 206 indigo gradient → violetDeep)* |
-| Modified | `docs/11_design/mobile_redesign_plan.md` *(execution gate marked lifted; whole-app scope rewrite earlier in session)* |
-| Modified | `docs/11_design/README.md` *(rewritten as folder index pointing to canonical sources)* |
-| Deleted | `docs/11_design/prototype/chats/` *(prototype handoff transcripts — not project content)* |
-| Deleted | `.tmp_design/` *(temp scratch dir)* |
-| Deleted | `docs/11_design/design_reference.html` *(2026-04-27 V1 concept HTML — superseded by `DESIGN.md` + `prototype/`)* |
-| Modified | `AGENT_LOG.md` *(this entry)* |
+| Created | `apps/mobile/lib/features/notifications/domain/repositories/notifications_repository.dart` |
+| Created | `apps/mobile/lib/features/notifications/data/repositories/notifications_repository_impl.dart` |
+| Created | `apps/mobile/lib/features/notifications/presentation/cubit/notifications_state.dart` |
+| Created | `apps/mobile/lib/features/notifications/presentation/cubit/notifications_cubit.dart` |
+| Modified | `apps/mobile/lib/features/notifications/presentation/screens/notifications_screen.dart` (rewritten to consume the cubit; new loading + failure + empty states; categories → icon+color; tap-to-markRead) |
+| Modified | `apps/mobile/lib/core/di/injector.dart` (+`NotificationsRepository` + `NotificationsCubit` lazySingleton registrations) |
+| Modified | `apps/mobile/lib/shared/data/mock_data.dart` (-`MockNotification` class; -`MockData.notifications` list; +`MockDownloadStatus` enum; +`MockDownload` shape; +`storageUsedGb` / `storageTotalGb` constants; +`MockData.downloads` fixture with 6 entries) |
+| Modified | `apps/mobile/lib/features/downloads/presentation/screens/downloads_screen.dart` (full rebuild — header + storage indicator + downloading cards + offline rows + bottom-sheet actions + empty state) |
+| Modified | `apps/mobile/lib/features/profile/presentation/screens/profile_screen.dart` (full rebuild — header + avatar block + stats row + settings list + sign-out flow) |
+| Created | `docs/logs/AGENT_LOG_archive_05.md` (verbatim copy of the prior 1634-line `AGENT_LOG.md`) |
+| Modified | `AGENT_LOG.md` (rotated — fresh log with Archive-05 summary + carry-forward M7 + this M8 entry) |
 
 ### Docs Updated
 
-- `DESIGN.md` — V2-only canonical
-- `docs/00_overview/current_status.md` — V2 theme cutover line + next-steps
-- `docs/08_frontend/01_frontend_architecture.md` — single-source-of-truth framing
-- `docs/11_design/desktop_redesign_plan.md` — M9.5 entry + status line
-- `docs/11_design/mobile_redesign_plan.md` — gate-lifted §0
-- `docs/11_design/README.md` — folder index
+- `docs/00_overview/current_status.md` — apps/mobile table gains "Mobile redesign M8 Downloads + Profile + Notifications real-data wiring" row; "What's next" item 1 rewritten to point at M9 (theme cutover).
+- `docs/11_design/mobile_redesign_plan.md` — top-of-file Status string updated to "M0–M8 landed"; §7 milestone-table M8 row body rewritten and marked ✅ done; §16 changelog gains a new row.
 
 ### Decisions Made
 
-- **Mobile redesign scope expanded to whole-app.** The earlier player-only plan can't apply V2 piecemeal — half-violet / half-indigo would feel broken. Whole-app migration locked in (`mobile_redesign_plan.md` §1 row 2 reverses the original §1 row 4 decision).
-- **Plan filename changed to match desktop convention.** `mobile_player_redesign_plan.md` → `mobile_redesign_plan.md` via `git mv` to preserve history.
-- **Theme directive: don't recreate theme infrastructure.** Owner directive 2026-05-03. Mobile redesign consumes existing `AppColors` / `AppTypography` / `AppRadii` / `AppSpacing` / `AppShadows` only — no new tokens, no new theme classes. Plan §1 row 2, §4, §4.2, §4.3 revised to document the mapping. M0 no longer adds tokens; M9 rewrites `apps/mobile/lib/shared/theme/app_theme.dart` body in-place.
-- **Desktop M9.5 was unplanned but necessary.** The M9 plan only covered "delete legacy widgets + update docs" — never specified a `ThemeData` rewrite. The redesigned screens bypassed Material theme by hardcoding V2 tokens, which masked the underlying V1 ThemeData until route transitions exposed the slate-blue scaffold. Logged as M9.5 in `desktop_redesign_plan.md` to keep the milestone history honest.
-- **DESIGN.md V2-only, no legacy section, no migration framing.** Owner directive. The mobile app still consumes V1 tokens in code, but DESIGN.md does not document them — it states the canonical spec. When mobile catches up, DESIGN.md doesn't change.
-- **Deleted `docs/11_design/design_reference.html`** rather than flagging as historical. 257-line V1 concept HTML from 2026-04-27 is no longer canonical (superseded by `DESIGN.md` + `prototype/`). Per "don't keep anything legacy" directive.
-
-### Blockers / Open Issues
-
-- **Visual smoke test for the V2 theme cutover.** `flutter run -d windows` to verify Material widgets that previously rendered indigo (default `TextField` border focus, `Switch` thumb tint, dialog `OK` button, dropdowns, snackbars, the active nav-rail tab indicator pill) all now render violet. No regressions caught by `flutter analyze` but visual sweep recommended.
-- **Mobile redesign execution.** Plan locked, gate lifted, but no code work started. Owner-scheduled.
+- **REST polling, not WS, for notifications.** The desktop's `NotificationsRepositoryImpl` already carries a `// TODO(M8): Replace polling with WS /api/v1/ws/notifications once desktop gains a proper WebSocket wrapper that supports the same HMAC-bearer auth pattern used by the server's get_current_user_ws dependency.` Mobile sits on the same transitional path — building a one-off WS auth wrapper for mobile alone would diverge the two clients. The new mobile repo carries the same `// TODO(WS):` comment so the cutover happens cohesively when the wrapper lands. Plan §7 row M8 says "Wire notifications to real backend endpoint when available; mock otherwise" — the REST endpoint *is* available, polling is honest.
+- **Notifications cubit registered as a singleton.** The poll loop in `liveStream()` should outlive any single push of the notifications screen — the user might back-pop, switch tabs, drop the screen — but the unread-count surface (Home tab bell) needs a steady tail. `lazySingleton` matches the M7 `PlayerCubit` pattern; `BlocProvider.value` is the entry point for screens.
+- **No `equatable` dep added for the new state class.** The existing mobile cubit (`PlayerState`) doesn't use Equatable; identity equality is fine because `_emitLoaded` always allocates a new state instance, so `BlocBuilder` rebuilds correctly. Adding the dep just to mirror the desktop's `Equatable` import would be churn for no behavioural gain. CLAUDE.md hard rule #6 ("no new dep without justification").
+- **Profile fields are mock-stubbed.** The server has `/api/v1/profile` (M0 chunk §7.2) but it's the *operator profile* (server admin: display_name + email + avatar_path). The mobile user is a paired *client*, not the server admin — surfacing the operator's name on every paired phone would leak identity. The mobile-user-profile endpoint is its own ticket; M8 ships the surface with hardcoded "Alex Kowalski" / "alex@fluxora.io" / 284h / 62 movies / 18 shows.
+- **Sign-out tears down the singleton PlayerCubit before clearing storage.** If the user signs out while a stream is active, calling `secureStorage.deleteAll()` first would leave the WebRTC peer connection alive without a bearer token to renew progress reports. `cubit.dismiss()` first ensures `_disposeCurrentSession` cleanly closes signaling + the player + the progress timer; then we clear storage; then the router's redirect guard takes the user to `/connect` on the next navigation tick.
+- **Downloads header is integrated, not a `FluxAppBar`.** The prototype JSX puts the 26/800 "Downloads" title directly above the storage indicator — visually they're one block. Wrapping that in a 52 px `FluxAppBar` (which has its own background blur + bottom border) would split them awkwardly. Same reasoning on the Profile tab — the title sits next to the settings gear in the same row as the body padding.
+- **Downloads bottom-sheet uses the existing `FluxBottomSheet` skeleton.** The "more" button opens a sheet with Play/Delete — using `showFluxBottomSheet` keeps consistency with the M6 player sheets. The two-action sheet didn't warrant its own widget file; it lives inline in `downloads_screen.dart` as `_SheetAction`.
+- **`MockNotification` class deleted, not deprecated.** Per the project's "no half-finished implementations" rule and the no-backwards-compat-hacks guidance, the class + fixture list are removed outright. The discover surfaces don't reference notifications (just continue-watching / trending / recently-added).
 
 ### Issues Discovered / Reported to User
 
-- **Theme migration was incomplete after desktop M9.** The redesign plan considered M9 ("Cleanup + final docs") to be the end of the desktop arc, but the underlying `ThemeData` body had never been rewritten — only individual screens migrated. This is now patched as M9.5 but the takeaway: future redesign plans should explicitly include a "rewrite ThemeData body" line item, not assume it as part of "cleanup".
-- **Two stale legacy artifacts found in design folder:** `design_reference.html` (V1 concept HTML) deleted; `prototype/chats/` (handoff transcripts) deleted; `.tmp_design/` (temp scratch) deleted.
-- **Showcase screen at `/showcase` was documented as "removed at M9 cutover" in `frontend_architecture.md:113` but is still present.** Updated wording to "Kept post-M9 as ongoing reference surface" — owner can decide separately whether to delete.
+- **The `_FailureView`'s "Couldn't reach your server" text uses a literal apostrophe via `\'`** — works fine but is a minor smell. If the project gets a string-i18n pass at M14, this is one of the strings that lands there.
+- **The Profile screen's settings rows have no real destinations.** Tapping any row hits an empty `onTap: () {}` — the rows render as interactive but go nowhere. Wiring them is its own follow-up (Account → server-edit screen, Subscription → existing subscription tier surface if it gets added to mobile, etc.). Worth tracking — currently the chevrons promise a destination.
+- **Sign-out doesn't show a "Successfully signed out" toast.** It just navigates to `/connect`. If the user wants the affirmative feedback, that's a SnackBar at M14 polish.
+- **Stale Dart Analysis Server diagnostics** flashed during the chained edits (especially around the unused-import warnings in `injector.dart` mid-Edit). CLI `flutter analyze` consistently confirms clean — same observation as the prior 8 entries, trust the CLI.
+- **Sonnet rotation agent stalled.** Spawned a background `general-purpose` subagent (model=sonnet) to handle the log rotation while M8 code work proceeded; it failed mid-stream after 600 s. Rotation was completed in-thread instead (`cp` for the archive + hand-written summary log). For future log rotations the heavy-token approach would benefit from streaming the file in batches rather than reading it whole.
+
+### Blockers / Open Issues
+
+- **None for M9.** All M8 plumbing is done. M9 is the theme cutover — delete legacy `AppColors.primary` (indigo) and superseded text styles; rewrite `apps/mobile/lib/shared/theme/app_theme.dart` body to consume V2 tokens; verify both apps' import paths still resolve. **This is the breaking PR for mobile** — no rollback after merge.
 
 ### Next Agent Should
 
-1. **Visual smoke test of the M9.5 theme cutover** — `flutter run -d windows`, walk every screen, look for any Material widget that previously appeared indigo and confirm it now renders violet (most critical: dialogs, dropdowns, snackbars, focused inputs).
-2. **Mobile redesign M0** — when owner schedules. Foundation milestone is no-code-change (just runtime deps `google_fonts` / `lucide_icons` / `cached_network_image` + `BackgroundGradient` widget). Per `mobile_redesign_plan.md` §7.
-3. **Desktop M10 — Custom window chrome** — open per `desktop_redesign_plan.md` §13. Independent of mobile.
-4. **Optional: delete the `/showcase` route** if no longer wanted as a reference surface (currently kept).
+1. **Mobile redesign M9 — theme cutover** per plan §7 row M9. Walk every `apps/mobile/lib/` file using the legacy `AppColors.{primary, accentPurple, surfaceMuted, primaryVariant}` or legacy `AppTypography.{displayLg, displayMd, headingLg, headingMd, headingSm, bodyLg, bodyMd, bodySm, caption, label}` tokens; migrate to V2 (`violet`, `bgRoot`, `surfaceGlass`, `textBright`, `displayV2`, `h2`, `body`, `captionV2`, `eyebrow`). Rewrite `apps/mobile/lib/shared/theme/app_theme.dart` body in-place (keep the `AppTheme.dark` getter signature). Run `flutter analyze` clean on both apps; this is the gate for the merge.
+2. **Visual smoke test the M5–M8 chain** on a physical Android + iOS device. Especially: poster tap → fullscreen player → drag-down to mini-player → tap to resume → sign out from Profile → verify stream tears down + router redirects to `/connect`.
+3. **Wire real Profile data when a mobile-client profile endpoint lands.** Replace the hardcoded "Alex Kowalski" / stats trio with a `ProfileCubit` consuming the new endpoint (no such endpoint today — the existing `/api/v1/profile` is the operator profile and shouldn't leak to paired clients).
+4. **Consider WS migration for notifications + the desktop polling repo at the same time.** If a shared `WebSocketClient` wrapper lands in `fluxora_core` (matching the WebRTC signaling service's `WebSocket.connect(...)` + bearer-token pattern), both desktop and mobile notification repos can swap their `liveStream()` implementations together. Two `// TODO(WS):` markers are tracking this.
 
 ### Hard Rules Checklist
-- [x] No `git commit` / `git push` ran. Owner does all version control.
+- [x] No `git commit` / `git push` ran. No commits this session — owner has not authorised.
 - [x] No agent / AI branding anywhere in code, docs, or commit messages.
 - [x] No `print()` / `debugPrint()` introduced.
-- [x] No exceptions swallowed silently.
+- [x] No exceptions swallowed silently — `NotificationsCubit` logs failures via `_log.{e,w}` with full context; sign-out's `playerCubit.dismiss()` is wrapped in `try/catch (_)` only because the cubit may not have an active session and its internal `_disposeCurrentSession` already logs the meaningful failure paths.
 - [x] No secrets / hardcoded paths added.
-- [x] No new third-party deps added this session — only existing tokens consumed.
-- [x] No backwards-compat hacks left behind — V1 tokens still in `app_colors.dart` only because mobile hasn't migrated; will be deleted at mobile M9.
+- [x] No new third-party deps added in M8. `flutter_bloc`, `get_it`, `logger`, `go_router`, `freezed_annotation` (transitive via `AppNotification` entity) all already in pubspec.
+- [x] No backwards-compat hacks. `MockNotification` + the fixture list deleted outright; deleted `MockData.notifications` references nowhere else in the codebase (verified via Grep). The new `NotificationsRepository` is additive — no shim layer.
+- [x] No layer-boundary violations. New repository in `features/notifications/{domain,data}/`; new cubit in `features/notifications/presentation/cubit/`; screen in `features/notifications/presentation/screens/`. Mock data + mock-shape extensions stay in `shared/data/mock_data.dart`. Sign-out reaches into `apps/mobile/lib/core/router/` + `core/di/` only — no presentation→data short-circuits.
 ---
 
-## [2026-05-03] — M8 deferred items + M10 custom window chrome + branding/Aero Peek fixes
-**Phase:** Phase 5 — Desktop redesign close-out
-**Status:** Complete. Desktop redesign is now M0-M10 fully shipped end-to-end. Mobile redesign gate already lifted by the prior M9.5 cutover; no remaining desktop blockers.
+## [2026-05-03] — Mobile redesign M9 — Theme cutover (V1 palette removed)
+**Phase:** Phase 5 (Mobile redesign — Plan in `docs/11_design/mobile_redesign_plan.md` §7)
+**Status:** Complete — the breaking PR for mobile.
 
 ### What Was Done
 
-#### A11y pass — 8 surfaces (M8 deferred from prior session)
-Added `Tooltip` + `Semantics` annotations to the screens Sonnet didn't reach in M8. Pattern matches the existing M3-M7 work: `Semantics(button: true, selected: ...)` on tappable widgets without a visible-button affordance, `Semantics(label: ...)` on info displays, tooltip-only on icon buttons that already have visible affordance.
-- `logs_screen.dart` — log row expand button (`Semantics(button: true, label: 'LEVEL log at TIME from SOURCE: MSG', toggled: isExpanded)`), live indicator container (`Semantics(label: 'Logs live/paused, N entries', container: true)`), Reset filters link (`Semantics(button: true, label: 'Reset filters')`).
-- `settings_screen.dart` — 6 tab-row items (`Semantics(button: true, selected: isActive, label: 'X settings tab')`).
-- `encoder_settings_screen.dart` — encoder selector cards + preset chips (`Semantics(button: true, selected, label)`).
-- `profile_screen.dart` — left-rail tab nav + custom toggle pills (`Semantics(button: true, toggled, label)`).
-- `help_screen.dart` — FAQ expanders (`Semantics(button: true, expanded, label)`) + external link rows (`Semantics(button: true, link: true, label)`).
-- `notifications_panel.dart` — filter chips + notification rows (`Semantics(button: true, selected/label, full title+message readout)`).
-- `flux_sidebar.dart` — nav items (`selected: _isActive`), View Plans (`label: 'View subscription plans'`), profile footer (`label: 'Open profile'`).
-- `flux_status_bar.dart` — metric chips wrapped in `Semantics(label: 'CPU 18%', container: true, excludeSemantics: true)` so screen readers read the combined value, not three fragments.
-
-#### Golden test enabled
-Switched the M3 Dashboard golden from skip-marked to active using the GetIt-mock recipe documented in `test/goldens/_README.md`:
-- `setUp` resets `GetIt.I`, registers mock `DashboardRepository` / `StorageRepository` / `RecentActivityRepository`. `when(() => mock.method()).thenAnswer(...)` stubs the methods the screen calls.
-- The wrapping `MultiBlocProvider` around `DashboardScreen` is dropped — the screen's own `MultiBlocProvider.create` block now consumes the mocks via `GetIt.I<X>()`.
-- `SystemStatsCubit` stays as a stub cubit (subclass overrides `start()` to emit one deterministic state) because its production `Timer.periodic` would tick mid-capture and produce flaky frames.
-- `dart_test.yaml` `skip:` removed; tag declared via per-file `@Tags(['golden'])`. Default `flutter test` excludes goldens automatically; opt-in with `--tags=golden`; regenerate with `--update-goldens`.
-- Baseline PNG `m3_dashboard_default.png` regenerated and committed.
-
-#### Tech stack doc rewrite
-`docs/02_architecture/02_tech_stack.md` was missing codegen + desktop-specific deps. Rewrote as a full canonical inventory: every package per repo (server, fluxora_core, desktop, mobile, web_landing) with versions + purpose, dedicated codegen pipeline section (freezed + json_serializable + build_runner), test stack (mocktail + bloc_test + golden_toolkit), build/CI/deploy (PyInstaller, GitHub Actions, Cloudflare Pages, Cloudflare Tunnel, devcontainer), external services, networking + risks. New section "System fonts used by FluxTitlebar" documents the Segoe Fluent Icons / Segoe MDL2 Assets fallback chain with codepoint table.
-
-#### M10 — Custom window chrome shipped
-Plan was authored at `desktop_redesign_plan.md` Section 13; implemented end-to-end in this session.
-- Added `window_manager: ^0.5.1` to `apps/desktop/pubspec.yaml`. Latest stable; primary-feature dep; allowed per CLAUDE.md hard rule #6 with explicit owner approval.
-- `apps/desktop/lib/main.dart` — `await windowManager.ensureInitialized()` before runApp; `WindowOptions(size: 1440x900, minimumSize: 1332x720, center: true, backgroundColor: transparent, titleBarStyle: TitleBarStyle.hidden)`. The `minimumSize` mirrors the existing `WM_GETMINMAXINFO` floor in the C++ runner.
-- New widget `apps/desktop/lib/shared/widgets/flux_titlebar.dart`:
-  - 36 px tall, `rgba(6,4,16,0.9)` bg, 1 px bottom border `rgba(255,255,255,0.04)`.
-  - Left half is a `DragToMoveArea` wrapping `FluxoraWordmark(height: 13)` + tagline. Trailing `Expanded(SizedBox.expand())` keeps the rest of the empty space draggable.
-  - Mid-right: 26x26 pill-style help button (routes to `/help`) + notifications bell with violet status dot + glow shadow (toggles existing `NotificationsPanelScope`).
-  - Far right: 3 native Win 11 caption buttons, 46x36 px each, **flush with the window edge, no inter-button gaps** so the muscle-memory "click top-right corner to close" gesture works.
-  - Window-control glyphs use Segoe Fluent Icons codepoints (Win 11 native): U+E921 ChromeMinimize, U+E922 ChromeMaximize, U+E923 ChromeRestore, U+E8BB ChromeClose. `Segoe MDL2 Assets` fallback for Win 10 1511+.
-  - Hover/press states match Windows 11 spec exactly: min/max -> transparent / `rgba(255,255,255,0.06)` hover / `rgba(255,255,255,0.10)` press; close -> transparent / `#C42B1C` hover with white icon / `#B72516` press. 80 ms `AnimatedContainer` for the bg fade. Tooltip 600 ms wait. Cursor stays `basic` (arrow), not click-hand — matches OS title bar.
-  - `WindowListener` hook re-syncs `_isMaximized` on `onWindowMaximize` / `onWindowUnmaximize` so the middle button's icon + tooltip swap (`Maximize` <-> `Restore`) follow the window state correctly.
-- `apps/desktop/lib/shared/widgets/flux_shell.dart` — restructured the body from a single Stack to a Column with the titlebar at top and an Expanded(Stack(Row + overlays)) below, so notifications panel + Cmd+K palette overlays don't cover the titlebar.
-- Sidebar `_LogoHeader` widget deleted from `flux_sidebar.dart` — the updated prototype starts the sidebar directly with the nav list (the wordmark moves to the titlebar). Unused `_taglineStyle` static + `fluxora_logo.dart` import dropped.
-
-#### Branding pass — Fluxora app icon end-to-end
-- New master `assets/brand/app_icon.ico` regenerated from `assets/brand/logo-icon.png` (1254x1254 source) via Pillow pipeline:
-  1. Alpha-from-brightness (brightness 10 -> alpha 0; brightness 100 -> alpha 255) so the dark backdrop becomes transparent.
-  2. Tight-crop to alpha bounding box (was 59% glyph fill of canvas — way smaller than peer apps).
-  3. Re-paste with **8% margin** to a square canvas (now 84% glyph fill, matching Slack/Discord/VS Code).
-  4. Save as multi-size .ico: 16/20/24/32/40/48/64/96/128/256.
-- Runtime copy synced to `apps/desktop/windows/runner/resources/app_icon.ico` (the `.rc` references this path; can't move). Sync flow + recipe documented in `assets/README.md`.
-- `apps/desktop/windows/runner/Runner.rc` — replaced `com.example` placeholders: ProductName / CompanyName = `Fluxora`, FileDescription = `Fluxora Desktop Control Panel`, LegalCopyright = `Copyright (C) 2026 Fluxora. All rights reserved.`. FileVersion / ProductVersion auto-pulled from pubspec `version: 0.1.0+1` via `FLUTTER_VERSION_*` macros. InternalName / OriginalFilename stay `fluxora_desktop` (binary identity).
-- `apps/desktop/windows/runner/main.cpp` — window title `L"fluxora_desktop"` -> `L"Fluxora"`, initial window size 1280x720 -> 1440x900 to match the Flutter-side `WindowOptions`.
-
-#### Aero Peek shell-integration fix
-The user reported: "I'm not getting dock prompt on windows when I hover over it". Two combined causes — fixed both:
-- `apps/desktop/windows/runner/win32_window.cpp` — switched `WNDCLASS` -> `WNDCLASSEX` + `RegisterClassEx`. Now loads **both** icon variants via `LoadImage(..., GetSystemMetrics(SM_CXICON / SM_CXSMICON), ..., LR_DEFAULTCOLOR)`. Without `hIconSm`, Windows downsamples the large icon for the taskbar — quality is poor, and Win 11's thumbnail renderer can skip thumbnail registration entirely.
-- `apps/desktop/windows/runner/main.cpp` — added `#include <shobjidl.h>` and `SetCurrentProcessExplicitAppUserModelID(L"Fluxora.Desktop")` before window creation. Without an explicit AUMID, the shell can't group the running .exe with any pinned shortcut and Aero Peek doesn't trigger.
-- `apps/desktop/windows/runner/CMakeLists.txt` — linked `shell32.lib` (where `SetCurrentProcessExplicitAppUserModelID` lives).
-
-### Validation
-- `flutter analyze` clean across `packages/fluxora_core`, `apps/desktop`.
-- `flutter test --exclude-tags=golden` — 38/38 desktop tests pass; 8/8 fluxora_core tests pass.
-- `flutter test --tags=golden test/goldens/` — 1/1 golden passes against committed baseline.
-- Server suite untouched — still 247/247 from the M0 close-out.
-- Visual smoke test pending the user's `flutter run -d windows` (full restart required for native runner changes).
+- **Migrated 7 mobile call-sites + 1 desktop straggler off V1 tokens.** Every `AppColors.{primary,primaryVariant,accent,accentPurple,background,surface,surfaceRaised,surfaceMuted,textPrimary,textSecondary,textMuted,textDisabled,success,warning,error,info,brandGradient}` reference and every `AppTypography.{displayLg,displayMd,headingLg,headingMd,headingSm,bodyLg,bodyMd,bodySm,caption,label,mono}` reference in `apps/mobile/lib/` was rewritten to its V2 equivalent before the deletion landed. Mapping (per plan §4 + §4.2):
+  - Colors: `primary`/`accentPurple` → `violet`; `primaryVariant` → `violetDeep`; `accent` → `cyan`; `info` → `blue`; `success` → `emerald`; `warning` → `amber`; `error` → `red`; `background` → `bgRoot`; `surface` → `surfaceGlass`; `surfaceRaised` → `borderSubtle` (used for borders + faint-fill backgrounds in V1); `textPrimary` → `textBright`; `textSecondary` → `textMutedV2`; `textMuted` → `textDim`; `textDisabled` → `textFaint`; `brandGradient` → `AppGradients.brand`.
+  - Typography: `displayLg`/`displayMd` → `displayV2` (was 32/700 and 24/700, now both 24/700 — minor downgrade per plan §4.2 "acceptable"); `headingLg` → `h1` (20/600 → 18/700); `headingMd`/`headingSm` → `h2` (16/600 and 13/500 → 14/600); `bodyLg`/`bodyMd` → `body` (16/400 and 14/400 → 13/500); `bodySm` → `bodySmall` (13/400 → 12/500); `caption` → `captionV2` (12/400 → 11/500); `label` → `eyebrow` (11/500/0.1em → 11/600/0.14em).
+  - One nuance in `upgrade_screen.dart`: V1 had Pro tier = `primary` (indigo) and Ultimate = `accentPurple` (violet). Both V1 colors map to `violet` in V2 — collapsing them would erase the visual distinction between Pro and Ultimate. Resolution: Pro now uses `violetDeep` (`#8B5CF6`) and Ultimate stays at `violet` (`#A855F7`); Plus moves from `info` → `blue`. The tier hierarchy is now Free (`textDim`) → Plus (`blue`) → Pro (`violetDeep`) → Ultimate (`violet`).
+- **Rewrote `apps/mobile/lib/shared/theme/app_theme.dart` body in-place** to consume V2 tokens. Mirrors the desktop's M9.5 pattern: `ColorScheme.dark(primary: violet, secondary: cyan, surface: surfaceGlass, error: red, onPrimary/Surface/Error: textBright, onSecondary: bgRoot)`; `scaffoldBackgroundColor: bgRoot`; `cardColor: surfaceGlass`; `dividerColor: borderSubtle`; `textTheme` mapped onto V2 styles; `appBarTheme` with `surfaceGlass` bg + `textBright` fg + `h2` title; `elevatedButtonTheme` (violet bg + textBright fg + `h2` text style); `outlinedButtonTheme` (textBright fg + `borderSubtle` border + `h2` text style); `inputDecorationTheme` (surfaceGlass fill, borderSubtle borders, violet on focus, `body` for label/hint); `cardTheme` (surfaceGlass + radius lg); `iconTheme: textMutedV2`; `progressIndicatorTheme: violet`; `snackBarTheme` (surfaceGlass + body); new `dividerTheme` (borderSubtle hairline). The `AppTheme.dark` getter signature is unchanged — every existing `MaterialApp(theme: AppTheme.dark)` consumer continues to work.
+- **Deleted V1 tokens from `packages/fluxora_core/lib/constants/`**:
+  - `app_colors.dart` — removed the 17-token V1 block plus the `brandGradient` LinearGradient. The class now contains only V2 surfaces, V2 text, V2 accents, V2 pill bg/fg, and V2 status semantic re-exports. Top-of-file comment rewritten to reflect V2 as the canonical palette + a note that V1 was removed at M9 cutover (2026-05-03).
+  - `app_typography.dart` — removed 11 V1 styles (`displayLg`, `displayMd`, `headingLg`, `headingMd`, `headingSm`, `bodyLg`, `bodyMd`, `bodySm`, `caption`, `label`, `mono`). Class now contains only V2 styles: `displayV2` / `h1` / `h2` / `body` / `bodySmall` / `captionV2` / `micro` / `eyebrow` / `monoBody` / `monoCaption` / `monoMicro`. The transitional "Desktop redesign tokens" comment block is gone — V2 is the only set.
+- **Migrated one desktop straggler.** `apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart:1001` had a single remaining `AppTypography.bodyMd` reference (everything else V2 since the M9.5 desktop cutover). Swapped to `AppTypography.body`. Found via the same Grep that scoped this PR — captured here so the deletion was safe.
+- **Validation:**
+  - `flutter analyze` clean × all 3 packages (`packages/fluxora_core`, `apps/mobile`, `apps/desktop`).
+  - 27 mobile tests + 8 core tests + 38 desktop tests (`--exclude-tags=golden` per the M8 a11y/golden-test-infra entry) all pass — zero test churn from the cutover.
+  - Verified via Grep: zero `AppColors.{V1 names}` and zero `AppTypography.{V1 names}` references remain in any `*.dart` under `apps/` or `packages/` (matches in `AGENT_LOG.md` + `docs/logs/AGENT_LOG_archive_*.md` are historical narrative, not code).
 
 ### Files Created / Modified
 
 | Action | Path |
 |--------|------|
-| Modified | `apps/desktop/pubspec.yaml` (add `window_manager: ^0.5.1`) |
-| Modified | `apps/desktop/lib/main.dart` (windowManager init + frameless `WindowOptions`) |
-| Created | `apps/desktop/lib/shared/widgets/flux_titlebar.dart` |
-| Modified | `apps/desktop/lib/shared/widgets/flux_shell.dart` (mount titlebar above Stack) |
-| Modified | `apps/desktop/lib/shared/widgets/flux_sidebar.dart` (delete `_LogoHeader` + unused style + import) |
-| Modified | `apps/desktop/lib/shared/widgets/flux_status_bar.dart` (Semantics on metric chips) |
-| Modified | `apps/desktop/lib/features/logs/presentation/screens/logs_screen.dart` (a11y) |
-| Modified | `apps/desktop/lib/features/settings/presentation/screens/settings_screen.dart` (a11y on tab row) |
-| Modified | `apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart` (a11y on selectors) |
-| Modified | `apps/desktop/lib/features/profile/presentation/screens/profile_screen.dart` (a11y on tabs + toggles) |
-| Modified | `apps/desktop/lib/features/help/presentation/screens/help_screen.dart` (a11y on FAQ + link rows) |
-| Modified | `apps/desktop/lib/features/notifications/presentation/widgets/notifications_panel.dart` (a11y on chips + rows) |
-| Modified | `apps/desktop/test/goldens/m3_dashboard_golden_test.dart` (GetIt-mock pattern, drop wrapping MultiBlocProvider) |
-| Modified | `apps/desktop/test/goldens/goldens/m3_dashboard_default.png` (regenerated baseline) |
-| Modified | `apps/desktop/test/goldens/_README.md` (recipe rewritten) |
-| Modified | `apps/desktop/dart_test.yaml` (drop `skip` for `golden` tag) |
-| Modified | `apps/desktop/windows/runner/main.cpp` (AUMID, title `L"Fluxora"`, size 1440x900) |
-| Modified | `apps/desktop/windows/runner/win32_window.cpp` (WNDCLASSEX with hIcon + hIconSm; comment update on min-size handler) |
-| Modified | `apps/desktop/windows/runner/Runner.rc` (Fluxora metadata) |
-| Modified | `apps/desktop/windows/runner/CMakeLists.txt` (link shell32.lib) |
-| Modified | `apps/desktop/windows/runner/resources/app_icon.ico` (regenerated, tight-crop + 8% margin) |
-| Created | `assets/brand/app_icon.ico` (master copy of the regenerated icon) |
-| Modified | `assets/README.md` (added Desktop Windows runner sync-flow row) |
+| Modified | `apps/mobile/lib/shared/theme/app_theme.dart` (full body rewrite — `ColorScheme`, `scaffoldBackgroundColor`, `cardColor`, `dividerColor`, `textTheme`, `appBarTheme`, button themes, `inputDecorationTheme`, `cardTheme`, `iconTheme`, `progressIndicatorTheme`, `snackBarTheme`, new `dividerTheme` — all on V2 tokens) |
+| Modified | `apps/mobile/lib/features/auth/presentation/screens/pairing_screen.dart` (V1 → V2 token swaps in 6 sites) |
+| Modified | `apps/mobile/lib/features/library/presentation/screens/files_screen.dart` (4 sites; full rewrite for clean diff) |
+| Modified | `apps/mobile/lib/features/connect/presentation/screens/connect_screen.dart` (8 sites; full rewrite) |
+| Modified | `apps/mobile/lib/features/upgrade/presentation/screens/upgrade_screen.dart` (full rewrite — added `app_gradients` import for `AppGradients.brand`; tier color reshuffle to keep Pro vs Ultimate visually distinct after the `primary`/`accentPurple` collapse) |
+| Modified | `apps/mobile/lib/shared/widgets/loading_overlay.dart` (V1 → V2 swaps in 2 sites; full rewrite) |
+| Modified | `apps/mobile/lib/shared/widgets/media_card.dart` (V1 → V2 swaps in 8 sites — including border, placeholder bg + icon, progress bar bg + value; full rewrite) |
+| Modified | `apps/mobile/lib/shared/widgets/status_badge.dart` (V1 → V2 swaps in 4 sites — `success`/`warning`/`textMuted` → `emerald`/`amber`/`textDim`, plus `label` → `eyebrow`; full rewrite) |
+| Modified | `apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart` (1 site — `AppTypography.bodyMd` → `AppTypography.body`) |
+| Modified | `packages/fluxora_core/lib/constants/app_colors.dart` (deleted V1 brand/surface/text/semantic tokens + `brandGradient` LinearGradient; 95 lines → 60 lines; V2-only) |
+| Modified | `packages/fluxora_core/lib/constants/app_typography.dart` (deleted 11 V1 text styles; 207 lines → 105 lines; V2-only) |
 
 ### Docs Updated
 
-- `docs/02_architecture/02_tech_stack.md` — full rewrite into canonical inventory; added `window_manager` row, Native runners shell-integration section, "System fonts used by FluxTitlebar" subsection with Segoe codepoint table, golden_toolkit description updated to reflect tag-gating (no longer skip-marked).
-- `docs/00_overview/current_status.md` — date bump 2026-05-02 -> 2026-05-03; M8 row updated to reflect a11y completion + golden test enablement; new M10 row added; "What's next" section updated (M10 removed, macOS / Linux runners added with the porting checklist).
-- `docs/00_overview/folder_structure.md` — `apps/desktop/` tree rewritten to current state (was missing 12 features + every M1/M6/M10 widget; was still listing deleted `stat_card`/`status_badge`/`data_table`); added `windows/runner/` annotations for the runner files and resources; updated assets sync-flow note to include the runner .ico copy.
-- `docs/00_overview/README.md` — Last-Updated date bump.
-- `docs/10_planning/01_roadmap.md` — Status header date bump + M10 mention added.
-- `docs/11_design/desktop_redesign_plan.md` — top-of-file status string updated (M10 marked done); Section 9 milestone table M10 row marked done; Section 12 changelog row added for this session; Section 13 status changed from "Spec only" to "Done — design-of-record retained".
-- `docs/11_design/mobile_redesign_plan.md` — top-of-file status updated (no longer notes M10 as open on desktop); Section 0 execution-gate body refreshed to "Desktop is now fully shipped".
-- `docs/12_guidelines/03_gotchas.md` — three new rows: Segoe Fluent Icons fallback, taskbar-icon margin recipe, no-Aero-Peek root cause (WNDCLASSEX + AUMID).
-- `assets/README.md` — added Desktop Windows runner row to the consumer sync-flow table with the Pillow regeneration recipe.
+- `docs/00_overview/current_status.md` — `apps/mobile` table title updated to "M0–M9 landed"; new M9 row added below the M8 row; "What's next" item 1 rewritten to point at M10 (X-Ray panel + Group Watch shell + Offline state). `packages/fluxora_core` row's Design-tokens line updated to reflect the V1 deletion.
+- `docs/11_design/mobile_redesign_plan.md` — top-of-file Status string updated to "M0–M9 landed"; §7 milestone-table M9 row body rewritten and marked ✅ done; §16 changelog gains a new row.
 
 ### Decisions Made
 
-- **`window_manager` over `bitsdojo_window` or rolling our own.** Per `desktop_redesign_plan.md` Section 13.1 recommendation. Confirmed actively maintained (last release < 60 days), single API across Win/macOS/Linux, ships drag/resize/min/max/close helpers. Owner ack obtained explicitly mid-session.
-- **Window controls flush with the right edge, not floating with prototype's `gap: 14` between them.** The prototype's `winBtn` styling was minimal/decorative; making the buttons fill the full 46x36 caption-button area and sit flush with the edge matches Windows 11 native behaviour exactly so the muscle-memory "click top-right" works.
-- **Native Windows caption glyphs (Segoe Fluent Icons) over Material icons.** Material's `Icons.minimize_rounded` / `Icons.crop_square` / `Icons.filter_none` don't pixel-match the OS — different stroke weight, sub-pixel placement, and the restore icon especially looks wrong. Using the OS font means our caption strip is identical to every other Win 11 app's.
-- **Tooltip text `Restore` not `Restore Down`** per user direction.
-- **App icon regenerated with 8% margin (was 0% by default).** The source `logo-icon.png` had ~21% transparent margin per side built in, so the actual glyph filled only 59% of the .ico canvas. Tight-cropping to alpha bbox + adding 8% margin (matching Slack/Discord/VS Code) brings the rendered taskbar icon to the same visual size as peer apps.
-- **Master .ico lives in `/assets/brand/`, runtime copy in `apps/desktop/windows/runner/resources/`.** Same duplication model already documented for `logo-icon.png`, `logo-wordmark-h.png`, etc. The .rc file references the runtime path and can't move; documented the sync flow + Pillow recipe in `assets/README.md` and saved a feedback memory so future generated assets default to `/assets/` first.
-- **AppUserModelID set in `main.cpp`, not via a manifest fragment or shortcut metadata.** Setting it programmatically before window creation is the simplest path that survives both `flutter run` (no shortcut) and any future pinned-shortcut launches.
+- **`primary` and `accentPurple` both collapse to `violet`, but `upgrade_screen.dart` differentiates Pro from Ultimate via `violetDeep` vs `violet`.** The two V1 token names happened to be used as distinct *signal* colors for Pro and Ultimate tiers, even though one was indigo and the other violet. After the M9 collapse they'd render as the same hex — eliminating the visible tier hierarchy. Picking `violetDeep` for Pro keeps the violet-family signal but at a slightly deeper shade so the tier ladder stays legible. `Plus` shifts from `info` (`#3B82F6`) to `blue` (same hex, V2 name) — purely a rename, no visual change.
+- **`AppColors.surfaceRaised` → `borderSubtle` (not a new dedicated mid-tier surface).** V1 `surfaceRaised` (`#334155`) was used in the mobile theme + media_card + connect tile + upgrade card for hairline borders + the LinearProgressIndicator background. V2 has no exact mid-tier surface — `borderSubtle` (rgba(255,255,255,0.06)) is the closest hairline equivalent. Per plan §4 row "borderStrong → borderSubtle" reasoning, "do not add a white-strong variant — escalate if visually broken." Visual smoke test will validate; if the connect tile or upgrade card look anemic, escalate before adding a new V2 token.
+- **Display tokens collapse 32 px → 24 px on mobile.** V1 `displayLg` was 32/700 — used only on the `_LoadingView` in pairing_screen and possibly nowhere mobile-visible after redesign. V2 `displayV2` is 24/700. The plan §4.2 sanctions the downgrade ("Closest existing display style; -1 px tracking, -100 weight. Acceptable."). If the pairing-screen "Connecting to server…" loading message looks under-emphatic, copy edit the screen, don't add a new token.
+- **Single `AppTypography.bodyMd` site found in desktop, swept in same PR.** The desktop M9.5 cutover entry claimed "Desktop is now V2-pure." Grep this session found `clients_screen.dart:1001` still on `bodyMd` — likely missed because it landed *after* the M9.5 grep snapshot. Migrating it here was zero-risk (same color, smaller font weight) and clears the way for the V1 deletion. Reported in Issues below.
+- **Deleted V1 typography defaults (e.g. `color: AppColors.textPrimary` inside the V1 `displayLg` def) propagate naturally.** Each V1 typography style baked in V1 colors as defaults. Removing the styles removed the references atomically — no orphan `textPrimary`/`textSecondary`/`textMuted` left after the typography deletion, so the colors deletion was safe.
+- **`mono` (V1) deleted, V2 mono trio is the canonical mono.** V1 `mono` (13/400) was unused in the mobile codebase per Grep — the V2 trio (`monoBody` 12/500, `monoCaption` 11/500, `monoMicro` 10.5/500) covers every actual call-site. Deleting `mono` is honest; if a 13/400 mono variant is ever needed it can be added explicitly.
+- **No new V2 tokens introduced.** The plan §1 row 2 + §4 + §4.2 are explicit: consume what exists, don't recreate. M9 is purely deletion + rewiring; the V2 token surface is unchanged from M0.
 
 ### Issues Discovered / Reported to User
 
-- **Mid-session feedback that "Restore Down" was wrong** — owner pointed out plain "Restore" is the desired label. Reverted.
-- **Mid-session feedback that taskbar Aero Peek wasn't appearing** — owner noticed during smoke check. Root-caused to two issues (no `hIconSm` + no AUMID), fixed both, documented in gotchas.
-- **Source `logo-icon.png` is RGB with no alpha channel.** Documented in `assets/brand/README.md` already; the alpha-from-brightness pipeline must be re-run any time the master is replaced.
-- **macOS / Linux runners not yet generated.** When they are, they will need: native equivalents of `WM_GETMINMAXINFO` + `SetCurrentProcessExplicitAppUserModelID` + `WNDCLASSEX hIconSm`, plus a `Platform.isWindows` swap for the Segoe Fluent Icons codepoints (the fonts are Windows-only). Documented in `current_status.md` "What's next" + `tech_stack.md` Native runners section.
+- **Desktop M9.5 was not actually V2-pure.** The M9.5 entry claimed "zero `AppColors.{primary,background,surface,...}` references" but `clients_screen.dart:1001` still had `AppTypography.bodyMd`. Single-site, low-risk, but worth flagging — future cutover claims should be backed by a Grep matrix run as part of the validation step, not just a spot check.
+- **`upgrade_screen.dart` is the only mobile screen still using legacy `_TierData` colors directly.** The V1→V2 collapse forced a tier-color reshuffle (Pro `primary` indigo → `violetDeep`; Ultimate `accentPurple` violet → `violet`). If a future "tier accent" entry lands in `AppColors`, the upgrade screen's hardcoded `Color(...)` direct refs should be reviewed.
+- **`InputDecorationTheme.fillColor: AppColors.surfaceGlass`** — surfaceGlass is rgba(20,18,38,0.7), so a `TextField` (used by the manual-entry IP/port row in connect_screen) renders semi-transparently over the screen background. Visually it should be fine on the V2 backdrop (fluxora bgRoot + radial gradient), but the legacy theme's V1 `surface` (`#1E293B`) was opaque, so the input fields looked solid before. Worth a visual smoke test.
+- **`AppTheme.dark` is now dead-loaded but most screens override `Scaffold.backgroundColor: Colors.transparent` to expose the M0 background gradient.** That means `scaffoldBackgroundColor: bgRoot` from the theme only applies to screens that don't override it (legacy `connect_screen` + `pairing_screen` + `upgrade_screen` + `files_screen` keep the theme bg; tab-shell screens ignore it). This is intentional — the redesigned tab screens want the gradient — but documenting here so the hierarchy is clear.
 
 ### Blockers / Open Issues
 
-- **Visual smoke test pending the user's restart.** Native runner changes (icon, AUMID, WNDCLASSEX) and `TitleBarStyle.hidden` only apply at process launch — full `flutter run -d windows` restart is needed; hot-reload won't pick them up. The user has been notified.
-- **No remaining desktop redesign blockers.** M0-M10 fully shipped.
+- **None for M10.** All M9 plumbing is done. M10 builds the X-Ray side panel (driven by static cast metadata only, plan §1 row 4 — no live ML), Group Watch shell (placeholder modal — "Coming soon"), and Offline empty state.
 
 ### Next Agent Should
 
-1. **Verify the visual smoke test** the user runs and triage any remaining bugs.
-2. **Mobile app redesign** — gate is lifted (was lifted at M9.5; M10 is also done now). Plan in `docs/11_design/mobile_redesign_plan.md` Section 7. Start at M0.
-3. **macOS / Linux desktop runners** when scoped — the Win-specific shell integration items (AUMID, WNDCLASSEX hIconSm, Segoe glyphs) need per-platform equivalents. Checklist in `current_status.md` "What's next".
-4. **Phase 6 routing hardening operator tasks** in `docs/10_planning/04_manual_tasks.md` (Cloudflare Access on `/orders`, WAF rules, tunnel-health alerts, TURN evaluation). All operator-driven.
-5. **Dependabot triage** — the Dart 3.9 floor bump may have unstuck PRs blocked on `json_annotation 4.11+`, `go_router 17.x`, `json_serializable 6.13+`.
+1. **Mobile redesign M10 — X-Ray panel + Group Watch shell + Offline state** per plan §7 row M10. Three small additions; UI shells only (no live X-Ray ML, no Group Watch sync engine).
+2. **Visual smoke test** the V1→V2 cutover on a real device — especially `pairing_screen` (uses theme defaults heavily), `connect_screen` (Material `TextField` with `inputDecorationTheme.fillColor: surfaceGlass`), `upgrade_screen` (Pro vs Ultimate tier color distinction; `AppGradients.brand` header). The legacy screens are the regression-risk surface.
+3. **Wire real per-client profile data** when a mobile-client profile endpoint lands — still mocked at M8.
+4. **Coordinated WS migration for notifications** when a shared HMAC-bearer wrapper lands — both mobile and desktop carry `// TODO(WS):` markers from M8.
 
 ### Hard Rules Checklist
-- [x] No `git commit` / `git push` ran without explicit per-action OK. No commits created this session — owner has not authorised.
+- [x] No `git commit` / `git push` ran. No commits this session — owner has not authorised.
 - [x] No agent / AI branding anywhere in code, docs, or commit messages.
 - [x] No `print()` / `debugPrint()` introduced.
 - [x] No exceptions swallowed silently.
 - [x] No secrets / hardcoded paths added.
-- [x] All new third-party deps version-checked — `window_manager 0.5.1` (latest stable per pub.dev, owner ack obtained per CLAUDE.md hard rule #6).
-- [x] No backwards-compat hacks left behind. Sidebar `_LogoHeader` deleted outright, not deprecated.
+- [x] No new third-party deps added in M9. The deletion is purely a contraction; no `pubspec.yaml` touched.
+- [x] No backwards-compat hacks. V1 tokens deleted outright, no aliases left behind, no deprecated-marker comments. Full compile-error grep before deletion confirmed every call-site was migrated.
+- [x] No layer-boundary violations. Theme rewrite stays in `apps/mobile/lib/shared/theme/`; V1 deletions stay in `packages/fluxora_core/lib/constants/`; per-screen migrations stay within their existing feature folders.
 ---
+
+---
+## [2026-05-03] — Desktop Library — P0+P1 close-out + D2–D7 decisions + full doc sync
+**Phase:** Phase 5 — desktop redesign close-out (Library surface)
+**Status:** Complete — every item in `docs/10_planning/07_library_screen_plan.md` P0/P1 shipped or explicitly dropped per owner decision.
+
+### What Was Done
+
+Picked up the desktop library screen audit (`docs/10_planning/07_library_screen_plan.md`) where the previous session left it: P0 #1–#5 + per-library `total_size_bytes` aggregate were already implemented end-to-end (server PATCH route + entity regen + cubit + new files screen + route wiring). Verified green: `flutter analyze apps/desktop/lib/features/library/` (clean, 104.8s), `pytest apps/server/tests/test_library.py` (14 / 14), `flutter analyze packages/fluxora_core` (clean, 113.1s).
+
+Then resolved the 6 open D-decisions with the owner this session:
+
+- **D2 — Photos tab**: drop. Confirmed already removed from `_kTabs` during the prior rewrite — only `all/movies/tv/music/docs` remain.
+- **D3 — Description field**: drop (recommended). Names + types convey ~90 % of intent; not worth the migration + empty-string maintenance.
+- **D4 — Rescan Metadata action**: drop (recommended). Full `Scan` already re-enriches new files; rare full-resweep need is covered by Delete + Rescan.
+- **D5 — Sort + Filter + List/Grid toggle**: implement. Shipped `_SortBy` enum (Name A–Z · Last Scanned · File Count · Total Size), `_LibraryFilters` (enriched-only · with-files · recently-scanned ≤ 7d), `_ViewMode` enum, `_ToolbarRow` widget (result-count label + Sort PopupMenu + Filters chip + segmented Grid/List toggle), `_FiltersDialog` modal, `_FiltersEmptyState`, `_LibraryList` widget (rounded glass card, one row per library: type icon + name/paths + file count + size + last scanned + 4 action buttons). State persists in `_LibraryViewState`.
+- **D6 — Edit dialog scope**: name + root_paths only; **type is immutable post-creation**. `UpdateLibraryBody` Pydantic model accepts only `name` and `root_paths`. UI passes `typeEditable: false` when editing. Promoted to ADR-016.
+- **D7 — Disk file deletion**: **NEVER**. Promoted to ADR-017 ("Hard Lock — does not change without a follow-up ADR"). Defense in depth: code (no `os.remove` / `Path.unlink` / `shutil.rmtree` calls on the library track — verified by grep), confirm-dialog copy hardened to "Your files on disk are never deleted by this app", plan + ADR documented.
+
+Then ran the full doc-update protocol — every affected file touched.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `apps/desktop/lib/features/library/presentation/screens/library_screen.dart` (added `_SortBy` / `_ViewMode` / `_LibraryFilters` types, `_ToolbarRow`, `_LibraryList`, `_FiltersDialog`, `_FiltersEmptyState`, `_ListRowAction`; threaded sort/filter/view-mode state through `_LibraryViewState` → `_LoadedBody`; tightened delete-dialog copy for ADR-017) — about +600 lines |
+| Modified | `apps/desktop/lib/features/library/presentation/cubit/library_cubit.dart` (already had `updateLibrary` / optimistic `deleteLibrary` / `scanLibrary` returning count from prior session; verified) |
+
+### Docs Updated
+
+| Action | Path |
+|--------|------|
+| Modified | `docs/10_planning/07_library_screen_plan.md` (status `🟡 PROPOSED` → `🟢 P0 + P1 SHIPPED`; replaced "Open decisions" with "Decisions (resolved 2026-05-03)" section listing D1–D7 outcomes including hard-lock 🔒 marker on D7) |
+| Modified | `docs/10_planning/02_decisions.md` (added ADR-016 — Library Type is Immutable Post-Creation; added ADR-017 — Files on Disk are NEVER Deleted by Fluxora; status header bumped to "ADR-016/017 added 2026-05-03") |
+| Modified | `docs/10_planning/01_roadmap.md` (Phase 1 Library row updated to mention `PATCH` + `total_size_bytes`; Desktop Library Management row updated to list edit/delete/files browser/sort/filter/list toggle/poster mosaic) |
+| Modified | `docs/04_api/01_api_contracts.md` (header status updated; `LibraryResponse` schema gains `total_size_bytes`; new `PATCH /api/v1/library/{library_id}` section; DELETE description hardened with ADR-017 reference) |
+| Modified | `docs/03_data/01_data_models.md` (Library entity gains `file_count` + `total_size_bytes` computed columns; `type` marked immutable per ADR-016; ActivityEvent `type` field examples extended with `library.create/update/delete` + `file.upload/delete`; producer call sites for routers/library.py + routers/files.py listed) |
+| Modified | `docs/09_backend/01_backend_architecture.md` (header status updated; routers/library.py annotation now mentions PATCH + emitters; library_service description mentions `update_library` + `total_size_bytes` aggregate; models/library.py description gains `UpdateLibraryBody`; test_library.py count 8 → 14; total tests 247 → 253; service map row updated with `update_library()`) |
+| Modified | `docs/05_infrastructure/02_url_inventory.md` (added PATCH /library/{library_id} row; DELETE description tightened with ADR-017) |
+| Modified | `docs/08_frontend/01_frontend_architecture.md` (new "Desktop Library Surface" section before "Two Client Targets" — full description of P0+P1 close-out + sort/filter/list/files-browser surface + ADR-016/017 references) |
+| Modified | `docs/00_overview/current_status.md` (header dated 2026-05-03 with library close-out; server test count 247 → 253; Desktop apps Library row description widened; new "Desktop Library — P0+P1 close-out" row in the desktop redesign milestone table) |
+
+### Decisions Made
+
+- **ADR-016 promoted from D6.** Library `type` is immutable post-creation. The risk of orphaning type-specific metadata (movie posters, episode counts, music tags) outweighs the operator-convenience win of being able to flip type. Workaround: `delete + recreate`. UI hides the type selector when editing.
+- **ADR-017 promoted from D7 — Hard Lock.** Fluxora never deletes files from disk. The server has zero file-deletion code on the library track. The dialog copy reflects this explicitly. Three layers of defense: code, UI copy, ADR. Reverting requires a fresh ADR.
+- **D3 (description field) and D4 (Rescan Metadata) dropped.** Both are low-value features that would add code surface, server work, or migrations for marginal user benefit. The remaining `Scan` covers re-enrichment via Delete + Rescan when full resweep is genuinely needed.
+- **`_LibraryFilters` is a value type with `copyWith`.** Considered passing individual flags as function args; the value-type approach kept the sheet's draft-state clean and made `isActive` / `activeCount` readable in the toolbar.
+- **`Last Scanned` replaced `Date Created` as a sort key.** The `Library` entity has no `created_at` field exposed to Dart (only `lastScanned`), so the plan's "Date Created" sort would have been fictional. Renamed the option to reflect the real data.
+
+### Validation
+
+- `flutter analyze apps/desktop/lib/features/library/` — **No issues found** (post-implementation, 6.2s after const-fixes; 104.8s on first run before)
+- `flutter analyze packages/fluxora_core` — **No issues found** (113.1s)
+- `pytest apps/server/tests/` (full suite) — **253 passed in 47 s**, 1 deprecation warning (`pythonjsonlogger.jsonlogger` rename — pre-existing, unrelated)
+- `pytest apps/server/tests/test_library.py` — **14 / 14 passed**
+- Documentation update protocol Step 5 checklist — every affected file updated; cross-reference sweep done; consistency checks pass.
+
+### Issues Discovered / Reported to User
+
+- **`_kTabs` already had Photos dropped.** The plan's audit was written against a pre-rewrite version of `library_screen.dart`. After the +919 line rewrite earlier in the session, only `all/movies/tv/music/docs` were left. D2 was effectively a no-op confirmation. Reported.
+- **The server has no `created_at` exposure on `Library` in the Dart entity.** The plan suggested "Date Created" as a sort option; in practice there's only `lastScanned`. Replaced silently in the implementation; flagged in this entry.
+- **Earlier git status snapshot at session start showed apps/server/routers/{auth,files,info,settings}.py as modified, but the actual working tree had no diff in those files.** Cached snapshot from before a previous commit landed; no action needed. (Already noted in prior log entry; carried forward.)
+
+### Blockers / Open Issues
+
+- **P2 nice-to-haves still open** (per plan): #14 multi-root in Add dialog, #15 inline-validation on Add, #16 optimistic mutation rollback, #17 drag-and-drop folder onto card, #18 Upload UI on the file browser screen. Not in scope for this PR — left for owner to prioritise.
+- **`apps/desktop/lib/features/recent_activity/` and `apps/desktop/lib/features/storage/`** still show as untracked in `git status`. They're consumed by the redesigned Dashboard / Library; if they were intentional carry-overs from another agent, they should be staged separately. Not touched this session.
+- **`apps/mobile/`, `packages/fluxora_core/lib/widgets/flux_*.dart`, `docs/11_design/mobile_redesign_plan.md`** — owned by the mobile-redesign agent per owner instruction "other agent is working on mobile work, dont touch that". Untouched.
+
+### Next Agent Should
+
+1. **Commit the desktop library track in chunks** (matches the prior commit cadence): (a) server — `routers/library.py` + `services/library_service.py` + `models/library.py` + `tests/test_library.py`; (b) core — `packages/fluxora_core/lib/entities/library.{dart,freezed.dart,g.dart}`; (c) desktop — `apps/desktop/lib/features/library/`; (d) docs — every `.md` listed in the table above. **Do not stage** the mobile work or the `flux_*.dart` widget files — those belong to the parallel mobile agent.
+2. **Manual visual smoke test on Windows desktop**: launch the Library tab, verify the toolbar row renders correctly at all widths (sort menu opens, filters dialog applies/clears, grid/list toggle persists), confirm the new files screen at `/library/:id/files` shows real per-library file counts/sizes, and that delete confirms with the new ADR-017 copy.
+3. **P2 batching**: ask owner to prioritise plan items #14–#18; #15 (inline validation on Add) is the cheapest win and the most user-visible.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran without explicit per-action OK. Committing is the next session's task per owner pattern.
+- [x] No agent / AI branding in any code, doc, or commit message.
+- [x] No `print()` / `debugPrint()` introduced (Dart) or `print()` (Python). Logger usage is consistent with the existing surface.
+- [x] No exceptions swallowed silently. Cubit methods catch `ApiException` separately from the generic `Exception` branch and rethrow after logging.
+- [x] No secrets / hardcoded paths added.
+- [x] No new third-party deps. All widgets reuse existing `fluxora_core` primitives + Material widgets already in pubspec.
+- [x] No backwards-compat hacks. Old `_visibleLibraries` getter expanded in place; toolbar + list view added cleanly; no shim layer.
+- [x] No layer-boundary violations. Sort/filter/view-mode state is local UI state in `_LibraryViewState`; cubit + repo + entity changes flow domain → data → presentation as intended.
+- [x] D7 hard-lock honoured at every layer (code, UI copy, ADR-017).
+---
+
+## [2026-05-03] — Mobile redesign M9 follow-up — Theme polish (input fill + progress track) + V1 grep matrix verification
+**Phase:** Phase 5 (Mobile redesign — Plan in `docs/11_design/mobile_redesign_plan.md` §7)
+**Status:** Complete — addresses 3 of the 4 issues flagged in the M9 entry. (Issue #3, the Pro/Ultimate tier reshuffle, was already correct in M9.)
+
+### What Was Done
+
+- **Issue #1 — V1 grep matrix verification.** Ran the exhaustive matrix the M9 entry promised: every `AppColors.{primary,primaryVariant,accent,accentPurple,background,surface,surfaceRaised,surfaceMuted,textPrimary,textSecondary,textMuted,textDisabled,success,warning,error,info,brandGradient}` and every `AppTypography.{displayLg,displayMd,headingLg,headingMd,headingSm,bodyLg,bodyMd,bodySm,caption,label,mono}` reference, scoped to `*.dart` files only across the entire repo. **Zero matches in code.** (Matches in `AGENT_LOG.md` + `docs/logs/AGENT_LOG_archive_*.md` + `docs/11_design/desktop_redesign_plan.md` are all historical narrative, never code.) The Grep matrix is the methodology future cutover claims should be backed by — spot checks alone are not sufficient (the M9.5 desktop cutover claimed V2-pure but missed `clients_screen.dart:1001`, caught only when M9 ran the matrix).
+- **Issue #4 — `InputDecorationTheme.fillColor` opaque equivalent.** Swapped `AppColors.surfaceGlass` (rgba(20,18,38,0.7) — translucent) → `Color(0xFF0F0C24)` (opaque). The M0 background gradient bleeds through any translucent fill on a Material `TextField`; the only such field today is the manual IP/port row in `connect_screen.dart`, but anything else that mounts a Material `TextField` would have rendered see-through. `Color(0xFF0F0C24)` is the prototype's `bgRaised` value (also used in `FluxBottomSheet` for the same "raised over bgRoot" intent). Inline literal with a 5-line comment explaining why no V2 token was added — plan §4 row 2 explicitly chose to live without an opaque mid-tier color.
+- **Issue #2 — `media_card` LinearProgressIndicator track contrast.** Bumped backgroundColor from `AppColors.borderSubtle` (rgba(255,255,255,0.06) — too faint to read as a duration cue) to `Color(0x14FFFFFF)` (white-8% — matches the FluxPlayerControls progress-track shade). Inline comment cross-references the FluxPlayer pattern. Other `surfaceRaised → borderSubtle` mappings audited in this pass: `media_card` border (border use, fine at 6%); `connect_screen` server-tile border (fine); `upgrade_screen` activation card border (fine). The progress track was the only fill-vs-border ambiguity that needed bumping — the rest are genuine borders where 6% reads correctly.
+- **Issue #3 — already shipped in M9.** Pro = `violetDeep` / Ultimate = `violet` was the M9 reshuffle decision; nothing further to do. Listed here for completeness.
+- **Validation:** `flutter analyze` clean × `apps/mobile`; 27 mobile tests still pass. Single transient hook diagnostic during the edit (a typo where I invented a `copyWithProgress` method that doesn't exist on `LinearProgressIndicator` — fixed by reverting to a plain non-const `LinearProgressIndicator(value: progress, ...)` since `progress` is a runtime value).
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `apps/mobile/lib/shared/theme/app_theme.dart` (`InputDecorationTheme.fillColor`: `AppColors.surfaceGlass` → `Color(0xFF0F0C24)` + 5-line explanatory comment) |
+| Modified | `apps/mobile/lib/shared/widgets/media_card.dart` (`LinearProgressIndicator.backgroundColor`: `AppColors.borderSubtle` → `Color(0x14FFFFFF)` + 2-line cross-reference comment) |
+
+### Docs Updated
+
+- None — these are surgical fixes against M9's already-documented "Issues Discovered / Reported to User" section. The M9 entry remains the canonical doc for the cutover; this follow-up records the resolution but doesn't change the cutover narrative. (Per CLAUDE.md "AGENT_LOG.md is append-only — never edit or delete past entries.")
+
+### Decisions Made
+
+- **`Color(0xFF0F0C24)` is an inline literal, not a new V2 token.** Plan §4 row 2 explicitly says "do not add a new token" for the bgRaised mid-tier. Adding one would re-open a settled architectural decision; using the literal — same value as `FluxBottomSheet`'s body bg — keeps the V2 surface set frozen. If a third site needs the same value, that's the trigger for adding a token.
+- **`Color(0x14FFFFFF)` for the progress track, not bumping `borderSubtle` from 6 → 8%.** `borderSubtle` is used as a hairline divider/border across both apps; bumping its alpha would visually thicken every divider in the codebase. Picking a local literal scoped to media_card mirrors the FluxPlayer pattern (which made the same call) and keeps the global border token where the spec wants it.
+- **No follow-up smoke test ordered.** The fixes are local and the failure modes were narrow: a translucent input fill (visible only on legacy `connect_screen` manual entry) and a barely-visible progress track (visible only on the legacy `MediaCard` in `files_screen` resume path). Both surfaces will be replaced in Phase 5+ (M11 `files-browser` rebuild + M12 onboarding revamp). Investing in a smoke test before the screens get rebuilt is throwaway effort.
+
+### Issues Discovered / Reported to User
+
+- **Other agent's entry sits between M9 and this follow-up** (`Desktop Library — P0+P1 close-out`, 2026-05-03 — appended to `AGENT_LOG.md` while this M9 work was in progress). That's the correct ordering — append-only means time-of-write order, not topical grouping. Anyone reading the log linearly will see the M9 entry → desktop library entry → this M9 follow-up. The cross-references in this follow-up's body make the topical link explicit.
+- **The `LinearProgressIndicator` const error during the edit** (a momentary attempt to mark `LinearProgressIndicator` as `const` then chain a `.copyWithProgress(progress)` call that doesn't exist on the Material class) is the kind of micro-mistake the IDE diagnostics catch in real time — flagged here just so future agents know to trust the analyzer over their model of Flutter's API surface.
+
+### Blockers / Open Issues
+
+- **None for M10.** Both M9 issues #2 and #4 are now resolved in code. M10 (X-Ray panel + Group Watch shell + Offline state) remains unblocked.
+
+### Next Agent Should
+
+1. **Mobile redesign M10 — X-Ray panel + Group Watch shell + Offline state** per plan §7 row M10 (unchanged from M9's "Next Agent Should").
+2. **Visual smoke test the V1→V2 cutover on hardware** when convenient — especially the `connect_screen` manual-entry IP/port `TextField` (now backed by the opaque `Color(0xFF0F0C24)` fill) and the `files_screen` `MediaCard` resume bar (now backed by the white-8% track). Both render correctly in static analysis but only a real device confirms the shade reads as intended.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran. No commits this session — owner has not authorised.
+- [x] No agent / AI branding anywhere in code, docs, or commit messages.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No exceptions swallowed silently.
+- [x] No secrets / hardcoded paths added — `Color(0xFF0F0C24)` and `Color(0x14FFFFFF)` are literal hex values matching values already in the codebase (`FluxBottomSheet` body bg + `FluxPlayerControls` track bg respectively).
+- [x] No new third-party deps.
+- [x] No backwards-compat hacks. Two surgical fixes in two files; no shim layer.
+- [x] No layer-boundary violations. Theme literal stays in `apps/mobile/lib/shared/theme/`; widget literal stays in `apps/mobile/lib/shared/widgets/`.
+---
+
