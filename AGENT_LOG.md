@@ -532,3 +532,87 @@ Ran the documentation update protocol after the M8/M9/M9-followup work landed. S
 - [x] No layer-boundary violations. Doc edits stay within `docs/`; the AGENT_LOG.md doc-sync entry stays append-only at the bottom.
 ---
 
+## [2026-05-03] — Mobile real-data backfill — plan + locked decisions + pre-flight + Phase A scope freeze
+**Phase:** Phase 5 (Mobile redesign — backfill prep)
+**Status:** Complete (planning only — no code change). Phase A is frozen and ready for the next session.
+
+### What Was Done
+
+- **New planning doc** `docs/10_planning/08_real_data_backfill_plan.md`. Lists every `MockData` reference in `apps/mobile/lib/`, its real-data path, the server work needed, the mobile work needed, and the phase it lands in. 7 phases originally drafted (A–G); 1 dropped (F = Trending), 1 deferred (E = Downloads, hidden in v1).
+- **8 owner decisions locked** (plan §5). Highlights:
+  - Search: SQL `LIKE` for v1; FTS5 deferred to v2 (endpoint contract identical, only WHERE clause changes).
+  - Profile per-client endpoint: new `GET /clients/me`; `/info` stays public-only.
+  - Trending rail: dropped permanently from Home (single-tenant single-user trending is degenerate).
+  - Downloads tab: hidden in v1, ships v1.1+.
+  - Episodes: schema-light — episode files stay regular `media_files` rows aggregated by `tmdb_show_id`; no new `episodes` table.
+  - Quality switching + Direct play: full Phase G (multi-variant HLS ladder + `GET /files/{id}/source` + Source/Auto picker).
+  - Pairing UX: Phase A includes a full rebuild — display_name editable + defaulted, optional email, explicit state machine, lost-token Reconnect route.
+  - MockGradients: lifted to `shared/widgets/gradients.dart` before deleting `mock_data.dart`.
+- **Phase D re-scoped from 5–8 sessions to 1–2** after the schema-light decision — episodes are pure SQL aggregates over the existing `media_files` table.
+- **Effort estimate refresh** (plan §4): Phase A 2–3 sessions, B 2–3, C 3–5, D 1–2, E 8–12 (deferred), F 0 (dropped), G 4–6. v1 ship line A+B+C+D+G ≈ 12–19 sessions.
+- **Pre-flight reads** (5 items, ~15 min):
+  - `media_files` columns: has all TMDB + resume + timestamp fields. **Missing:** `width`, `height`, `codec_name`, `hdr_format`, `tmdb_show_id`, `season_number`, `episode_number`.
+  - `clients` columns: has `name` (= display_name today via `device_name` pair-request field), `platform`, `last_seen`, `is_trusted`, `auth_token`, `status`. **Missing:** `email`, `paired_at`.
+  - Legacy `LibraryRepository` mobile compile path: intact post-M9 token cutover; just rewire `library_screen.dart` back to `LibraryBloc`.
+  - TV episode columns: none on `media_files` today — Phase A migration adds them (pre-folded for Phase D so we ship one schema bump).
+  - Auth router + pairing flow: ratelimit + state-machine in place; **two real bugs found that Phase A must fix** (see Issues below).
+- **Phase A scope frozen** in plan §9 — single migration 016 + FFprobe persistence + 2 new endpoints (`GET /files/recent` + `GET /clients/me`) + same-`client_id` re-pair fix on the server; Library / Detail / Recent / Profile rewiring + full pairing-screen rebuild + lost-token Reconnect route on mobile. 3-commit delivery proposed (server / mobile-data / mobile-pairing).
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `docs/10_planning/08_real_data_backfill_plan.md` (~370 lines — 10 sections, decision table, full Phase A migration SQL, frozen mobile scope, cross-references) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Docs Updated
+
+- `docs/10_planning/08_real_data_backfill_plan.md` — new file. (Other docs not touched in this session — Phase A's commits will update `04_api/01_api_contracts.md`, `03_data/02_database_schema.md`, `06_security/01_security.md` §Pairing, `00_overview/current_status.md`, and the plan's §3 / §4 / §5 / §9 with the as-built state.)
+
+### Decisions Made
+
+(All 8 are in the plan §5 — copying the headline rationale here for searchability.)
+
+- **Search backend = SQL LIKE for v1.** Endpoint contract is identical when v2 swaps to FTS5. Zero mobile-side cutover cost.
+- **Profile endpoint = new `/clients/me`.** Don't muddy `/info` with per-caller fields.
+- **Trending rail dropped.** Not telemetry-rich enough at single-tenant scale to be honest.
+- **Downloads tab hidden in v1.** Full download manager is a v1.1+ feature; can't smuggle it into the v1 ship.
+- **Episodes via aggregate, not new table.** Each episode is already a `media_files` row; "show" is `WHERE tmdb_show_id = ?`. Massive scope reduction.
+- **Quality + Direct-play in v1 (Phase G).** User asked for both; multi-variant HLS ladder is FFmpeg config + master playlist (media_kit handles client-side switching automatically); direct-play is a new bearer-auth Range-capable file endpoint with codec allowlist + client-side fallback chain.
+- **Pairing UX rebuild in Phase A.** State-machine UI + display_name editable + lost-token Reconnect path. Two server bugs caught in pre-flight (re-pair 409, in-memory pending tokens) get fixed alongside.
+- **MockGradients lifted, not deleted.** Gradient placeholders look intentional; solid violet would read as broken.
+
+### Issues Discovered / Reported to User
+
+- **Re-pair from same `client_id` returns 409 Conflict.** `apps/server/routers/auth.py` `POST /auth/approve/{client_id}` (line 100–104) refuses approval if the client's `status` is not `pending`. So a mobile user who reinstalls the app or restores from iCloud / Google Backup hits a hard error the operator can't resolve from the desktop UI today. **Phase A must fix:** `services/auth_service.create_pair_request()` should reset `status` → `pending`, clear the prior `auth_token`, refresh `name` + `email`, drop any cached `_pending_tokens` entry. Operator sees a fresh "re-pair request from {device}" — old token is dead immediately. Doubles as a security improvement (stolen token + reinstall = forced re-approval).
+- **Pending tokens are in-memory only.** `_pending_tokens: dict[str, str]` in `apps/server/routers/auth.py` lines 159–167. Server restart between approve and the first `/auth/status` poll loses the raw token; client never sees `auth_token: "..."`. v1 single-tenant home server — operator can re-approve. **Phase A flags as known limitation in `04_manual_tasks.md`** rather than fixing (would need persistent storage with TTL — out of Phase A scope).
+- **No mobile lost-token recovery path.** If `secureStorage.auth_token` returns null but `client_id` is still present (could happen via OS keychain glitch, iCloud restore, or future selective wipe), the app routes to `/connect` losing the user's `serverUrl` too. Phase A adds `Routes.reconnect` covering this.
+- **Quality / Direct-play (Phase G) needs FFmpeg ladder work that isn't trivial.** The 4–6 session estimate assumes a sane source-aware default ladder (4K → 1080p+720p+480p, etc.) and `media_kit`'s built-in master-playlist variant API works as expected on iOS / Android. Bandwidth-aware adaptive switching is media_kit's territory; we just need to emit a valid HLS master. Worth a media_kit smoke test before committing the full Phase G effort.
+
+### Blockers / Open Issues
+
+- **None for Phase A.** Scope is frozen, migration is drafted, endpoints are specified, the pairing rebuild is itemised. Next agent picks this up cleanly.
+- **One open question for Phase G** (not blocking Phase A): does media_kit on iOS handle HLS master playlist variant switching transparently, or does it need an explicit `Player.setVideoTrack` call from the picker? Worth a 30-minute experiment before committing the full Phase G design. Phase A doesn't need this.
+
+### Next Agent Should
+
+1. **Execute Phase A** per plan §9 — three commits in this order:
+   - **Commit 1 — Server side.** `apps/server/database/migrations/016_media_quality_episodes_client_email.sql` (full DDL in plan §9.1) + FFprobe persistence in `services/ffmpeg_service.py` (or wherever scan probing lives) + same-`client_id` re-pair fix in `services/auth_service.create_pair_request()` + `models/client.py` adds optional `email` to `PairRequestBody` + new `GET /api/v1/files/recent` + new `GET /api/v1/clients/me` + tests for migration + new endpoints + re-pair flow. Server suite stays green. Subject: `feat(server): migration 016 + FFprobe + recent + clients/me + re-pair fix`.
+   - **Commit 2 — Mobile data wiring.** `library_screen.dart` rewires to `LibraryBloc`; new `DetailCubit` + `RecentCubit`; `profile_screen.dart` consumes `/clients/me`; mock entries deleted (`MockMediaItem.recentlyAdded`, `MockMediaItem.findById`, profile hardcoded fields). 27 mobile tests stay green. Subject: `feat(mobile): Phase A real-data wiring (Library + Detail + Recent + Profile basics)`.
+   - **Commit 3 — Mobile pairing rebuild.** `pairing_screen.dart` rebuilt with state-machine UI per plan §9.2; new `Routes.reconnect` + reconnect screen; auth-guard updates in `app_router.dart`. Subject: `feat(mobile): pairing UX rebuild + lost-token Reconnect route`.
+2. **Update docs at commit time** (don't batch a separate doc-sync commit) — `04_api/01_api_contracts.md` for the 2 new endpoints, `03_data/02_database_schema.md` for migration 016, `06_security/01_security.md` §Pairing for the re-pair-resets-to-pending behaviour, `00_overview/current_status.md` for the test-count + feature-list bumps, and the backfill plan §3 / §4 to mark Phase A done.
+3. **Don't touch Phase B / C / D / G yet** — each is a separate session at minimum. Phase B is the natural follow-up (Continue-watching + Search + Profile stats); start it after Phase A is in and CI is green.
+4. **Phase G (quality + direct-play) wants a media_kit smoke test first** — see Open Issues above. Don't commit the full ladder design until you've confirmed the master-playlist switching path works on iOS + Android.
+5. **Hide the Downloads tab in v1.** Standalone tiny commit at any point: remove `Downloads` from `FluxBottomTabs` registry + remove `Routes.downloads` + the `StatefulShellBranch`. `downloads_screen.dart` stays in tree (deleted at Phase E or kept for v1.1 reactivation). Could land alongside Phase A or as its own polish commit.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` ran by default — owner authorised the in-session chunked commits earlier; this entry's plan + log commit will be staged + drafted then run with that same authorisation in mind. Single end-of-session commit only.
+- [x] No agent / AI branding anywhere in code, docs, or commit messages.
+- [x] No `print()` / `debugPrint()` introduced (no code change in this session).
+- [x] No exceptions swallowed silently.
+- [x] No secrets / hardcoded paths added.
+- [x] No new third-party deps.
+- [x] No backwards-compat hacks. The `device_name` → `display_name` field rename in `PairRequestBody` is keeping the wire field as-is and renaming only the Python attribute (zero-impact); flagged in plan §9.1.
+- [x] No layer-boundary violations. Plan doc lives under `docs/10_planning/`. AGENT_LOG entry stays append-only at the bottom.
+---
+
