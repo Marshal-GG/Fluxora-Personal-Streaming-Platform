@@ -1,7 +1,7 @@
 # Architecture Decision Records (ADR)
 
 > **Category:** Planning  
-> **Status:** Active — Sourced from Planning Session (2026-04-27); ADR-013 added 2026-05-01; ADR-014/015 added 2026-05-01
+> **Status:** Active — Sourced from Planning Session (2026-04-27); ADR-013 added 2026-05-01; ADR-014/015 added 2026-05-01; ADR-016/017 added 2026-05-03
 
 ---
 
@@ -145,3 +145,21 @@
 - **Context:** Tier enforcement requires `max_concurrent_streams` to reflect the current tier at all times. Hard-coding the limits in `config.py` would diverge from the DB row after a `PATCH /settings` tier change.
 - **Decision:** `settings_service.py` maps each tier to its stream limit (`free=1, plus=3, pro=10, ultimate=9999`) and writes `max_concurrent_streams` to `user_settings` on every tier change. The stream router reads the limit from the DB row, not from config.
 - **Consequences:** Single source of truth in the DB; `migration_007` back-fills any stale rows; correct concurrency enforced immediately after PATCH without server restart.
+
+---
+
+### ADR-016 — Library Type is Immutable Post-Creation
+- **Date:** 2026-05-03
+- **Status:** Accepted
+- **Context:** The library `PATCH /library/{id}` route lets operators rename a library and change its `root_paths`. Allowing the `type` field (`movies` / `tv` / `music` / `files`) to change too was considered.
+- **Decision:** Type is **immutable**. The `UpdateLibraryBody` Pydantic model accepts only `name` and `root_paths`. To switch a library's type, the operator must delete it and recreate.
+- **Consequences:** Type-specific metadata already attached to scanned files (movie posters, episode counts, music tags) cannot be silently invalidated by a PATCH. The trade-off is that `delete + recreate` loses scan history — an acceptable cost since type changes are rare and the workflow is unambiguous. UI: the Edit dialog hides the type selector when editing (passes `typeEditable: false`).
+
+---
+
+### ADR-017 — Files on Disk are NEVER Deleted by Fluxora
+- **Date:** 2026-05-03
+- **Status:** Accepted (Hard Lock — does not change without a follow-up ADR)
+- **Context:** When deleting a library or removing files from the index, an operator might reasonably expect the option to also delete the files from disk. Plex famously ships this as an opt-in dialog. The question was whether to follow Plex's pattern or stay strictly read-only on the filesystem.
+- **Decision:** **Fluxora never deletes files from disk.** `DELETE /library/{id}` removes only the library entry and its file index from the database. `DELETE /file/{id}` removes only the database row. The server has no `os.remove` / `Path.unlink` / `shutil.rmtree` calls on the library track (verified). The Delete confirm dialog says explicitly: _"This removes only the library entry and its file index from Fluxora. Your files on disk are never deleted by this app."_
+- **Consequences:** Operators trust Fluxora as a read-mostly surface over their media. A buggy delete handler can never lose user data. The trade-off is some duplicate-cleanup tooling has to live outside Fluxora — operators use their OS file manager. Defense in depth: the rule is enforced at code (no deletion calls), at UI copy, in [`docs/10_planning/07_library_screen_plan.md`](07_library_screen_plan.md) decision D7, and in this ADR. Reverting requires a fresh ADR.

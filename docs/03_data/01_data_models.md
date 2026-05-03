@@ -35,11 +35,13 @@
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | id | TEXT (UUID) | ✅ | Primary key |
-| name | TEXT | ✅ | e.g., "Movies", "TV Shows", "Music" |
-| type | TEXT | ✅ | Enum: `movies`, `tv`, `music`, `files` |
-| root_paths | TEXT (JSON) | ✅ | Array of root directories |
+| name | TEXT | ✅ | e.g., "Movies", "TV Shows", "Music" — editable via `PATCH /library/{id}` |
+| type | TEXT | ✅ | Enum: `movies`, `tv`, `music`, `files` — **immutable post-creation** (ADR-016) |
+| root_paths | TEXT (JSON) | ✅ | Array of root directories — editable via `PATCH /library/{id}` |
 | last_scanned | TIMESTAMP | ❌ | Last library scan time |
 | created_at | TIMESTAMP | ✅ | |
+| file_count | INTEGER (computed) | ✅ | `COUNT(*)` of `media_files` joined on `library_id`. Returned on every `LibraryResponse`; not persisted as a column |
+| total_size_bytes | INTEGER (computed) | ✅ | `SUM(media_files.size_bytes)` joined on `library_id`. Returned on every `LibraryResponse`; not persisted as a column |
 
 ---
 
@@ -210,7 +212,7 @@ Composite primary key: `(group_id, client_id)`. A client may belong to multiple 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | id | TEXT (UUID) | ✅ | Primary key |
-| type | TEXT | ✅ | Event type in `<domain>.<verb>` form: `stream.start`, `stream.end`, `client.pair`, `client.approve`, `client.reject`, `library.scan` |
+| type | TEXT | ✅ | Event type in `<domain>.<verb>` form: `stream.start`, `stream.end`, `client.pair`, `client.approve`, `client.reject`, `library.scan`, `library.create`, `library.update`, `library.delete`, `file.upload`, `file.delete` |
 | actor_kind | TEXT | ❌ | Who initiated the action: `client`, `system`, `operator`, or `null` |
 | actor_id | TEXT | ❌ | UUID of the actor entity (e.g. client_id); `null` for system/operator events |
 | target_kind | TEXT | ❌ | Type of the affected entity: `session`, `client`, `file`, `library`, or `null` |
@@ -226,6 +228,11 @@ Producer call sites (each wrapped in `try/except` — activity write failures ar
 - `services/auth_service.py approve_client` → `client.approve`
 - `services/auth_service.py reject_client` → `client.reject`
 - `services/library_service.py scan_library` (only when `added > 0`) → `library.scan`
+- `routers/library.py create_library` → `library.create`
+- `routers/library.py update_library` → `library.update`
+- `routers/library.py delete_library` → `library.delete`
+- `routers/files.py upload_file` → `file.upload`
+- `routers/files.py delete_file` → `file.delete`
 
 ---
 

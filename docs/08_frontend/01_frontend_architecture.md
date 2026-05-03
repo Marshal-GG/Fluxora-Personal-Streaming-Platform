@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active - Updated 2026-05-02 (M7 shipped: `Profile` + `AppNotification` entities; `profile/`, `notifications/`, `help/` features; `subscription/` rewritten; `NotificationsPanel` slide-over + `NotificationsPanelScope`; `FluxShell` extended; `/help` route + sidebar entry)
+> **Status:** Active - Updated 2026-05-03 (mobile redesign M0–M9 landed; mobile theme is now V2-pure — V1 palette + V1 typography deleted from `fluxora_core` at M9 cutover; mobile screen/route map rewritten for the 5-tab shell + detail/episodes/player.resume routes; new `notifications/` feature added with `NotificationsRepository` polling `/api/v1/notifications`; M9 follow-up swapped opaque `Color(0xFF0F0C24)` into `InputDecorationTheme.fillColor` so Material `TextField` doesn't bleed the gradient)
 
 ---
 
@@ -22,6 +22,27 @@
 
 ---
 
+## Desktop Library Surface (✅ Done 2026-05-03)
+
+The Library screen is now functionally complete after the P0 + P1 sweep tracked in [`docs/10_planning/07_library_screen_plan.md`](../10_planning/07_library_screen_plan.md). What's wired:
+
+- **CRUD end-to-end**: Create · Edit (name + root_paths only — type is immutable per ADR-016) · Delete (DB row + file index only — files on disk are NEVER touched per ADR-017) · Scan with file-count snackbar.
+- **Real per-library statistics**: detail panel + stat tiles consume `Library.fileCount` and `Library.totalSizeBytes` returned on every server response.
+- **Client-side poster mosaic** (D1 = Option A): cubit picks up to 4 enriched poster URLs per library from `state.files` and the card renders a 2×2 mosaic with gradient overlay; gradient + icon fallback for libraries with no enriched files.
+- **Files browser**: new `library_files_screen.dart` (637 lines) at `/library/:id/files` — header + 4 stat chips (file count · size · last scanned · type) + scoped file table; reuses the loaded `MediaFile` list filtered by `libraryId`.
+- **Sort / Filter / View toggle** (D5): sort by Name (A–Z) · Last Scanned · File Count · Total Size; filters: enriched-only · with-files · recently-scanned (last 7 days); grid/list segmented toggle persists across tab changes.
+
+Files (`apps/desktop/lib/features/library/`):
+- `presentation/screens/library_screen.dart` (~2360 lines after the P0+P1 land)
+- `presentation/screens/library_files_screen.dart` (NEW)
+- `presentation/cubit/library_cubit.dart` — adds `updateLibrary()`, `deleteLibrary()` (optimistic state drop), `scanLibrary()` returning the added count
+- `data/repositories/library_repository_impl.dart` — `PATCH /library/{id}` + `DELETE /library/{id}`
+- `domain/repositories/library_repository.dart` — interface widened
+
+Routing: `/library/:id/files` registered in `app_router.dart` plus a Cmd+K command "Open library files: <name>" per library.
+
+---
+
 ## Two Client Targets
 
 | Target | Purpose | Status |
@@ -38,8 +59,8 @@
 - **Color palette:** `#08061A` root, `#A855F7` violet primary, glassmorphic surfaces (`rgba(20,18,38,0.7)`), 7-color pill semantics, status-dot semantics.
 - **Typography:** `Inter` 400/500/600/700/800 + `JetBrains Mono` 400/500/600.
 - **Theming (desktop):** [`apps/desktop/lib/shared/theme/app_theme.dart`](../../apps/desktop/lib/shared/theme/app_theme.dart) wires V2 tokens through Material 3 `ThemeData` (`scaffoldBackgroundColor: bgRoot`, `colorScheme.primary: violet`, etc.) so Material defaults can't leak slate-blue. Every redesign primitive **also** owns its own `BoxDecoration` / `TextStyle` so it stays pixel-locked even outside the theme.
-- **Theming (mobile):** Currently consumes V1 tokens (legacy mobile palette in `app_colors.dart` lines 1-35); migrating to V2 per `mobile_redesign_plan.md`. Until mobile M9, `apps/mobile/lib/shared/theme/app_theme.dart` keeps the V1 wiring; mobile screens reference V1 styles. The V1 token block exists in code only because mobile hasn't migrated yet — it is not part of the design spec.
-- **Tokens:** `packages/fluxora_core/lib/constants/app_colors.dart` (V2 section, lines 43-94), `app_typography.dart` (V2 section, lines 102-207), `app_gradients.dart`, `app_spacing.dart`, `app_radii.dart`, `app_shadows.dart`.
+- **Theming (mobile):** V2-pure as of M9 cutover (2026-05-03). [`apps/mobile/lib/shared/theme/app_theme.dart`](../../apps/mobile/lib/shared/theme/app_theme.dart) wires V2 tokens through Material 3 `ThemeData` (`scaffoldBackgroundColor: bgRoot`, `colorScheme.primary: violet`, V2 typography in `textTheme`, V2 button + card themes, new `dividerTheme`); `AppTheme.dark` getter signature unchanged. **`InputDecorationTheme.fillColor` uses an opaque inline `Color(0xFF0F0C24)`** (matching the prototype's `bgRaised` value already used by `FluxBottomSheet`) — `surfaceGlass` is rgba-translucent and would let the M0 background gradient bleed through any Material `TextField`. Plan §4 row 2 explicitly chose to live without an opaque mid-tier color token; the literal is scoped to one site.
+- **Tokens:** `packages/fluxora_core/lib/constants/app_colors.dart` (V2-only — V1 indigo/slate palette deleted at M9 cutover), `app_typography.dart` (V2-only — `displayLg`/`headingLg`/`bodyMd`/`caption`/`label`/`mono` etc. deleted at M9), `app_gradients.dart`, `app_spacing.dart`, `app_radii.dart`, `app_shadows.dart`. Both apps now share a single token set with no transitional comments.
 - **Surface plans:** [`desktop_redesign_plan.md`](../11_design/desktop_redesign_plan.md), [`mobile_redesign_plan.md`](../11_design/mobile_redesign_plan.md), [`web_landing_redesign_plan.md`](../11_design/web_landing_redesign_plan.md).
 
 ---

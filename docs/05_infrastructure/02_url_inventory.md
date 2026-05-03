@@ -59,7 +59,8 @@ All paths are under the base `http://{server_ip}:8080` on LAN or `https://fluxor
 | `POST` | `/api/v1/library` | Token or localhost | Create a library |
 | `GET` | `/api/v1/library/storage-breakdown` | Token or localhost | Per-type storage totals + disk capacity |
 | `GET` | `/api/v1/library/{library_id}` | Token or localhost | Get single library |
-| `DELETE` | `/api/v1/library/{library_id}` | Token or localhost | Delete library (not files from disk) |
+| `PATCH` | `/api/v1/library/{library_id}` | Token or localhost | Update name and/or root_paths (type is immutable, ADR-016) |
+| `DELETE` | `/api/v1/library/{library_id}` | Token or localhost | Delete library entry + file index (files on disk are NEVER touched, ADR-017) |
 | `POST` | `/api/v1/library/{library_id}/scan` | Token or localhost | Walk root paths, index files, run TMDB enrichment |
 
 ### `stream` router

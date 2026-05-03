@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-02 (new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`)
+> **Status:** Active - Updated 2026-05-03 (library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017). 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
 
 ---
 
@@ -325,10 +325,13 @@ Authorization: Bearer {auth_token}
     "root_paths": ["/media/movies"],
     "last_scanned": null,
     "created_at": "2026-04-27T10:00:00+00:00",
-    "file_count": 142
+    "file_count": 142,
+    "total_size_bytes": 1_380_000_000_000
   }
 ]
 ```
+
+`total_size_bytes` is computed via `SUM(media_files.size_bytes)` in the `list_libraries` / `get_library` SQL — `0` for libraries with no files.
 
 ---
 
@@ -388,8 +391,26 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 
 ---
 
+### `PATCH /api/v1/library/{library_id}`
+**Description:** Update an existing library's `name` and/or `root_paths`. The library `type` is **immutable** — type changes would orphan or mis-render scanned files (ADR-016). Records a `library.update` activity event.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Request:** all fields optional; at least one must be provided.
+```json
+{
+  "name": "Movies (4K)",
+  "root_paths": ["/media/movies", "/nas/movies"]
+}
+```
+
+**Response:** `200 OK` with the updated library object (same schema as list item, including the recomputed `total_size_bytes`).  
+**Errors:** `404` library not found · `400` no fields supplied · `422` validation failure
+
+---
+
 ### `DELETE /api/v1/library/{library_id}`
-**Description:** Delete a library (does not delete files from disk).  
+**Description:** Delete a library entry and its file index from the database. **Files on disk are never touched** — this is a hard policy lock (ADR-017). Records a `library.delete` activity event.  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 

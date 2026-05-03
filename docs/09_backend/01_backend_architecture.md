@@ -52,7 +52,7 @@ server/
 │   ├── auth.py             # /auth/* ✅ (request-pair, status, approve, reject, revoke)
 │   ├── deps.py             # validate_token, validate_token_or_local, require_local_caller FastAPI dependencies ✅
 │   ├── files.py            # GET/POST(upload)/DELETE /api/v1/files; validate_token_or_local ✅
-│   ├── library.py          # GET/POST /api/v1/library, GET/DELETE /{id}, POST /{id}/scan, GET /storage-breakdown; validate_token_or_local ✅
+│   ├── library.py          # GET/POST /api/v1/library, GET/PATCH/DELETE /{id}, POST /{id}/scan, GET /storage-breakdown; validate_token_or_local; emits library.create/update/delete activity events ✅
 │   ├── stream.py           # GET /sessions, POST /start/{id}, PATCH /{id}/progress, GET/{id}, DELETE/{id} + hls_router; stream-gate hook calls group_service ✅
 │   ├── ws.py               # WS /status (token auth + ping/pong + progress), WS /stats (live system stats) ✅
 │   ├── signal.py           # WS /signal: SDP offer/answer + ICE relay ✅
@@ -69,7 +69,7 @@ server/
 │
 │   ├── services/
 │   │   ├── ffmpeg_service.py   # FFmpeg subprocess management, HLS output ✅
-│   │   ├── library_service.py  # Library + file CRUD + scan_library ✅
+│   │   ├── library_service.py  # Library + file CRUD + scan_library + update_library + total_size_bytes SUM aggregate ✅
 │   │   ├── discovery_service.py # mDNS/Zeroconf broadcasting ✅
 │   │   ├── auth_service.py     # HMAC-SHA256 tokens, pairing state machine ✅
 │   │   ├── webrtc_service.py   # aiortc RTCPeerConnection registry; SDP/ICE handling; graceful teardown ✅
@@ -88,7 +88,7 @@ server/
 │
 │   ├── models/
 │   │   ├── media_file.py       # MediaFileResponse Pydantic schema ✅
-│   │   ├── library.py          # LibraryResponse, CreateLibraryBody ✅
+│   │   ├── library.py          # LibraryResponse (with file_count + total_size_bytes), CreateLibraryBody, UpdateLibraryBody ✅
 │   │   ├── client.py           # Client Pydantic schemas ✅
 │   │   ├── stream_session.py   # StreamStartResponse, StreamSessionResponse ✅
 │   │   ├── settings.py         # UserSettingsResponse (incl. license_status, license_tier, transcoding fields), UpdateSettingsBody ✅
@@ -104,7 +104,7 @@ server/
 │   └── tests/
 │       ├── conftest.py          # test_db + client fixtures; reset_rate_limits autouse
 │       ├── test_auth.py         # 13 tests — info + pairing flow + localhost restriction + client listing ✅
-│       ├── test_library.py      # 8 tests — library CRUD ✅
+│       ├── test_library.py      # 14 tests — library CRUD + PATCH (rename / re-root / type-immutable / 404) + total_size_bytes aggregate ✅
 │       ├── test_files.py        # 6 tests — file listing + filtering (validate_token_or_local) ✅
 │       ├── test_stream.py       # 10 tests — stream start/stop/HLS (mocked FFmpeg) ✅
 │       ├── test_ws.py           # 4 tests — WebSocket auth + pong ✅
@@ -125,7 +125,7 @@ server/
 │       ├── test_logs.py         # 15 tests — JSON-line parse, level/source/since/until/q filters, pagination, WS fan-out, localhost + token auth ✅
 │       └── test_settings_extended.py # 16 tests — PATCH + GET for all 18 new settings fields, Pydantic constraint enforcement ✅
 
-Total: 247 tests passing ✅ (198 pre-§7.8 + 6 §7.8 + 15 §7.9 + 16 §7.10 + 5 §7.11 + 7 auth-gate / activity emitter extensions)
+Total: 253 tests passing ✅ (198 pre-§7.8 + 6 §7.8 + 15 §7.9 + 16 §7.10 + 5 §7.11 + 7 auth-gate / activity emitter extensions + 6 library PATCH/aggregate)
 ```
 
 ---
@@ -135,7 +135,7 @@ Total: 247 tests passing ✅ (198 pre-§7.8 + 6 §7.8 + 15 §7.9 + 16 §7.10 + 5
 | Service | Responsibility | Key Functions |
 |---------|---------------|---------------|
 | `ffmpeg_service` ✅ | Spawn FFmpeg, manage HLS output, cleanup segments; reads transcoding encoder/preset/CRF from DB; supports software (libx264) and hardware (NVENC/QSV/VAAPI) | `start_stream()`, `stop_stream()`, `cleanup_session_dir()`, `is_running()` |
-| `library_service` ✅ | Library + media file CRUD; TMDB enrichment (Phase 2); storage breakdown (Dashboard donut) | `list_libraries()`, `get_library()`, `create_library()`, `delete_library()`, `list_files()`, `get_file()`, `get_storage_breakdown()` |
+| `library_service` ✅ | Library + media file CRUD; TMDB enrichment (Phase 2); storage breakdown (Dashboard donut); per-library `total_size_bytes` SUM joined into every list/get response | `list_libraries()`, `get_library()`, `create_library()`, `update_library()`, `delete_library()`, `list_files()`, `get_file()`, `get_storage_breakdown()` |
 | `discovery_service` ✅ | Broadcast `_fluxora._tcp.local.` via mDNS on LAN — uses `AsyncZeroconf` to avoid blocking FastAPI's event loop | `start_discovery()` (async), `stop_discovery()` (async) |
 | `auth_service` ✅ | Token generation (HMAC-SHA256), pairing state machine, token validation | `create_pair_request()`, `approve_client()`, `reject_client()`, `revoke_client()`, `get_trusted_client_by_token()` |
 | `webrtc_service` ✅ | Manage `RTCPeerConnection` registry, ICE/STUN/TURN, graceful teardown | `create_peer_connection()`, `handle_offer()`, `close_connection()` |

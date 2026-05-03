@@ -16,7 +16,7 @@
 | SQLite schema + migrations | Must | ✅ Done | Migrations 001–003; WAL mode |
 | Client pairing + auth tokens | Must | ✅ Done | HMAC-SHA256, full pairing state machine |
 | mDNS/Zeroconf LAN broadcast | Must | ✅ Done | `_fluxora._tcp.local.` |
-| Library CRUD + scan API | Must | ✅ Done | `GET/POST/DELETE /library`, scan endpoint |
+| Library CRUD + scan API | Must | ✅ Done | `GET/POST/PATCH/DELETE /library`, scan endpoint, `total_size_bytes` aggregate (added 2026-05-03 — ADR-016/017) |
 | `GET /api/v1/files` endpoint | Must | ✅ Done | List + filter by library |
 | Basic FFmpeg HLS streaming | Must | ✅ Done | `POST /stream/start`, HLS segment serving |
 | WebSocket status channel | Must | ✅ Done | Token auth, ping/pong, progress updates |
@@ -99,7 +99,7 @@
 | Settings Extension (M0 §7.10) | Must | ✅ Done 2026-05-02 | `015_extended_settings.sql` adds 18 columns to `user_settings` (General: `language`, `auto_start_on_boot`, `auto_restart_on_crash`, `minimize_to_system_tray`, `theme_accent`, `default_library_view`, `scan_libraries_on_startup`, `generate_thumbnails`; Network: `preferred_mode`, `enable_mdns`, `enable_webrtc`, `relay_server_url`; Streaming: `default_quality`, `ai_segment_duration_seconds`; Security: `enable_pairing_required`, `session_timeout_minutes`; Advanced: `enable_log_export`, `custom_server_url`); `UpdateSettingsBody` extended with Pydantic `Literal` guards; dynamic SET-list in `update_settings`; 16 tests; suite 219 → 235 |
 | Orders Pagination + Portal URL (M0 §7.11) | Must | ✅ Done 2026-05-02 | `GET /api/v1/orders` extended with `limit`/`cursor` pagination + `total_all`/`next_cursor` in response; `GET /api/v1/orders/portal-url` (localhost-only; returns `FLUXORA_POLAR_PORTAL_URL` or 404); `PortalUrlResponse` model; `polar_portal_url` in `config.py`; 5 tests; suite 235 → 240 |
 | Hardware encoding (NVENC/VAAPI) | Nice-to-have | 🔵 In Progress | `ffmpeg_service.py` reads `transcoding_encoder/preset/crf` from DB; supports libx264, h264_nvenc, h264_qsv, h264_vaapi |
-| Desktop Library Management | Must | ✅ Done | `LibraryScreen` — create/scan/upload/filter; `POST /files/upload` endpoint |
+| Desktop Library Management | Must | ✅ Done 2026-05-03 | `LibraryScreen` — create/edit/scan/delete (DB only)/upload + filter + sort + grid/list toggle + per-library files browser; client-side poster mosaic; per-library `total_size_bytes`. P0+P1 close-out details in `docs/10_planning/07_library_screen_plan.md` |
 | Desktop Licenses view | Must | ✅ Done | `LicensesScreen` — lists all Polar orders + license keys from `GET /api/v1/orders` |
 | Desktop Activity monitor | Should | ✅ Done | `ActivityScreen` — real-time active stream sessions from `GET /api/v1/stream/sessions` |
 | Desktop Server Logs | Should | ✅ Done | `LogsScreen` — live log viewer from `GET /api/v1/logs` |
