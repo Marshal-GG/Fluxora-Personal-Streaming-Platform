@@ -9,10 +9,10 @@ import 'package:fluxora_core/entities/group.dart';
 import 'package:fluxora_desktop/features/groups/domain/repositories/groups_repository.dart';
 import 'package:fluxora_desktop/features/groups/presentation/cubit/groups_cubit.dart';
 import 'package:fluxora_desktop/features/groups/presentation/cubit/groups_state.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
-import 'package:fluxora_desktop/shared/widgets/pill.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
 
@@ -606,11 +606,11 @@ class _GroupDetailPanel extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: AppSpacing.s6),
-                          Pill(
+                          FluxChip(
                             isActive ? 'Active' : 'Inactive',
                             color: isActive
-                                ? PillColor.success
-                                : PillColor.neutral,
+                                ? FluxChipColor.success
+                                : FluxChipColor.neutral,
                           ),
                         ],
                       ),
@@ -684,8 +684,8 @@ class _GroupDetailPanel extends StatelessWidget {
                         spacing: 4,
                         runSpacing: 4,
                         children: r.allowedLibraries!
-                            .map((l) => Pill(l,
-                                color: PillColor.info))
+                            .map((l) => FluxChip(l,
+                                color: FluxChipColor.info))
                             .toList(),
                       ),
                     ],

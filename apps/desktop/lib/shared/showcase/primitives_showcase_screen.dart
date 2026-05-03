@@ -10,11 +10,9 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:fluxora_core/fluxora_core.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_progress.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
-import 'package:fluxora_desktop/shared/widgets/pill.dart';
 import 'package:fluxora_desktop/shared/widgets/section_label.dart';
 import 'package:fluxora_desktop/shared/widgets/sparkline.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
@@ -47,7 +45,7 @@ class PrimitivesShowcaseScreen extends StatelessWidget {
               SizedBox(height: AppSpacing.s32),
               _StatusDotSection(),
               SizedBox(height: AppSpacing.s32),
-              _PillSection(),
+              _ChipSection(),
               SizedBox(height: AppSpacing.s32),
               _ButtonSection(),
               SizedBox(height: AppSpacing.s32),
@@ -192,10 +190,10 @@ class _StatusDotSection extends StatelessWidget {
   }
 }
 
-// ── Pill section ───────────────────────────────────────────────────────────
+// ── Chip section ───────────────────────────────────────────────────────────
 
-class _PillSection extends StatelessWidget {
-  const _PillSection();
+class _ChipSection extends StatelessWidget {
+  const _ChipSection();
 
   @override
   Widget build(BuildContext context) {
@@ -206,8 +204,8 @@ class _PillSection extends StatelessWidget {
           spacing: AppSpacing.s10,
           runSpacing: AppSpacing.s10,
           children: [
-            for (final c in PillColor.values) Pill(c.name, color: c),
-            const Pill('with icon', color: PillColor.purple, icon: Icons.bolt),
+            for (final c in FluxChipColor.values) FluxChip(c.name, color: c),
+            const FluxChip('with icon', color: FluxChipColor.purple, icon: Icons.bolt),
           ],
         ),
       ),

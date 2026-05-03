@@ -12,11 +12,11 @@ import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_st
 import 'package:fluxora_desktop/features/transcoding/domain/repositories/transcoding_repository.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/transcoding_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/transcoding_state.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_progress.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
-import 'package:fluxora_desktop/shared/widgets/pill.dart';
 
 // ── Entry point ────────────────────────────────────────────────────────────────
 
@@ -302,7 +302,7 @@ class _HardwareAccelCard extends StatelessWidget {
                     ),
                   ],
                 ),
-                const Pill('Available', color: PillColor.success),
+                const FluxChip('Available', color: FluxChipColor.success),
               ],
             ),
           ),
@@ -366,8 +366,8 @@ class _HardwareAccelCard extends StatelessWidget {
                                 ),
                                 if (isPrimary) ...[
                                   const SizedBox(width: AppSpacing.s8),
-                                  const Pill('Primary',
-                                      color: PillColor.purple),
+                                  const FluxChip('Primary',
+                                      color: FluxChipColor.purple),
                                 ],
                               ],
                             ),

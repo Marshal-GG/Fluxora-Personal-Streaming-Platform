@@ -10,10 +10,10 @@ import 'package:fluxora_core/entities/enums.dart';
 import 'package:fluxora_desktop/features/clients/domain/repositories/clients_repository.dart';
 import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_cubit.dart';
 import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_state.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
-import 'package:fluxora_desktop/shared/widgets/pill.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
 
@@ -678,7 +678,7 @@ class _ClientRowState extends State<_ClientRow> {
               // Status
               Expanded(
                 flex: 9,
-                child: _StatusPill(client: c),
+                child: _StatusChip(client: c),
               ),
               // Last Active
               Expanded(
@@ -804,21 +804,21 @@ class _DeviceCell extends StatelessWidget {
   }
 }
 
-class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.client});
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({required this.client});
 
   final ClientListItem client;
 
   @override
   Widget build(BuildContext context) {
     if (client.status == ClientStatus.approved && client.isTrusted) {
-      return const Pill('Online', color: PillColor.success);
+      return const FluxChip('Online', color: FluxChipColor.success);
     } else if (client.status == ClientStatus.approved && !client.isTrusted) {
-      return const Pill('Idle', color: PillColor.warning);
+      return const FluxChip('Idle', color: FluxChipColor.warning);
     } else if (client.status == ClientStatus.rejected) {
-      return const Pill('Offline', color: PillColor.neutral);
+      return const FluxChip('Offline', color: FluxChipColor.neutral);
     }
-    return const Pill('Pending', color: PillColor.info);
+    return const FluxChip('Pending', color: FluxChipColor.info);
   }
 }
 
@@ -998,7 +998,7 @@ class _EmptyTableState extends StatelessWidget {
           Text(
             hasFilters ? 'No clients match your filters' : 'No clients yet',
             style:
-                AppTypography.bodyMd.copyWith(color: AppColors.textMutedV2),
+                AppTypography.body.copyWith(color: AppColors.textMutedV2),
           ),
         ],
       ),

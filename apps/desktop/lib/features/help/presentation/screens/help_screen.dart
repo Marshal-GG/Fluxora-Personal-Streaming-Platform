@@ -12,7 +12,7 @@ import 'package:fluxora_core/constants/app_radii.dart';
 import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
 
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';

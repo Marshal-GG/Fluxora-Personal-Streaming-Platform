@@ -13,11 +13,11 @@ import 'package:fluxora_desktop/features/activity/presentation/cubit/activity_cu
 import 'package:fluxora_desktop/features/transcoding/domain/repositories/transcoding_repository.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/transcoding_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/transcoding_state.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_progress.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
-import 'package:fluxora_desktop/shared/widgets/pill.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -366,14 +366,14 @@ class _SessionRow extends StatelessWidget {
               Row(
                 children: [
                   if (fps != null || speed != null)
-                    Pill(
+                    FluxChip(
                       [
                         if (fps != null)
                           '${fps.toStringAsFixed(0)} fps',
                         if (speed != null)
                           '${speed.toStringAsFixed(1)}×',
                       ].join(' · '),
-                      color: PillColor.success,
+                      color: FluxChipColor.success,
                     ),
                   const SizedBox(width: AppSpacing.s8),
                   FluxButton(

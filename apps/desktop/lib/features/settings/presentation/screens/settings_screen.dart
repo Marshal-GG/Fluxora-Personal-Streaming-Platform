@@ -9,14 +9,14 @@ import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_desktop/core/di/injector.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_state.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_select.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_slider.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_switch.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_text_field.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
-import 'package:fluxora_desktop/shared/widgets/pill.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
 
 // ── Tier metadata ──────────────────────────────────────────────────────────────
@@ -1146,13 +1146,13 @@ class _SecurityTab extends StatelessWidget {
             _SField(
               label: 'Subscription Tier',
               sub: 'Current active plan',
-              control: Pill(
+              control: FluxChip(
                 tier.toUpperCase(),
                 color: switch (tier) {
-                  'plus' => PillColor.info,
-                  'pro' => PillColor.purple,
-                  'ultimate' => PillColor.warning,
-                  _ => PillColor.neutral,
+                  'plus' => FluxChipColor.info,
+                  'pro' => FluxChipColor.purple,
+                  'ultimate' => FluxChipColor.warning,
+                  _ => FluxChipColor.neutral,
                 },
               ),
             ),

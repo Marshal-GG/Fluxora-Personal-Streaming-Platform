@@ -12,7 +12,7 @@ import 'package:fluxora_desktop/features/logs/domain/log_record.dart';
 import 'package:fluxora_desktop/features/logs/domain/repositories/logs_repository.dart';
 import 'package:fluxora_desktop/features/logs/presentation/cubit/logs_cubit.dart';
 import 'package:fluxora_desktop/features/logs/presentation/cubit/logs_state.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_tab_bar.dart';

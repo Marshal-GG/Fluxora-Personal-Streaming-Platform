@@ -19,11 +19,11 @@ import 'package:fluxora_desktop/features/storage/domain/repositories/storage_rep
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_cubit.dart';
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_state.dart';
 import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_progress.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
-import 'package:fluxora_desktop/shared/widgets/pill.dart';
 import 'package:fluxora_desktop/shared/widgets/sparkline.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
@@ -336,8 +336,8 @@ class _ServerInfoCard extends StatelessWidget {
           _InfoRow(
             label: 'Internet Status',
             valueWidget: internetConnected
-                ? const Pill('Connected', color: PillColor.success)
-                : const Pill('Offline', color: PillColor.warning),
+                ? const FluxChip('Connected', color: FluxChipColor.success)
+                : const FluxChip('Offline', color: FluxChipColor.warning),
             index: 2,
           ),
           _InfoRow(

@@ -9,7 +9,7 @@ import 'package:fluxora_core/entities/activity_event.dart';
 import 'package:fluxora_desktop/features/recent_activity/domain/repositories/recent_activity_repository.dart';
 import 'package:fluxora_desktop/features/recent_activity/presentation/cubit/recent_activity_cubit.dart';
 import 'package:fluxora_desktop/features/recent_activity/presentation/cubit/recent_activity_state.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_button.dart';
+import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
