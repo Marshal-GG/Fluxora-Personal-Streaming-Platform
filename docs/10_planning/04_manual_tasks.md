@@ -22,6 +22,41 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 
 ## Pending
 
+### 🔲 iOS Picture-in-Picture support
+
+- **What:** Android PIP shipped 2026-05-04 via a `dev.marshalx.fluxora/pip` Kotlin method channel + manifest `android:supportsPictureInPicture="true"`. iOS PIP is harder: `media_kit` uses MPV (libmpv) under the hood, which doesn't bridge to `AVPictureInPictureController` (the iOS PIP API works against `AVPlayer`, not arbitrary GL surfaces). The PIP button is hidden on iOS via a `Platform.isAndroid` guard in `flux_player_controls.dart`.
+- **Why:** PIP is a baseline mobile-app expectation in 2026; missing-on-iOS is a real UX gap for the half of mobile users on iPhone.
+- **Prereqs:** physical iOS device (or paid iOS Simulator with PIP capability); decision on player-backend swap (stay on `media_kit` and write a custom AVFoundation surface, or switch to `flutter_inappwebview` / native AVPlayer for iOS only).
+- **Trigger:** owner has an iOS test device + bandwidth for the player-backend conversation.
+- **Owner:** project owner.
+
+### 🔲 Replace bundled FFmpeg with a libdav1d-enabled build
+
+- **What:** the bundled `ffmpeg.exe` / `ffmpeg` binary lacks `--enable-libdav1d`. The native AV1 software decoder fails on common sources (`[av1] Failed to get pixel format`), including HDR 10-bit AV1 files from game captures. The NVIDIA cuvid auto-fallback correctly detects this case and surfaces the error, but cannot fix it without a working software AV1 decoder.
+- **Why:** AV1 NVDEC has tight GPU-generation and chroma/bit-depth constraints (RTX 30+ for 8/10-bit 4:2:0; older GPUs = no AV1 at all; 4:4:4 / 12-bit unsupported on most consumer cards). Without libdav1d, AV1 sources that NVDEC can't decode also can't be transcoded in software — the only workarounds are re-encoding the source or replacing the FFmpeg binary.
+- **Steps:** download a static FFmpeg build with `--enable-libdav1d` (e.g. from `ffmpeg.org/download.html` → "Static builds" → Windows/Linux; or `brew install ffmpeg` on macOS). Replace the bundled binary at the path the PyInstaller executable uses (check `config.py` / `sys._MEIPASS` path resolution). Verify `ffmpeg -decoders | grep dav1d` shows `libdav1d`.
+- **Time:** ~15 min.
+- **Trigger:** when a user reports AV1 source playback failure and is not on RTX 30+.
+- **Owner:** project owner.
+
+### 🔲 Validate cuvid auto-fallback on each NVIDIA generation
+
+- **What:** the cuvid input-decoder hint (`av1_cuvid`, `hevc_cuvid`, etc.) plus auto-fallback retry was written and tested against RTX-class hardware. NVIDIA NVDEC capabilities differ meaningfully across generations: RTX 20 (Turing) lacks AV1 NVDEC entirely; RTX 30 (Ampere) adds AV1 but only 8/10-bit 4:2:0; RTX 40 (Ada Lovelace) adds AV1 12-bit on select models. The `_is_cuvid_failure` substring classifier is conservative but needs real-world validation on each generation.
+- **Why:** if the classifier fails to trigger on a generation-specific error string, the first attempt fails and the second attempt also fails (no retry), giving the user a confusing double-error instead of a clean fallback. Alternatively, if it fires on a non-cuvid error, unnecessary retries add latency.
+- **Steps:** test playback of: (a) h264 source, (b) HEVC source, (c) AV1 SDR source, (d) AV1 HDR 10-bit source on each available GPU generation. Check server logs for `cuvid decoder rejected source … retrying without cuvid hint` entries on expected-fail sources.
+- **Time:** ~30 min per GPU generation.
+- **Trigger:** when hardware from a new GPU generation (RTX 20 / 30 / 40 / 50) becomes available for testing.
+- **Owner:** project owner.
+
+### 🔲 iOS lockscreen / Now Playing card
+
+- **What:** Phase 2 of the player polish round wired Android's MediaSession via `audio_service ^0.18.18`. iOS support exists in the same package but couldn't be tested without a device, so `Info.plist` `UIBackgroundModes` was left untouched and the iOS half of `FluxoraAudioHandler` is unverified.
+- **Why:** without it, iOS users get no lockscreen card, no Bluetooth-headset transport, no audio when the screen locks.
+- **Steps to enable:** add `<key>UIBackgroundModes</key><array><string>audio</string></array>` to [`apps/mobile/ios/Runner/Info.plist`](../../apps/mobile/ios/Runner/Info.plist); rebuild on a real iPhone; verify the now-playing card appears and that backgrounding doesn't kill audio.
+- **Time:** ~30 min plumbing + however long iOS-device QA takes.
+- **Trigger:** owner has an iOS test device.
+- **Owner:** project owner.
+
 ### 🔲 Swap landing-page hero screenshot for a real Dashboard capture
 
 - **What:** in [`apps/web_landing/public/mockups/desktop-dashboard.png`](../../apps/web_landing/public/mockups/desktop-dashboard.png), replace the temporary placeholder (currently the ref image at `docs/11_design/ref images/desktop/desktop_dashboard_redesign.png`) with a real 1440 × 900 PNG/WebP capture of the redesigned Flutter desktop Dashboard. Compress to ≤ 200 KB. Re-export OG image (`public/og.png`) using the new screenshot.

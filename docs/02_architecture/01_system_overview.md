@@ -50,7 +50,7 @@
 | Component | Role | Technology |
 |-----------|------|------------|
 | FastAPI Server | Main backend, REST API, streaming engine | Python, FastAPI, Uvicorn |
-| FFmpeg Pipeline | Video/audio transcoding and HLS streaming | FFmpeg |
+| FFmpeg Pipeline | Video/audio remux + HLS packaging.  Picks **stream-copy** (`-c:v copy`) for h264 / hevc sources (~95% CPU drop vs. transcode) and full transcode for vp9 / av1 / mpeg4 / etc. — read from `media_files.codec_name` per migration 016, with a lazy ffprobe at stream-start as fallback for un-probed files. For transcode sessions on NVIDIA encoders, injects a cuvid hardware-decoder hint (`-c:v av1_cuvid` etc.) before `-i` via `_NVIDIA_CUVID_BY_CODEC`; auto-retries without the hint when cuvid rejects the source's chroma format. Stream-copy omits `independent_segments` and uses `hls_time=10` to handle long-GOP sources (game captures with 4–10 s GOPs). | FFmpeg |
 | SQLite Database | Local metadata, library index, settings | SQLite |
 | Zeroconf/mDNS | LAN device discovery and auto-pairing | Zeroconf (Python) |
 | WebRTC Module | NAT traversal, P2P internet streaming | WebRTC + STUN/TURN |
@@ -97,7 +97,7 @@ Client attempts connection:
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Backend language | Python + FastAPI | Rapid development, FFmpeg ecosystem, async support |
-| Streaming protocol | HLS via FFmpeg | Adaptive quality, wide client support |
+| Streaming protocol | HLS via FFmpeg, stream-copy when source codec is HLS-compatible | Wide client support; remuxing already-h264/hevc sources avoids the 95 % CPU cost of always-transcoding, while everything else falls through to the configured (HW or SW) encoder. `ActivityCubit` (desktop) polls `/stream/sessions` every 2 s so the Transcoding screen's active-sessions list and per-session progress refresh live. |
 | Local discovery | Zeroconf/mDNS | Zero-config, no cloud dependency |
 | Internet transport | WebRTC | NAT traversal without port forwarding |
 | Client framework | Flutter | Single codebase for mobile + desktop |
@@ -111,7 +111,7 @@ Client attempts connection:
 
 | Attribute | Strategy |
 |-----------|----------|
-| Performance | HLS adaptive bitrate, local LAN path preference |
+| Performance | HLS adaptive bitrate, local LAN path preference, stream-copy remux for h264/hevc sources (no encoder load) |
 | Reliability | Automatic path failover (LAN → WebRTC → TURN) |
 | Security | E2E encryption (Phase 5), auth tokens |
 | Scalability | Multi-user support, permission system |

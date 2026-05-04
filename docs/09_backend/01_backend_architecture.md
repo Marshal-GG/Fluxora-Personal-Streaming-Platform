@@ -1,7 +1,7 @@
 # Backend Architecture
 
 > **Category:** Backend  
-> **Status:** Active - Updated 2026-05-02 (Phase 5: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint, live system stats + storage breakdown, info actions, conditional Sentry init, `/healthz` + `remote_url` on `/info`, CF Tunnel real-IP / HLS-block / admin-hardening middlewares for public routing; legacy 4-part license keys removed; Groups CRUD + stream-gate; Profile endpoints; Notifications (REST + WS + in-process pub/sub); Activity event log; §7.8 transcoding status endpoint + transcoding_service + models/transcoding.py; §7.9 structured JSON logs + GET /api/v1/logs + WS /ws/logs + log_service; §7.10 settings extended 18 fields + migration 015; §7.11 orders pagination + portal-url endpoint; 240 tests)
+> **Status:** Active - Updated 2026-05-04 (GPU UX Slice A + stream pipeline robustness: new `services/encoder_advisor.py` pure-function recommendation engine + `GET /api/v1/transcoding/advisor`; `test_encoder` returns `tuple[bool, str | None]`; `EncoderTestResult` dataclass (`passed`, `error`, `tested_at`); `_TEST_RESULTS` keyed to `EncoderTestResult`; `EncoderLoad` gains `encoder_test_error` + `encoder_tested_at`; NVIDIA cuvid input-decoder hint via `_NVIDIA_CUVID_BY_CODEC` + `_input_decoder_args`; cuvid auto-fallback retry (`_is_cuvid_failure` + `_build_ffmpeg_cmd` + `_spawn_ffmpeg_attempt` refactor); `independent_segments` dropped + `hls_time=10` for stream-copy long-GOP; migration 019 sanitises stale license keys; settings router `_log_validation_error` now delegates to FastAPI's default handler; stream/start 503 detail surfaces FFmpeg stderr tail. Earlier 2026-05-04: Player polish round: ffmpeg stream-copy pipeline for h264/hevc sources [`-c:v copy`, ~95% CPU drop], hevc → fMP4 segments, lazy `probe_video()` at stream-start back-fills `codec_name` for pre-migration-016 rows, per-session ffmpeg stderr captured to temp file + tail logged on premature exit / timeout. Phase A backfill (migration 016 + `probe_video` + `/files/recent` + `/auth/clients/me` + same-`client_id` re-pair fix); Phase B backfill (`/files/search` + `/me/continue-watching` + `/me/stats`). 2026-05-02: orders router, transcoding settings DB-driven, hardware encoding, logs endpoint, live system stats + storage breakdown, info actions, conditional Sentry init, `/healthz` + `remote_url` on `/info`, CF Tunnel real-IP / HLS-block / admin-hardening middlewares for public routing; legacy 4-part license keys removed; Groups CRUD + stream-gate; Profile endpoints; Notifications (REST + WS + in-process pub/sub); Activity event log; §7.8 transcoding status endpoint + transcoding_service + models/transcoding.py; §7.9 structured JSON logs + GET /api/v1/logs + WS /ws/logs + log_service; §7.10 settings extended 18 fields + migration 015; §7.11 orders pagination + portal-url endpoint; 297 tests)
 
 ---
 
@@ -82,7 +82,8 @@ server/
 │   │   ├── activity_service.py # record() + list_events(limit, since, type_prefix); backs /api/v1/activity; producer errors swallowed by callers ✅
 │   │   ├── profile_service.py  # get_profile(db) + update_profile(db, ...); avatar_letter computation ✅
 │   │   ├── system_stats_service.py # CPU/RAM/network/uptime/IP/internet probe; backs /info/stats + /ws/stats ✅
-│   │   ├── transcoding_service.py  # encoder discovery via `ffmpeg -encoders` (cached); GPU probe via nvidia-smi (best-effort); backs GET /api/v1/transcoding/status ✅
+│   │   ├── transcoding_service.py  # encoder discovery via `ffmpeg -encoders` (cached); GPU probe via nvidia-smi/intel_gpu_top/radeontop/system_profiler; `EncoderTestResult` dataclass (passed/error/tested_at); backs GET /api/v1/transcoding/status ✅
+│   │   ├── encoder_advisor.py      # pure function recommend(active, available, test_results) → Recommendation; backs GET /api/v1/transcoding/advisor ✅
 │   │   └── log_service.py          # parse JSON-line log file; filter (level/source/since/until/q); cursor pagination; pubsub for WS /ws/logs ✅
 │
 │
@@ -125,7 +126,7 @@ server/
 │       ├── test_logs.py         # 15 tests — JSON-line parse, level/source/since/until/q filters, pagination, WS fan-out, localhost + token auth ✅
 │       └── test_settings_extended.py # 16 tests — PATCH + GET for all 18 new settings fields, Pydantic constraint enforcement ✅
 
-Total: 253 tests passing ✅ (198 pre-§7.8 + 6 §7.8 + 15 §7.9 + 16 §7.10 + 5 §7.11 + 7 auth-gate / activity emitter extensions + 6 library PATCH/aggregate)
+Total: 297 tests passing ✅ (253 through library PATCH/aggregate + 9 Phase A backfill cases [`/files/recent`, `/auth/clients/me`, re-pair flow] + 12 Phase B backfill cases [`/files/search`, `/auth/clients/me/continue-watching`, `/auth/clients/me/stats`] + 14 encoder-advisor cases [pure-function rules + endpoint + EncoderLoad shape] + 6 `_input_decoder_args` cases [cuvid codec map] + 3 `_is_cuvid_failure` cases)
 ```
 
 ---
@@ -134,7 +135,7 @@ Total: 253 tests passing ✅ (198 pre-§7.8 + 6 §7.8 + 15 §7.9 + 16 §7.10 + 5
 
 | Service | Responsibility | Key Functions |
 |---------|---------------|---------------|
-| `ffmpeg_service` ✅ | Spawn FFmpeg, manage HLS output, cleanup segments; reads transcoding encoder/preset/CRF from DB; supports software (libx264) and hardware (NVENC/QSV/VAAPI) | `start_stream()`, `stop_stream()`, `cleanup_session_dir()`, `is_running()` |
+| `ffmpeg_service` ✅ | Spawn FFmpeg, manage HLS output, cleanup segments. Picks stream-copy (`-c:v copy`) for h264 / hevc sources (95 % CPU win) and full transcode for everything else, reading `transcoding_encoder/preset/crf` from DB. Supports software (libx264) and hardware (NVENC / QSV / VAAPI). For NVIDIA transcode sessions, injects a cuvid input-decoder hint (`_NVIDIA_CUVID_BY_CODEC` + `_input_decoder_args`) and auto-retries without the hint when `_is_cuvid_failure` matches stderr. Stream-copy drops `independent_segments` and uses `hls_time=10` for long-GOP sources. `test_encoder` returns `tuple[bool, str | None]` (passed + first stderr line). Per-session FFmpeg stderr captured to temp file; tail logged on premature exit / timeout; first stderr line bubbled into the `RuntimeError` message. Internal helpers: `_build_ffmpeg_cmd`, `_spawn_ffmpeg_attempt`, `_is_cuvid_failure`. Lazy `probe_video()` at stream-start back-fills `codec_name` for files scanned before migration 016. | `start_stream()`, `stop_stream()`, `probe_video()`, `test_encoder()`, `cleanup_session_dir()`, `is_running()` |
 | `library_service` ✅ | Library + media file CRUD; TMDB enrichment (Phase 2); storage breakdown (Dashboard donut); per-library `total_size_bytes` SUM joined into every list/get response | `list_libraries()`, `get_library()`, `create_library()`, `update_library()`, `delete_library()`, `list_files()`, `get_file()`, `get_storage_breakdown()` |
 | `discovery_service` ✅ | Broadcast `_fluxora._tcp.local.` via mDNS on LAN — uses `AsyncZeroconf` to avoid blocking FastAPI's event loop | `start_discovery()` (async), `stop_discovery()` (async) |
 | `auth_service` ✅ | Token generation (HMAC-SHA256), pairing state machine, token validation | `create_pair_request()`, `approve_client()`, `reject_client()`, `revoke_client()`, `get_trusted_client_by_token()` |
@@ -147,7 +148,8 @@ Total: 253 tests passing ✅ (198 pre-§7.8 + 6 §7.8 + 15 §7.9 + 16 §7.10 + 5
 | `notification_service` ✅ | Persists notifications to the `notifications` table and fans them out live via an in-process pub/sub bus. `create()` inserts a row and broadcasts to every subscribed asyncio.Queue (max 100 items per queue). Slow consumers drop frames rather than blocking producers. `subscribe()` returns a new queue; `unsubscribe(q)` removes it. CRUD: `list_notifications()`, `mark_read()`, `mark_all_read()`, `dismiss()`. | `create()`, `list_notifications(*, only_unread, limit)`, `mark_read()`, `mark_all_read()`, `dismiss()`, `subscribe()`, `unsubscribe(q)` |
 | `activity_service` ✅ | Appends activity events to the `activity_events` table. `record()` inserts one event row; callers must wrap it in `try/except` so audit failures are non-fatal. `list_events()` returns most-recent-first, optionally filtered by `since` (ISO-8601 timestamp) and `type_prefix` (`LIKE 'prefix%'`). Invalid JSON in `payload` is silently returned as `null`. | `record(db, *, type, summary, actor_kind?, actor_id?, target_kind?, target_id?, payload?)`, `list_events(db, *, limit, since?, type_prefix?)` |
 | `profile_service` ✅ | Reads and writes operator profile metadata from the `user_settings` singleton. Computes `avatar_letter` on every read (not stored). Pass `""` to clear a field; pass `None` to leave it unchanged. | `get_profile(db)` → `ProfileResponse`, `update_profile(db, *, display_name?, email?)` → `ProfileResponse` |
-| `transcoding_service` ✅ | Discovers available FFmpeg encoders by parsing `ffmpeg -encoders` output (cached for server lifetime). Probes GPU utilization via `nvidia-smi` for NVENC (best-effort — returns `None` on failure). QSV/VAAPI probes deferred. Builds `TranscodingStatusResponse` with active encoder, available encoders, per-encoder loads, and per-session metadata. | `get_transcoding_status(db)` → `TranscodingStatusResponse` |
+| `transcoding_service` ✅ | Discovers available FFmpeg encoders by parsing `ffmpeg -encoders` output (cached for server lifetime). Probes GPU utilization via vendor-specific tools (nvidia-smi / intel_gpu_top / radeontop / system_profiler). `_TEST_RESULTS: dict[str, EncoderTestResult]` stores `passed`, `error` (first stderr line ≤240 chars), and `tested_at` per encoder. Builds `TranscodingStatusResponse` with active encoder, available encoders, per-encoder loads (including `encoder_test_error` + `encoder_tested_at`), and per-session metadata. | `get_transcoding_status(db)` → `TranscodingStatusResponse` |
+| `encoder_advisor` ✅ | Pure function `recommend(active, available, test_results) -> Recommendation`. Priority rules: (1) active failed self-test → recommend best tested-passing alternative; (2) active is software + tested-passing GPU available → recommend GPU encoder; (3) active is HEVC → compatibility note; (4) none. Vendor preference: NVIDIA → Intel → AMD → Apple. Never recommends untested encoders. | `recommend(active, available, test_results)` |
 | `log_service` ✅ | Reads the JSON-line log file (`~/.fluxora/logs/server.log`) and provides filtered, cursor-paginated access. Also runs an in-process `BroadcastHandler` attached to the root Python logger at startup that fans every emitted record to subscribed asyncio queues (drop on slow consumers). | `list_logs(*, level?, source?, since?, until?, q?, limit, cursor)` → `LogListResponse`, `subscribe()` → `asyncio.Queue`, `unsubscribe(q)` |
 
 ---
@@ -166,21 +168,54 @@ Total: 253 tests passing ✅ (198 pre-§7.8 + 6 §7.8 + 15 §7.9 + 16 §7.10 + 5
 
 ## FFmpeg Pipeline Detail
 
+`ffmpeg_service.start_stream` picks one of two pipelines per session by reading `media_files.codec_name` (back-filled at scan time via FFprobe — migration 016). Files that pre-date that migration trigger a one-time lazy probe at stream-start (~200 ms) and the result is persisted; the next play of the same file is constant-time.
+
+### Stream-copy path (h264 / hevc sources)
+
+When the source video is already h264 or hevc — the typical case for personal libraries — FFmpeg just *remuxes* into HLS without re-encoding, dropping CPU usage by ~95 % vs. a full transcode. Audio is still re-encoded to AAC 128 kb/s because source audio may be AC3/DTS/FLAC and not all HLS clients decode those.
+
 ```
-Input: /media/movies/Inception.mkv
+Input: /media/movies/Inception.mkv  (h264 + AC3)
     │
     └──▶ ffmpeg -i <input>
-              -codec:v libx264       # Video: H.264 (wide compatibility)
-              -codec:a aac           # Audio: AAC
-              -f hls                 # Output format: HLS
-              -hls_time 6            # 6-second segments
-              -hls_list_size 0       # Keep all segments
-              -hls_segment_type mpegts
-              -hls_flags delete_segments  # Auto-cleanup
+              -c:v copy               # No re-encode — remux only
+              -c:a aac -b:a 128k      # Re-encode audio (cheap, <3% CPU)
+              -f hls
+              -hls_time 10            # bumped from 6 to accommodate long-GOP sources
+              -hls_list_size 0
+              -hls_segment_type mpegts          # h264: mpegts
+              -hls_segment_type fmp4            # hevc: fmp4 (Apple HLS spec)
+              # Note: -hls_flags independent_segments is NOT used for stream-copy.
+              # The flag asserts every segment starts with an IDR keyframe — true for
+              # transcode (encoder emits IDRs at segment boundaries) but false for
+              # stream-copy when the source GOP exceeds hls_time. Game captures
+              # (ShadowPlay / OBS) commonly ship 4-10s GOPs.
               /tmp/fluxora/{session_id}/playlist.m3u8
-
-Output: .m3u8 playlist + numbered .ts segment files
 ```
+
+For hevc the segment type switches to `fmp4` (`.m4s`) and an `init.mp4` is auto-emitted referenced via `EXT-X-MAP` in the playlist. Apple's HLS spec requires fMP4 for hevc — `mpegts` segments don't reliably carry hevc.
+
+### Full transcode path (vp9 / av1 / mpeg4 / unknown)
+
+Falls through to the configured encoder from `user_settings.transcoding_encoder` (libx264 by default; hardware encoders `h264_nvenc` / `hevc_nvenc` / `h264_qsv` / etc. if the operator selected them in Settings → Transcoding). Hardware-accel hints (`-hwaccel cuda` etc.) are added from the encoder registry via `pre_input_args()`. For NVIDIA encoders, `_input_decoder_args()` also injects a cuvid decoder hint (e.g. `-c:v av1_cuvid`) before `-i` to keep decoded frames on the GPU and avoid broken software-decoder paths. If cuvid rejects the source's chroma format, `_is_cuvid_failure()` detects the stderr pattern and a second attempt is made without the cuvid hint.
+
+```
+ffmpeg [pre_input_args: -hwaccel cuda -hwaccel_output_format cuda]
+       [-c:v av1_cuvid]                    # NVIDIA only + cuvid map match
+       -i <input>
+       -c:v libx264 -preset veryfast -crf 23
+       -c:a aac -b:a 128k
+       -f hls -hls_time 6 -hls_list_size 0
+       -hls_segment_type mpegts
+       -hls_flags independent_segments
+       /tmp/fluxora/{session_id}/playlist.m3u8
+```
+
+### Diagnostics
+
+Every session writes FFmpeg's stderr to a per-session temp file (`fluxora-ffmpeg-{session_id}-*.log` under the OS temp dir). On premature exit or playlist-creation timeout, `start_stream` reads the last 4 KB of the file, logs it, and bubbles the first stderr line up through the `RuntimeError` — so the operator notification's exception message names the actual reason ("No NVENC capable devices found" / "Cannot use both -hls_time and …" / etc.) instead of a generic "FFmpeg failed". The temp file is unlinked in `stop_stream`.
+
+The log line `FFmpeg pipeline: session=… mode=stream-copy(h264/mpegts) source_codec=h264` records which path each session took.
 
 ---
 

@@ -1,7 +1,7 @@
 # Frontend Architecture
 
 > **Category:** Frontend  
-> **Status:** Active - Updated 2026-05-03 (mobile redesign M0–M9 landed; mobile theme is now V2-pure — V1 palette + V1 typography deleted from `fluxora_core` at M9 cutover; mobile screen/route map rewritten for the 5-tab shell + detail/episodes/player.resume routes; new `notifications/` feature added with `NotificationsRepository` polling `/api/v1/notifications`; M9 follow-up swapped opaque `Color(0xFF0F0C24)` into `InputDecorationTheme.fillColor` so Material `TextField` doesn't bleed the gradient)
+> **Status:** Active - Updated 2026-05-04 (GPU UX Slice A: Settings → Streaming tab gained `ActiveEncoderStrip`, `EncoderRecommendationBanner`, `EncoderStatusPanel` widgets reading from `TranscodingCubit`; `SettingsScreen` now wraps in `MultiBlocProvider` with both `SettingsCubit` and `TranscodingCubit`; `TranscodingCubit._tick()` fetches `/status` + `/advisor` per 2 s poll. `ActivityCubit` now polls `/stream/sessions` every 2 s (was one-shot) via `start()`/`stop()` methods + `Timer.periodic` — active-sessions list and per-session progress on the Transcoding screen refresh live. `ApiException.fromDioException` rewritten to parse FastAPI's `detail` field (string or Pydantic list of `{loc, msg, type, ctx}`) and render Pydantic-list entries as `<field>: <msg>` joined by `; `. `SettingsCubit.saveSettings` now distinguishes 4xx errors (server rejected payload — "Server URL saved, but the server rejected one of the other settings: $detail") from 5xx/connection failures. Settings → General `_save` only includes `license_key` in the PATCH body when the field has been edited from `_loadedSnapshot.licenseKey`. Encoder Settings screen passes `licenseKey: null` since it never edits the license. Earlier 2026-05-04: Player polish round: Picture-in-Picture on Android via a `dev.marshalx.fluxora/pip` Kotlin method channel + new `PipService` Dart wrapper + top-bar PIP button on `flux_player_controls.dart`; lockscreen / notification / Bluetooth-headset transport controls via `audio_service ^0.18.18` + new `FluxoraAudioHandler` sidecar that bridges `media_kit.Player` to the OS MediaSession; foreground-service declared in `AndroidManifest.xml` + `ic_stat_fluxora` notification icon; first-time "Keep playing in background?" prompt in `player_screen.dart` on app-resume after auto-pause, persisted via two new `SecureStorage` keys (`bg_playback_enabled`, `bg_playback_prompt_shown`); new `_BackgroundPlaybackToggleRow` inline switch on Profile screen replaces the stub Playback row. Earlier 2026-05-04: QR-pairing scanner (`mobile_scanner ^7.1.2` + `PairingUri` parser + `ScanQrScreen`) on `/scan-qr`; Phase A + B real-data backfill (3 new cubits + 4 new endpoints wired); Downloads tab hidden in v1; mDNS reusePort fix on Android. 2026-05-03: mobile redesign M0–M9 landed; mobile theme is now V2-pure — V1 palette + V1 typography deleted from `fluxora_core` at M9 cutover.)
 
 ---
 
@@ -216,13 +216,16 @@ apps/mobile/lib/
         ├── domain/entities/stream_start_response.dart
         ├── domain/repositories/player_repository.dart
         ├── data/repositories/player_repository_impl.dart
-        ├── data/services/{webrtc_signaling_service.dart,network_path_detector.dart}
+        ├── data/services/
+        │   ├── webrtc_signaling_service.dart
+        │   ├── pip_service.dart                          # Player polish — Android PIP method-channel wrapper (isSupported / enter)
+        │   └── fluxora_audio_handler.dart                # Player polish — BaseAudioHandler sidecar; bind/detach on a media_kit.Player
         └── presentation/
             ├── controllers/player_controls_controller.dart     # M5 ChangeNotifier — visibility / lockMode / fitCover / 3 s auto-hide / drag-HUD scratchpad
-            ├── cubit/{player_cubit.dart,player_state.dart}     # M7 singleton + restart-safe startStream + _disposeCurrentSession + dismiss()
-            ├── widgets/flux_player_controls.dart                # M5 + M6 — top bar / center transport / progress bar / 8-up quick-actions / side rails / lock chip + double-tap ripple / long-press 2× peek / vertical drag brightness+volume / pinch fit / hold-to-unlock progress ring
+            ├── cubit/{player_cubit.dart,player_state.dart}     # M7 singleton + restart-safe startStream + _disposeCurrentSession + dismiss(); Player polish: optional FluxoraAudioHandler param + WidgetsBindingObserver auto-pause on background when bg_playback_enabled=false
+            ├── widgets/flux_player_controls.dart                # M5 + M6 — top bar / center transport / progress bar / 8-up quick-actions / side rails / lock chip + double-tap ripple / long-press 2× peek / vertical drag brightness+volume / pinch fit / hold-to-unlock progress ring; Player polish — top-bar PIP icon button gated on PipService.isSupported()
             ├── sheets/{audio_subs_sheet,speed_sheet,sleep_sheet,quality_sheet,cast_sheet}.dart   # M6 — 5 bottom sheets via showFluxBottomSheet
-            └── screens/player_screen.dart                       # M7 dual constructors: PlayerScreen({file}) + PlayerScreen.resume(); _MinimizeHandle drag-down → context.pop() ≥ 150 px
+            └── screens/player_screen.dart                       # M7 dual constructors: PlayerScreen({file}) + PlayerScreen.resume(); _MinimizeHandle drag-down → context.pop() ≥ 150 px; Player polish — WidgetsBindingObserver fires _maybeShowBackgroundPlaybackPrompt on first resume after auto-pause + passes file.posterUrl into cubit.startStream so the lockscreen card has artwork
 ```
 
 ---
@@ -312,11 +315,13 @@ Mobile test/ (27 tests)
 │   └── player/player_cubit_test.dart             # 8 tests
 └── placeholder_test.dart
 
-Desktop test/ (38 tests)
+Desktop test/ (63 tests)
 └── features/
-    ├── dashboard/dashboard_cubit_test.dart  # 3 tests ✅
-    ├── clients/clients_cubit_test.dart      # 7 tests ✅
-    └── settings/settings_cubit_test.dart    # 17 tests ✅ (loadSettings + saveSettings + license_key PATCH + Remote Access — `loadSettings` populates `remoteUrl` from `/info`; `checkRemoteAccess` early-return paths)
+    ├── dashboard/dashboard_cubit_test.dart                    # 3 tests ✅
+    ├── clients/clients_cubit_test.dart                        # 7 tests ✅
+    ├── settings/settings_cubit_test.dart                      # 17 tests ✅ (loadSettings + saveSettings + license_key PATCH + Remote Access — `loadSettings` populates `remoteUrl` from `/info`; `checkRemoteAccess` early-return paths)
+    ├── notifications/notifications_cubit_test.dart            # 13 tests ✅ (start/markRead/markAllRead/dismiss happy + rethrow paths; live-stream new + duplicate-id ignore)
+    └── transcoding/encoder_status_panel_test.dart             # 9 tests ✅ (pill rendering per status, sort order, failed-tooltip, banner severity → icon, ActiveEncoderStrip CPU/GPU pill + engine label)
     └── (library/orders/activity/logs/transcoding cubits tested via manual integration)
 ```
 
@@ -379,7 +384,7 @@ apps/desktop/lib/
     │   ├── domain/repositories/activity_repository.dart
     │   ├── data/repositories/activity_repository_impl.dart
     │   └── presentation/
-    │       ├── cubit/activity_cubit.dart   # freezed state
+    │       ├── cubit/activity_cubit.dart   # freezed state; now polls every 2 s via start()/stop() + Timer.periodic — active-sessions list refreshes live
     │       └── screens/activity_screen.dart  # Active stream sessions monitor
     │
     ├── storage/                 # ✅ M3 — storage breakdown for Dashboard donut

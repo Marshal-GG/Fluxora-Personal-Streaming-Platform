@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-04 (migrations 004-016; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at)
+> **Status:** Active - Updated 2026-05-04 (migrations 001-019; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device, encoder sanitiser, license-key sanitiser)
 
 ---
 
@@ -120,7 +120,9 @@ CREATE TABLE user_settings (
     session_timeout_minutes  INTEGER NOT NULL DEFAULT 60,   -- range 1–1440
     -- Advanced
     enable_log_export        INTEGER NOT NULL DEFAULT 1,
-    custom_server_url        TEXT       -- operator-specified public URL; NULL = use env var
+    custom_server_url        TEXT,      -- operator-specified public URL; NULL = use env var
+    -- migration 017: VAAPI device path
+    transcoding_hwaccel_device TEXT NOT NULL DEFAULT ''  -- '' = auto; set to /dev/dri/renderD129 etc. for multi-GPU Linux
 );
 
 -- Polar paid-order idempotency table
@@ -246,3 +248,6 @@ CREATE INDEX IF NOT EXISTS idx_activity_type_created
 | `014_activity_events.sql` | Creates `activity_events` table (id UUID PK, type, actor_kind?, actor_id?, target_kind?, target_id?, summary, payload JSON?, created_at); adds `idx_activity_created` on `(created_at DESC)` and `idx_activity_type_created` on `(type, created_at DESC)`. |
 | `015_extended_settings.sql` | Adds 18 columns to `user_settings` (skips `max_concurrent_streams` which already exists from 001): General — `language`, `auto_start_on_boot`, `auto_restart_on_crash`, `minimize_to_system_tray`, `theme_accent`, `default_library_view`, `scan_libraries_on_startup`, `generate_thumbnails`; Network — `preferred_mode`, `enable_mdns`, `enable_webrtc`, `relay_server_url`; Streaming — `default_quality`, `ai_segment_duration_seconds`; Security — `enable_pairing_required`, `session_timeout_minutes`; Advanced — `enable_log_export`, `custom_server_url`. |
 | `016_media_quality_episodes_client_email.sql` | Three independent additions for Phase A of the real-data backfill: (a) FFprobe-derived `width`, `height`, `codec_name`, `hdr_format` on `media_files` (quality badges + Phase G direct-play allowlist); (b) TV episode aggregation columns `tmdb_show_id`, `season_number`, `episode_number` on `media_files` plus `idx_media_files_tmdb_show_id` (Phase D ships pure-SQL show endpoints — no new `episodes` table); (c) `email` and `paired_at` on `clients` for the new `GET /auth/clients/me` profile endpoint. `paired_at` is back-filled to migration-apply time for already-paired rows so the desktop's "Paired Mar 15" label never shows blank. |
+| `017_hwaccel_device.sql` | Adds `transcoding_hwaccel_device TEXT NOT NULL DEFAULT ''` to `user_settings`. Back-fills existing rows to `''` (empty = auto-detect). Used by `ffmpeg_service` for the VAAPI `-hwaccel_device` flag on Linux multi-GPU setups. |
+| `018_sanitize_encoder.sql` | Cleans `user_settings.transcoding_encoder` rows that hold legacy encoder values (e.g. `h264_amf`) not in the current 10-encoder registry `Literal` set — resets them to `libx264`. Prevents Pydantic 422 on every settings save after an encoder is removed from the registry. |
+| `019_sanitize_license_key.sql` | Sanitises stale `user_settings.license_key` values to NULL when they don't match the current 5-segment FLUXORA shape (`FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<HMAC8>`). The 4-segment legacy shape from phase-4 was tightened to 5 segments without a migration; this closes that gap. Uses pure SQL `length - length(replace(key, '-', ''))` to count dashes without regex. Idempotent. |

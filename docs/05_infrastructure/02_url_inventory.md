@@ -133,7 +133,8 @@ All paths are under the base `http://{server_ip}:8080` on LAN or `https://fluxor
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| `GET` | `/api/v1/transcoding/status` | Localhost only | Encoder loads, available encoders, active transcode sessions |
+| `GET` | `/api/v1/transcoding/status` | Localhost only | Encoder loads, available encoders, per-encoder GPU engine + self-test result + tested-at, active transcode sessions |
+| `GET` | `/api/v1/transcoding/advisor` | Localhost only | Recommendation for the active encoder (cpu_fallback / failed_active / hevc_compat / none) — drives Settings → Streaming banner |
 
 ### `logs` router
 

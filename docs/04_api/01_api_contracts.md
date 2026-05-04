@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-04 (Phase B real-data backfill: new `GET /api/v1/files/search?q=&limit=`, new `GET /api/v1/auth/clients/me/continue-watching?limit=`, new `GET /api/v1/auth/clients/me/stats` returning `{hours, movies, shows}`. Phase A real-data backfill (earlier 2026-05-04): new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
+> **Status:** Active - Updated 2026-05-04 (GPU UX Slice A: new `GET /api/v1/transcoding/advisor` endpoint; `/transcoding/status` gains `encoder_test_error` + `encoder_tested_at` fields; `transcoding_encoder` allowed values expanded to all 10 registry encoders; `/stream/start` 503 detail now carries the FFmpeg stderr tail. Earlier 2026-05-04: Phase B real-data backfill: new `GET /api/v1/files/search?q=&limit=`, new `GET /api/v1/auth/clients/me/continue-watching?limit=`, new `GET /api/v1/auth/clients/me/stats` returning `{hours, movies, shows}`. Phase A real-data backfill: new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
 
 ---
 
@@ -558,7 +558,13 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 ---
 
 ### `POST /api/v1/stream/start/{file_id}`
-**Description:** Spawn an FFmpeg transcode process for a file and return the HLS playlist URL.  
+**Description:** Spawn an FFmpeg HLS process for a file and return the playlist URL.  Server picks one of two pipelines automatically based on the source's video codec (recorded in `media_files.codec_name` per migration 016, lazy-probed at stream-start for files that pre-date that migration):
+
+- **Stream-copy** when source is `h264` (mpegts segments) or `hevc` (fmp4 segments) — FFmpeg just remuxes, dropping CPU usage by ~95% versus a full transcode. Audio still re-encoded to AAC 128 kb/s for HLS-client compatibility.
+- **Full transcode** for everything else — applies the operator's configured `transcoding_encoder` / `preset` / `crf` from `user_settings`.
+
+The decision is invisible to the client — the response shape is identical for both paths. The server log records which pipeline ran (`mode=stream-copy(h264/mpegts)` / `stream-copy(hevc/fmp4)` / `transcode(libx264)`).
+
 **Auth:** Bearer token required.  
 **Status:** ✅ Implemented
 
@@ -571,7 +577,7 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 }
 ```
 
-**Errors:** `404` file not found · `429` concurrency limit reached · `503` FFmpeg unavailable
+**Errors:** `404` file not found · `429` concurrency limit reached · `503` FFmpeg failed (the response body now carries the first FFmpeg stderr line so the operator notification can surface the real reason — e.g. `"No NVENC capable devices found"`, not a generic "FFmpeg failed")
 
 ---
 
@@ -802,7 +808,7 @@ Client connects → sends auth message → server replies auth_ok
 | Field | Allowed values |
 |-------|----------------|
 | `license_key` | `FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>` — exactly 5 dash-separated segments |
-| `transcoding_encoder` | `libx264` · `h264_nvenc` · `h264_qsv` · `h264_vaapi` |
+| `transcoding_encoder` | `libx264` · `libx265` · `h264_nvenc` · `hevc_nvenc` · `h264_qsv` · `hevc_qsv` · `h264_vaapi` · `hevc_vaapi` · `h264_videotoolbox` · `hevc_videotoolbox` |
 | `transcoding_preset` | `ultrafast` · `superfast` · `veryfast` · `faster` · `fast` · `medium` · `slow` · `slower` · `veryslow` |
 | `transcoding_crf` | Integer in `[0, 51]` (0 = lossless, 23 = default, 51 = worst quality) |
 | `default_library_view` | `grid` · `list` |
@@ -1267,8 +1273,8 @@ All producer call-sites are wrapped in `try/except` with logging — an activity
 ---
 
 ### `GET /api/v1/transcoding/status`
-**Description:** Return live transcoding status — which encoder is active, which encoders are available on this machine, per-encoder load, and the list of currently active transcode sessions with per-session metadata.  
-**Auth:** Localhost only — `require_local_caller`.  
+**Description:** Return live transcoding status — which encoder is active, which encoders are available on this machine, per-encoder load + GPU engine + self-test result, and the list of currently active transcode sessions with per-session metadata.
+**Auth:** Localhost only — `require_local_caller`.
 **Status:** ✅ Implemented
 
 **Response:**
@@ -1276,14 +1282,30 @@ All producer call-sites are wrapped in `try/except` with logging — an activity
 {
   "active_encoder": "libx264",
   "available_encoders": ["libx264", "h264_nvenc"],
-  "encoder_loads": {
-    "libx264": {
+  "encoder_loads": [
+    {
+      "encoder": "libx264",
       "active_sessions": 1,
       "cpu_utilization_percent": 42.5,
       "gpu_utilization_percent": null,
-      "vram_used_mb": null
+      "vram_used_mb": null,
+      "gpu_engine": null,
+      "encoder_test_passed": true,
+      "encoder_test_error": null,
+      "encoder_tested_at": "2026-05-04T15:30:00+00:00"
+    },
+    {
+      "encoder": "h264_nvenc",
+      "active_sessions": 0,
+      "cpu_utilization_percent": null,
+      "gpu_utilization_percent": null,
+      "vram_used_mb": null,
+      "gpu_engine": "cuda",
+      "encoder_test_passed": false,
+      "encoder_test_error": "Cannot load nvcuda.dll",
+      "encoder_tested_at": "2026-05-04T15:30:00+00:00"
     }
-  },
+  ],
   "active_sessions": [
     {
       "id": "session-uuid",
@@ -1302,9 +1324,44 @@ All producer call-sites are wrapped in `try/except` with logging — an activity
 
 **Notes:**
 - `available_encoders` is discovered by parsing `ffmpeg -encoders` output; result is cached for the server lifetime.
-- `gpu_utilization_percent` and `vram_used_mb` are populated via `nvidia-smi` for `h264_nvenc` only; `null` on non-NVENC encoders or if `nvidia-smi` is unavailable (best-effort).
-- QSV (`h264_qsv`) and VAAPI (`h264_vaapi`) GPU probes are deferred to a future release — those fields remain `null`.
+- `gpu_engine` is the underlying hardware backend (`cuda` / `qsv` / `vaapi` / `videotoolbox`); `null` for software encoders. Drives the desktop's CPU/GPU pill.
+- `encoder_test_passed` is the result of the most recent `test_encoder()` self-test (~1 s of synthetic encode against `lavfi testsrc`). Software encoders always pass. `null` if no test has run yet.
+- `encoder_test_error` carries the first non-empty stderr line (≤240 chars) from a failed self-test — drives the desktop's failed-encoder tooltip / modal so the operator knows *why* (missing driver vs. missing FFmpeg build feature vs. timeout).
+- `encoder_tested_at` is the ISO-8601 UTC timestamp of the last self-test run; surfaces as "tested HH:MM" in the encoder availability panel.
+- `gpu_utilization_percent` / `vram_used_mb` are populated only for the *active* encoder (per-vendor probe: `nvidia-smi` / `intel_gpu_top` / `radeontop` / `system_profiler`). `null` on non-active rows and on probe failure (best-effort).
 - `fps` and `speed_x` on active sessions are v1 placeholders — `null` until real-time FFmpeg progress parsing lands.
+
+**Errors:** `403` not from localhost
+
+---
+
+### `GET /api/v1/transcoding/advisor`
+**Description:** Return a recommendation for the operator's current encoder choice. Pure function over current settings + detected encoders + last self-test results. Drives the desktop Settings → Streaming recommendation banner.
+**Auth:** Localhost only — `require_local_caller`.
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "recommended_encoder": "h264_nvenc",
+  "reason_code": "cpu_fallback",
+  "reason_text": "You're transcoding on CPU (libx264). NVIDIA NVENC is detected and tested — switch to h264_nvenc for ~10-30× faster transcoding.",
+  "severity": "info"
+}
+```
+
+**Reason codes:**
+| Code | Meaning | Severity |
+|------|---------|----------|
+| `none` | Active encoder is fine; no banner. | `none` |
+| `cpu_fallback` | Active is software, a tested-passing GPU encoder is available. | `info` |
+| `failed_active` | Active encoder failed last self-test. `recommended_encoder` is the best tested-passing fallback (preferring same codec), or `null` if every encoder failed. | `warning` |
+| `hevc_compat` | Active outputs HEVC (fmp4 segments). Older Roku / Chromecast 1st gen / pre-2017 smart TVs may stutter. Informational only — `recommended_encoder` is `null`. | `info` |
+
+**Notes:**
+- Untested encoders are never recommended — only encoders with `encoder_test_passed: true` qualify.
+- Vendor preference for the GPU upgrade rule: NVIDIA → Intel → AMD → Apple.
+- `reason_text` is operator-facing copy; the desktop renders it verbatim in the recommendation banner.
 
 **Errors:** `403` not from localhost
 
