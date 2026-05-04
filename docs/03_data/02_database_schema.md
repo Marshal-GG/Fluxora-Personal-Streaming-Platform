@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-04 (migrations 001-019; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device, encoder sanitiser, license-key sanitiser)
+> **Status:** Active - Updated 2026-05-04 (migrations 001-021; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device, encoder sanitiser, license-key sanitiser, **encoder priority chain (Slice C), per-session encoder_used**)
 
 ---
 
@@ -75,7 +75,8 @@ CREATE TABLE stream_sessions (
     ended_at           TIMESTAMP,
     connection_type    TEXT NOT NULL CHECK(connection_type IN ('lan','webrtc_p2p','turn_relay')),
     bytes_transferred  INTEGER DEFAULT 0,
-    progress_sec       REAL DEFAULT 0
+    progress_sec       REAL DEFAULT 0,
+    encoder_used       TEXT     -- migration 021: encoder picked by session_router (NULL on stream-copy)
 );
 
 -- Settings singleton
@@ -122,7 +123,9 @@ CREATE TABLE user_settings (
     enable_log_export        INTEGER NOT NULL DEFAULT 1,
     custom_server_url        TEXT,      -- operator-specified public URL; NULL = use env var
     -- migration 017: VAAPI device path
-    transcoding_hwaccel_device TEXT NOT NULL DEFAULT ''  -- '' = auto; set to /dev/dri/renderD129 etc. for multi-GPU Linux
+    transcoding_hwaccel_device TEXT NOT NULL DEFAULT '',  -- '' = auto; set to /dev/dri/renderD129 etc. for multi-GPU Linux
+    -- migration 020: encoder priority chain (Slice C of GPU UX plan)
+    transcoding_chain          TEXT      -- JSON-encoded list e.g. '["h264_nvenc","h264_qsv","libx264"]'; NULL = use default chain
 );
 
 -- Polar paid-order idempotency table
@@ -251,3 +254,5 @@ CREATE INDEX IF NOT EXISTS idx_activity_type_created
 | `017_hwaccel_device.sql` | Adds `transcoding_hwaccel_device TEXT NOT NULL DEFAULT ''` to `user_settings`. Back-fills existing rows to `''` (empty = auto-detect). Used by `ffmpeg_service` for the VAAPI `-hwaccel_device` flag on Linux multi-GPU setups. |
 | `018_sanitize_encoder.sql` | Cleans `user_settings.transcoding_encoder` rows that hold legacy encoder values (e.g. `h264_amf`) not in the current 10-encoder registry `Literal` set — resets them to `libx264`. Prevents Pydantic 422 on every settings save after an encoder is removed from the registry. |
 | `019_sanitize_license_key.sql` | Sanitises stale `user_settings.license_key` values to NULL when they don't match the current 5-segment FLUXORA shape (`FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<HMAC8>`). The 4-segment legacy shape from phase-4 was tightened to 5 segments without a migration; this closes that gap. Uses pure SQL `length - length(replace(key, '-', ''))` to count dashes without regex. Idempotent. |
+| `020_encoder_chain.sql` | Adds `transcoding_chain TEXT DEFAULT NULL` to `user_settings`. Stored as JSON-encoded list (chains are tiny + single-tenant; never queried relationally). Walked by `services/session_router.py` on every transcode session start; NULL falls back to the default chain `[transcoding_encoder, "libx264"]`. Slice C of the GPU UX plan. |
+| `021_session_encoder.sql` | Adds `encoder_used TEXT DEFAULT NULL` to `stream_sessions`. Populated by the stream router from `session_router.get_session_encoder(session_id)` on INSERT — null on stream-copy sessions. Drives the desktop's per-session encoder pill + supports historical "why did N+1 fall back yesterday?" diagnostics across server restarts (the in-memory ring buffer in `session_router` only covers the current process lifetime). |

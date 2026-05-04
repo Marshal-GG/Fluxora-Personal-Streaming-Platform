@@ -136,6 +136,7 @@ All paths are under the base `http://{server_ip}:8080` on LAN or `https://fluxor
 | `GET` | `/api/v1/transcoding/status` | Localhost only | Encoder loads, available encoders, per-encoder GPU engine + self-test result + tested-at, active transcode sessions |
 | `GET` | `/api/v1/transcoding/advisor` | Localhost only | Recommendation for the active encoder (cpu_fallback / failed_active / hevc_compat / none) — drives Settings → Streaming banner |
 | `GET` | `/api/v1/transcoding/devices` | Localhost only | Detected CPU + GPU inventory (lspci / wmic / system_profiler + nvidia-smi). Drives the Detected Hardware card. Cached for server lifetime. |
+| `GET` | `/api/v1/transcoding/fallback-history` | Localhost only | Last 50 encoder routing decisions from `session_router` (in-memory ring buffer). Drives the FallbackHistoryPanel. |
 
 ### `logs` router
 

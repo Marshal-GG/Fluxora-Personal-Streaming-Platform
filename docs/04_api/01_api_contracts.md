@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-04 (GPU UX Slice A: new `GET /api/v1/transcoding/advisor` endpoint; `/transcoding/status` gains `encoder_test_error` + `encoder_tested_at` fields; `transcoding_encoder` allowed values expanded to all 10 registry encoders; `/stream/start` 503 detail now carries the FFmpeg stderr tail. Earlier 2026-05-04: Phase B real-data backfill: new `GET /api/v1/files/search?q=&limit=`, new `GET /api/v1/auth/clients/me/continue-watching?limit=`, new `GET /api/v1/auth/clients/me/stats` returning `{hours, movies, shows}`. Phase A real-data backfill: new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
+> **Status:** Active - Updated 2026-05-04 (**Phase 6 follow-ups:** `POST /api/v1/stream/start/{file_id}` gained `?tonemap=true` query param; `StreamStartResponse` gains `hdr_format: string | null` + `tonemapped: bool` fields. GPU UX Slice A: new `GET /api/v1/transcoding/advisor` endpoint; `/transcoding/status` gains `encoder_test_error` + `encoder_tested_at` fields; `transcoding_encoder` allowed values expanded to all 10 registry encoders; `/stream/start` 503 detail now carries the FFmpeg stderr tail. Earlier 2026-05-04: Phase B real-data backfill: new `GET /api/v1/files/search?q=&limit=`, new `GET /api/v1/auth/clients/me/continue-watching?limit=`, new `GET /api/v1/auth/clients/me/stats` returning `{hours, movies, shows}`. Phase A real-data backfill: new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
 
 ---
 
@@ -565,6 +565,12 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 
 The decision is invisible to the client — the response shape is identical for both paths. The server log records which pipeline ran (`mode=stream-copy(h264/mpegts)` / `stream-copy(hevc/fmp4)` / `transcode(libx264)`).
 
+**Query params:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tonemap` | `bool` | `false` | When `true` and the source has an HDR format (HDR10 / HLG / DolbyVision per `media_files.hdr_format`), the server forces transcode mode and applies a zscale + Hable tonemap filter chain to convert BT.2020 PQ → BT.709 SDR.  No-op for SDR sources — the flag is accepted but `tonemapped` in the response will be `false`.  Tonemap forces CPU-side decode (drops the GPU input pipeline) because the `zscale` and `tonemap` filters cannot consume CUDA frames. |
+
 **Auth:** Bearer token required.  
 **Status:** ✅ Implemented
 
@@ -573,9 +579,21 @@ The decision is invisible to the client — the response shape is identical for 
 {
   "session_id": "uuid",
   "file_id": "uuid",
-  "playlist_url": "http://192.168.1.10:8000/api/v1/hls/uuid/playlist.m3u8"
+  "playlist_url": "http://192.168.1.10:8000/api/v1/hls/uuid/playlist.m3u8",
+  "resume_sec": 0.0,
+  "hdr_format": "HDR10",
+  "tonemapped": false
 }
 ```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `session_id` | `string` | UUID for subsequent progress / stop calls |
+| `file_id` | `string` | Echo of the request path param |
+| `playlist_url` | `string` | HLS playlist URL to open in the player |
+| `resume_sec` | `float` | Playback position to seek to on open (0.0 = start) |
+| `hdr_format` | `string \| null` | Source HDR format: `"HDR10"`, `"HLG"`, `"DolbyVision"`, or `null` for SDR.  Drives the player's HDR badge and tonemap toggle visibility. |
+| `tonemapped` | `bool` | `true` when the server is actively tonemapping HDR → SDR for this session.  Echoes `tonemap && hdr_format != null`. |
 
 **Errors:** `404` file not found · `429` concurrency limit reached · `503` FFmpeg failed (the response body now carries the first FFmpeg stderr line so the operator notification can surface the real reason — e.g. `"No NVENC capable devices found"`, not a generic "FFmpeg failed")
 
@@ -1414,6 +1432,54 @@ All producer call-sites are wrapped in `try/except` with logging — an activity
 - `encoder_support` is **registry-derived** (`encoder_registry.py` filtered by vendor + current `sys.platform`), not probed. Pair with `/transcoding/status`'s `available_encoders` to know what FFmpeg actually has.
 
 **Errors:** `403` not from localhost
+
+---
+
+### `GET /api/v1/transcoding/fallback-history`
+**Description:** Recent encoder routing decisions from `services/session_router.py`'s in-memory ring buffer (max 50 entries). Backs the desktop's "Recent encoder fallbacks" diagnostic panel — answers "why did N+1 fall through to libx264?" without making the operator dig through server logs. Slice C of the GPU UX plan.
+**Auth:** Localhost only — `require_local_caller`.
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "events": [
+    {
+      "timestamp": "2026-05-04T15:30:12.123456+00:00",
+      "session_id": "session-uuid",
+      "requested_encoder": "h264_nvenc",
+      "actual_encoder": "h264_qsv",
+      "reason": "gpu_session_cap_hit"
+    }
+  ]
+}
+```
+
+**Reason values:**
+| Reason | Meaning |
+|--------|---------|
+| `configured` | First chain entry was available; no fallback. |
+| `gpu_session_cap_hit` | First entry was at its `concurrent_session_cap` (NVENC = 3 on consumer cards); fell to next entry. |
+| `all_encoders_saturated` | Every entry in the chain was at cap; using the last entry anyway so FFmpeg can produce a clear error. |
+| `encoder_unknown` | Every chain entry was a typo / unknown to the registry; using the default encoder. |
+
+**Notes:**
+- Ring buffer is **in-memory only**; resets on server restart. Historical analysis across restarts uses `stream_sessions.encoder_used` (migration 021).
+- Newest events appear last in the response.
+- The desktop panel only renders the last 5 entries — the buffer is sized for ~30 minutes of typical fallback churn.
+
+**Errors:** `403` not from localhost
+
+---
+
+### `PATCH /api/v1/settings` — `transcoding_chain` field
+The settings PATCH body gained a `transcoding_chain: list[str] | null` field for Slice C. Each entry must be a known encoder in the registry. The list is JSON-encoded into `user_settings.transcoding_chain` (migration 020). Validation rules:
+
+- Empty list `[]` → stored as NULL → server uses the default chain (`[transcoding_encoder, "libx264"]`).
+- Unknown encoder name → 422 with detail naming the offending entry.
+- Chain where every entry is the same encoder → 422 (`"transcoding_chain must contain distinct encoders or be empty"`).
+
+The response's `transcoding_chain` field decodes back to a list (or null). The desktop's `EncoderPriorityList` widget renders + reorders.
 
 ---
 

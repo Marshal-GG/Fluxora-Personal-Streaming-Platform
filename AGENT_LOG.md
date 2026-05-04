@@ -936,3 +936,245 @@ Slice B of the GPU UX plan (`docs/10_planning/10_gpu_ux_plan.md` §3) — surfac
 - **Confirm Slice B against the operator's real desktop** — opening Settings → Streaming should show the new card with the Intel UHD 630 + RTX 2060 + i7-9750H detected.
 - **Wait for owner's call on Slice C** before starting — the multi-encoder priority chain is meaningful engineering and the owner should weigh in on the decisions §4 of the plan.
 ---
+
+## [2026-05-04] — GPU UX Slice C: multi-encoder priority chain + fallback orchestration
+**Phase:** Phase 6 — GPU & Encoder UX (final slice)
+**Status:** Complete.  All three slices of `docs/10_planning/10_gpu_ux_plan.md` shipped today.
+
+### What Was Done
+
+Slice C transforms `transcoding_encoder` from a single-encoder choice into a *priority chain* the operator orders.  When the first encoder hits its concurrent-session cap (NVENC = 3 on consumer cards), the new `services/session_router.py` transparently routes the next session to the second entry in the chain — turning "stream N+1 returns 503" into "stream N+1 plays from the QSV iGPU instead".
+
+1. **Migrations 020 + 021.**
+   - `020_encoder_chain.sql` — adds `transcoding_chain TEXT DEFAULT NULL` to `user_settings`.  JSON-encoded list (chains are tiny + single-tenant); NULL means "use the default chain" (back-compat for installs that predate Slice C).
+   - `021_session_encoder.sql` — adds `encoder_used TEXT DEFAULT NULL` to `stream_sessions` so the desktop can show *what encoder each session is actually using* + supports historical "why did N+1 fall back yesterday?" diagnostics across server restarts.
+
+2. **`EncoderMeta.concurrent_session_cap: int | None`** ([encoder_registry.py](apps/server/services/encoder_registry.py)). NVENC entries (`h264_nvenc` + `hevc_nvenc`) get cap=3 (NVIDIA driver limit on consumer GeForce / non-Quadro cards).  All other encoders get None (no enforced cap; software is bandwidth-bound, QSV / VAAPI / VideoToolbox have no documented session limit).
+
+3. **New `services/session_router.py`** (~200 lines).
+   - `parse_chain(raw)` / `encode_chain(chain)` for JSON round-trip.
+   - `pick_encoder(chain, session_id, *, default_encoder)` walks the chain, returns `(encoder, reason)`.  Reasons: `configured` (first chain entry was available), `gpu_session_cap_hit` (first at cap, fell to next), `all_encoders_saturated` (every entry at cap, using last anyway so FFmpeg produces a clear error), `encoder_unknown` (every chain entry was a typo, using default).
+   - `release_session(session_id)` frees the cap slot in `stop_stream`.
+   - `get_session_encoder(session_id)` exposes the picked encoder for the `stream/start` route handler to persist.
+   - `get_history()` returns a JSON-friendly copy of the 50-entry FIFO ring buffer for the diagnostic panel.
+
+4. **`start_stream` integration** ([ffmpeg_service.py](apps/server/services/ffmpeg_service.py)).
+   - Stream-copy bypasses the router entirely (no encoder is invoked).
+   - Transcode mode reads `transcoding_chain` from settings.  Empty chain → back-compat default `[transcoding_encoder, "libx264"]`.  Calls `pick_encoder` → uses returned encoder for the meta lookup.
+   - Failure path releases the session slot before raising.
+
+5. **`stop_stream` integration** — calls `session_router.release_session(session_id)`.  No-op for stream-copy (which never reserved a slot).
+
+6. **`stream_sessions.encoder_used` persistence** ([routers/stream.py](apps/server/routers/stream.py)).  After `start_stream` succeeds, `session_router.get_session_encoder(session_id)` reads the picked encoder + the INSERT now writes `encoder_used` alongside the rest of the session row.
+
+7. **`/transcoding/fallback-history` endpoint** + Pydantic models ([routers/transcoding.py](apps/server/routers/transcoding.py)).  Local-only.  Backed by `session_router.get_history()`.
+
+8. **`UserSettingsResponse.transcoding_chain` + `UpdateSettingsBody.transcoding_chain`** ([models/settings.py](apps/server/models/settings.py)).  List of strings.  `_to_response` decodes the stored JSON-string column back to a list (or null) for the desktop.
+
+9. **Settings service validation** ([services/settings_service.py](apps/server/services/settings_service.py)).  Rejects unknown encoders (422 with the offending entry named).  Rejects all-duplicate chains.  Empty list normalises to NULL ("use default chain").  JSON-encodes once at the validation step so the dynamic UPDATE only sees the serialised form.
+
+10. **`ActiveTranscodeSession.encoder_used: str | None`** ([models/transcoding.py](apps/server/models/transcoding.py)) — drives the desktop's per-session "Encoder" pill.  `_list_active_sessions` selects + propagates the column.
+
+11. **Desktop entities + repository** — new `FallbackEvent` + `FallbackHistory` freezed entities in `packages/fluxora_core`; `EncoderLoad` extended with `encoderUsed` (regen); new `Endpoints.transcodingFallbackHistory`; new `TranscodingRepository.fallbackHistory()` + impl.
+
+12. **Desktop SettingsCubit** — `loadSettings` reads `transcoding_chain` from the response and stores it on `SettingsLoaded.transcodingChain`.  `saveSettings` accepts `List<String>? transcodingChain` and includes it in the PATCH body when non-null.
+
+13. **Desktop `EncoderPriorityList` widget** (~330 lines) — drag-and-drop reorderable list using `ReorderableListView` with `ReorderableDragStartListener` handles.  Each row: index pill (1, 2, 3 …), encoder label + ID (monospace), Primary purple pill on entry 0, X button to remove.  "+ Add encoder" popup menu shows only encoders not already in the chain; empty chain shows an empty-state message; full chain (all encoders) shows "All encoders are already in the chain" hint.  Controlled — parent passes `chain` + `onChanged`; widget owns no state.
+
+14. **Desktop `FallbackHistoryCubit` + `FallbackHistoryPanel`** — cubit polls `/fallback-history` every 5 s (slower than `TranscodingCubit`'s 2 s because fallback events are rare).  Panel renders one row per recent event with timestamp + `requested → actual` arrow + reason chip (OK / Cap hit / All saturated / Unknown encoder).  Caps display at the most recent 5; collapses to nothing when the buffer is empty.
+
+15. **Settings → Streaming tab** gets a new "Encoder priority chain (advanced)" `_SettingBlock` rendering the `EncoderPriorityList`.  Wired through the existing `_save` flow with a `_listEquals` dirty check + `chainChanged` guard so the chain is only PATCHed when the operator actually edited it.
+
+16. **Transcoding screen** gets the `FallbackHistoryPanel` below the active sessions card; provides the new `FallbackHistoryCubit` via `MultiBlocProvider`.
+
+17. **Active sessions table** ([transcoding_screen.dart](apps/desktop/lib/features/transcoding/presentation/screens/transcoding_screen.dart)) gets a per-session encoder pill — `atx.encoderUsed` value (e.g. `h264_nvenc`) when the session is transcoding, or `stream-copy` info-pill when the session is just remuxing.  Finally answers the operator's "is NVENC actually running for this file?" question without log-diving.
+
+### Tests Added
+
+- **Server: 24 new tests** in `tests/test_session_router.py` (13 cases) + `tests/test_settings_extended.py` (4 chain-validation cases) + new `tests/test_session_router.py` endpoint tests.  `parse_chain` round-tripping, chain semantics (uncapped, cap-fall-through, all-saturated, default-encoder, unknown skipping), `release_session` idempotency, ring buffer FIFO at 50 entries, endpoint shape.
+- **Desktop: 13 new widget tests** in `test/features/transcoding/encoder_priority_list_test.dart` (7) + `test/features/transcoding/fallback_history_panel_test.dart` (6).  Empty-state copy, index pills, Primary pill, remove-fires-onChanged, Add menu filters out already-chained entries, Add appends to chain, "all in chain" hint, fallback panel render-nothing on loading/failure/empty, header + reason chips, requested→actual arrow, 5-event display cap.
+- **Server suite 312 → 336 passing.  Desktop suite 71 → 84 passing.**  `flutter analyze` clean.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `apps/server/database/migrations/020_encoder_chain.sql` |
+| Created | `apps/server/database/migrations/021_session_encoder.sql` |
+| Created | `apps/server/services/session_router.py` |
+| Created | `apps/server/tests/test_session_router.py` (13 cases) |
+| Created | `packages/fluxora_core/lib/entities/fallback_event.dart` (+ freezed parts) |
+| Created | `apps/desktop/lib/features/transcoding/presentation/cubit/fallback_history_cubit.dart` |
+| Created | `apps/desktop/lib/features/transcoding/presentation/widgets/encoder_priority_list.dart` |
+| Created | `apps/desktop/lib/features/transcoding/presentation/widgets/fallback_history_panel.dart` |
+| Created | `apps/desktop/test/features/transcoding/encoder_priority_list_test.dart` (7 cases) |
+| Created | `apps/desktop/test/features/transcoding/fallback_history_panel_test.dart` (6 cases) |
+| Modified | `apps/server/services/encoder_registry.py` (`concurrent_session_cap` field; NVENC entries set to 3) |
+| Modified | `apps/server/services/ffmpeg_service.py` (`start_stream` consults `session_router.pick_encoder`; failure path releases slot) |
+| Modified | `apps/server/services/transcoding_service.py` (`_list_active_sessions` selects + propagates `encoder_used`) |
+| Modified | `apps/server/services/settings_service.py` (`transcoding_chain` kwarg + JSON-encode + validation) |
+| Modified | `apps/server/models/settings.py` (`transcoding_chain` on response + body) |
+| Modified | `apps/server/models/transcoding.py` (`encoder_used` on `ActiveTranscodeSession`) |
+| Modified | `apps/server/routers/settings.py` (`_to_response` decodes `transcoding_chain` JSON) |
+| Modified | `apps/server/routers/stream.py` (INSERT writes `encoder_used`) |
+| Modified | `apps/server/routers/transcoding.py` (`/fallback-history` endpoint + Pydantic models) |
+| Modified | `apps/server/tests/test_settings_extended.py` (4 chain-validation cases) |
+| Modified | `packages/fluxora_core/lib/entities/transcoding_status.dart` (`encoderUsed` on `ActiveTranscodeSession`) |
+| Modified | `packages/fluxora_core/lib/network/endpoints.dart` (`transcodingFallbackHistory`) |
+| Modified | `packages/fluxora_core/lib/fluxora_core.dart` (export `fallback_event`) |
+| Modified | `apps/desktop/lib/features/transcoding/domain/repositories/transcoding_repository.dart` (`fallbackHistory()`) |
+| Modified | `apps/desktop/lib/features/transcoding/data/repositories/transcoding_repository_impl.dart` (impl) |
+| Modified | `apps/desktop/lib/features/transcoding/presentation/screens/transcoding_screen.dart` (provide `FallbackHistoryCubit`; render panel; per-session encoder pill) |
+| Modified | `apps/desktop/lib/features/settings/presentation/cubit/settings_state.dart` (`transcodingChain` field on Loaded) |
+| Modified | `apps/desktop/lib/features/settings/presentation/cubit/settings_cubit.dart` (load + save chain) |
+| Modified | `apps/desktop/lib/features/settings/presentation/screens/settings_screen.dart` (chain state + dirty + sync + save + new `_SettingBlock` rendering `EncoderPriorityList`) |
+
+### Decisions Made
+- **Chain stored as JSON-encoded TEXT, not a child table.**  Chains are tiny (1-5 entries), single-tenant, never queried relationally.  A child table would over-engineer.  Documented in migration 020.
+- **Stream-copy bypasses the router entirely.**  Stream-copy doesn't invoke any encoder — counting it against an encoder's cap would be wrong.  Confirmed by routing the if/else at the top of `start_stream`.
+- **NVENC cap = 3 hardcoded; treat as soft.**  Plan §4 row 4.  Newer drivers + RTX 40+ have lifted this on some cards but per-card detection is fragile (driver version + GPU model interact).  Treating as a soft cap means: when reached, route to the next encoder in the chain *but also* let the operator force-select the saturated encoder via a single-encoder chain → FFmpeg surfaces the actual driver error if it fails.
+- **Default chain when null = `[transcoding_encoder, "libx264"]`.**  Plan §4 row 5.  Existing installs that never touched the chain UI get a guaranteed software fallback for free, no migration needed (chain stays NULL).
+- **Empty list `[]` clears the chain (stored as NULL).**  Distinct from null in the request body (which means "leave unchanged").  The desktop's `_save` only sends `transcoding_chain` when the local list differs from the loaded snapshot.
+- **Reject all-duplicate chains at the validation layer.**  `[libx264, libx264]` is meaningless and would silently degrade the operator's routing.  422 with explicit error makes the operator either fix it or use an empty list.
+- **Ring buffer 50 entries, in-memory only.**  Plan §3 Slice C.  Restart loses history; that's fine for a real-time diagnostic panel.  Cross-restart questions go to `stream_sessions.encoder_used`.
+- **Drag-and-drop is the editing surface, not free-text.**  `ReorderableListView` is built into Flutter; the operator visually sees what they're configuring.  Free-text JSON input would be cryptic.
+- **Primary pill on chain[0] only.**  Visual cue that the first entry is the *first attempt*, not just one of many equals.
+
+### Blockers / Open Issues
+- **Per-codec NVDEC capability matrix still missing.**  An RTX 20 still gets the `h264_nvenc` encoder_support badge from Slice B but cuvid AV1 decode will fail with the chroma-format error from Slice B+. Surfacing per-codec NVDEC capability per GPU generation is a future enhancement; for now operators with AV1 sources should re-encode upstream.
+- **In-memory ring buffer means cross-restart history is lost.**  Acceptable per plan §3 Slice C.  If operators ask for longer retention, persist routing decisions to a `transcoding_routing_events` table.
+- **Hardcoded NVENC cap=3 is conservative.**  RTX 40 + driver ≥ 530 lift the cap on some cards.  Detecting the actual cap requires either an SDK call (no Python binding) or trial-and-error session creation.
+
+### Issues / Sharp Edges Discovered
+- **Chain validation can't be a Pydantic Literal.**  The encoder list is dynamic (registry-driven); using a `Literal` would couple the model to the registry's snapshot at import time.  Validating at the service layer (where `ENCODER_REGISTRY` is queryable) keeps the contract honest.
+- **`session_router` and `ffmpeg_service` have a circular-import risk.**  Resolved by importing `session_router` lazily inside `start_stream` / `stop_stream` rather than at module-top.
+- **The `_listEquals` helper duplicates `package:collection` ListEquality.**  Acceptable single-method dup to avoid pulling in the package for one comparison; if any other Settings field grows list-typed, swap to ListEquality.
+- **`ReorderableDragStartListener` requires a fresh `MouseRegion(cursor: SystemMouseCursors.grab)` on the handle child.**  Without it the drag handle still works but doesn't show the grab cursor — which makes the drag affordance look broken on hover.
+
+### Suggested Next Steps
+1. **Restart the server** to pick up: (a) migrations 020 + 021, (b) `session_router`, (c) `start_stream`'s router integration, (d) `/fallback-history` endpoint.
+2. **Open Settings → Streaming** on the desktop — the "Encoder priority chain (advanced)" card should appear under the existing Transcoding card.  Default state is empty (server uses fallback `[transcoding_encoder, "libx264"]`).  Drag the operator's preferred order in (e.g. for RTX 2060 + Intel UHD 630: `[h264_nvenc, h264_qsv, libx264]`).
+3. **Open Transcoding screen** — active session pills now show `h264_nvenc` / `stream-copy` per session.  When the operator hits 4 simultaneous transcode sessions on the 2060, session #4 should automatically route to `h264_qsv` and the FallbackHistoryPanel should show the routing decision.
+4. **HDR tonemap on transcode path** — separate from this slice but adjacent.  Detect `hdr_format` from ffprobe (already stored at scan time), add the zscale tonemap chain when present and the active encoder isn't HDR-aware.  Eliminates the "wrong colors when transcoding HDR" failure mode.
+5. **Per-codec NVDEC capability matrix** would let `_input_decoder_args` refuse `av1_cuvid` upfront on a Turing card (RTX 20) instead of the current "try cuvid → cuvid rejects → fall back".
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()`.
+- [x] No silent exceptions — `session_router` failure to find a known encoder logs at WARNING; the cuvid auto-fallback already logs.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps.
+- [x] No layer-boundary violations — `session_router` is pure server logic; cubit owns the repo call; widget reads from cubit.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations — 020 + 021 are new.
+- [x] No string-concatenated SQL — migration 020/021 are pure literal SQL; the dynamic UPDATE in `settings_service` builds parameterised statements.
+
+### Next Agent Should
+- **Confirm Slice C against the operator's real desktop** — the priority-chain card appears in Settings → Streaming; the encoder pill appears on each active session in the Transcoding screen.
+- **Watch for the FallbackHistoryPanel firing on the operator's 4th simultaneous NVENC session** — that's the killer demo of Slice C value.  If it doesn't fire, the cap accounting is broken.
+- **Plan the HDR tonemap follow-up** as the natural next polish on the transcode path; it's adjacent to this work and addresses a real-world failure mode (wrong colors on HDR sources).
+---
+
+## [2026-05-05] — Phase 6 follow-ups: cuvid widening · fmp4 init helper · HDR tonemap · static VOD playlist
+**Phase:** Phase 6 — encoder pipeline polish + player UX
+**Status:** Complete.  Server suite 336 → 351 passing (+15 across the four areas).  Mobile 41 unchanged.  Desktop 84 unchanged.
+
+### What Was Done
+
+A series of polish fixes on top of the GPU UX slices, all driven by user-observed playback issues with a real-world Genshin Impact game capture (1080p60 HDR10, AV1 software encode, RTX 2060 host).
+
+1. **Cuvid auto-fallback widened** ([apps/server/services/ffmpeg_service.py](apps/server/services/ffmpeg_service.py)).
+   - The Slice C-era retry path dropped only the explicit `-c:v av1_cuvid` decoder, but kept the encoder's `pre_input_args` which still added `-hwaccel cuda`.  On Turing GPUs (RTX 20-series) that hwaccel itself fails to initialise for AV1 — there's no AV1 NVDEC at all.  Stderr surfaces `Failed setup for format cuda: hwaccel initialisation returned error` + `Your platform doesn't support hardware accelerated AV1 decoding`.
+   - Fix: renamed `use_cuvid` → `use_gpu_input` on `_build_ffmpeg_cmd`.  When `use_gpu_input=False`, the entire CUDA input pipeline is dropped (both `-hwaccel cuda` AND `-c:v *_cuvid`).  Software decode → NVENC encode via FFmpeg's automatic upload — slower, but works on any GPU + FFmpeg combo.
+   - Widened `_CUVID_FAILURE_MARKERS` to also match `"hwaccel initialisation returned error"`, `"doesn't support hardware accelerated"`, `"hardware is lacking required capabilities"`.  4 new test cases in `test_stream.py`.
+
+2. **fmp4 init segment quirk fix** ([apps/server/services/ffmpeg_service.py](apps/server/services/ffmpeg_service.py), [apps/server/routers/stream.py](apps/server/routers/stream.py)).
+   - User's HEVC stream-copy session showed segments serving fine but `init.mp4` returning 404.  Root cause: bundled FFmpeg builds vary in their fmp4-init-segment behaviour under `-c:v copy` — some silently skip writing it.
+   - Fix part 1: pinned `-hls_fmp4_init_filename "init.mp4"` explicitly in the HLS args so the playlist's `#EXT-X-MAP URI` always matches a deterministic filename.
+   - Fix part 2: new `_ensure_fmp4_init_segment(session_dir, file_path)` helper.  After `start_stream` succeeds in fmp4 mode, runs a one-shot `ffmpeg -t 0.04 -movflags +empty_moov+default_base_moof+frag_keyframe -f mp4` to write a valid init segment ourselves if FFmpeg didn't.  Tonemap-aware (re-encodes audio to AAC for the moov match).  Idempotent — short-circuits when the file already exists.
+   - Fix part 3: HLS router content-type was wrong.  `.m4s` and `.mp4` were served as `video/MP2T`; Safari + media_kit silently reject the wrong MIME and refuse to parse the moov.  Now mapped to `video/mp4`.
+   - 3 new test cases in `test_stream.py` (idempotent skip, zero-byte file regenerate, ffmpeg-missing returns False).
+
+3. **HDR → SDR tonemap path** ([apps/server/services/ffmpeg_service.py](apps/server/services/ffmpeg_service.py), [apps/server/routers/stream.py](apps/server/routers/stream.py), [apps/server/models/stream_session.py](apps/server/models/stream_session.py), mobile player UI).
+   - User's Genshin file is HDR10 (BT.2020 PQ, 10-bit 4:2:0).  Stream-copy preserved the HDR bitstream verbatim; media_kit on Android renders the PQ values as if sRGB → washed greys, desaturated colours.  Pre-stream-copy era worked because libx264 transcoding implicitly tonemapped via libswscale.
+   - Server: new `_HDR_TO_SDR_VF` filter chain — `zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p`.  Hable curve + `desat=0` keeps highlight detail and saturation.
+   - New `_resolve_source_metadata(db, file_path) -> tuple[codec, hdr_format]` (existing `_resolve_source_codec` is now a back-compat wrapper).
+   - `start_stream(*, tonemap_hdr: bool = False)` parameter; when true AND source has `hdr_format`, forces transcode mode (overrides stream-copy, drops `use_gpu_input` since the zscale chain operates on CPU pixels).
+   - `_build_ffmpeg_cmd` gains `apply_hdr_tonemap` parameter.  Combines the tonemap chain with the encoder's existing `vf_chain` (e.g. VAAPI's `format=nv12|vaapi,hwupload`) so tonemap runs first and the GPU upload step sees yuv420p.
+   - `POST /api/v1/stream/start/{file_id}` gains `?tonemap=true` query param.
+   - `StreamStartResponse` gains `hdr_format: str | None` and `tonemapped: bool` fields.
+   - Mobile: `StreamStartResponse` Dart class + `PlayerRepository.startStream(fileId, {bool tonemap})` + `ApiClient.post()` gains `queryParameters` parameter (was missing).  `PlayerReady` state gains `hdrFormat`, `tonemapped`, `isHdrSource`.  New `PlayerCubit.setTonemap(bool)` restarts the stream with the new flag while preserving resume position via cached `_lastFileId`/`_lastFileName`/`_lastPosterUrl`.  `FluxPlayerControls` gains `hdrFormat`/`tonemapped`/`onTonemapChanged` props.  New `_HdrChip` widget (violet `HDR10`/`HLG`/`DV` pill when streaming HDR; neutral `SDR` pill when tonemapped).  Previously-dead 3-dot icon now opens `_showOverflowMenu()` — modal bottom sheet with a "Tone-map HDR to SDR" Switch tile (only when source is HDR).
+   - 5 new test cases in `test_stream.py` (tonemap flag injection + chain ordering with VAAPI + stream-copy bypass + `_resolve_source_metadata` round-trip).
+
+4. **Static VOD playlist** ([apps/server/services/ffmpeg_service.py](apps/server/services/ffmpeg_service.py), [apps/server/routers/stream.py](apps/server/routers/stream.py)).
+   - User noticed the seek bar was growing during playback rather than showing the file's full duration upfront.  Root cause: FFmpeg's HLS muxer emits an incrementally-growing playlist; without `#EXT-X-PLAYLIST-TYPE:VOD` + `#EXT-X-ENDLIST` the player treats it as live.
+   - Fix: new `_write_static_vod_playlist(playlist, duration_sec, hls_time, use_fmp4, init_filename)` helper.  Pre-emits a complete `#EXT-X-PLAYLIST-TYPE:VOD` playlist listing every expected segment URL (one EXTINF per `ceil(duration / hls_time)` segments) + correct durations summing to `duration_sec` + `#EXT-X-ENDLIST`.  Player loads this once, sees full duration on the scrubber, can seek anywhere.
+   - FFmpeg's own incremental playlist now writes to `_ff_playlist.m3u8` (used internally as the "FFmpeg has produced output" sentinel; never served to clients).  Our static playlist lives at the canonical `playlist.m3u8`.
+   - HLS router waits up to 5 s for a not-yet-written segment before falling through to 404.  Covers seek-ahead-of-encode without crashing playback.
+   - 4 new test cases in `test_stream.py` (segment count, partial last segment, fmp4 with init line, zero-duration short-circuit).
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/services/ffmpeg_service.py` (cuvid widen + fmp4 init helper + HDR tonemap + static VOD playlist) |
+| Modified | `apps/server/routers/stream.py` (`?tonemap=true` query param + `hdr_format`/`tonemapped` response fields + 5 s segment-wait + `video/mp4` MIME) |
+| Modified | `apps/server/models/stream_session.py` (`StreamStartResponse.hdr_format` + `.tonemapped`) |
+| Modified | `apps/server/tests/test_stream.py` (16 new cases across the four areas; mocks updated to accept `**_` so the new `tonemap_hdr` kwarg passes through) |
+| Modified | `apps/server/tests/test_groups.py` (mock signature parity for `**_`) |
+| Modified | `apps/mobile/lib/features/player/domain/entities/stream_start_response.dart` (`hdrFormat` + `tonemapped`) |
+| Modified | `apps/mobile/lib/features/player/domain/repositories/player_repository.dart` (`tonemap` param) |
+| Modified | `apps/mobile/lib/features/player/data/repositories/player_repository_impl.dart` (`tonemap` query param plumbing) |
+| Modified | `apps/mobile/lib/features/player/presentation/cubit/player_state.dart` (`PlayerReady.hdrFormat` + `.tonemapped` + `.isHdrSource`) |
+| Modified | `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart` (`setTonemap` + `_lastFileId`/`_lastFileName`/`_lastPosterUrl` cached fields + propagate response fields to `PlayerReady`) |
+| Modified | `apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart` (`_HdrChip` + `_showOverflowMenu` + `hdrFormat`/`tonemapped`/`onTonemapChanged` props on `FluxPlayerControls` and `_TopBar`) |
+| Modified | `apps/mobile/lib/features/player/presentation/screens/player_screen.dart` (`_VideoView` forwards HDR props to `FluxPlayerControls`; wires `onTonemapChanged` to `PlayerCubit.setTonemap`) |
+| Modified | `packages/fluxora_core/lib/network/api_client.dart` (`post` gains `queryParameters` parameter) |
+| Modified | `docs/00_overview/current_status.md`, `docs/02_architecture/01_system_overview.md`, `docs/04_api/01_api_contracts.md`, `docs/08_frontend/01_frontend_architecture.md`, `docs/09_backend/01_backend_architecture.md`, `docs/09_backend/02_hardware_acceleration.md`, `docs/12_guidelines/03_gotchas.md`, `docs/10_planning/01_roadmap.md` (full doc sweep covering all four follow-ups) |
+
+### Decisions Made
+- **Rename `use_cuvid` → `use_gpu_input` to broaden semantics.**  The flag now controls both the cuvid hint AND the `-hwaccel cuda` pre-input flag.  Single retry attempt drops the entire GPU input pipeline.
+- **Tonemap forces `use_gpu_input=False` from the first attempt.**  zscale + tonemap operate on CPU pixels; running them after a CUDA-format `-hwaccel cuda` would force a costly download per frame anyway.  Cleaner to start in software-decode mode.
+- **Tonemap only fires when both `?tonemap=true` AND source is HDR.**  An SDR file passing `tonemap=true` is a no-op — `tonemapped: false` in the response, no filter chain applied.  Tells the player the toggle had no observable effect.
+- **HDR badge label switches to `SDR` when tonemapped.**  Operator immediately sees that the override is on; flipping it off restores the violet HDR pill.
+- **3-dot menu is silent on SDR sources** (returns early without opening an empty sheet).  Future quality / speed options can land in the same overflow without re-architecting.
+- **Static VOD playlist segment count is an upper bound.**  For stream-copy, segments align to source keyframes; if the source's last keyframe falls early, the playlist may list a few segments at the tail that FFmpeg never writes.  HLS router's 5 s segment-wait handles seek-ahead; for the trailing-segment case, the player retries-then-skips, worst case is a brief stutter at end-of-file.
+- **FFmpeg's incremental playlist moved to `_ff_playlist.m3u8` (private).**  Avoids a race between FFmpeg's gradual writes and our static-playlist write.  HLS router serves only `playlist.m3u8` (our static version) to clients.
+- **HLS router's segment-wait is 5 s (50 × 100 ms).**  Long enough to absorb a typical seek-into-not-yet-encoded position without 404; short enough that a genuine encode failure surfaces clearly.
+
+### Blockers / Open Issues
+- **Bundled FFmpeg lacks libdav1d.**  Software AV1 decode fails on common HDR sources.  Tracked in `docs/10_planning/04_manual_tasks.md` as a separate operator task; not fixable from inside the server.
+- **Tonemap on transcode is CPU-heavy.**  The zscale + Hable chain runs at ~30-60 fps on the operator's i7-9750H for 1080p60.  HEVC sources at 4K HDR may not keep up in real time without hardware tonemap (libplacebo, NVDEC tonemap, etc.).  Slice D territory.
+- **Static playlist doesn't account for variable GOPs in stream-copy.**  Predicted segment durations assume `hls_time` exactly; actual durations may be longer.  Player tolerates the mismatch but the scrubber's mid-segment timestamps won't be perfectly accurate.
+
+### Issues / Sharp Edges Discovered
+- **`-hwaccel cuda` doesn't gracefully fall back to software when AV1 NVDEC is unavailable.**  Even passing `-hwaccel cuda -i source.mp4` errors out at hwaccel-init time on Turing.  The "auto-fallback" promise of `-hwaccel cuda` only applies to codecs the GPU CAN decode.
+- **fmp4 HLS init-segment writing is a known FFmpeg quirk.**  Some bundled builds skip writing it under `-c:v copy`.  Worth pinning `-hls_fmp4_init_filename` explicitly even when the default would work — the explicit flag forces the issue.
+- **`video/MP2T` is silently wrong for fmp4 segments.**  Safari + media_kit accept the segment but fail to parse the moov, leading to "video plays for one frame then freezes" symptoms.  Always `video/mp4` for fmp4.
+- **Tonemap on hardware-encoded output drops back to libx264 in some edge cases.**  When the encoder's `vf_chain` is empty (libx264) and tonemap is on, only the tonemap chain runs.  When the encoder's `vf_chain` is non-empty (VAAPI), they're concatenated with `,` — order matters: tonemap first (CPU pixels), then the encoder's hwupload.  This was non-obvious until I wrote the test for it.
+- **HLS playlist as VOD vs live changes player behaviour drastically.**  Without `#EXT-X-PLAYLIST-TYPE:VOD` + `#EXT-X-ENDLIST`, libmpv treats the playlist as live and only buffers the current portion.  Adding both flags unlocks full-timeline seeking — same player, same segments, completely different UX.
+
+### Suggested Next Steps
+1. **Restart the server** to pick up all four fixes.
+2. **Retry Genshin** — should now play with washed colors initially; tap 3-dot → toggle "Tone-map HDR to SDR" → playback restarts → colours match the pre-stream-copy era.
+3. **AGENT_LOG.md is over the rotation threshold (1077 lines)** — schedule a rotation to `docs/logs/AGENT_LOG_archive_07.md` next session.  Summarise Slices A/B/C + Phase 6 follow-ups in the new log header.
+4. **HDR tonemap performance** at higher bitrates is untested — a 4K HDR HEVC source with tonemap would tax the i7-9750H heavily.  When the operator has such content, measure and consider hardware tonemap paths (libplacebo, NVDEC).
+5. **Slice D candidates** if there's appetite: hardware tonemap (NVDEC + scale_npp + tonemap_npp on RTX 30+); libdav1d-enabled FFmpeg bundle; per-codec NVDEC capability matrix surfaced in the Detected Hardware card so AV1 sources on Turing GPUs fail-fast at scan time rather than at playback.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` performed.  Owner reviews staged changes separately.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No silent exceptions — `_ensure_fmp4_init_segment` failure logs WARN; static-playlist write logs WARN on failure; cuvid retry logs WARN with the original stderr tail.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps.
+- [x] No layer-boundary violations — tonemap chain is pure FFmpeg-arg composition; static playlist write is filesystem-only; mobile UI reads from cubit; cubit reads from repo.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+
+### Next Agent Should
+- **Watch the user's next HDR playback attempt** to confirm the toggle works end-to-end.  Server log should show `FFmpeg pipeline: session=… mode=transcode(h264_nvenc/mpegts) source_codec=hevc` plus the tonemap `-vf` value when tonemap is on.
+- **Confirm the static VOD playlist** survives a mid-encode seek — operator scrubs to 90% of duration before FFmpeg has encoded that far → server's segment-wait kicks in → playback resumes after FFmpeg catches up.
+- **Rotate AGENT_LOG.md** before adding the next entry.  File is at 1077 lines (over the 1000-line threshold).
+---

@@ -1,6 +1,6 @@
 # Hardware Acceleration — Transcoding Pipeline
 
-> **Status:** Phase 1 (encoder registry) + Phase 2 (DB migration) + Phase 3 (FFmpeg pipeline rewrite + self-test) + Phase 4 (GPU monitoring) complete. Slice A (encoder availability surfacing + advisor) shipped 2026-05-04. Slice B (GPU hardware detection) pending owner approval.
+> **Status:** Phase 1 (encoder registry) + Phase 2 (DB migration) + Phase 3 (FFmpeg pipeline rewrite + self-test) + Phase 4 (GPU monitoring) complete. **All three GPU UX slices shipped 2026-05-04** — A (encoder availability surfacing + advisor), B (GPU hardware detection + Detected Hardware card), C (multi-encoder priority chain + fallback orchestration + FallbackHistoryPanel + per-session encoder_used).
 
 ---
 
@@ -131,15 +131,137 @@ Module-level dict mapping source codec → cuvid decoder name: `av1` → `av1_cu
 
 Returns `["-c:v", "<codec>_cuvid"]` only when encoder vendor is NVIDIA AND source codec is in the map. Injected between `pre_input_args(...)` and `-i <file>` in the transcode branch only.
 
-### Cuvid auto-fallback retry
+### Cuvid auto-fallback retry (widened 2026-05-04)
 
-`_is_cuvid_failure(stderr_tail)` matches substrings `('cuvid is not supported', 'not supported with this chroma format', 'cuvid')`. Conservative — only fires on cuvid-tagged failures.
+`_is_cuvid_failure(stderr_tail)` matches substrings in `_CUVID_FAILURE_MARKERS`:
+
+```python
+_CUVID_FAILURE_MARKERS = (
+    "cuvid is not supported",
+    "not supported with this chroma format",
+    "cuvid",                                 # any cuvid-tagged error in the tail
+    "hwaccel initialisation returned error", # NEW — covers -hwaccel cuda setup failures
+    "doesn't support hardware accelerated",  # NEW — Turing AV1 NVDEC absent
+    "hardware is lacking required capabilities",  # NEW — hardware capability gap
+)
+```
+
+**Why the widening matters:** on Turing GPUs (RTX 20-series) that have no AV1 NVDEC at all, even `-hwaccel cuda` itself fails to initialise for AV1 input — FFmpeg logs `"Failed setup for format cuda: hwaccel initialisation returned error"` before the cuvid step. The old markers only matched cuvid-specific strings and missed this case, leaving the stream erroring on the second attempt too. The widened set catches the `-hwaccel cuda`-level failure so the full GPU input pipeline (both `-hwaccel cuda` AND `-c:v *_cuvid`) is dropped on retry.
 
 `start_stream` refactored into:
-- `_build_ffmpeg_cmd(..., use_cuvid: bool)` — pure argv builder.
+- `_build_ffmpeg_cmd(..., use_gpu_input: bool)` — pure argv builder (renamed from `use_cuvid`; `use_gpu_input=False` drops both `pre_input_args` and `_input_decoder_args`).
 - `_spawn_ffmpeg_attempt(cmd, session_id, playlist)` — runs one attempt; returns `(succeeded, stderr_tail, returncode)`.
 
-Retry logic: spawn with cuvid → on failure, if `_is_cuvid_failure` fires → spawn second attempt without cuvid → surface second error if both fail.
+Retry logic: spawn with `use_gpu_input=True` → on failure, if `_is_cuvid_failure` fires → spawn second attempt with `use_gpu_input=False` (software decode, NVENC encode via FFmpeg's auto-upload) → surface second error if both fail.
+
+**Tonemap always uses `use_gpu_input=False`** from the first attempt — the `zscale` / `tonemap` filters operate on CPU frames; routing input through CUDA would require converting to CPU before the filter anyway, and many FFmpeg builds refuse the mixed-context pipeline.
+
+---
+
+## Slice C — Multi-encoder priority chain + fallback orchestration (shipped 2026-05-04)
+
+The single-encoder model breaks at the cap: an RTX 2060 host running 3 NVENC streams returns 503 on stream #4 instead of falling back to the Intel iGPU's QSV. Slice C transforms `transcoding_encoder` from one choice into a **priority chain** the operator orders.
+
+### Server architecture
+
+- **`EncoderMeta.concurrent_session_cap: int | None`** — NVENC entries (`h264_nvenc` + `hevc_nvenc`) get cap = 3 (NVIDIA driver limit on consumer GeForce / non-Quadro cards). Software / QSV / VAAPI / VideoToolbox = `None` (no enforced cap; software is bandwidth-bound, others have no documented session limit).
+- **`services/session_router.py`** — pure-function-style chain walker. `pick_encoder(chain, session_id, *, default_encoder)` walks the chain, finds the first encoder whose live-session count is under cap, reserves a slot, returns `(encoder, reason)`. `release_session(session_id)` frees the slot in `stop_stream`.
+- **Reason codes**: `configured` (first chain entry was available), `gpu_session_cap_hit` (first at cap, fell to next), `all_encoders_saturated` (every entry at cap; using last anyway so FFmpeg produces a clear error), `encoder_unknown` (every chain entry was a typo, using default).
+- **50-entry FIFO ring buffer** of routing decisions exposed via `GET /api/v1/transcoding/fallback-history`. In-memory only; resets on server restart. Cross-restart history uses `stream_sessions.encoder_used` (migration 021).
+- **`start_stream` integration** — transcode mode only. Stream-copy bypasses the router entirely (no encoder is invoked, so it doesn't count against any cap). When `transcoding_chain` is NULL, falls back to `[transcoding_encoder, "libx264"]`.
+
+### Storage
+
+- **Migration 020** — `user_settings.transcoding_chain TEXT DEFAULT NULL`. JSON-encoded list (chains are tiny + single-tenant; never queried relationally).
+- **Migration 021** — `stream_sessions.encoder_used TEXT DEFAULT NULL`. Populated on INSERT from `session_router.get_session_encoder(session_id)`. Drives the desktop's per-session encoder pill.
+- **Validation** in `settings_service.update_settings`: rejects unknown encoders (422 with the offending entry named); rejects all-duplicate chains (`[libx264, libx264]` is meaningless); empty list normalises to NULL ("use default chain").
+
+### Desktop architecture
+
+- **`EncoderPriorityList` widget** (`apps/desktop/lib/features/transcoding/presentation/widgets/`). Drag-and-drop reorderable list using `ReorderableListView`. Each row: index pill, encoder label + ID, "Primary" purple pill on entry 0, X button to remove. "+ Add encoder" popup menu shows encoders not already in the chain. Controlled — parent owns state.
+- **"Encoder priority chain (advanced)" `_SettingBlock`** on Settings → Streaming.
+- **`FallbackHistoryCubit`** polls `/transcoding/fallback-history` every 5 s. **`FallbackHistoryPanel`** below active sessions card on the Transcoding screen renders one row per recent event with a `requested → actual` arrow + reason chip; capped at 5 most recent; collapses to nothing when buffer is empty.
+- **Per-session encoder pill** on the active-sessions table — purple `h264_nvenc` etc. when transcoding, info `stream-copy` when remuxing.
+
+### Decisions
+
+- **NVENC cap = 3, treated as soft.** Newer drivers + RTX 40+ have lifted this on some cards but per-card detection is fragile (driver version + GPU model interact). Treating as soft means: when reached, route to next encoder *but also* let the operator force-select via a single-encoder chain → FFmpeg surfaces the actual driver error.
+- **Empty list `[]` clears the chain (stored as NULL).** Distinct from null in the request body (which means "leave unchanged"). The desktop only sends `transcoding_chain` when the local list differs from the loaded snapshot.
+- **In-memory ring buffer 50 entries.** Real-time diagnostic panel doesn't need cross-restart history; that's what `stream_sessions.encoder_used` is for.
+
+---
+
+## HDR tonemap path (shipped 2026-05-04)
+
+### When it triggers
+
+`start_stream(*, tonemap_hdr: bool = False)` enables the path when **both** conditions hold:
+1. The caller passes `tonemap_hdr=True` (set by `routers/stream.py` from the `?tonemap=true` query param).
+2. `_resolve_source_metadata` returns a non-null `hdr_format` (`"HDR10"` / `"HLG"` / `"DolbyVision"`).
+
+If either is false the flag is a no-op (`apply_hdr_tonemap = False`) — an SDR source with `tonemap=true` streams normally.
+
+### The zscale + Hable filter chain
+
+```python
+_HDR_TO_SDR_VF = (
+    "zscale=t=linear:npl=100,format=gbrpf32le,"
+    "zscale=p=bt709,"
+    "tonemap=tonemap=hable:desat=0,"
+    "zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
+)
+```
+
+Steps in order:
+1. `zscale=t=linear:npl=100` — un-PQ the HDR10 transfer function to linear light at 100 nit peak.
+2. `format=gbrpf32le` — float planar colour space so `tonemap` has sufficient headroom.
+3. `zscale=p=bt709` — gamut conversion: BT.2020 primaries → BT.709 primaries.
+4. `tonemap=tonemap=hable:desat=0` — Hable tonemapping curve; `desat=0` preserves saturation (avoids washing out game-capture / anime content).
+5. `zscale=t=bt709:m=bt709:r=tv,format=yuv420p` — back to BT.709 transfer + TV-range 8-bit yuv420p, ready for any 8-bit encoder (libx264, h264_nvenc, etc.).
+
+### Force-transcode override
+
+If the source would normally be stream-copied (h264 or hevc), but `apply_hdr_tonemap` is true, the pipeline overrides `direct_remux = False` — stream-copy passes the encoded bitstream unchanged and cannot apply any filter. Log: `"Tonemap requested for HDR source — overriding stream-copy for session"`.
+
+### Combination with VAAPI vf_chain
+
+`_build_ffmpeg_cmd` builds the final `-vf` argument by concatenating `[c for c in (_HDR_TO_SDR_VF if apply_hdr_tonemap else None, meta.vf_chain) if c]`. The tonemap chain runs first (CPU-side), converting to `yuv420p`; VAAPI's `format=nv12|vaapi,hwupload` step then sees standard 8-bit frames and uploads them to VRAM for NVENC/QSV encode. Without this ordering, VAAPI would receive BT.2020 PQ frames it cannot consume.
+
+### `StreamStartResponse` new fields
+
+| Field | Type | Semantics |
+|-------|------|-----------|
+| `hdr_format` | `str \| None` | Source HDR tag from `media_files.hdr_format`. Drives the player's HDR badge and tonemap toggle visibility. |
+| `tonemapped` | `bool` | `True` when the server is actively tonemapping this session (`tonemap_hdr and hdr_format`). |
+
+---
+
+## Static VOD playlist (shipped 2026-05-04)
+
+### Problem
+
+FFmpeg's HLS muxer emits an incremental live playlist as it writes segments. Without `#EXT-X-PLAYLIST-TYPE:VOD` + `#EXT-X-ENDLIST`, `media_kit` and other players treat the stream as live — the scrubber only spans segments written so far, growing in real time.
+
+### Fix: `_write_static_vod_playlist`
+
+```python
+def _write_static_vod_playlist(
+    *, playlist: Path, duration_sec: float, hls_time: float,
+    use_fmp4: bool, init_filename: str = "init.mp4"
+) -> int:
+```
+
+Called after `_spawn_ffmpeg_attempt` succeeds. Writes a complete playlist to `playlist.m3u8` listing every segment FFmpeg will eventually produce (`ceil(duration_sec / hls_time)` entries), plus `#EXT-X-PLAYLIST-TYPE:VOD` and `#EXT-X-ENDLIST`. Returns the segment count.
+
+FFmpeg writes its own incremental playlist to `_ff_playlist.m3u8` (the `ff_playlist` path in `start_stream`) — used only as the "FFmpeg has started producing output" sentinel for `_spawn_ffmpeg_attempt`'s 10 s wait loop; never served to the client.
+
+### HLS router segment-wait
+
+The static playlist lists segments that may not yet exist (user seeks ahead of FFmpeg's encode position). The HLS router (`GET /api/v1/hls/{session_id}/{filename}`) waits up to 5 s (50 × 100 ms polls) for `seg*.m4s` / `seg*.ts` / `init.mp4` before falling through to 404. This covers the seek-ahead case without holding the response open indefinitely.
+
+### Limitation
+
+Stream-copy aligns segment boundaries to source keyframes, not to `hls_time`. The predicted segment count is therefore an **upper bound** — if the source's last keyframe falls early, the final listed segments may never be written. Players retry-then-skip on 404 within reason; the visible effect is at most a small stutter at end-of-file.
 
 ---
 
@@ -161,10 +283,10 @@ VideoToolbox ignores the `-preset` flag entirely. The Desktop UI hides the prese
 
 AV1 NVDEC support varies by GPU generation:
 - RTX 30 (Ampere)+: supports 8-bit and 10-bit 4:2:0 AV1.
-- RTX 20 (Turing) and older: no AV1 NVDEC support at all — cuvid hint will fail cleanly; auto-fallback fires.
+- RTX 20 (Turing) and older: **no AV1 NVDEC at all** — even `-hwaccel cuda` itself fails to initialise for AV1 input on these cards (`"hwaccel initialisation returned error"` in stderr). The widened `_CUVID_FAILURE_MARKERS` catches this; the retry drops the entire GPU input pipeline (`use_gpu_input=False`) so software decode feeds directly into NVENC encode.
 - 4:4:4 chroma and 12-bit depth are unsupported on all consumer NVIDIA cards.
 
-When cuvid is rejected for chroma/bit-depth reasons, the fallback retry uses FFmpeg's auto-selected software decoder. On bundled FFmpeg builds that lack `--enable-libdav1d`, the native AV1 software decoder also fails (`[av1] Failed to get pixel format`). In that case both attempts fail and the operator sees the second error tail.
+When the GPU input pipeline is rejected for any reason, the fallback retry uses FFmpeg's auto-selected software decoder. On bundled FFmpeg builds that lack `--enable-libdav1d`, the native AV1 software decoder also fails (`[av1] Failed to get pixel format`). In that case both attempts fail and the operator sees the second error tail.
 
 **Operator workarounds:** re-encode the source to h264/hevc with Handbrake, or replace the bundled `ffmpeg.exe` with a build that includes `--enable-libdav1d` (see manual tasks).
 
@@ -221,5 +343,5 @@ All probes are best-effort — failure returns `null`, never raises.
 | 3 | FFmpeg pipeline rewrite + self-test | ✅ Shipped | `ffmpeg_service.py` |
 | 4 | GPU monitoring expansion | ✅ Shipped | `transcoding_service.py` |
 | Slice A | Encoder availability surfacing + advisor | ✅ Shipped 2026-05-04 | `encoder_advisor.py` (new), `encoder_status_panel.dart` (new), `transcoding_cubit.dart`, `settings_screen.dart` |
-| Slice B | GPU hardware detection + `/transcoding/devices` endpoint | Pending owner approval | — |
-| Slice C | Multi-encoder fallback chain | Pending owner approval | — |
+| Slice B | GPU hardware detection + `/transcoding/devices` endpoint | ✅ Shipped 2026-05-04 | `hardware_probe.py` (new), `detected_hardware_card.dart` (new), `hardware_cubit.dart` (new) |
+| Slice C | Multi-encoder fallback chain | ✅ Shipped 2026-05-04 | `session_router.py` (new), `020_encoder_chain.sql` + `021_session_encoder.sql` (new migrations), `EncoderMeta.concurrent_session_cap`, `encoder_priority_list.dart` (new), `fallback_history_panel.dart` (new), `fallback_history_cubit.dart` (new) |

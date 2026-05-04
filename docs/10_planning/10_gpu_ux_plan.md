@@ -1,7 +1,7 @@
 # GPU & Encoder UX Plan — Desktop Settings + Server-Side Orchestration
 
 > **Category:** Planning
-> **Status:** Drafted 2026-05-04. **Slice A shipped 2026-05-04** (encoder availability surfacing + advisor + active-encoder strip). **Slice B shipped 2026-05-04** (hardware probe + `/transcoding/devices` + Detected Hardware card). Slice C (multi-encoder fallback chain) awaiting owner approval.
+> **Status:** Drafted 2026-05-04. **All three slices shipped 2026-05-04.** Slice A — encoder availability surfacing + advisor + active-encoder strip. Slice B — hardware probe + `/transcoding/devices` + Detected Hardware card. Slice C — multi-encoder fallback chain + `session_router` + EncoderPriorityList drag-and-drop + FallbackHistoryPanel + per-session `encoder_used`.
 > **Goal:** Make the operator's GPU + encoder reality *visible* in the desktop control panel, then *intelligent* (recommendations + automatic fallback), then *resilient* (multi-encoder routing under load).
 > **Scope:** Server (`apps/server/`) + Desktop (`apps/desktop/`). Mobile shows the active encoder per-stream as a footnote only — no UI re-architecture.
 
@@ -127,7 +127,7 @@ Three slices, each independently shippable. **Slice A is the value-per-effort sw
 - `wmic` is deprecated on Win11 23H2+ but still ships. **Fallback:** parse `Get-WmiObject` via PowerShell only if `wmic` returns non-zero. Verified at run-time, no precondition.
 - `lspci` requires `pciutils` package on minimal Linux installs. **Mitigation:** failure returns the GPU model as `"Unknown PCI device 0x..."` from `/sys/class/drm/*/device/{vendor,device}`.
 
-### Slice C — "Don't fail loudly when one encoder saturates" (~3 days)
+### Slice C — "Don't fail loudly when one encoder saturates" ✅ shipped 2026-05-04
 
 **Multi-encoder priority chain + fallback orchestration. Largest slice; most risk.**
 

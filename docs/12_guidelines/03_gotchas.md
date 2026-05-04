@@ -92,3 +92,72 @@ However, cuvid AV1 itself rejects unusual chroma formats (HDR 10-bit on some GPU
 **Root cause:** the `#EXT-X-INDEPENDENT-SEGMENTS` tag asserts that every HLS segment begins with an IDR (instantaneous decode refresh) keyframe. This is true for transcoded output — the encoder emits IDRs at segment boundaries via `-g` / `-force_key_frames`. It is NOT true for stream-copy when the source GOP exceeds `hls_time`. FFmpeg can only place segment boundaries at existing keyframes in the source; if the source uses 4–10 s GOPs (common in game captures), some `hls_time=6` boundaries land mid-GOP and the segment does not start with an IDR. Players that honour the tag buffer forever waiting for a segment-opening IDR that isn't there.
 
 **Fix:** remove `-hls_flags independent_segments` for the stream-copy path. Also bump `-hls_time` from 6 to 10 seconds for stream-copy — more breathing room to align segment boundaries with long-GOP keyframes. Transcode mode keeps both flags and the 6 s segment time (the encoder controls the IDR cadence). Pattern in `apps/server/services/ffmpeg_service.py` — separate `common_hls` + per-path tail lists.
+
+---
+
+## Lazy import to break service circular dependencies
+
+**Symptom:** server fails to start with `ImportError: cannot import name 'X' from partially initialised module 'services.Y'` (or similar). The error shows up at the top of the stack trace immediately on first request handling; existing tests that don't exercise the affected code path keep passing.
+
+**Root cause:** two services in `apps/server/services/` reference each other at module-top. Specifically, `services/session_router.py` and `services/ffmpeg_service.py` form a cycle: `start_stream` calls `session_router.pick_encoder` to pick the encoder, while `release_session` is invoked from `stop_stream`. If both modules import each other at the top, Python's import resolver hits a partial-init state.
+
+**Fix:** import the *callee* lazily, inside the function body that actually needs it, rather than at module-top. Pattern in `apps/server/services/ffmpeg_service.py`:
+
+```python
+async def start_stream(...):
+    from services import session_router  # lazy — breaks the cycle
+    ...
+    encoder, _ = session_router.pick_encoder(chain, session_id, ...)
+
+async def stop_stream(session_id: str) -> None:
+    from services import session_router  # lazy — same reason
+    ...
+    session_router.release_session(session_id)
+```
+
+Per-call import cost is ~µs after the first call (Python caches modules); the structural cleanliness is worth it. Lifting the imports to module-top is a tempting clean-up — don't, you'll break startup.
+
+---
+
+## `-hwaccel cuda` itself fails on GPUs without AV1 NVDEC (Turing / RTX 20-series)
+
+**Symptom:** AV1 source files fail with `Failed setup for format cuda: hwaccel initialisation returned error` or `Your platform doesn't support hardware accelerated AV1 decoding` in the stderr tail, even after the cuvid retry path should have caught the failure. Both the first and second FFmpeg attempts error out; the session returns 503.
+
+**Root cause:** on RTX 20-series (Turing) and older GPUs there is no AV1 NVDEC hardware at all — not just "rejected chroma format" but "the decoder doesn't exist". Because the failure happens before the cuvid hint is even evaluated, the old `_CUVID_FAILURE_MARKERS` (which only matched `"cuvid"` substrings) did not recognise it as a GPU-input failure. The retry kept `-hwaccel cuda` in the second attempt, which failed for the same reason, leaving both attempts dead.
+
+**Fix:** `_CUVID_FAILURE_MARKERS` was widened with three new substrings: `"hwaccel initialisation returned error"`, `"doesn't support hardware accelerated"`, `"hardware is lacking required capabilities"`. Additionally, the `use_cuvid` parameter in `_build_ffmpeg_cmd` was renamed `use_gpu_input` — when `False`, it drops **both** `meta.pre_input_args(device=…)` (which adds `-hwaccel cuda`) **and** `_input_decoder_args(…)` (which adds `-c:v *_cuvid`). The retry path now fully disables the GPU input pipeline; software decode feeds directly into NVENC encode via FFmpeg's automatic tensor upload. Pattern: `apps/server/services/ffmpeg_service.py`, `_CUVID_FAILURE_MARKERS` + `_build_ffmpeg_cmd(use_gpu_input=)`.
+
+---
+
+## fmp4 HLS init segment is unreliable across FFmpeg builds
+
+**Symptom:** `seg00000.m4s` returns 200 but `init.mp4` returns 404; the player (media_kit / Safari) refuses to start playback. The log shows `"Manual init-segment generation raised for session"` or the HLS router logs repeated 404s for `init.mp4`.
+
+**Root cause:** some bundled FFmpeg builds (especially Windows static builds) silently skip writing the fmp4 init segment under `-c:v copy` (stream-copy mode) even when `-hls_fmp4_init_filename init.mp4` is explicitly set. The HLS playlist already has `#EXT-X-MAP URI="init.mp4"` pointing at a file that doesn't exist on disk. In addition, `.m4s` and `.mp4` served with the wrong `Content-Type: video/MP2T` (correct for mpegts segments) cause Safari and media_kit to silently reject the response without reporting a parse error.
+
+**Fix:** two changes together:
+1. Explicit `-hls_fmp4_init_filename "init.mp4"` in the FFmpeg HLS args (was missing on some code paths, letting the build use its own default name which sometimes differs).
+2. `_ensure_fmp4_init_segment(session_dir, file_path)` helper: after `start_stream` confirms FFmpeg is running, it checks whether `init.mp4` exists. If not, it runs a one-shot `ffmpeg -i <file> -t 0.04 -movflags +empty_moov+default_base_moof+frag_keyframe -f mp4 init.mp4` to write the init segment from scratch. The `moov` box produced this way matches the source's video configuration and the AAC config used for the segments; players parse it, set up the decoder, and skip the tiny `mdat`.
+3. HLS router content-type: `.m4s` and `.mp4` extensions return `Content-Type: video/mp4`; only `.ts` files return `video/MP2T`. Pattern: `apps/server/routers/stream.py` `serve_hls` content-type block and `ffmpeg_service._ensure_fmp4_init_segment`.
+
+---
+
+## HLS playlist grows during encode unless pre-emitted as VOD
+
+**Symptom:** the player's seek bar starts at 0 s and grows in real time over the encode duration. The user cannot seek past FFmpeg's current write position — attempts to do so result in a 404 on the requested segment.
+
+**Root cause:** FFmpeg's HLS muxer emits an incremental, ever-growing playlist as it produces segments. Without `#EXT-X-PLAYLIST-TYPE:VOD` + `#EXT-X-ENDLIST`, `media_kit`, Safari, and most other HLS players treat the stream as live. Their seek bar only spans the duration covered by segments already in the playlist.
+
+**Fix:** `_write_static_vod_playlist(playlist, duration_sec, hls_time, use_fmp4)` runs immediately after `_spawn_ffmpeg_attempt` succeeds. It writes a complete `#EXT-X-PLAYLIST-TYPE:VOD` playlist to `playlist.m3u8` (the path the HLS router serves) listing every expected segment (`ceil(duration_sec / hls_time)` EXTINF lines) and `#EXT-X-ENDLIST`. FFmpeg's own incremental playlist is redirected to `_ff_playlist.m3u8` so it doesn't overwrite ours. The HLS router waits up to 5 s for not-yet-written segments (50 × 100 ms polls) before returning 404, which covers seek-ahead-of-encode without stalling indefinitely. Fallback: when `duration_sec` is unknown (file pre-dates migration 016 and lazy probe returned nothing), the service copies `_ff_playlist.m3u8` to `playlist.m3u8` and the player degrades to the old growing-bar behaviour.
+
+**Limitation:** stream-copy aligns segments to source keyframes, not to `hls_time`. The predicted segment count is an upper bound — the last few segments listed in the static playlist may never be written if the source's final keyframe falls before the last predicted boundary. Players retry-then-skip on 404 within reason; the operator-visible effect is at most a brief stutter at end-of-file.
+
+---
+
+## `session_id` is generated by the route handler, owned by `session_router`
+
+**Symptom:** a future refactor moves session-ID generation into `ffmpeg_service.start_stream`. Cap accounting starts to leak: `_active_session_count_for_encoder('h264_nvenc')` keeps climbing past 3 even when streams have stopped.
+
+**Root cause:** `services/session_router.py` reserves a slot keyed on `session_id` at `pick_encoder` time and frees it via `release_session(session_id)`. The contract is that the *caller* (`apps/server/routers/stream.py`) generates the UUID, hands it to `start_stream`, and the same UUID later flows into `stop_stream`. If the route handler stops generating it and `ffmpeg_service` starts manufacturing IDs internally, the released ID won't match the reserved ID — and the cap accounting silently leaks.
+
+**Fix:** keep `session_id` generation in `routers/stream.py`'s `start_stream` route handler. Treat `start_stream(file_path, session_id, hls_root)` and `stop_stream(session_id)` as ID-consuming, not ID-generating. The router persists the same `session_id` to `stream_sessions.id`, so the chain `route handler → start_stream → session_router → stop_stream → release_session` all uses one ID. Document in the `session_router` module docstring that the cap accounting is keyed on caller-supplied `session_id` and any change to the ownership of that ID must be traced through every call site.
