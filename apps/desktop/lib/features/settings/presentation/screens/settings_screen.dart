@@ -9,6 +9,9 @@ import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_desktop/core/di/injector.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_state.dart';
+import 'package:fluxora_desktop/features/transcoding/domain/repositories/transcoding_repository.dart';
+import 'package:fluxora_desktop/features/transcoding/presentation/cubit/transcoding_cubit.dart';
+import 'package:fluxora_desktop/features/transcoding/presentation/widgets/encoder_status_panel.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
@@ -21,7 +24,19 @@ import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
 
 // ── Tier metadata ──────────────────────────────────────────────────────────────
 
-const _kEncoders = ['libx264', 'h264_nvenc', 'h264_qsv', 'h264_vaapi'];
+// Keep in sync with server TranscodingEncoder literal + encoder_registry.py.
+const _kEncoders = [
+  (id: 'libx264',           label: 'Software (x264)'),
+  (id: 'libx265',           label: 'Software (x265)'),
+  (id: 'h264_nvenc',        label: 'NVIDIA NVENC H.264'),
+  (id: 'hevc_nvenc',        label: 'NVIDIA NVENC HEVC'),
+  (id: 'h264_qsv',          label: 'Intel QuickSync H.264'),
+  (id: 'hevc_qsv',          label: 'Intel QuickSync HEVC'),
+  (id: 'h264_vaapi',        label: 'VAAPI H.264'),
+  (id: 'hevc_vaapi',        label: 'VAAPI HEVC'),
+  (id: 'h264_videotoolbox', label: 'VideoToolbox H.264'),
+  (id: 'hevc_videotoolbox', label: 'VideoToolbox HEVC'),
+];
 const _kPresets = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'];
 
 // ── Entry point ────────────────────────────────────────────────────────────────
@@ -31,8 +46,20 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) => getIt<SettingsCubit>()..loadSettings(),
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider(
+          create: (_) => getIt<SettingsCubit>()..loadSettings(),
+        ),
+        // Powers the encoder status panel, recommendation banner, and the
+        // active-encoder strip on the Streaming tab.  Polling is gated so
+        // it stops on screen pop via Cubit.close().
+        BlocProvider(
+          create: (_) => TranscodingCubit(
+            repository: getIt<TranscodingRepository>(),
+          )..start(),
+        ),
+      ],
       child: const _SettingsView(),
     );
   }
@@ -127,6 +154,22 @@ class _SettingsViewState extends State<_SettingsView> {
 
   void _onFieldChanged() => setState(() {});
 
+  /// Reset the Server URL field to the desktop's default (`localhost:8000`,
+  /// matching the server's `fluxora_port` default).  Only resets the
+  /// editable text; the user still has to hit Save to persist + reconfigure
+  /// the ApiClient — keeps the action reversible if they didn't mean to
+  /// click Reset.  The default literal lives in `core/di/injector.dart`
+  /// (`_defaultServerUrl`); this duplicates the value because the injector
+  /// constant isn't exported, and adding an `import` from a settings
+  /// screen into the DI module would invert the dependency direction.
+  static const String _kFallbackServerUrl = 'http://localhost:8000';
+  void _resetServerUrl() {
+    _urlCtrl.text = _kFallbackServerUrl;
+    _urlCtrl.selection = TextSelection.fromPosition(
+      TextPosition(offset: _urlCtrl.text.length),
+    );
+  }
+
   void _syncFromState(SettingsLoaded s) {
     if (_urlCtrl.text != s.serverUrl) _urlCtrl.text = s.serverUrl;
     if (_nameCtrl.text != s.serverName) _nameCtrl.text = s.serverName;
@@ -134,7 +177,13 @@ class _SettingsViewState extends State<_SettingsView> {
     if (_licenseCtrl.text != key) _licenseCtrl.text = key;
     if (!_initialized) {
       _selectedTier = s.tier;
-      _transcodingEncoder = s.transcodingEncoder;
+      // Guard against stale encoder IDs stored in the DB (e.g. 'h264_amf')
+      // that are no longer in the server's TranscodingEncoder Literal.
+      // Sending an unknown value in the PATCH body causes a 422.
+      final validIds = _kEncoders.map((e) => e.id).toSet();
+      _transcodingEncoder = validIds.contains(s.transcodingEncoder)
+          ? s.transcodingEncoder
+          : 'libx264';
       _transcodingPreset = s.transcodingPreset;
       _transcodingCrf = s.transcodingCrf.toDouble();
       _initialized = true;
@@ -143,13 +192,22 @@ class _SettingsViewState extends State<_SettingsView> {
   }
 
   void _save(BuildContext context) {
+    // Only send license_key when the user has actually edited the field
+    // since load.  Re-sending a pre-existing malformed value (Fluxora's
+    // server-side Pydantic validator rejects anything that isn't
+    // FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>) would 422 the entire
+    // settings PATCH and block the user from saving the rest of the
+    // form — even though they never touched the license field.
+    final trimmedLicense = _licenseCtrl.text.trim();
+    final loadedLicense = _loadedSnapshot?.licenseKey ?? '';
+    final licenseChanged = trimmedLicense != loadedLicense;
     context.read<SettingsCubit>().saveSettings(
           serverUrl: _urlCtrl.text,
           serverName: _nameCtrl.text,
           tier: _selectedTier,
-          licenseKey: _licenseCtrl.text.trim().isEmpty
+          licenseKey: !licenseChanged
               ? null
-              : _licenseCtrl.text.trim(),
+              : (trimmedLicense.isEmpty ? null : trimmedLicense),
           transcodingEncoder: _transcodingEncoder,
           transcodingPreset: _transcodingPreset,
           transcodingCrf: _transcodingCrf.round(),
@@ -189,6 +247,13 @@ class _SettingsViewState extends State<_SettingsView> {
       builder: (context, state) {
         final loaded = state is SettingsLoaded ? state : null;
         final isLoading = state is SettingsLoading;
+        // Enable Save when there's something to save *or* when the cubit
+        // is sitting in an error state — the latter is the user's retry
+        // path when the server briefly went away (the Save button reuses
+        // `_save` which re-runs the persist + PATCH pipeline; safely
+        // idempotent if nothing's actually dirty).
+        final canSave =
+            !isLoading && (_isDirty || state is SettingsError);
 
         return Padding(
           padding: const EdgeInsets.only(
@@ -207,10 +272,12 @@ class _SettingsViewState extends State<_SettingsView> {
                   variant: FluxButtonVariant.primary,
                   size: FluxButtonSize.sm,
                   icon: Icons.save_outlined,
-                  onPressed: (isLoading || !_isDirty)
-                      ? null
-                      : () => _save(context),
-                  child: const Text('Save Changes'),
+                  onPressed: canSave ? () => _save(context) : null,
+                  child: Text(
+                    state is SettingsError
+                        ? 'Retry save'
+                        : 'Save Changes',
+                  ),
                 ),
               ),
 
@@ -255,6 +322,7 @@ class _SettingsViewState extends State<_SettingsView> {
                       ),
                     'about'     => _AboutTab(state: loaded),
                     _           => _GeneralTab(
+                        urlCtrl: _urlCtrl,
                         nameCtrl: _nameCtrl,
                         language: _language,
                         autoStartOnBoot: _autoStartOnBoot,
@@ -264,6 +332,7 @@ class _SettingsViewState extends State<_SettingsView> {
                         generateThumbnails: _generateThumbnails,
                         defaultLibraryView: _defaultLibraryView,
                         state: loaded,
+                        connectionFailed: state is SettingsError,
                         onLanguageChanged: (v) => setState(() { _language = v; }),
                         onAutoStartChanged: (v) => setState(() { _autoStartOnBoot = v; }),
                         onAutoRestartChanged: (v) => setState(() { _autoRestartOnCrash = v; }),
@@ -271,6 +340,9 @@ class _SettingsViewState extends State<_SettingsView> {
                         onScanChanged: (v) => setState(() { _scanOnStartup = v; }),
                         onThumbnailsChanged: (v) => setState(() { _generateThumbnails = v; }),
                         onLibraryViewChanged: (v) => setState(() { _defaultLibraryView = v; }),
+                        onResetUrl: _resetServerUrl,
+                        onTestConnection: () =>
+                            context.read<SettingsCubit>().loadSettings(),
                       ),
                   },
                 ),
@@ -514,6 +586,7 @@ class _SField extends StatelessWidget {
 
 class _GeneralTab extends StatelessWidget {
   const _GeneralTab({
+    required this.urlCtrl,
     required this.nameCtrl,
     required this.language,
     required this.autoStartOnBoot,
@@ -523,6 +596,7 @@ class _GeneralTab extends StatelessWidget {
     required this.generateThumbnails,
     required this.defaultLibraryView,
     required this.state,
+    required this.connectionFailed,
     required this.onLanguageChanged,
     required this.onAutoStartChanged,
     required this.onAutoRestartChanged,
@@ -530,8 +604,15 @@ class _GeneralTab extends StatelessWidget {
     required this.onScanChanged,
     required this.onThumbnailsChanged,
     required this.onLibraryViewChanged,
+    required this.onResetUrl,
+    required this.onTestConnection,
   });
 
+  /// Editable Server URL.  Drives `secureStorage.serverUrl` +
+  /// `ApiClient.localBaseUrl` on Save.  Wasn't rendered in v1 — users
+  /// stuck on a stale `localhost:8080` saved URL had no in-app way to
+  /// recover.
+  final TextEditingController urlCtrl;
   final TextEditingController nameCtrl;
   final String language;
   final bool autoStartOnBoot;
@@ -541,6 +622,14 @@ class _GeneralTab extends StatelessWidget {
   final bool generateThumbnails;
   final String defaultLibraryView;
   final SettingsLoaded? state;
+
+  /// `true` when the cubit is in `SettingsError` — used to surface the
+  /// inline "Retry" button next to the URL field so the operator has an
+  /// obvious recovery path when the server isn't responding.  Decoupled
+  /// from `state == null` because `SettingsError` is a *terminal*
+  /// non-loaded state where the URL field's value is already what the
+  /// user wants persisted.
+  final bool connectionFailed;
   final ValueChanged<String> onLanguageChanged;
   final ValueChanged<bool> onAutoStartChanged;
   final ValueChanged<bool> onAutoRestartChanged;
@@ -548,6 +637,17 @@ class _GeneralTab extends StatelessWidget {
   final ValueChanged<bool> onScanChanged;
   final ValueChanged<bool> onThumbnailsChanged;
   final ValueChanged<String> onLibraryViewChanged;
+
+  /// "Reset to default" button next to the URL field — sets `urlCtrl.text`
+  /// to `http://localhost:8000` (matches the server's port default).
+  /// Doesn't auto-Save; the user still has to click Save to persist.
+  final VoidCallback onResetUrl;
+
+  /// "Retry" button that fires `cubit.loadSettings()` to re-fetch from
+  /// the currently-configured URL.  Only rendered when [connectionFailed]
+  /// is `true`.  Distinct from Save: doesn't write anything; just tries
+  /// to recover into `SettingsLoaded` once the server is reachable.
+  final VoidCallback onTestConnection;
 
   @override
   Widget build(BuildContext context) {
@@ -562,6 +662,51 @@ class _GeneralTab extends StatelessWidget {
                 icon: Icons.settings_outlined,
                 title: 'General Settings',
                 children: [
+                  _SField(
+                    label: 'Server URL',
+                    sub: 'Where this control panel reaches the server '
+                        '(default `http://localhost:8000`)',
+                    // SizedBox bounds the inner Row's width so the
+                    // `Expanded(FluxTextField)` has finite constraints to
+                    // flex against — without it, Row+Expanded inside the
+                    // unbounded `control` slot of `_SField` throws a
+                    // layout assertion at first paint and freezes the
+                    // entire Settings page.  280 px matches the typical
+                    // intrinsic width that a `FluxTextField` lands at in
+                    // the other `_SField` rows on this card.
+                    // Connection-failed state widens the row to 400 px so
+                    // a third "Retry" chip fits beside the input + Reset
+                    // without truncating any of them.
+                    control: SizedBox(
+                      width: connectionFailed ? 400 : 320,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: FluxTextField(
+                              controller: urlCtrl,
+                              hint: 'http://localhost:8000',
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          FluxButton(
+                            variant: FluxButtonVariant.secondary,
+                            icon: Icons.restore_rounded,
+                            onPressed: onResetUrl,
+                            child: const Text('Reset'),
+                          ),
+                          if (connectionFailed) ...[
+                            const SizedBox(width: 6),
+                            FluxButton(
+                              variant: FluxButtonVariant.primary,
+                              icon: Icons.wifi_find_rounded,
+                              onPressed: onTestConnection,
+                              child: const Text('Retry'),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
                   _SField(
                     label: 'Server Name',
                     sub: 'This name will be visible to other devices',
@@ -969,6 +1114,19 @@ class _StreamingTab extends StatelessWidget {
 
     return Column(
       children: [
+        // Active-encoder strip — what the server is actually running right now.
+        const ActiveEncoderStrip(),
+        const SizedBox(height: 10),
+
+        // Recommendation banner — collapses to nothing when reasonCode == 'none'.
+        // Tapping "Switch to <encoder>" updates the dropdown via onEncoderChanged;
+        // the operator still has to click Save to persist.
+        EncoderRecommendationBanner(
+          onApplyRecommendation: onEncoderChanged,
+        ),
+
+        const SizedBox(height: 14),
+
         // Quality card
         _SettingBlock(
           icon: Icons.high_quality_outlined,
@@ -1021,10 +1179,25 @@ class _StreamingTab extends StatelessWidget {
               control: FluxSelect<String>(
                 value: encoder,
                 items: _kEncoders
-                    .map((e) => FluxSelectItem(value: e, label: e))
+                    .map((e) => FluxSelectItem(value: e.id, label: e.label))
                     .toList(),
                 onChanged: onEncoderChanged,
                 enabled: enabled,
+              ),
+            ),
+            // Encoder availability panel — pills (Recommended / Available /
+            // Failed / Not detected) so the operator can pick informed.
+            // Failed entries carry the FFmpeg stderr tail in a hover tooltip.
+            Padding(
+              padding: const EdgeInsets.only(
+                left: AppSpacing.s14,
+                right: AppSpacing.s14,
+                top: 2,
+                bottom: AppSpacing.s8,
+              ),
+              child: EncoderStatusPanel(
+                knownEncoders: _kEncoders,
+                activeEncoder: encoder,
               ),
             ),
             _SField(

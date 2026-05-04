@@ -37,7 +37,14 @@ import 'package:fluxora_desktop/features/recent_activity/domain/repositories/rec
 final getIt = GetIt.instance;
 
 /// Default server URL used when nothing is stored in secure storage yet.
-const _defaultServerUrl = 'http://localhost:8080';
+///
+/// Port `8000` matches the server's `fluxora_port` default in
+/// `apps/server/config.py`.  Earlier desktop builds defaulted to `:8080`
+/// which silently broke fresh installs — the polling loop logged
+/// `WSAECONNREFUSED` every 1.1 s with no UI hint that the URL just didn't
+/// match the server.  Operators who already have a saved `server_url` in
+/// secure storage are unaffected (`getServerUrl()` overrides this).
+const _defaultServerUrl = 'http://localhost:8000';
 
 Future<void> setupInjector() async {
   // ── Storage ─────────────────────────────────────────────────────────────────

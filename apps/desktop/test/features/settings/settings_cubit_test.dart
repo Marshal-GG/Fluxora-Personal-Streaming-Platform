@@ -367,7 +367,8 @@ void main() {
     );
 
     blocTest<SettingsCubit, SettingsState>(
-      'emits SettingsError when API patch throws',
+      'emits SettingsError indicating URL was saved locally when API'
+      ' patch throws (new two-phase save contract)',
       build: () {
         stubStorageSaveUrl();
         stubApiConfigure();
@@ -380,12 +381,21 @@ void main() {
         tier: 'free',
       ),
       expect: () => [
+        // Phase 1 (local URL persist) succeeded — phase 2 (server PATCH)
+        // failed.  The error message must explicitly tell the user the
+        // URL is still saved so the chicken-and-egg "I'm changing the
+        // URL because I can't reach the old one" case is recoverable.
         isA<SettingsError>().having(
           (s) => s.message,
           'message',
-          startsWith('Save failed:'),
+          contains('saved locally'),
         ),
       ],
+      verify: (_) {
+        // The local-side persist must have happened even though the
+        // server PATCH failed afterwards.
+        verify(() => mockStorage.saveServerUrl(kSavedUrl)).called(1);
+      },
     );
 
     blocTest<SettingsCubit, SettingsState>(

@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/entities/server_info.dart';
 import 'package:fluxora_core/network/api_client.dart';
+import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_core/network/endpoints.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_state.dart';
@@ -156,12 +157,30 @@ class SettingsCubit extends Cubit<SettingsState> {
       return;
     }
 
+    // Phase 1 — local-only state.  Server URL is a *client-side*
+    // preference (lives in `secure_storage`), so this step doesn't need
+    // network and must always succeed regardless of server reachability.
+    // Without this split, the chicken-and-egg case ("I'm changing the
+    // URL precisely because I can't reach the server at the old URL")
+    // hard-fails the save and leaves the user stuck on the broken URL.
     try {
-      // Persist server URL locally.
       await _secureStorage.saveServerUrl(trimmedUrl);
       _apiClient.configure(localBaseUrl: trimmedUrl);
+    } catch (e, st) {
+      _log.e('Failed to persist server URL locally', error: e, stackTrace: st);
+      emit(SettingsError(
+        message: 'Could not save the server URL to local storage: $e',
+      ));
+      return;
+    }
 
-      // Push server-side settings to the API.
+    // Phase 2 — push server-side fields (server_name / tier / license /
+    // transcoding) to the freshly-configured ApiClient.  May fail if the
+    // user just typed a wrong host or the server is down; in that case
+    // the URL change *still* landed in step 1, and the user can restart
+    // the desktop or fix the URL on the next attempt without losing
+    // their save.
+    try {
       await _apiClient.patch<void>(
         Endpoints.serverSettings,
         body: {
@@ -174,15 +193,39 @@ class SettingsCubit extends Cubit<SettingsState> {
           'transcoding_crf': ?transcodingCrf,
         },
       );
-
       emit(SettingsSaved(
         serverUrl: trimmedUrl,
         serverName: trimmedName,
         tier: tier,
       ));
+    } on ApiException catch (e, st) {
+      _log.e('Server-side settings sync failed', error: e, stackTrace: st);
+      // 4xx is a server-side rejection (typically validation): the URL
+      // change DID land, but one of the other fields was rejected.  The
+      // user needs to know *which* field to fix — surface the parsed
+      // detail.  CONNECTION_ERROR / TIMEOUT keep the original "couldn't
+      // reach" framing because the URL change still applied locally and
+      // the user's recovery action is to retry once the server is up.
+      final isClientError =
+          e.statusCode != null && e.statusCode! >= 400 && e.statusCode! < 500;
+      emit(SettingsError(
+        message: isClientError
+            ? 'Server URL saved, but the server rejected one of the '
+                'other settings: ${e.message}. Fix the highlighted '
+                'value and click Retry save.'
+            : 'Server URL saved locally, but couldn\'t reach the server '
+                'at $trimmedUrl to sync server-side settings '
+                '(${e.message}). Verify the server is running on that '
+                'URL — restart the desktop afterwards if changes don\'t '
+                'apply.',
+      ));
     } catch (e, st) {
-      _log.e('Failed to save settings', error: e, stackTrace: st);
-      emit(SettingsError(message: 'Save failed: $e'));
+      _log.e('Server-side settings sync failed', error: e, stackTrace: st);
+      emit(SettingsError(
+        message:
+            'Server URL saved locally, but the server-side settings '
+            'sync failed: $e. Restart the desktop or verify the URL.',
+      ));
     }
   }
 }

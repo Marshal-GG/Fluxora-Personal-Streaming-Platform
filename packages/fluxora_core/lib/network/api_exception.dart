@@ -23,9 +23,39 @@ class ApiException implements Exception {
       case DioExceptionType.badResponse:
         final statusCode = e.response?.statusCode;
         final body = e.response?.data;
-        final message = body is Map
-            ? (body['error'] as String? ?? 'Server error')
-            : 'Server error';
+        // FastAPI uses `detail` for HTTPException + RequestValidationError;
+        // Fluxora's older handlers used `error`.  Prefer `error` when the
+        // server has the field; fall back to `detail`.  When `detail` is a
+        // Pydantic-style list of validation entries, render each as
+        // `<field>: <msg>` so the UI can surface the actual rejection
+        // instead of a generic "Server error".
+        String? extractMessage(dynamic body) {
+          if (body is! Map) return null;
+          final err = body['error'];
+          if (err is String) return err;
+          final detail = body['detail'];
+          if (detail is String) return detail;
+          if (detail is List) {
+            return detail
+                .whereType<Map>()
+                .map((entry) {
+                  final loc = entry['loc'];
+                  final msg = entry['msg'] ?? entry['message'];
+                  if (loc is List && loc.isNotEmpty && msg != null) {
+                    final field = loc
+                        .where((p) => p != 'body')
+                        .map((p) => p.toString())
+                        .join('.');
+                    return field.isEmpty ? '$msg' : '$field: $msg';
+                  }
+                  return msg?.toString() ?? entry.toString();
+                })
+                .join('; ');
+          }
+          return null;
+        }
+
+        final message = extractMessage(body) ?? 'Server error';
         final errorCode =
             body is Map ? body['code'] as String? : null;
         return ApiException(
