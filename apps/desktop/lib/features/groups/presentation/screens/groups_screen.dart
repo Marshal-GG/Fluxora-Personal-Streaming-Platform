@@ -489,7 +489,7 @@ class _GroupRowState extends State<_GroupRow> {
     showDialog<void>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppColors.surfaceGlass,
+        backgroundColor: AppColors.bgRaised,
         title: Text(
           'Delete "${g.name}"?',
           style: AppTypography.h2
@@ -793,7 +793,7 @@ class _GroupDetailPanel extends StatelessWidget {
     showDialog<void>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppColors.surfaceGlass,
+        backgroundColor: AppColors.bgRaised,
         title: Text('Add Member',
             style:
                 AppTypography.h2.copyWith(color: AppColors.textBright)),
@@ -831,7 +831,7 @@ class _GroupDetailPanel extends StatelessWidget {
     showDialog<void>(
       context: context,
       builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppColors.surfaceGlass,
+        backgroundColor: AppColors.bgRaised,
         title: Text(
           'Delete "${g.name}"?',
           style:
@@ -1016,7 +1016,7 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppColors.surfaceGlass,
+      backgroundColor: AppColors.bgRaised,
       title: Text('Create Group',
           style: AppTypography.h2.copyWith(color: AppColors.textBright)),
       content: Column(
@@ -1096,7 +1096,7 @@ class _EditGroupDialogState extends State<_EditGroupDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      backgroundColor: AppColors.surfaceGlass,
+      backgroundColor: AppColors.bgRaised,
       title: Text('Edit Group',
           style: AppTypography.h2.copyWith(color: AppColors.textBright)),
       content: Column(

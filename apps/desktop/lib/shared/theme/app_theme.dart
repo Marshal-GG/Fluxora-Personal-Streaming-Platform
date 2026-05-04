@@ -12,7 +12,7 @@ class AppTheme {
         colorScheme: const ColorScheme.dark(
           primary: AppColors.violet,
           secondary: AppColors.cyan,
-          surface: AppColors.surfaceGlass,
+          surface: AppColors.bgRaised,
           error: AppColors.red,
           onPrimary: AppColors.textBright,
           onSecondary: AppColors.bgRoot,
@@ -20,7 +20,7 @@ class AppTheme {
           onError: AppColors.textBright,
         ),
         scaffoldBackgroundColor: AppColors.bgRoot,
-        cardColor: AppColors.surfaceGlass,
+        cardColor: AppColors.bgRaised,
         dividerColor: AppColors.borderSubtle,
         textTheme: const TextTheme(
           displayLarge: AppTypography.displayV2,
@@ -35,7 +35,7 @@ class AppTheme {
           labelSmall: AppTypography.captionV2,
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: AppColors.surfaceGlass,
+          backgroundColor: AppColors.bgRaised,
           foregroundColor: AppColors.textBright,
           elevation: 0,
           centerTitle: false,
@@ -74,7 +74,7 @@ class AppTheme {
           ),
         ),
         cardTheme: const CardThemeData(
-          color: AppColors.surfaceGlass,
+          color: AppColors.bgRaised,
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.all(
@@ -88,7 +88,7 @@ class AppTheme {
           color: AppColors.violet,
         ),
         snackBarTheme: const SnackBarThemeData(
-          backgroundColor: AppColors.surfaceGlass,
+          backgroundColor: AppColors.bgRaised,
           contentTextStyle: AppTypography.body,
         ),
         navigationRailTheme: const NavigationRailThemeData(

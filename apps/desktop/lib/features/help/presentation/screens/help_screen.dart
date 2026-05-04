@@ -325,7 +325,7 @@ class _FaqItemState extends State<_FaqItem> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         decoration: BoxDecoration(
-          color: AppColors.surfaceGlass,
+          color: AppColors.bgRaised,
           border: Border.all(color: AppColors.borderSubtle),
           borderRadius: BorderRadius.circular(AppRadii.lg),
         ),

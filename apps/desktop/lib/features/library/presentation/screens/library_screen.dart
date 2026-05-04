@@ -18,6 +18,8 @@ import 'package:fluxora_desktop/features/storage/domain/repositories/storage_rep
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_cubit.dart';
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_state.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_glass_dialog.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_glass_menu.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_tab_bar.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
@@ -331,14 +333,11 @@ class _LibraryViewState extends State<_LibraryView> {
     final messenger = ScaffoldMessenger.of(context);
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surfaceGlass,
-        title: Text('Remove "${lib.name}"?',
-            style: AppTypography.h2.copyWith(color: AppColors.textBright)),
-        content: Text(
+      builder: (ctx) => FluxGlassDialog(
+        title: Text('Remove "${lib.name}"?'),
+        content: const Text(
           'This removes only the library entry and its file index from '
           'Fluxora. Your files on disk are never deleted by this app.',
-          style: AppTypography.body.copyWith(color: AppColors.textBody),
         ),
         actions: [
           TextButton(
@@ -406,10 +405,9 @@ Future<void> _showLibraryFormDialog({
   await showDialog<void>(
     context: context,
     builder: (dialogCtx) => StatefulBuilder(
-      builder: (dialogCtx, setLocal) => AlertDialog(
-        backgroundColor: AppColors.surfaceGlass,
-        title: Text(title,
-            style: AppTypography.h2.copyWith(color: AppColors.textBright)),
+      builder: (dialogCtx, setLocal) => FluxGlassDialog(
+        maxWidth: 540,
+        title: Text(title),
         content: SizedBox(
           width: 460,
           child: Column(
@@ -1071,9 +1069,19 @@ class _LibraryCardState extends State<_LibraryCard> {
           transform: (_hovered && !widget.isSelected)
               ? Matrix4.translationValues(0, -2, 0)
               : Matrix4.identity(),
-          child: ClipRRect(
+          // Card body uses a fixed height + ConstrainedBox so the Stack
+          // and its non-positioned Column child get tight vertical
+          // constraints — required for the inner Spacers to flex
+          // correctly. Without this, the Column receives unbounded
+          // height from the Stack and layout collapses (the bug that
+          // piled stat tiles + toolbar + page header into the same
+          // vertical band).
+          child: SizedBox(
+            height: 168,
+            child: ClipRRect(
             borderRadius: BorderRadius.circular(AppRadii.lg - 1),
             child: Stack(
+              fit: StackFit.expand,
               children: [
                 if (lib.coverUrls.isNotEmpty)
                   Positioned.fill(child: _PosterMosaic(urls: lib.coverUrls)),
@@ -1090,7 +1098,6 @@ class _LibraryCardState extends State<_LibraryCard> {
                     ),
                   ),
                 ),
-                // Content
                 Padding(
                   padding: const EdgeInsets.all(14),
                   child: Column(
@@ -1186,6 +1193,7 @@ class _LibraryCardState extends State<_LibraryCard> {
               ],
             ),
           ),
+          ),
         ),
       ),
     );
@@ -1207,12 +1215,8 @@ class _CardMenuButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      tooltip: 'More actions',
-      icon: const Icon(Icons.more_horiz_rounded,
-          size: 16, color: Colors.white),
-      iconSize: 16,
-      padding: EdgeInsets.zero,
+    return FluxGlassMenu<String>(
+      width: 180,
       onSelected: (value) {
         switch (value) {
           case 'open':
@@ -1225,15 +1229,29 @@ class _CardMenuButton extends StatelessWidget {
             onRemove();
         }
       },
-      itemBuilder: (_) => const [
-        PopupMenuItem(value: 'open', child: Text('Open files')),
-        PopupMenuItem(value: 'scan', child: Text('Scan')),
-        PopupMenuItem(value: 'edit', child: Text('Edit')),
-        PopupMenuItem(
+      items: const [
+        FluxGlassMenuItem(
+            value: 'open',
+            label: 'Open files',
+            icon: Icons.folder_open_outlined),
+        FluxGlassMenuItem(
+            value: 'scan', label: 'Scan', icon: Icons.refresh_rounded),
+        FluxGlassMenuItem(
+            value: 'edit', label: 'Edit', icon: Icons.edit_outlined),
+        FluxGlassMenuItem(
           value: 'remove',
-          child: Text('Remove', style: TextStyle(color: Color(0xFFF87171))),
+          label: 'Remove',
+          icon: Icons.delete_outline_rounded,
+          destructive: true,
         ),
       ],
+      child: Container(
+        width: 24,
+        height: 24,
+        alignment: Alignment.center,
+        child: const Icon(Icons.more_horiz_rounded,
+            size: 16, color: Colors.white),
+      ),
     );
   }
 }
@@ -1892,36 +1910,15 @@ class _SortMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<_SortBy>(
-      tooltip: 'Sort libraries',
-      initialValue: value,
+    return FluxGlassMenu<_SortBy>(
+      width: 200,
       onSelected: onChanged,
-      color: AppColors.surfaceGlass,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.all(Radius.circular(AppRadii.md)),
-        side: BorderSide(color: AppColors.borderSubtle),
-      ),
-      itemBuilder: (ctx) => [
+      items: [
         for (final option in _SortBy.values)
-          PopupMenuItem(
+          FluxGlassMenuItem(
             value: option,
-            child: Row(
-              children: [
-                Icon(
-                  option == value
-                      ? Icons.check_rounded
-                      : Icons.remove_rounded,
-                  size: 16,
-                  color: option == value
-                      ? AppColors.violet
-                      : Colors.transparent,
-                ),
-                const SizedBox(width: 8),
-                Text(option.label,
-                    style: AppTypography.body
-                        .copyWith(color: AppColors.textBright)),
-              ],
-            ),
+            label: option.label,
+            selected: option == value,
           ),
       ],
       child: _ToolbarChip(
@@ -1972,7 +1969,7 @@ class _ToolbarChip extends StatelessWidget {
       decoration: BoxDecoration(
         color: accent
             ? AppColors.violet.withValues(alpha: 0.12)
-            : AppColors.surfaceGlass,
+            : AppColors.bgRaised,
         borderRadius: BorderRadius.circular(AppRadii.md),
         border: Border.all(
           color: accent ? AppColors.violet : AppColors.borderSubtle,
@@ -2006,7 +2003,7 @@ class _ViewModeToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.surfaceGlass,
+        color: AppColors.bgRaised,
         borderRadius: BorderRadius.circular(AppRadii.md),
         border: Border.all(color: AppColors.borderSubtle),
       ),
@@ -2086,10 +2083,8 @@ class _FiltersDialogState extends State<_FiltersDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: AppColors.surfaceGlass,
-      title: Text('Filter libraries',
-          style: AppTypography.h2.copyWith(color: AppColors.textBright)),
+    return FluxGlassDialog(
+      title: const Text('Filter libraries'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2252,7 +2247,7 @@ class _LibraryList extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: AppColors.surfaceGlass,
+        color: AppColors.bgRaised,
         borderRadius: BorderRadius.circular(AppRadii.lg),
         border: Border.all(color: AppColors.borderSubtle),
       ),

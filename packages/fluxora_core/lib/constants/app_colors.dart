@@ -12,6 +12,15 @@ class AppColors {
   // ── Surfaces ───────────────────────────────────────────────────────────
   static const Color bgRoot = Color(0xFF08061A);
   static const Color surfaceGlass = Color(0xB3141226); // rgba(20,18,38,0.7)
+  // Opaque raised surface for popup menus, dialog backgrounds, AppBar /
+  // SnackBar / Card chrome, and any floating panel that mounts directly
+  // over the `bgRoot` scaffold. The translucent `surfaceGlass` lets the
+  // page bleed through, which reads as "broken" rather than "glass" on
+  // popups. Hex matches the prototype's canonical raised value already
+  // used by `FluxBottomSheet` (`packages/fluxora_core/lib/widgets/flux_bottom_sheet.dart`)
+  // and the mobile theme's `InputDecorationTheme.fillColor` — using one
+  // token keeps desktop popups visually identical to the mobile variant.
+  static const Color bgRaised = Color(0xFF0F0C24);
   static const Color borderSubtle = Color(0x0FFFFFFF); // rgba(255,255,255,0.06)
   static const Color borderHover = Color(0x66A855F7); // rgba(168,85,247,0.4)
   static const Color sidebarGlass = Color(0xB30D0B1C); // rgba(13,11,28,0.7)

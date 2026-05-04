@@ -21,7 +21,7 @@ import 'package:fluxora_core/constants/app_shadows.dart';
 
 /// Glass-morphic card that pixel-matches the prototype `Card` primitive.
 ///
-/// - Background: [AppColors.surfaceGlass]
+/// - Background: [AppColors.bgRaised]
 /// - Border: 1 px [AppColors.borderSubtle], transitions to [AppColors.borderHover] on hover
 /// - Border radius: [AppRadii.lg] (12 px)
 /// - Hover tint: `rgba(168,85,247,0.05)` overlay
@@ -80,7 +80,7 @@ class _FluxCardState extends State<FluxCard> {
       curve: Curves.easeOut,
       margin: widget.margin,
       decoration: BoxDecoration(
-        color: AppColors.surfaceGlass,
+        color: AppColors.bgRaised,
         border: Border.all(color: borderColor),
         borderRadius: BorderRadius.circular(AppRadii.lg),
         boxShadow: shadows,

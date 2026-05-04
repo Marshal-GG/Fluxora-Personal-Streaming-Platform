@@ -461,7 +461,7 @@ class _FilterDropdown extends StatelessWidget {
   Widget build(BuildContext context) {
     return PopupMenuButton<String>(
       tooltip: '',
-      color: const Color(0xFF1A1830),
+      color: AppColors.bgRaised,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadii.sm),
         side: const BorderSide(color: Color(0x14FFFFFF)),
@@ -897,7 +897,7 @@ class _RowActions extends StatelessWidget {
                 iconSize: 12,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(maxWidth: 130),
-                color: const Color(0xFF1A1830),
+                color: AppColors.bgRaised,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(AppRadii.sm),
                   side: const BorderSide(color: Color(0x14FFFFFF)),
