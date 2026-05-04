@@ -227,6 +227,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.warning("License expiry check failed", exc_info=True)
 
+    # 8b. Run encoder self-tests in the background — non-blocking.
+    import asyncio as _asyncio
+    from services import transcoding_service as _ts
+
+    async def _self_test_task() -> None:
+        try:
+            from database.db import get_db as _get_db
+            from services import settings_service as _ss
+
+            _db2 = await _get_db()
+            _sr = await _ss.get_settings(_db2)
+            _device = _sr.get("transcoding_hwaccel_device")
+            _avail = await _ts._detect_available_encoders()
+            await _ts.run_encoder_self_tests(_avail, _device)
+        except Exception:
+            logger.warning("Encoder self-tests failed", exc_info=True)
+
+    _asyncio.create_task(_self_test_task())
+
     # 9. Start mDNS broadcast
     await start_discovery(settings.fluxora_server_name, settings.fluxora_port)
 
@@ -258,6 +277,33 @@ app = FastAPI(
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ── Validation error logger ────────────────────────────────────────────────────
+# FastAPI's default 422 response body is returned to the client but never
+# logged, making the exact failing field invisible in the server console.
+# This handler emits a WARNING log and then delegates to FastAPI's default
+# handler — that path uses `jsonable_encoder`, which is required because
+# `exc.errors()` may include non-serialisable `ValueError` instances inside
+# `ctx` (Pydantic v2 attaches the original exception). A naive
+# `JSONResponse(content=exc.errors())` raises `TypeError: Object of type
+# ValueError is not JSON serializable` and surfaces as a 500.
+from fastapi import Request  # noqa: E402
+from fastapi.exception_handlers import (  # noqa: E402
+    request_validation_exception_handler,
+)
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+
+
+@app.exception_handler(RequestValidationError)
+async def _log_validation_error(request: Request, exc: RequestValidationError):
+    logger.warning(
+        "422 Unprocessable Entity on %s %s — validation errors: %s",
+        request.method,
+        request.url.path,
+        exc.errors(),
+    )
+    return await request_validation_exception_handler(request, exc)
 
 # Middleware order: app.add_middleware adds OUTSIDE the existing stack, so
 # the LAST one added runs FIRST on the request. We want:

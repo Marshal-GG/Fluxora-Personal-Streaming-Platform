@@ -2,7 +2,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-EncoderName = Literal["libx264", "h264_nvenc", "h264_qsv", "h264_vaapi"]
+EncoderName = Literal[
+    "libx264", "libx265",
+    "h264_nvenc", "hevc_nvenc",
+    "h264_qsv", "hevc_qsv",
+    "h264_vaapi", "hevc_vaapi",
+    "h264_videotoolbox", "hevc_videotoolbox",
+]
 
 
 class EncoderLoad(BaseModel):
@@ -11,6 +17,17 @@ class EncoderLoad(BaseModel):
     gpu_utilization_percent: float | None = None
     vram_used_mb: int | None = None
     cpu_utilization_percent: float | None = None
+    # Underlying GPU engine name ("cuda", "qsv", "vaapi", "videotoolbox", or None
+    # for software encoders).  Displayed in the desktop GPU stats tile header.
+    gpu_engine: str | None = None
+    # Result of the startup / on-change self-test (None = not yet tested).
+    encoder_test_passed: bool | None = None
+    # First non-empty stderr line from the failed self-test, if any.  Drives
+    # the desktop's failed-encoder modal — without it the operator can't tell
+    # a missing-driver from a missing-binary case.
+    encoder_test_error: str | None = None
+    # ISO-8601 UTC timestamp of the last self-test (None = not yet tested).
+    encoder_tested_at: str | None = None
 
 
 class ActiveTranscodeSession(BaseModel):

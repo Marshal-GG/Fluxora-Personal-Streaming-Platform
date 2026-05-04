@@ -238,9 +238,7 @@ async def test_recent_files_does_not_match_file_id_route(
 # ── GET /api/v1/files/search (Phase B §3 row 2) ─────────────────────────────
 
 
-async def _insert_named_file(
-    test_db, *, name: str, title: str | None = None
-) -> str:
+async def _insert_named_file(test_db, *, name: str, title: str | None = None) -> str:
     file_id = str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
     await test_db.execute(
@@ -250,8 +248,7 @@ async def _insert_named_file(
              library_id, tmdb_id, title, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (file_id, f"/m/{name}", name, ".mp4", 1024, None, None, None,
-         title, now, now),
+        (file_id, f"/m/{name}", name, ".mp4", 1024, None, None, None, title, now, now),
     )
     await test_db.commit()
     return file_id
@@ -293,9 +290,7 @@ async def test_search_matches_tmdb_title_when_filename_doesnt(
 
 
 @pytest.mark.asyncio
-async def test_search_is_case_insensitive(
-    client: AsyncClient, monkeypatch, test_db
-):
+async def test_search_is_case_insensitive(client: AsyncClient, monkeypatch, test_db):
     token = await _get_token(client, monkeypatch)
     await _insert_named_file(test_db, name="Inception.mkv")
 
@@ -308,9 +303,7 @@ async def test_search_is_case_insensitive(
 
 
 @pytest.mark.asyncio
-async def test_search_escapes_wildcards(
-    client: AsyncClient, monkeypatch, test_db
-):
+async def test_search_escapes_wildcards(client: AsyncClient, monkeypatch, test_db):
     """Searching for a literal `_` must match `_` only, not any character.
     The service escapes `_` and `%` before passing to LIKE."""
     token = await _get_token(client, monkeypatch)
@@ -327,9 +320,7 @@ async def test_search_escapes_wildcards(
 
 
 @pytest.mark.asyncio
-async def test_search_rejects_empty_query(
-    client: AsyncClient, monkeypatch
-):
+async def test_search_rejects_empty_query(client: AsyncClient, monkeypatch):
     await _get_token(client, monkeypatch)
     resp = await client.get(
         "/api/v1/files/search?q=",
@@ -339,9 +330,7 @@ async def test_search_rejects_empty_query(
 
 
 @pytest.mark.asyncio
-async def test_search_clamps_oversized_limit(
-    client: AsyncClient, monkeypatch
-):
+async def test_search_clamps_oversized_limit(client: AsyncClient, monkeypatch):
     await _get_token(client, monkeypatch)
     resp = await client.get(
         "/api/v1/files/search?q=anything&limit=999",
@@ -351,9 +340,7 @@ async def test_search_clamps_oversized_limit(
 
 
 @pytest.mark.asyncio
-async def test_search_does_not_match_file_id_route(
-    client: AsyncClient, monkeypatch
-):
+async def test_search_does_not_match_file_id_route(client: AsyncClient, monkeypatch):
     """Sanity: `/files/search` must hit search_files, not get_file with
     file_id='search'.  Route order in files.py guarantees this."""
     token = await _get_token(client, monkeypatch)

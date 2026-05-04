@@ -50,6 +50,9 @@ async def get_settings(
     return _to_response(row)
 
 
+_ENCODER_CHANGE_FIELDS = {"transcoding_encoder", "transcoding_hwaccel_device"}
+
+
 @router.patch("", response_model=UserSettingsResponse)
 async def update_settings(
     body: UpdateSettingsBody,
@@ -81,4 +84,21 @@ async def update_settings(
             logger.warning(
                 "Failed to record settings.change activity event", exc_info=True
             )
+
+    # If the encoder or VAAPI device path changed, re-run self-tests so the
+    # new choice is validated immediately and _TEST_RESULTS stays current.
+    if _ENCODER_CHANGE_FIELDS & changed.keys():
+        import asyncio as _asyncio
+        from services import transcoding_service as _ts
+
+        async def _retest() -> None:
+            try:
+                avail = await _ts._detect_available_encoders()
+                device = row.get("transcoding_hwaccel_device")
+                await _ts.run_encoder_self_tests(avail, device)
+            except Exception:
+                logger.warning("Encoder re-test after settings change failed", exc_info=True)
+
+        _asyncio.create_task(_retest())
+
     return _to_response(row)

@@ -2,10 +2,28 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-# FFmpeg encoders we support (software + common hardware accelerators).
-TranscodingEncoder = Literal["libx264", "h264_nvenc", "h264_qsv", "h264_vaapi"]
+# FFmpeg encoders Fluxora supports (software + GPU hardware accelerators).
+# Keep in sync with services/encoder_registry.py::ENCODER_REGISTRY.
+TranscodingEncoder = Literal[
+    # Software
+    "libx264",
+    "libx265",
+    # NVIDIA NVENC
+    "h264_nvenc",
+    "hevc_nvenc",
+    # Intel Quick Sync
+    "h264_qsv",
+    "hevc_qsv",
+    # AMD / Linux VA-API
+    "h264_vaapi",
+    "hevc_vaapi",
+    # Apple VideoToolbox (macOS only)
+    "h264_videotoolbox",
+    "hevc_videotoolbox",
+]
 
-# FFmpeg x264 preset names (also accepted by NVENC/QSV/VAAPI variants).
+# FFmpeg x264 preset names — the UI always uses these names; the encoder
+# registry translates them to native HW preset names at runtime.
 TranscodingPreset = Literal[
     "ultrafast",
     "superfast",
@@ -55,6 +73,8 @@ class UserSettingsResponse(BaseModel):
     transcoding_encoder: str
     transcoding_preset: str
     transcoding_crf: int
+    # Optional VAAPI device path (Linux only). NULL = auto (/dev/dri/renderD128).
+    transcoding_hwaccel_device: str | None = None
     # General
     language: str = "en"
     auto_start_on_boot: bool = False
@@ -89,6 +109,8 @@ class UpdateSettingsBody(BaseModel):
     transcoding_preset: TranscodingPreset | None = None
     # FFmpeg CRF range — 0 (lossless) to 51 (worst quality).
     transcoding_crf: int | None = Field(default=None, ge=0, le=51)
+    # VAAPI device path — only meaningful on Linux with h264_vaapi / hevc_vaapi.
+    transcoding_hwaccel_device: str | None = None
     # General
     language: str | None = None
     auto_start_on_boot: bool | None = None

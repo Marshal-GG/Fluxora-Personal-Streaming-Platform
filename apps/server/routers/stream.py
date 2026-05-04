@@ -105,15 +105,30 @@ async def start_stream(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
-    except Exception:
-        logger.error("FFmpeg failed to start: session=%s", session_id, exc_info=True)
+    except Exception as exc:
+        # ffmpeg_service.start_stream raises RuntimeError with the first
+        # non-empty stderr line (or "exit code N" / "no output before
+        # timeout") embedded.  Surface that to the client + the
+        # notification — without it the operator sees only "Transcoding
+        # service unavailable" which doesn't help diagnose missing codecs,
+        # bad source files, or driver issues.
+        ffmpeg_error = str(exc) or exc.__class__.__name__
+        logger.error(
+            "FFmpeg failed to start: session=%s error=%s",
+            session_id,
+            ffmpeg_error,
+            exc_info=True,
+        )
         try:
             await notification_service.create(
                 db,
                 type="error",
                 category="transcode",
                 title="Transcode failed",
-                message=f"Could not start playback for {file_row['name']}.",
+                message=(
+                    f"Could not start playback for {file_row['name']}: "
+                    f"{ffmpeg_error}"
+                ),
                 related_kind="session",
                 related_id=session_id,
             )
@@ -121,8 +136,8 @@ async def start_stream(
             logger.warning("Failed to emit transcode notification", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Transcoding service unavailable",
-        )
+            detail=f"FFmpeg failed: {ffmpeg_error}",
+        ) from exc
 
     await db.execute(
         """

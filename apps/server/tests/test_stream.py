@@ -281,3 +281,100 @@ async def test_serve_hls_path_traversal_rejected(client: AsyncClient, monkeypatc
     )
     # FastAPI decodes %2F but the path parameter itself should be blocked
     assert response.status_code in {400, 404, 422}
+
+
+# ── _input_decoder_args (NVIDIA cuvid hint) ──────────────────────────────────
+
+
+def test_input_decoder_args_av1_nvenc_returns_av1_cuvid():
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _input_decoder_args
+
+    assert _input_decoder_args("av1", ENCODER_REGISTRY["h264_nvenc"]) == [
+        "-c:v",
+        "av1_cuvid",
+    ]
+
+
+def test_input_decoder_args_hevc_nvenc_returns_hevc_cuvid():
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _input_decoder_args
+
+    assert _input_decoder_args("hevc", ENCODER_REGISTRY["hevc_nvenc"]) == [
+        "-c:v",
+        "hevc_cuvid",
+    ]
+
+
+def test_input_decoder_args_non_nvidia_returns_empty():
+    """QSV / VAAPI / VideoToolbox / software all fall through to FFmpeg's
+    auto-selection — only NVENC has the broken-decoder workaround today."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _input_decoder_args
+
+    for enc in ("h264_qsv", "h264_vaapi", "h264_videotoolbox", "libx264"):
+        assert _input_decoder_args("av1", ENCODER_REGISTRY[enc]) == []
+
+
+def test_input_decoder_args_unknown_codec_returns_empty():
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _input_decoder_args
+
+    assert (
+        _input_decoder_args("speedrun-mvp9", ENCODER_REGISTRY["h264_nvenc"]) == []
+    )
+
+
+def test_input_decoder_args_none_codec_returns_empty():
+    """Untested files (codec_name still NULL) get no decoder hint — defer
+    to FFmpeg's auto-selection."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _input_decoder_args
+
+    assert _input_decoder_args(None, ENCODER_REGISTRY["h264_nvenc"]) == []
+
+
+def test_input_decoder_args_h265_alias_resolves_to_hevc_cuvid():
+    """Some sources report `h265` instead of `hevc` for the same codec."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _input_decoder_args
+
+    assert _input_decoder_args("h265", ENCODER_REGISTRY["h264_nvenc"]) == [
+        "-c:v",
+        "hevc_cuvid",
+    ]
+
+
+# ── _is_cuvid_failure (retry classifier) ─────────────────────────────────────
+
+
+def test_is_cuvid_failure_detects_chroma_format_error():
+    """Real-world stderr from RTX 30 / HDR AV1 source — must trigger retry."""
+    from services.ffmpeg_service import _is_cuvid_failure
+
+    tail = (
+        "[av1_cuvid @ 000001f3248e4fc0] Codec av1_cuvid is not supported "
+        "with this chroma format.\n"
+        "[vist#0:0/av1 @ 000001f3248e5840] [dec:av1_cuvid @ 000001f3248e5080] "
+        "Error while opening decoder: Invalid argument\n"
+    )
+    assert _is_cuvid_failure(tail) is True
+
+
+def test_is_cuvid_failure_detects_generic_cuvid_tag():
+    from services.ffmpeg_service import _is_cuvid_failure
+
+    assert _is_cuvid_failure(
+        "[hevc_cuvid @ 0x1] some other cuvid-tagged failure"
+    ) is True
+
+
+def test_is_cuvid_failure_does_not_match_unrelated_failures():
+    """Generic decode errors / file-not-found / encoder errors must NOT
+    trigger the cuvid retry — we only retry when cuvid itself rejected."""
+    from services.ffmpeg_service import _is_cuvid_failure
+
+    assert _is_cuvid_failure("Error opening input: No such file or directory") is False
+    assert _is_cuvid_failure("[av1 @ 0x1] Failed to get pixel format") is False
+    assert _is_cuvid_failure("") is False
+    assert _is_cuvid_failure("Could not open codec libx264") is False
