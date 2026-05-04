@@ -17,11 +17,14 @@ class MobileShell extends StatelessWidget {
 
   final StatefulNavigationShell navigationShell;
 
+  // Phase A backfill plan §5 row 4 / decision §5 row 4: the Downloads tab
+  // is hidden in v1 — offline downloads ship in Phase E (or as v1.1).
+  // `downloads_screen.dart` stays in the tree so re-enabling is a one-line
+  // restoration once the offline-storage subsystem lands.
   static const List<FluxBottomTabItem> _tabs = [
     FluxBottomTabItem(icon: LucideIcons.layoutDashboard, label: 'Home'),
     FluxBottomTabItem(icon: LucideIcons.bookOpen, label: 'Library'),
     FluxBottomTabItem(icon: LucideIcons.search, label: 'Search'),
-    FluxBottomTabItem(icon: LucideIcons.download, label: 'Downloads'),
     FluxBottomTabItem(icon: LucideIcons.user, label: 'Profile'),
   ];
 

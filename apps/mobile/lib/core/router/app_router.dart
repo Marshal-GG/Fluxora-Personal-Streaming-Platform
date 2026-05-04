@@ -11,7 +11,9 @@ import 'package:fluxora_mobile/features/auth/presentation/screens/reconnect_scre
 import 'package:fluxora_mobile/features/connect/domain/entities/discovered_server.dart';
 import 'package:fluxora_mobile/features/connect/presentation/screens/connect_screen.dart';
 import 'package:fluxora_mobile/features/detail/presentation/screens/detail_screen.dart';
-import 'package:fluxora_mobile/features/downloads/presentation/screens/downloads_screen.dart';
+// Downloads screen is hidden in v1 (decision §5 row 4); the file stays
+// in tree so re-enabling for v1.1 / Phase E is a one-line restoration.
+// import 'package:fluxora_mobile/features/downloads/presentation/screens/downloads_screen.dart';
 import 'package:fluxora_mobile/features/episodes/presentation/screens/episodes_screen.dart';
 import 'package:fluxora_mobile/features/home/presentation/screens/home_screen.dart';
 import 'package:fluxora_mobile/features/library/presentation/screens/files_screen.dart';
@@ -24,10 +26,13 @@ import 'package:fluxora_mobile/shared/widgets/mobile_shell.dart';
 
 /// Named route paths.
 ///
-/// The 5 tab paths (`home` / `library` / `search` / `downloads` / `profile`)
-/// are nested inside the [StatefulShellRoute] and share the bottom-tab
-/// chrome. Auth-gate paths (`connect`, `pairing`) and full-screen deep-link
-/// paths (`player`, `libraryFiles`) bypass the shell.
+/// The 4 tab paths (`home` / `library` / `search` / `profile`) are
+/// nested inside the [StatefulShellRoute] and share the bottom-tab
+/// chrome. The Downloads tab is hidden in v1 (decision §5 row 4 of
+/// the real-data backfill plan) — `downloads_screen.dart` stays in the
+/// tree so Phase E / v1.1 can restore it without rebuilding the screen.
+/// Auth-gate paths (`connect`, `pairing`, `reconnect`) and full-screen
+/// deep-link paths (`player`, `libraryFiles`) bypass the shell.
 abstract class Routes {
   static const String connect = '/connect';
   static const String pairing = '/pairing';
@@ -42,7 +47,6 @@ abstract class Routes {
   static const String home = '/home';
   static const String library = '/library';
   static const String search = '/search';
-  static const String downloads = '/downloads';
   static const String profile = '/profile';
 
   static String libraryFiles(String id) => '/library-files/$id';
@@ -127,14 +131,6 @@ final GoRouter appRouter = GoRouter(
             GoRoute(
               path: Routes.search,
               builder: (context, state) => const SearchScreen(),
-            ),
-          ],
-        ),
-        StatefulShellBranch(
-          routes: [
-            GoRoute(
-              path: Routes.downloads,
-              builder: (context, state) => const DownloadsScreen(),
             ),
           ],
         ),
