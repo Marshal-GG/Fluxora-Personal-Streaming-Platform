@@ -12,4 +12,15 @@ abstract class LibraryRepository {
 
   /// `GET /api/v1/files/{file_id}` — single file by id.
   Future<MediaFile> getFile(String fileId);
+
+  /// `GET /api/v1/files/search?q=...&limit=N` (Phase B backfill plan
+  /// §3 row 2).  Backs the mobile Search tab.  Server uses SQL `LIKE`
+  /// for v1 — FTS5 is the v2 swap-in (decision §5 row 1).
+  Future<List<MediaFile>> searchFiles({required String query, int limit = 20});
+
+  /// `GET /api/v1/auth/clients/me/continue-watching?limit=N` (Phase B
+  /// backfill plan §3 row 1).  Backs the mobile Home "Continue watching"
+  /// rail.  Returns files with non-zero resume position that aren't
+  /// effectively complete (sorted by `updated_at DESC`).
+  Future<List<MediaFile>> listContinueWatching({int limit = 12});
 }

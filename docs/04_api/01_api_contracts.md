@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-04 (Phase A real-data backfill: new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
+> **Status:** Active - Updated 2026-05-04 (Phase B real-data backfill: new `GET /api/v1/files/search?q=&limit=`, new `GET /api/v1/auth/clients/me/continue-watching?limit=`, new `GET /api/v1/auth/clients/me/stats` returning `{hours, movies, shows}`. Phase A real-data backfill (earlier 2026-05-04): new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
 
 ---
 
@@ -261,6 +261,55 @@ Authorization: Bearer {auth_token}
 `email` and `paired_at` may be `null` for clients paired before the migration-016 columns existed. `display_name` reads from the existing `clients.name` column — `name` doubles as display name; the API field is renamed for clarity. `tier` is read live from `user_settings.subscription_tier` so a freshly-applied license upgrade is reflected on the next mobile profile refresh.
 
 **Errors:** `401` missing/invalid bearer
+
+---
+
+### `GET /api/v1/auth/clients/me/stats`
+**Description:** Per-client watch statistics — backs the mobile Profile stats row (Phase B backfill plan §3 row 3). Returns `{hours, movies, shows}` aggregated from `stream_sessions` + `media_files` for the calling client. All three values are non-negative integers and degrade gracefully — a fresh client returns `{0, 0, 0}` rather than 404.  
+**Auth:** Bearer token required (`validate_token`).  
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{ "hours": 5, "movies": 2, "shows": 0 }
+```
+
+- `hours` is `SUM(progress_sec) / 3600` rounded down across the user's `stream_sessions`.
+- `movies` is the count of distinct movie file ids the user has at least one stream session against (joined to `libraries.type = 'movies'`).
+- `shows` is the count of distinct `tmdb_show_id` values across the user's stream sessions. Stays at 0 until Phase D back-fills `tmdb_show_id` for TV episodes — this is intentional honesty rather than a guessed-up number.
+
+**Errors:** `401` missing / invalid bearer
+
+---
+
+### `GET /api/v1/auth/clients/me/continue-watching`
+**Description:** Files with non-zero resume position that aren't effectively complete — backs the mobile Home "Continue watching" rail (Phase B backfill plan §3 row 1). Sorted by `media_files.updated_at DESC`. Excludes rows where `last_progress_sec >= duration_sec * 0.95` so a watched-to-the-end file stops resurfacing.  
+**Auth:** Bearer token required (`validate_token`). Path namespace stays symmetric with `/auth/clients/me/...`; v1 reads the global `last_progress_sec` column on `media_files` (single-tenant home server).  
+**Status:** ✅ Implemented
+
+**Query Params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | int (1-50) | `12` | Max rows; bounded server-side |
+
+**Response:** Array of `MediaFileResponse` objects with the same shape as `GET /files`.  
+**Errors:** `401` missing / invalid bearer
+
+---
+
+### `GET /api/v1/files/search`
+**Description:** Search media files by `name` + TMDB `title` (case-insensitive substring match). Backs the mobile Search tab (Phase B backfill plan §3 row 2). v1 uses SQL `LIKE` per decision §5 row 1 — FTS5 is the v2 swap-in. The service escapes `_` and `%` before passing to LIKE so a search for `season_1` matches the literal `_`, not any character.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Query Params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `q` | string (1-200) | — | Required. Empty / oversized queries return 422 |
+| `limit` | int (1-50) | `20` | Max rows; clamped server-side |
+
+**Response:** Array of `MediaFileResponse` objects.  
+**Errors:** `401` invalid bearer · `422` empty `q` or `limit` outside `[1, 50]`
 
 ---
 

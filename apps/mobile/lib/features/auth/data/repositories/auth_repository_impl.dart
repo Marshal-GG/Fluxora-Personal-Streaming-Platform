@@ -1,5 +1,6 @@
 import 'package:logger/logger.dart';
 import 'package:fluxora_core/entities/client_profile.dart';
+import 'package:fluxora_core/entities/client_stats.dart';
 import 'package:fluxora_core/entities/server_info.dart';
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/network/endpoints.dart';
@@ -45,6 +46,16 @@ class AuthRepositoryImpl implements AuthRepository {
       Endpoints.authClientsMe,
       fromJson: (data) =>
           ClientProfile.fromJson(data as Map<String, dynamic>),
+    );
+  }
+
+  @override
+  Future<ClientStats> getMyStats() async {
+    _log.d('Fetching /clients/me/stats');
+    return _apiClient.get<ClientStats>(
+      Endpoints.authClientsMeStats,
+      fromJson: (data) =>
+          ClientStats.fromJson(data as Map<String, dynamic>),
     );
   }
 

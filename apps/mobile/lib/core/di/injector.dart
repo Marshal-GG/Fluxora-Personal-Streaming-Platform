@@ -6,6 +6,7 @@ import 'package:fluxora_mobile/features/auth/data/repositories/auth_repository_i
 import 'package:fluxora_mobile/features/auth/domain/repositories/auth_repository.dart';
 import 'package:fluxora_mobile/features/connect/data/repositories/server_discovery_repository_impl.dart';
 import 'package:fluxora_mobile/features/connect/domain/repositories/server_discovery_repository.dart';
+import 'package:fluxora_mobile/features/home/presentation/cubit/continue_watching_cubit.dart';
 import 'package:fluxora_mobile/features/home/presentation/cubit/recent_cubit.dart';
 import 'package:fluxora_mobile/features/library/data/repositories/library_repository_impl.dart';
 import 'package:fluxora_mobile/features/library/domain/repositories/library_repository.dart';
@@ -16,6 +17,7 @@ import 'package:fluxora_mobile/features/player/data/repositories/player_reposito
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
 import 'package:fluxora_mobile/features/profile/presentation/cubit/profile_cubit.dart';
+import 'package:fluxora_mobile/features/profile/presentation/cubit/profile_stats_cubit.dart';
 
 final GetIt getIt = GetIt.instance;
 
@@ -93,11 +95,23 @@ Future<void> setupInjector() async {
     () => RecentCubit(repository: getIt<LibraryRepository>()),
   );
 
+  // Phase B backfill — Continue-watching rail.  Same singleton-pattern
+  // rationale as RecentCubit; both refresh on Home pull-to-refresh.
+  getIt.registerLazySingleton<ContinueWatchingCubit>(
+    () => ContinueWatchingCubit(repository: getIt<LibraryRepository>()),
+  );
+
   // Profile cubit — singleton so the profile header survives bottom-tab
   // hops (most expensive piece is the network round-trip; once loaded
   // the cached `ClientProfile` is fine for the session unless the user
   // pulls to refresh).
   getIt.registerLazySingleton<ProfileCubit>(
     () => ProfileCubit(repository: getIt<AuthRepository>()),
+  );
+
+  // Profile-stats cubit — separate from ProfileCubit so a stats failure
+  // can't blank the avatar header (and vice versa).  Singleton.
+  getIt.registerLazySingleton<ProfileStatsCubit>(
+    () => ProfileStatsCubit(repository: getIt<AuthRepository>()),
   );
 }

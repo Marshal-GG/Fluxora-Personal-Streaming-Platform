@@ -1,27 +1,48 @@
 /// Search tab — text-driven discover surface.
 ///
-/// Empty state: "Recent searches" list + "Try" suggestion chips. Active
-/// state (any non-empty query): top-3 horizontal poster rail + sectioned
-/// vertical results. Mocked client-side over [MockData] until the server
-/// exposes a `/search` endpoint.
+/// Phase B backfill (`docs/10_planning/08_real_data_backfill_plan.md`
+/// §3 row 2): consumes [SearchCubit] over `GET /files/search` (server
+/// uses SQL `LIKE` for v1).  Empty state still shows the recent /
+/// trending search chrome backed by `MockData.recentSearches` +
+/// `MockData.trendingSearches` — those are persistence-target lists
+/// (not actual media), so they survive Phase B and live on until the
+/// search-history feature ships.
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/fluxora_core.dart';
+import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:fluxora_mobile/core/router/app_router.dart';
-import 'package:fluxora_mobile/shared/data/mock_data.dart';
 
-class SearchScreen extends StatefulWidget {
+import 'package:fluxora_mobile/core/router/app_router.dart';
+import 'package:fluxora_mobile/features/library/domain/repositories/library_repository.dart';
+import 'package:fluxora_mobile/features/search/presentation/cubit/search_cubit.dart';
+import 'package:fluxora_mobile/shared/data/mock_data.dart';
+import 'package:fluxora_mobile/shared/widgets/gradients.dart';
+
+class SearchScreen extends StatelessWidget {
   const SearchScreen({super.key});
 
   @override
-  State<SearchScreen> createState() => _SearchScreenState();
+  Widget build(BuildContext context) {
+    return BlocProvider<SearchCubit>(
+      create: (_) =>
+          SearchCubit(repository: GetIt.I<LibraryRepository>()),
+      child: const _SearchView(),
+    );
+  }
 }
 
-class _SearchScreenState extends State<SearchScreen> {
+class _SearchView extends StatefulWidget {
+  const _SearchView();
+
+  @override
+  State<_SearchView> createState() => _SearchViewState();
+}
+
+class _SearchViewState extends State<_SearchView> {
   late final TextEditingController _controller;
-  String _query = '';
 
   @override
   void initState() {
@@ -35,33 +56,20 @@ class _SearchScreenState extends State<SearchScreen> {
     super.dispose();
   }
 
-  List<MockMediaItem> get _results {
-    final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return const [];
-    // Phase B replaces this client-side filter with `GET /files/search`;
-    // the `recentlyAdded` source is gone (now a real Home rail) so search
-    // pulls only from the still-mock continue-watching + trending pools
-    // until Phase B lands.
-    final pool = [
-      ...MockData.continueWatching,
-      ...MockData.trending,
-    ];
-    final seen = <String>{};
-    return pool
-        .where(
-          (m) =>
-              m.title.toLowerCase().contains(q) ||
-              m.subtitle.toLowerCase().contains(q),
-        )
-        .where((m) => seen.add(m.id))
-        .toList(growable: false);
+  void _setQuery(String value) {
+    context.read<SearchCubit>().queryChanged(value);
+  }
+
+  void _runChip(String term) {
+    _controller.text = term;
+    _controller.selection = TextSelection.fromPosition(
+      TextPosition(offset: term.length),
+    );
+    _setQuery(term);
   }
 
   @override
   Widget build(BuildContext context) {
-    final results = _results;
-    final isActive = _query.trim().isNotEmpty;
-
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: const FluxAppBar(title: 'Search'),
@@ -69,28 +77,44 @@ class _SearchScreenState extends State<SearchScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
-            child: FluxTextField(
-              controller: _controller,
-              hint: 'Search Fluxora',
-              leadingIcon: Icons.search,
-              autofocus: false,
-              onChanged: (v) => setState(() => _query = v),
-              trailing: _query.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.close,
-                          size: 18, color: AppColors.textMutedV2),
-                      onPressed: () {
-                        _controller.clear();
-                        setState(() => _query = '');
-                      },
-                    )
-                  : null,
+            child: ValueListenableBuilder(
+              valueListenable: _controller,
+              builder: (context, value, _) {
+                return FluxTextField(
+                  controller: _controller,
+                  hint: 'Search Fluxora',
+                  leadingIcon: Icons.search,
+                  autofocus: false,
+                  onChanged: _setQuery,
+                  trailing: value.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.close,
+                              size: 18, color: AppColors.textMutedV2),
+                          onPressed: () {
+                            _controller.clear();
+                            _setQuery('');
+                          },
+                        )
+                      : null,
+                );
+              },
             ),
           ),
           Expanded(
-            child: isActive
-                ? _ActiveResults(query: _query, results: results)
-                : const _EmptyState(),
+            child: BlocBuilder<SearchCubit, SearchState>(
+              builder: (context, state) {
+                return switch (state) {
+                  SearchIdle() => _EmptyState(onChipTap: _runChip),
+                  SearchLoading() => const _LoadingState(),
+                  SearchFailure(:final message) => _FailureState(
+                      message: message,
+                      onRetry: () => _setQuery(_controller.text),
+                    ),
+                  SearchLoaded(:final query, :final results) =>
+                    _ActiveResults(query: query, results: results),
+                };
+              },
+            ),
           ),
         ],
       ),
@@ -99,7 +123,9 @@ class _SearchScreenState extends State<SearchScreen> {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+  const _EmptyState({required this.onChipTap});
+
+  final void Function(String) onChipTap;
 
   @override
   Widget build(BuildContext context) {
@@ -140,7 +166,7 @@ class _EmptyState extends StatelessWidget {
             ),
             trailing: const Icon(Icons.north_west,
                 size: 16, color: AppColors.textDim),
-            onTap: () {},
+            onTap: () => onChipTap(term),
           ),
         const SizedBox(height: 16),
         const FluxSectionHeader(eyebrow: 'Try', title: 'Trending searches'),
@@ -151,7 +177,7 @@ class _EmptyState extends StatelessWidget {
           children: [
             for (final term in MockData.trendingSearches)
               GestureDetector(
-                onTap: () {},
+                onTap: () => onChipTap(term),
                 child: FluxChip(term, color: FluxChipColor.purple),
               ),
           ],
@@ -161,11 +187,65 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
+class _LoadingState extends StatelessWidget {
+  const _LoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: SizedBox(
+        width: 28,
+        height: 28,
+        child: CircularProgressIndicator(
+          strokeWidth: 2.5,
+          color: AppColors.violet,
+        ),
+      ),
+    );
+  }
+}
+
+class _FailureState extends StatelessWidget {
+  const _FailureState({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline,
+                size: 44, color: Color(0xFFF87171)),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: AppTypography.body
+                  .copyWith(color: AppColors.textBright),
+            ),
+            const SizedBox(height: 12),
+            FluxButton(
+              variant: FluxButtonVariant.secondary,
+              onPressed: onRetry,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ActiveResults extends StatelessWidget {
   const _ActiveResults({required this.query, required this.results});
 
   final String query;
-  final List<MockMediaItem> results;
+  final List<MediaFile> results;
 
   @override
   Widget build(BuildContext context) {
@@ -187,7 +267,7 @@ class _ActiveResults extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                'Try a different title or genre.',
+                'Try a different title, file name, or genre.',
                 style: AppTypography.captionV2
                     .copyWith(color: AppColors.textMutedV2),
                 textAlign: TextAlign.center,
@@ -199,7 +279,8 @@ class _ActiveResults extends StatelessWidget {
     }
 
     final top = results.take(3).toList();
-    final rest = results.length > 3 ? results.sublist(3) : const <MockMediaItem>[];
+    final rest =
+        results.length > 3 ? results.sublist(3) : const <MediaFile>[];
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 24),
@@ -222,10 +303,10 @@ class _ActiveResults extends StatelessWidget {
             itemBuilder: (context, i) {
               final m = top[i];
               return FluxPoster(
-                title: m.title,
-                subtitle: m.subtitle,
-                gradient: m.gradient,
-                imageUrl: m.imageUrl,
+                title: m.title ?? m.name,
+                subtitle: _subtitleFor(m),
+                gradient: AppGradientPlaceholders.forKey(m.id),
+                imageUrl: m.posterUrl,
                 qualityBadge: m.qualityBadge,
                 onTap: () => context.push(Routes.detail(m.id)),
               );
@@ -248,14 +329,29 @@ class _ActiveResults extends StatelessWidget {
                   const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
               leading: ClipRRect(
                 borderRadius: BorderRadius.circular(6),
-                child: Container(
+                child: SizedBox(
                   width: 44,
                   height: 60,
-                  decoration: BoxDecoration(gradient: m.gradient),
+                  child: m.posterUrl != null
+                      ? Image.network(
+                          m.posterUrl!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient:
+                                  AppGradientPlaceholders.forKey(m.id),
+                            ),
+                          ),
+                        )
+                      : DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: AppGradientPlaceholders.forKey(m.id),
+                          ),
+                        ),
                 ),
               ),
               title: Text(
-                m.title,
+                m.title ?? m.name,
                 style: AppTypography.body.copyWith(
                   color: AppColors.textBright,
                   fontSize: 14,
@@ -263,7 +359,7 @@ class _ActiveResults extends StatelessWidget {
                 ),
               ),
               subtitle: Text(
-                m.subtitle,
+                _subtitleFor(m),
                 style: AppTypography.captionV2
                     .copyWith(color: AppColors.textMutedV2),
               ),
@@ -275,4 +371,15 @@ class _ActiveResults extends StatelessWidget {
       ],
     );
   }
+}
+
+String _subtitleFor(MediaFile m) {
+  final parts = <String>[
+    if (m.codecName != null) m.codecName!.toUpperCase(),
+    if (m.tmdbShowId != null && m.seasonNumber != null && m.episodeNumber != null)
+      'S${m.seasonNumber!.toString().padLeft(2, '0')}'
+          ' · E${m.episodeNumber!.toString().padLeft(2, '0')}',
+  ];
+  if (parts.isEmpty) return m.extension.replaceFirst('.', '').toUpperCase();
+  return parts.join('  ·  ');
 }

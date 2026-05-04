@@ -18,6 +18,9 @@ class Endpoints {
       '$_base/auth/status/$clientId';
   static const String authClients = '$_base/auth/clients';
   static const String authClientsMe = '$_base/auth/clients/me';
+  static const String authClientsMeStats = '$_base/auth/clients/me/stats';
+  static const String authClientsMeContinueWatching =
+      '$_base/auth/clients/me/continue-watching';
   static String authApprove(String clientId) =>
       '$_base/auth/approve/$clientId';
   static String authReject(String clientId) =>
@@ -28,6 +31,7 @@ class Endpoints {
   // Files
   static const String files = '$_base/files';
   static const String filesRecent = '$_base/files/recent';
+  static const String filesSearch = '$_base/files/search';
   static String fileById(String fileId) => '$_base/files/$fileId';
 
   // Library

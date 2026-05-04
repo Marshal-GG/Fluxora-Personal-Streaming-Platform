@@ -42,6 +42,8 @@ All paths are under the base `http://{server_ip}:8080` on LAN or `https://fluxor
 | `DELETE` | `/api/v1/auth/revoke/{client_id}` | Localhost only | Revoke an approved client (operator action) |
 | `GET` | `/api/v1/auth/clients` | Localhost only | List all paired clients |
 | `GET` | `/api/v1/auth/clients/me` | Token required | Calling client's own profile (mobile profile screen) |
+| `GET` | `/api/v1/auth/clients/me/stats` | Token required | Aggregate `{hours, movies, shows}` watch stats (mobile profile stats row) |
+| `GET` | `/api/v1/auth/clients/me/continue-watching` | Token required | Files with non-zero resume position, sorted most-recent-first (mobile Home rail) |
 
 ### `files` router
 
@@ -49,6 +51,7 @@ All paths are under the base `http://{server_ip}:8080` on LAN or `https://fluxor
 |--------|------|------|---------|
 | `GET` | `/api/v1/files` | Token or localhost | List indexed media files (optional `?library_id=`) |
 | `GET` | `/api/v1/files/recent` | Token or localhost | Most-recently-added files (mobile Home rail; `?limit=N` clamped to [1,50]) |
+| `GET` | `/api/v1/files/search` | Token or localhost | Substring match on `name` + TMDB `title` (`?q=...&limit=N`; SQL `LIKE` for v1, FTS5 v2 swap-in) |
 | `GET` | `/api/v1/files/{file_id}` | Token or localhost | Get single file by ID |
 | `POST` | `/api/v1/files/upload` | Token or localhost | Upload a file to a library |
 | `DELETE` | `/api/v1/files/{file_id}` | Token or localhost | Remove file from index (does not delete from disk) |

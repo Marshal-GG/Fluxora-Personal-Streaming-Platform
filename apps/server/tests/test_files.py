@@ -233,3 +233,133 @@ async def test_recent_files_does_not_match_file_id_route(
     assert resp.status_code == 200
     # Returns a list, not a single object — proves the recent route won.
     assert isinstance(resp.json(), list)
+
+
+# ── GET /api/v1/files/search (Phase B §3 row 2) ─────────────────────────────
+
+
+async def _insert_named_file(
+    test_db, *, name: str, title: str | None = None
+) -> str:
+    file_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    await test_db.execute(
+        """
+        INSERT INTO media_files
+            (id, path, name, extension, size_bytes, duration_sec,
+             library_id, tmdb_id, title, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (file_id, f"/m/{name}", name, ".mp4", 1024, None, None, None,
+         title, now, now),
+    )
+    await test_db.commit()
+    return file_id
+
+
+@pytest.mark.asyncio
+async def test_search_matches_filename_substring(
+    client: AsyncClient, monkeypatch, test_db
+):
+    token = await _get_token(client, monkeypatch)
+    await _insert_named_file(test_db, name="Inception.mkv")
+    await _insert_named_file(test_db, name="Interstellar.mkv")
+    await _insert_named_file(test_db, name="The Martian.mkv")
+
+    resp = await client.get(
+        "/api/v1/files/search?q=inter",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    names = [f["name"] for f in resp.json()]
+    assert names == ["Interstellar.mkv"]
+
+
+@pytest.mark.asyncio
+async def test_search_matches_tmdb_title_when_filename_doesnt(
+    client: AsyncClient, monkeypatch, test_db
+):
+    token = await _get_token(client, monkeypatch)
+    await _insert_named_file(test_db, name="abc123.mp4", title="Velvet Horizon")
+
+    resp = await client.get(
+        "/api/v1/files/search?q=velvet",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    files = resp.json()
+    assert len(files) == 1
+    assert files[0]["title"] == "Velvet Horizon"
+
+
+@pytest.mark.asyncio
+async def test_search_is_case_insensitive(
+    client: AsyncClient, monkeypatch, test_db
+):
+    token = await _get_token(client, monkeypatch)
+    await _insert_named_file(test_db, name="Inception.mkv")
+
+    resp = await client.get(
+        "/api/v1/files/search?q=INCEPTION",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_escapes_wildcards(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """Searching for a literal `_` must match `_` only, not any character.
+    The service escapes `_` and `%` before passing to LIKE."""
+    token = await _get_token(client, monkeypatch)
+    await _insert_named_file(test_db, name="season-1.mp4")
+    await _insert_named_file(test_db, name="season_1.mp4")
+
+    resp = await client.get(
+        "/api/v1/files/search?q=season_",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    names = [f["name"] for f in resp.json()]
+    assert names == ["season_1.mp4"]
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_empty_query(
+    client: AsyncClient, monkeypatch
+):
+    await _get_token(client, monkeypatch)
+    resp = await client.get(
+        "/api/v1/files/search?q=",
+        headers={"Authorization": "Bearer x"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_search_clamps_oversized_limit(
+    client: AsyncClient, monkeypatch
+):
+    await _get_token(client, monkeypatch)
+    resp = await client.get(
+        "/api/v1/files/search?q=anything&limit=999",
+        headers={"Authorization": "Bearer x"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_search_does_not_match_file_id_route(
+    client: AsyncClient, monkeypatch
+):
+    """Sanity: `/files/search` must hit search_files, not get_file with
+    file_id='search'.  Route order in files.py guarantees this."""
+    token = await _get_token(client, monkeypatch)
+    resp = await client.get(
+        "/api/v1/files/search?q=nothing-matches",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []

@@ -17,6 +17,7 @@ import 'package:go_router/go_router.dart';
 import 'package:fluxora_mobile/core/router/app_router.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
 import 'package:fluxora_mobile/features/profile/presentation/cubit/profile_cubit.dart';
+import 'package:fluxora_mobile/features/profile/presentation/cubit/profile_stats_cubit.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -27,26 +28,38 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   late final ProfileCubit _profile;
+  late final ProfileStatsCubit _stats;
 
   @override
   void initState() {
     super.initState();
     _profile = GetIt.I<ProfileCubit>();
+    _stats = GetIt.I<ProfileStatsCubit>();
     if (_profile.state is ProfileInitial) {
       _profile.load();
     }
+    if (_stats.state is ProfileStatsInitial) {
+      _stats.load();
+    }
+  }
+
+  Future<void> _refresh() async {
+    await Future.wait([_profile.refresh(), _stats.refresh()]);
   }
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<ProfileCubit>.value(
-      value: _profile,
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider<ProfileCubit>.value(value: _profile),
+        BlocProvider<ProfileStatsCubit>.value(value: _stats),
+      ],
       child: Scaffold(
         backgroundColor: Colors.transparent,
         body: SafeArea(
           bottom: false,
           child: RefreshIndicator(
-            onRefresh: () => _profile.refresh(),
+            onRefresh: _refresh,
             color: AppColors.violet,
             backgroundColor: AppColors.surfaceGlass,
             child: BlocBuilder<ProfileCubit, ProfileState>(
@@ -384,65 +397,78 @@ class _ProfileFailure extends StatelessWidget {
   }
 }
 
-// ── Stats row (Hours · Movies · Shows) — placeholder until Phase B ──────────
+// ── Stats row (Hours · Movies · Shows) — Phase B real data ──────────────────
 
 class _StatRow extends StatelessWidget {
   const _StatRow();
 
-  static const _stats = <(String, String)>[
-    ('—', 'Hours'),
-    ('—', 'Movies'),
-    ('—', 'Shows'),
-  ];
-
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: BoxDecoration(
-        color: const Color(0x08FFFFFF),
-        border: Border.all(color: AppColors.borderSubtle),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          for (var i = 0; i < _stats.length; i++) ...[
-            Expanded(
-              child: Column(
-                children: [
-                  Text(
-                    _stats[i].$1,
-                    style: AppTypography.displayV2.copyWith(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.5,
-                      color: AppColors.textBright,
-                    ),
+    return BlocBuilder<ProfileStatsCubit, ProfileStatsState>(
+      builder: (context, state) {
+        final tuples = switch (state) {
+          ProfileStatsLoaded(:final stats) => <(String, String)>[
+              ('${stats.hours}', 'Hours'),
+              ('${stats.movies}', 'Movies'),
+              ('${stats.shows}', 'Shows'),
+            ],
+          // Loading / failure / initial — render em-dashes so the row still
+          // takes up its layout slot but doesn't lie about the numbers.
+          _ => const <(String, String)>[
+              ('—', 'Hours'),
+              ('—', 'Movies'),
+              ('—', 'Shows'),
+            ],
+        };
+
+        return Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: const Color(0x08FFFFFF),
+            border: Border.all(color: AppColors.borderSubtle),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              for (var i = 0; i < tuples.length; i++) ...[
+                Expanded(
+                  child: Column(
+                    children: [
+                      Text(
+                        tuples[i].$1,
+                        style: AppTypography.displayV2.copyWith(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.5,
+                          color: AppColors.textBright,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        tuples[i].$2.toUpperCase(),
+                        style: AppTypography.eyebrow.copyWith(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.4,
+                          color: AppColors.textMutedV2,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _stats[i].$2.toUpperCase(),
-                    style: AppTypography.eyebrow.copyWith(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.4,
-                      color: AppColors.textMutedV2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (i < _stats.length - 1)
-              const SizedBox(
-                height: 36,
-                child: VerticalDivider(
-                  width: 1,
-                  color: AppColors.borderSubtle,
                 ),
-              ),
-          ],
-        ],
-      ),
+                if (i < tuples.length - 1)
+                  const SizedBox(
+                    height: 36,
+                    child: VerticalDivider(
+                      width: 1,
+                      color: AppColors.borderSubtle,
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }

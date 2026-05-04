@@ -58,4 +58,34 @@ class LibraryRepositoryImpl implements LibraryRepository {
       fromJson: (data) => MediaFile.fromJson(data as Map<String, dynamic>),
     );
   }
+
+  @override
+  Future<List<MediaFile>> searchFiles({
+    required String query,
+    int limit = 20,
+  }) async {
+    _log.d('Searching files for "$query" (limit=$limit)');
+    if (query.trim().isEmpty) return const [];
+    return _apiClient.get<List<MediaFile>>(
+      Endpoints.filesSearch,
+      queryParameters: {'q': query, 'limit': limit},
+      fromJson: (data) => (data as List<dynamic>)
+          .map((item) =>
+              MediaFile.fromJson(item as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  @override
+  Future<List<MediaFile>> listContinueWatching({int limit = 12}) async {
+    _log.d('Fetching continue-watching (limit=$limit)');
+    return _apiClient.get<List<MediaFile>>(
+      Endpoints.authClientsMeContinueWatching,
+      queryParameters: {'limit': limit},
+      fromJson: (data) => (data as List<dynamic>)
+          .map((item) =>
+              MediaFile.fromJson(item as Map<String, dynamic>))
+          .toList(),
+    );
+  }
 }

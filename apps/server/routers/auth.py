@@ -12,11 +12,13 @@ from models.client import (
     ClientListItem,
     ClientListResponse,
     ClientMeResponse,
+    ClientMeStatsResponse,
     PairRequestBody,
     PairResponse,
 )
+from models.media_file import MediaFileResponse
 from routers.deps import require_local_caller, validate_token
-from services import activity_service, auth_service
+from services import activity_service, auth_service, library_service
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -178,4 +180,45 @@ async def get_me(
         paired_at=me["paired_at"] if "paired_at" in me.keys() else None,
         last_seen=me["last_seen"],
         tier=tier,
+    )
+
+
+@router.get(
+    "/clients/me/continue-watching",
+    response_model=list[MediaFileResponse],
+)
+async def list_continue_watching(
+    limit: int = 12,
+    me: aiosqlite.Row = Depends(validate_token),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> list[MediaFileResponse]:
+    """Continue-watching rail — files with non-zero `last_progress_sec`
+    that aren't effectively complete (Phase B backfill plan §3 row 1).
+
+    `limit` is bounded `[1, 50]` at the FastAPI layer.  v1 reads the
+    global `last_progress_sec` column on `media_files` (single-tenant
+    home server, so per-client progress isn't required); the route still
+    requires bearer auth so `me` resolves and the path namespace stays
+    symmetric with the rest of `/auth/clients/me/...`.
+    """
+    bounded = max(1, min(50, limit))
+    rows = await library_service.list_continue_watching(db, limit=bounded)
+    return [MediaFileResponse(**row) for row in rows]
+
+
+@router.get("/clients/me/stats", response_model=ClientMeStatsResponse)
+async def get_my_stats(
+    me: aiosqlite.Row = Depends(validate_token),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> ClientMeStatsResponse:
+    """Per-client watch statistics — backs the mobile Profile stats row
+    (Phase B backfill plan §3 row 3).  Returns `{hours, movies, shows}`
+    aggregated from `stream_sessions` + `media_files` for the calling
+    client.
+    """
+    stats = await library_service.get_client_stats(db, me["id"])
+    return ClientMeStatsResponse(
+        hours=stats["hours"],
+        movies=stats["movies"],
+        shows=stats["shows"],
     )

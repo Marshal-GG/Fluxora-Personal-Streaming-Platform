@@ -1,21 +1,21 @@
 /// Mock fixtures for surfaces that don't yet have a server endpoint.
 ///
-/// Phase A backfill (`docs/10_planning/08_real_data_backfill_plan.md` §9.2)
-/// removed `MockData.recentlyAdded`, `MockData.findById`, the
-/// `_details` rich-detail map, and the `MockGradients` class — those were
-/// the symbols replaced by real `GET /files/recent`, `GET /files/{id}`,
-/// and `GET /auth/clients/me` data.  Gradient placeholders moved to
-/// `apps/mobile/lib/shared/widgets/gradients.dart` (`AppGradientPlaceholders`).
+/// Phase A backfill removed `MockData.recentlyAdded`, `MockData.findById`,
+/// the `_details` rich-detail map, and the `MockGradients` class.
+/// Phase B backfill removed `MockData.continueWatching` (now backed by
+/// `GET /auth/clients/me/continue-watching`) and the `MockData` filter
+/// inside `search_screen.dart` (now backed by `GET /files/search`).
 ///
-/// What's still here is everything Phase B / E delete next:
-/// - `MockData.continueWatching` — `/clients/me/continue-watching` (Phase B)
-/// - `MockData.trending` — search screen pool (Phase B trims this when
-///   `/files/search` lands)
+/// What's still here:
+/// - `MockData.trending` — Home "Trending now" rail.  Phase C either
+///   deletes the rail (decision §5 row 3) or rewires it against a
+///   future popularity / TMDB-trending endpoint.
 /// - `MockData.recentSearches` / `MockData.trendingSearches` — search
-///   chrome until Phase B
-/// - `MockData.downloads` + `storage{Used,Total}Gb` — downloads screen,
-///   removed when Phase E ships (or when the Downloads tab is hidden in
-///   v1 per decision §5 row 4, whichever comes first).
+///   chrome.  Will be replaced by a real search-history persistence
+///   feature; no plan-anchored phase yet.
+/// - `MockData.downloads` + `storage{Used,Total}Gb` — downloads screen.
+///   Hidden in v1 (decision §5 row 4); the screen + fixtures stay so
+///   Phase E (or v1.1) can re-enable in one line.
 library;
 
 import 'package:flutter/material.dart';
@@ -97,42 +97,6 @@ class MockDownload {
 
 class MockData {
   MockData._();
-
-  static List<MockMediaItem> continueWatching = const [
-    MockMediaItem(
-      id: 'cw-1',
-      title: 'Echoes of Tomorrow',
-      subtitle: 'S2 · E4',
-      gradient: AppGradientPlaceholders.violetCyan,
-      progress: 0.62,
-      qualityBadge: '4K',
-      kind: 'show',
-    ),
-    MockMediaItem(
-      id: 'cw-2',
-      title: 'Nebula Run',
-      subtitle: '1h 48m left',
-      gradient: AppGradientPlaceholders.pinkAmber,
-      progress: 0.34,
-      qualityBadge: 'HDR',
-    ),
-    MockMediaItem(
-      id: 'cw-3',
-      title: 'The Last Signal',
-      subtitle: 'S1 · E7',
-      gradient: AppGradientPlaceholders.emeraldBlue,
-      progress: 0.81,
-      kind: 'show',
-    ),
-    MockMediaItem(
-      id: 'cw-4',
-      title: 'Aurora Drift',
-      subtitle: '24m left',
-      gradient: AppGradientPlaceholders.indigoCyan,
-      progress: 0.92,
-      qualityBadge: '1080p',
-    ),
-  ];
 
   static List<MockMediaItem> trending = const [
     MockMediaItem(

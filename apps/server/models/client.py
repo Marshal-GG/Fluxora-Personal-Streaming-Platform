@@ -57,3 +57,19 @@ class ClientMeResponse(BaseModel):
     paired_at: str | None = None
     last_seen: str
     tier: str
+
+
+class ClientMeStatsResponse(BaseModel):
+    """Per-client watch statistics for `GET /auth/clients/me/stats`
+    (Phase B backfill plan §3 row 3).
+
+    All three values are non-negative integers and degrade gracefully —
+    a fresh client with no stream sessions returns `{0, 0, 0}` rather
+    than 404.  `shows` will stay at 0 until Phase D back-fills the
+    `tmdb_show_id` column on TV episode rows; that's intentional honesty
+    rather than a guessed-up number.
+    """
+
+    hours: int
+    movies: int
+    shows: int

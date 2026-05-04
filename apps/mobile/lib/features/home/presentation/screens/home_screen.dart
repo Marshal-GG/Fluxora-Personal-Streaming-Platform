@@ -4,11 +4,11 @@
 /// Trending now (rail 116×174), Recently added (rail 116×174). App bar:
 /// avatar (left) + Fluxora wordmark (center) + bell + cast (right).
 ///
-/// Phase A backfill: the Recently-added rail now consumes [RecentCubit]
-/// (real `GET /files/recent` data — no more `MockData.recentlyAdded`).
-/// Continue-watching + Trending are still mock-backed; Phase B replaces
-/// them with `/clients/me/continue-watching` + a deletion of the
-/// trending rail (decision §5 row 3).
+/// Phase A: Recently-added consumes [RecentCubit] (`GET /files/recent`).
+/// Phase B: Continue-watching consumes [ContinueWatchingCubit]
+/// (`GET /auth/clients/me/continue-watching`).  Trending stays mock;
+/// Phase C either deletes the rail (decision §5 row 3) or rewires it
+/// against a future popularity endpoint.
 library;
 
 import 'package:flutter/material.dart';
@@ -18,6 +18,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:fluxora_mobile/core/router/app_router.dart';
+import 'package:fluxora_mobile/features/home/presentation/cubit/continue_watching_cubit.dart';
 import 'package:fluxora_mobile/features/home/presentation/cubit/recent_cubit.dart';
 import 'package:fluxora_mobile/shared/data/mock_data.dart';
 import 'package:fluxora_mobile/shared/widgets/gradients.dart';
@@ -31,24 +32,32 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   late final RecentCubit _recent;
+  late final ContinueWatchingCubit _cw;
 
   @override
   void initState() {
     super.initState();
     _recent = GetIt.I<RecentCubit>();
+    _cw = GetIt.I<ContinueWatchingCubit>();
     if (_recent.state is RecentInitial) {
       _recent.load();
+    }
+    if (_cw.state is ContinueWatchingInitial) {
+      _cw.load();
     }
   }
 
   Future<void> _refresh() async {
-    await _recent.refresh();
+    await Future.wait([_recent.refresh(), _cw.refresh()]);
   }
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider<RecentCubit>.value(
-      value: _recent,
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider<RecentCubit>.value(value: _recent),
+        BlocProvider<ContinueWatchingCubit>.value(value: _cw),
+      ],
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: FluxAppBar(
@@ -81,21 +90,15 @@ class _HomeScreenState extends State<HomeScreen> {
           child: ListView(
             padding: const EdgeInsets.only(bottom: 24),
             physics: const AlwaysScrollableScrollPhysics(),
-            children: [
-              const SizedBox(height: 12),
-              _MockRail(
-                title: 'Continue watching',
-                eyebrow: 'Pick up where you left off',
-                items: MockData.continueWatching,
-                size: FluxPosterSize.hero,
-              ),
+            children: const [
+              SizedBox(height: 12),
+              _ContinueWatchingRail(),
               _MockRail(
                 title: 'Trending now',
                 eyebrow: 'This week',
-                items: MockData.trending,
                 size: FluxPosterSize.rail,
               ),
-              const _RecentRail(),
+              _RecentRail(),
             ],
           ),
         ),
@@ -131,21 +134,22 @@ class _AvatarChip extends StatelessWidget {
   }
 }
 
+/// Trending-now rail (still mock-backed — Phase C is the deletion or
+/// rewire target depending on whether a popularity endpoint lands).
 class _MockRail extends StatelessWidget {
   const _MockRail({
     required this.title,
     required this.eyebrow,
-    required this.items,
     required this.size,
   });
 
   final String title;
   final String eyebrow;
-  final List<MockMediaItem> items;
   final FluxPosterSize size;
 
   @override
   Widget build(BuildContext context) {
+    final items = MockData.trending;
     return _RailFrame(
       title: title,
       eyebrow: eyebrow,
@@ -164,6 +168,175 @@ class _MockRail extends StatelessWidget {
           onTap: () => context.push(Routes.detail(item.id)),
         );
       },
+    );
+  }
+}
+
+/// Continue-watching rail — wired to the live [ContinueWatchingCubit]
+/// (Phase B).  Falls back to a 4-tile placeholder while loading and to
+/// an empty surface when there are no in-progress files.
+class _ContinueWatchingRail extends StatelessWidget {
+  const _ContinueWatchingRail();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<ContinueWatchingCubit, ContinueWatchingState>(
+      builder: (context, state) {
+        return switch (state) {
+          ContinueWatchingInitial() || ContinueWatchingLoading() =>
+            const _RailFrame(
+              title: 'Continue watching',
+              eyebrow: 'Pick up where you left off',
+              size: FluxPosterSize.hero,
+              itemCount: 4,
+              itemBuilder: _placeholderHeroTile,
+            ),
+          ContinueWatchingFailure(:final message) =>
+            _CwRailFailure(message: message),
+          ContinueWatchingLoaded(:final items) when items.isEmpty =>
+            const _CwRailEmpty(),
+          ContinueWatchingLoaded(:final items) => _RailFrame(
+              title: 'Continue watching',
+              eyebrow: 'Pick up where you left off',
+              size: FluxPosterSize.hero,
+              itemCount: items.length,
+              itemBuilder: (context, i) {
+                final f = items[i];
+                final placeholder =
+                    AppGradientPlaceholders.forKey(f.id);
+                final progress = (f.durationSec ?? 0) > 0
+                    ? (f.resumeSec / f.durationSec!).clamp(0.0, 1.0)
+                    : null;
+                return FluxPoster(
+                  title: f.title ?? f.name,
+                  subtitle: _resumeSubtitle(f),
+                  imageUrl: f.posterUrl,
+                  gradient: placeholder,
+                  size: FluxPosterSize.hero,
+                  qualityBadge: f.qualityBadge,
+                  progress: progress,
+                  onTap: () => context.push(Routes.detail(f.id)),
+                );
+              },
+            ),
+        };
+      },
+    );
+  }
+
+  static Widget _placeholderHeroTile(BuildContext context, int i) {
+    return Container(
+      width: 150,
+      height: 220,
+      decoration: BoxDecoration(
+        color: const Color(0x0AFFFFFF),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.borderSubtle),
+      ),
+    );
+  }
+
+  static String _resumeSubtitle(MediaFile f) {
+    final dur = f.durationSec;
+    if (dur == null || dur <= 0) return 'Continue';
+    final remaining = (dur - f.resumeSec).clamp(0.0, dur);
+    final minutes = (remaining / 60).round();
+    if (minutes < 1) return 'Almost done';
+    if (minutes < 60) return '$minutes min left';
+    final h = minutes ~/ 60;
+    final m = minutes % 60;
+    return m == 0 ? '${h}h left' : '${h}h ${m}m left';
+  }
+}
+
+class _CwRailEmpty extends StatelessWidget {
+  const _CwRailEmpty();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const FluxSectionHeader(
+            eyebrow: 'Pick up where you left off',
+            title: 'Continue watching',
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0x08FFFFFF),
+              border: Border.all(color: AppColors.borderSubtle),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              'Nothing in progress yet — start a title and it\'ll show up here.',
+              style: AppTypography.captionV2
+                  .copyWith(color: AppColors.textMutedV2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CwRailFailure extends StatelessWidget {
+  const _CwRailFailure({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const FluxSectionHeader(
+            eyebrow: 'Pick up where you left off',
+            title: 'Continue watching',
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0x14EF4444),
+              border: Border.all(color: const Color(0x40EF4444)),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.error_outline,
+                    size: 18, color: Color(0xFFF87171)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    message,
+                    style: AppTypography.captionV2
+                        .copyWith(color: const Color(0xFFF87171)),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      context.read<ContinueWatchingCubit>().refresh(),
+                  child: Text(
+                    'Retry',
+                    style: AppTypography.captionV2.copyWith(
+                      color: AppColors.violetTint,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

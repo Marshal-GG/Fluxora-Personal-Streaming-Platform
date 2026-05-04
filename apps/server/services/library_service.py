@@ -324,6 +324,117 @@ async def list_recent_files(db: aiosqlite.Connection, limit: int = 20) -> list[d
     return [dict(row) for row in rows]
 
 
+async def search_files(
+    db: aiosqlite.Connection, query: str, limit: int = 20
+) -> list[dict]:
+    """Case-insensitive substring match on `name` + TMDB `title`.
+
+    Phase B v1 — SQL `LIKE` is fine; FTS5 is documented as the v2 swap-in
+    in the real-data backfill plan §5 row 1.  `query` is escaped for the
+    `_` and `%` wildcard characters so a search for "season_1" doesn't
+    silently match "season-1", "season_one", etc.
+    """
+    if not query:
+        return []
+    escaped = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
+    async with db.execute(
+        """
+        SELECT * FROM media_files
+         WHERE (name  LIKE ? ESCAPE '\\' COLLATE NOCASE
+             OR title LIKE ? ESCAPE '\\' COLLATE NOCASE)
+         ORDER BY created_at DESC
+         LIMIT ?
+        """,
+        (pattern, pattern, limit),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(row) for row in rows]
+
+
+async def list_continue_watching(
+    db: aiosqlite.Connection, limit: int = 12
+) -> list[dict]:
+    """Files with non-zero resume position that aren't effectively complete.
+
+    Phase B v1 — uses the global `last_progress_sec` column on `media_files`
+    (single-tenant home server, so per-client progress isn't required).
+    Excludes rows where `last_progress_sec >= duration_sec * 0.95` so a
+    file watched to the end stops resurfacing.  Sorted by `updated_at DESC`
+    — the stream-progress writer touches that column on every reported
+    progress event, so the natural sort matches "recently watched".
+    """
+    async with db.execute(
+        """
+        SELECT * FROM media_files
+         WHERE last_progress_sec > 0
+           AND (duration_sec IS NULL OR last_progress_sec < duration_sec * 0.95)
+         ORDER BY updated_at DESC
+         LIMIT ?
+        """,
+        (limit,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [dict(row) for row in rows]
+
+
+async def get_client_stats(db: aiosqlite.Connection, client_id: str) -> dict:
+    """Aggregate per-client watch stats — backs `/auth/clients/me/stats`.
+
+    Returns three integers:
+    - `hours`   — `SUM(progress_sec) / 3600`, rounded down.
+    - `movies`  — distinct file ids the client has at least one stream
+                  session against where the file's library is `movies`.
+    - `shows`   — distinct `tmdb_show_id` values across the client's
+                  stream sessions.  Always 0 until Phase D back-fills
+                  `tmdb_show_id` for TV episodes — that's correct
+                  ("we don't know how many shows you've watched") rather
+                  than an inflated guess.
+
+    All three queries are bounded by `client_id` so cross-client data
+    never leaks even if the bearer token resolves to the wrong client by
+    accident.
+    """
+    async with db.execute(
+        """
+        SELECT COALESCE(SUM(progress_sec), 0) AS total_seconds
+          FROM stream_sessions
+         WHERE client_id = ?
+        """,
+        (client_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    total_seconds = float(row["total_seconds"]) if row else 0.0
+    hours = int(total_seconds // 3600)
+
+    async with db.execute(
+        """
+        SELECT COUNT(DISTINCT s.file_id) AS cnt
+          FROM stream_sessions s
+          JOIN media_files m ON m.id = s.file_id
+          JOIN libraries   l ON l.id = m.library_id
+         WHERE s.client_id = ? AND l.type = 'movies'
+        """,
+        (client_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    movies = int(row["cnt"]) if row else 0
+
+    async with db.execute(
+        """
+        SELECT COUNT(DISTINCT m.tmdb_show_id) AS cnt
+          FROM stream_sessions s
+          JOIN media_files m ON m.id = s.file_id
+         WHERE s.client_id = ? AND m.tmdb_show_id IS NOT NULL
+        """,
+        (client_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    shows = int(row["cnt"]) if row else 0
+
+    return {"hours": hours, "movies": movies, "shows": shows}
+
+
 async def get_file(db: aiosqlite.Connection, file_id: str) -> dict | None:
     async with db.execute("SELECT * FROM media_files WHERE id = ?", (file_id,)) as cur:
         row = await cur.fetchone()

@@ -275,3 +275,186 @@ async def test_clients_me_requires_token(client: AsyncClient):
         headers={"CF-Connecting-IP": "1.2.3.4"},  # force token validation
     )
     assert resp.status_code == 401
+
+
+# ── /clients/me/stats (Phase B backfill plan §3 row 3) ──────────────────────
+
+
+async def _approve_and_token(client: AsyncClient, monkeypatch) -> str:
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    status_resp = await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")
+    return status_resp.json()["auth_token"]
+
+
+@pytest.mark.asyncio
+async def test_clients_me_stats_zero_for_fresh_client(client: AsyncClient, monkeypatch):
+    token = await _approve_and_token(client, monkeypatch)
+    resp = await client.get(
+        "/api/v1/auth/clients/me/stats",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"hours": 0, "movies": 0, "shows": 0}
+
+
+@pytest.mark.asyncio
+async def test_clients_me_stats_aggregates_sessions(
+    client: AsyncClient, monkeypatch, test_db
+):
+    import json
+    import uuid
+    from datetime import UTC, datetime
+
+    token = await _approve_and_token(client, monkeypatch)
+    now = datetime.now(UTC).isoformat()
+
+    # Two libraries — one movies, one tv.
+    movies_lib = str(uuid.uuid4())
+    tv_lib = str(uuid.uuid4())
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths, created_at)"
+        " VALUES (?,?,?,?,?)",
+        (movies_lib, "Movies", "movies", json.dumps(["/m"]), now),
+    )
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths, created_at)"
+        " VALUES (?,?,?,?,?)",
+        (tv_lib, "Shows", "tv", json.dumps(["/t"]), now),
+    )
+
+    # Three movie files + two TV episodes (with shared tmdb_show_id) +
+    # one TV episode in a different show.
+    movie_a = str(uuid.uuid4())
+    movie_b = str(uuid.uuid4())
+    show_ep1 = str(uuid.uuid4())
+    show_ep2 = str(uuid.uuid4())
+    other_show_ep = str(uuid.uuid4())
+
+    for fid, name, lib_id, show_id in [
+        (movie_a, "a.mp4", movies_lib, None),
+        (movie_b, "b.mp4", movies_lib, None),
+        (show_ep1, "show1-s01e01.mp4", tv_lib, 100),
+        (show_ep2, "show1-s01e02.mp4", tv_lib, 100),
+        (other_show_ep, "show2-s01e01.mp4", tv_lib, 200),
+    ]:
+        await test_db.execute(
+            """
+            INSERT INTO media_files
+                (id, path, name, extension, size_bytes, duration_sec,
+                 library_id, tmdb_id, tmdb_show_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fid,
+                f"/{fid}-{name}",
+                name,
+                ".mp4",
+                1024,
+                3600.0,
+                lib_id,
+                None,
+                show_id,
+                now,
+                now,
+            ),
+        )
+
+    # Stream sessions: 2 hours on movie_a (7200s), 30min on movie_b (1800s),
+    # 45min on show_ep1 + show_ep2 (2700s each), 60min on other_show_ep.
+    for fid, secs in [
+        (movie_a, 7200.0),
+        (movie_b, 1800.0),
+        (show_ep1, 2700.0),
+        (show_ep2, 2700.0),
+        (other_show_ep, 3600.0),
+    ]:
+        await test_db.execute(
+            """
+            INSERT INTO stream_sessions
+                (id, file_id, client_id, started_at, connection_type,
+                 progress_sec)
+            VALUES (?, ?, ?, ?, 'lan', ?)
+            """,
+            (str(uuid.uuid4()), fid, PAIR_BODY["client_id"], now, secs),
+        )
+    await test_db.commit()
+
+    resp = await client.get(
+        "/api/v1/auth/clients/me/stats",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # 7200 + 1800 + 2700 + 2700 + 3600 = 18000 s = 5 h.
+    assert data["hours"] == 5
+    # Two distinct movie file ids touched.
+    assert data["movies"] == 2
+    # Two distinct tmdb_show_id values across TV sessions (100, 200).
+    assert data["shows"] == 2
+
+
+@pytest.mark.asyncio
+async def test_clients_me_stats_requires_token(client: AsyncClient):
+    resp = await client.get(
+        "/api/v1/auth/clients/me/stats",
+        headers={"CF-Connecting-IP": "1.2.3.4"},
+    )
+    assert resp.status_code == 401
+
+
+# ── /clients/me/continue-watching (Phase B §3 row 1) ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_continue_watching_excludes_zero_and_complete(
+    client: AsyncClient, monkeypatch, test_db
+):
+    import uuid
+    from datetime import UTC, datetime
+
+    token = await _approve_and_token(client, monkeypatch)
+    now = datetime.now(UTC).isoformat()
+
+    fresh = str(uuid.uuid4())
+    in_progress = str(uuid.uuid4())
+    finished = str(uuid.uuid4())
+
+    rows = [
+        # last_progress_sec = 0 → not in continue-watching
+        (fresh, "fresh.mp4", 0.0, 3600.0),
+        # 600/3600 = 16% — counts
+        (in_progress, "wip.mp4", 600.0, 3600.0),
+        # 3500/3600 = 97% — past the 95% cutoff, doesn't count
+        (finished, "done.mp4", 3500.0, 3600.0),
+    ]
+    for fid, name, prog, dur in rows:
+        await test_db.execute(
+            """
+            INSERT INTO media_files
+                (id, path, name, extension, size_bytes, duration_sec,
+                 last_progress_sec, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (fid, f"/{name}", name, ".mp4", 1024, dur, prog, now, now),
+        )
+    await test_db.commit()
+
+    resp = await client.get(
+        "/api/v1/auth/clients/me/continue-watching",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    files = resp.json()
+    ids = {f["id"] for f in files}
+    assert ids == {in_progress}
+
+
+@pytest.mark.asyncio
+async def test_continue_watching_requires_token(client: AsyncClient):
+    resp = await client.get(
+        "/api/v1/auth/clients/me/continue-watching",
+        headers={"CF-Connecting-IP": "1.2.3.4"},
+    )
+    assert resp.status_code == 401

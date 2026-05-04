@@ -93,6 +93,22 @@ async def list_recent_files(
     return [MediaFileResponse(**row) for row in rows]
 
 
+@router.get("/search", response_model=list[MediaFileResponse])
+async def search_files(
+    q: str = Query(..., min_length=1, max_length=200),
+    limit: int = Query(default=20, ge=1, le=50),
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> list[MediaFileResponse]:
+    """Search media files by `name` + TMDB `title` (case-insensitive
+    substring match).  Backs the mobile Search tab (Phase B backfill plan
+    §3 row 2).  v1 uses SQL `LIKE` per decision §5 row 1 — FTS5 is the
+    v2 swap-in.  `q` is required; `limit` clamped to `[1, 50]`.
+    """
+    rows = await library_service.search_files(db, query=q, limit=limit)
+    return [MediaFileResponse(**row) for row in rows]
+
+
 @router.get("/{file_id}", response_model=MediaFileResponse)
 async def get_file(
     file_id: str,
