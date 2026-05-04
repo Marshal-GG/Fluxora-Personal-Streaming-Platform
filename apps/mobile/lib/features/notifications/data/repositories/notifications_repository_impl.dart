@@ -25,11 +25,19 @@ class NotificationsRepositoryImpl implements NotificationsRepository {
   }) =>
       _apiClient.get(
         Endpoints.notifications,
+        // Server query param is `unread` (renamed from `unread_only` during
+        // the desktop notifications-audit round); response body is a flat
+        // `list[NotificationResponse]`, not a `{notifications: [...]}`
+        // wrapper.  Both shapes were silently wrong before — `unread_only`
+        // landed as an unknown query param (server defaulted to `unread=
+        // false` and returned everything), and the wrapper indexing
+        // crashed at runtime with "type 'String' is not a subtype of type
+        // 'int' of 'index'".
         queryParameters: {
-          if (onlyUnread) 'unread_only': 'true',
+          if (onlyUnread) 'unread': 'true',
           'limit': '$limit',
         },
-        fromJson: (json) => (json['notifications'] as List<dynamic>)
+        fromJson: (json) => (json as List<dynamic>)
             .map(
               (e) => AppNotification.fromJson(e as Map<String, dynamic>),
             )
