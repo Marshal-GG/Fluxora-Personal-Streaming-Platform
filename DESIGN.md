@@ -355,18 +355,49 @@ The primary brand colors communicate **action and identity**.
 
 The brand gradient is: `linear-gradient(135deg, #8B5CF6, #A855F7, #22D3EE)`. Use for the logo mark, hero headings, primary CTAs, and premium tier callouts. **Never** use the gradient on body text.
 
-### Surface Hierarchy (Glass)
+### Surface Hierarchy
 
-The system uses a **glassmorphic three-layer model**. All surfaces above the root are translucent over the bg-root + radial-gradient overlay.
+Two surface families:
+
+**Translucent glass** — for on-page chrome that should pick up the bgRoot + radial-gradient backdrop:
 
 | Token | Value | Usage |
 |-------|-------|-------|
 | `bg-root` | `#08061A` | Scaffold / page background — the deepest layer |
-| `surface-glass` | `rgba(20,18,38,0.7)` | Cards, app bar, snackbars, dropdown menus, tooltips |
+| `surface-glass` | `rgba(20,18,38,0.7)` | On-page glass cards (`FluxCard`, `FluxPoster` overlays) where the radial bg should bleed through |
 | `sidebar-glass` | `rgba(13,11,28,0.7)` | Left rail (with `backdrop-filter: blur(20px)`) |
 | `titlebar-glass` | `rgba(6,4,16,0.9)` | Window titlebar — slightly darker than sidebar |
+
+**Opaque raised** — for floating chrome that mounts over everything else:
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `bg-raised` | `#0F0C24` | Popup menus, dialog/sheet backgrounds, AppBar, SnackBar, Material `Card`, `InputDecoration.fillColor` — anywhere a translucent fill would let the page bleed through and read as "broken" rather than "glass" |
+
+**Borders** (apply across both families):
+
+| Token | Value | Usage |
+|-------|-------|-------|
 | `border-subtle` | `rgba(255,255,255,0.06)` | Default 1 px borders, dividers, table row separators |
 | `border-hover` | `rgba(168,85,247,0.4)` | Focused inputs, hovered interactive cards |
+
+**Rule**: floating chrome must commit to *real* glass (rgba + `BackdropFilter` blur) or *opaque* (`bg-raised`). Translucent fill **without** blur is a layout bug — the page bleeds through unblurred and reads as broken.
+
+**Real-glass widgets** (rgba + blur) — already shipping:
+
+| Widget | File | Blur σ |
+|--------|------|--------|
+| `FluxAppBar` | [`packages/fluxora_core/lib/widgets/flux_app_bar.dart`](packages/fluxora_core/lib/widgets/flux_app_bar.dart) | 20 |
+| `FluxBottomTabs` | [`packages/fluxora_core/lib/widgets/flux_bottom_tabs.dart`](packages/fluxora_core/lib/widgets/flux_bottom_tabs.dart) | 20 |
+| `FluxSidebar` | [`apps/desktop/lib/shared/widgets/flux_sidebar.dart`](apps/desktop/lib/shared/widgets/flux_sidebar.dart) | 20 |
+| `FluxGlassDialog` | [`apps/desktop/lib/shared/widgets/flux_glass_dialog.dart`](apps/desktop/lib/shared/widgets/flux_glass_dialog.dart) | 20 |
+| `FluxGlassMenu` (replaces `PopupMenuButton`) | [`apps/desktop/lib/shared/widgets/flux_glass_menu.dart`](apps/desktop/lib/shared/widgets/flux_glass_menu.dart) | 20 |
+| Command palette overlay | [`apps/desktop/lib/features/command_palette/presentation/widgets/command_palette_overlay.dart`](apps/desktop/lib/features/command_palette/presentation/widgets/command_palette_overlay.dart) | 8 |
+
+**Opaque-raised widgets** (`bg-raised`, no blur) — for surfaces where blur isn't worth the GPU cost:
+- Material `Card` theme default, `AppBar` theme default, `SnackBar` theme default, `InputDecoration.fillColor`. Widgets that opt into glass override these per-instance via `Material(color: transparent)` + their own `BackdropFilter`.
+
+**`surface-glass` (rgba *without* blur)** is now scoped to one place: the in-flow `FluxCard` / `FluxPoster` overlay surfaces, where the rgba is read as "tinted overlay over the page's radial-gradient backdrop", not "glass". Anywhere else that uses `surface-glass` standalone is a bug — wrap it in `BackdropFilter` (real glass) or switch to `bg-raised` (opaque).
 
 The scaffold should also have a **two-radial-gradient overlay** painted once globally:
 

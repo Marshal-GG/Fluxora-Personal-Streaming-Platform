@@ -74,6 +74,8 @@ Components:
 | Roadmap / phase status | `docs/10_planning/01_roadmap.md` |
 | Locked architectural decisions (ADRs) | `docs/10_planning/02_decisions.md` |
 | Manual / external tasks tracker | `docs/10_planning/04_manual_tasks.md` |
+| Ship readiness — what blocks v1 launch | `docs/10_planning/05_ship_readiness.md` |
+| Installer & distribution plan (proposed, awaiting decision) | `docs/10_planning/06_installer_plan.md` |
 | URL inventory (every endpoint, WS, hosted, third-party, future TBD) | `docs/05_infrastructure/02_url_inventory.md` |
 | Design system | `DESIGN.md` |
 

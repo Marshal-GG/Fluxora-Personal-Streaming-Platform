@@ -229,6 +229,40 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 - **Trigger:** optional. Skip unless the threat model expands to assume potential server-side bypasses.
 - **Owner:** project owner.
 
+### 🔲 Distribution: Windows server `.exe` code signing
+
+- **What:** the PyInstaller-built `dist/fluxora-server.exe` is unsigned today. Buy an OV or EV code-signing certificate (Sectigo / DigiCert / SSL.com — ~$200–400/yr OV, ~$300–600/yr EV), add a `signtool.exe sign /tr <timestamp-url> /td sha256 /fd sha256 /a dist/fluxora-server.exe` step to the build pipeline. EV gets you instant SmartScreen reputation; OV builds reputation over downloads.
+- **Why:** Windows SmartScreen blocks unsigned `.exe` downloads with a red "unrecognized publisher" dialog that requires a "More info" → "Run anyway" click-through. Most non-technical users abandon at that screen. First-impression friction is the #1 install conversion killer.
+- **Prereqs:** business identity that the CA can verify (sole proprietor / LLC works; takes ~3–5 business days for OV, ~7 days for EV). Hardware token for EV (USB dongle the CA mails you).
+- **Time:** ~30 min build-pipeline integration; days waiting on cert issuance.
+- **Trigger:** before Path B public launch (see [`05_ship_readiness.md`](./05_ship_readiness.md) §Recommended ship paths). Skip for Path A friends-and-family.
+- **Doc:** [`runbooks/10_pyinstaller_distribution.md`](../05_infrastructure/runbooks/10_pyinstaller_distribution.md) (signing section to be added when this task is picked up).
+- **Owner:** project owner.
+
+### 🔲 Distribution: Desktop app installer + signing (Win / macOS / Linux)
+
+- **What:** Flutter desktop currently ships as a folder of files from `flutter build windows/macos/linux`. Wrap into proper installers:
+  - **Windows:** `flutter_distributor` → `.msix` (preferred — Microsoft Store-compatible) or Inno Setup `.exe`. Sign with the same cert from the server-signing task above.
+  - **macOS:** `.dmg` via `create-dmg`; **must** be code-signed with an Apple Developer ID + notarized via `xcrun notarytool submit` (Gatekeeper hard-blocks unsigned/un-notarized apps from Catalina+).
+  - **Linux:** `.AppImage` (universal, no install needed) and/or `.deb` for Debian/Ubuntu. No signing requirement.
+- **Why:** users can't double-click a folder. macOS install is impossible without notarization. Windows install without signing trips the same SmartScreen friction as the server `.exe`.
+- **Prereqs:** Apple Developer Program membership ($99/yr) for macOS notarization; code-signing cert (shared with server task above) for Windows.
+- **Time:** ~4–8 hours for first-time setup of all three; ~5 min per release after.
+- **Trigger:** before any public download link goes on the landing page.
+- **Owner:** project owner.
+
+### 🔲 Distribution: Mobile app store submission (Play Store + App Store)
+
+- **What:**
+  - **Android (Google Play Console — $25 one-time):** create developer account, generate upload keystore (`keytool -genkey`), configure Play App Signing, create store listing (title, short + full description, 2–8 screenshots per form factor, feature graphic 1024×500, content rating questionnaire, privacy policy URL, target audience), upload signed `.aab`, submit for review (typically <72 hours first time).
+  - **iOS (App Store Connect — Apple Developer Program $99/yr):** create app record, upload via Xcode Organizer or Transporter, configure App Privacy declarations, screenshots for every required device size (currently 6.9" + 6.5" iPhone + 13" iPad), age rating, submit for review (3–7 days first submission; expect at least 1 round of soft rejection).
+- **Why:** sideloading APKs and TestFlight invites work for friends-and-family; public users expect store-discoverable apps.
+- **Prereqs:** privacy policy hosted at `fluxora.marshalx.dev/privacy` (✅ done); app icons in correct densities (✅ done 2026-05-03); store screenshots taken from polished mobile UI (mobile redesign should be at least M3+ before this — current legacy screens look weak).
+- **Time:** ~1 day per platform for first submission (assets + listing copy + form filling); review wait times above.
+- **Risks:** iOS soft-rejection patterns: streaming apps may need to demonstrate first-party content rights or be classified as a "media player" rather than "streaming service" (see Risks table in [`03_open_questions.md`](./03_open_questions.md)).
+- **Trigger:** before Path B public launch. Mobile redesign should be reasonably complete first.
+- **Owner:** project owner.
+
 ### 🔲 Long-term: decide whether to register `fluxora.cloud`
 
 - **What:** if v2 multi-tenant becomes a real plan, register `fluxora.cloud` (or another single-purpose TLD) so per-user subdomains (`<user>.fluxora.cloud`) get free Universal SSL. Alternative: pay $10/mo for Cloudflare ACM on `*.fluxora.marshalx.dev`.
