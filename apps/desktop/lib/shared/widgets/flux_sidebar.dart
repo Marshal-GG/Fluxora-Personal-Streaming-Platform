@@ -27,6 +27,8 @@ import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_core/entities/system_stats.dart';
 
+import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
+import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_state.dart';
 import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
 
@@ -105,12 +107,6 @@ const List<_NavEntry> _navItems = [
     icon: Icons.workspace_premium_outlined,
     path: '/subscription',
   ),
-  _NavEntry(
-    id: 'help',
-    label: 'Help',
-    icon: Icons.help_outline,
-    path: '/help',
-  ),
 ];
 
 // ─── Uptime formatter ────────────────────────────────────────────────────────
@@ -129,22 +125,14 @@ String _formatUptime(int seconds) {
 /// Redesigned sidebar for the Fluxora desktop control panel.
 ///
 /// Width is fixed at 232 px to match the prototype exactly. The sidebar is
-/// self-contained: it reads the active route from [GoRouterState] and the
-/// live system stats from [SystemStatsCubit] — no external state is passed in
-/// except [currentTier], which gates the upgrade-callout card.
+/// self-contained: it reads the active route from [GoRouterState], the live
+/// system stats from [SystemStatsCubit], and the subscription tier from the
+/// shell-level [SettingsCubit] — no external state is passed in.
 ///
 /// **Do not pass** the active path as a constructor argument; the widget
 /// reads it internally to avoid stale-state bugs on deep-links.
 class FluxSidebar extends StatelessWidget {
-  const FluxSidebar({
-    super.key,
-    this.currentTier = 'free',
-  });
-
-  /// The user's current subscription tier.
-  ///
-  /// The upgrade callout is hidden when this equals `'ultimate'`.
-  final String currentTier;
+  const FluxSidebar({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -153,8 +141,8 @@ class FluxSidebar extends StatelessWidget {
       child: ClipRect(
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: DecoratedBox(
-            decoration: const BoxDecoration(
+          child: const DecoratedBox(
+            decoration: BoxDecoration(
               color: AppColors.sidebarGlass,
               border: Border(
                 right: BorderSide(color: AppColors.borderSubtle),
@@ -166,10 +154,10 @@ class FluxSidebar extends StatelessWidget {
                 // The prototype's sidebar starts directly with the nav list —
                 // the wordmark + tagline live in the 36 px FluxTitlebar at the
                 // top of the window instead.
-                const Expanded(child: _NavList()),
-                const _SystemStatusBlock(),
-                if (currentTier != 'ultimate') const _UpgradeCard(),
-                const _UserFooter(),
+                Expanded(child: _NavList()),
+                _SystemStatusBlock(),
+                _UpgradeCard(),
+                _UserFooter(),
               ],
             ),
           ),
@@ -334,33 +322,44 @@ class _SystemStatusBlock extends StatelessWidget {
     return BlocSelector<SystemStatsCubit, SystemStatsState, SystemStats?>(
       selector: (state) => state.latest,
       builder: (context, latest) {
+        // Inset raised panel — distinguishes the system-status block from
+        // the surrounding sidebarGlass nav rail without breaking the
+        // glassmorphic feel. Slightly darker tint + 1 px border.
         return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Eyebrow — JSX lines 41–43, forced to fontSize 10.
-              Text('System Status', style: _eyebrowStyle),
-              const SizedBox(height: AppSpacing.s10),
-              // Three status rows, 10 px gap between them.
-              _ServerRunningRow(
-                latest: latest,
-                titleStyle: _titleStyle,
-                subtitleStyle: _subtitleStyle,
-              ),
-              const SizedBox(height: AppSpacing.s10),
-              _LanModeRow(
-                latest: latest,
-                titleStyle: _titleStyle,
-                monoStyle: _monoStyle,
-              ),
-              const SizedBox(height: AppSpacing.s10),
-              _InternetAccessRow(
-                latest: latest,
-                titleStyle: _titleStyle,
-                subtitleStyle: _subtitleStyle,
-              ),
-            ],
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            decoration: BoxDecoration(
+              color: const Color(0x33000000), // rgba(0,0,0,0.2)
+              border: Border.all(color: AppColors.borderSubtle),
+              borderRadius: BorderRadius.circular(AppRadii.md),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Eyebrow — JSX lines 41–43, forced to fontSize 10.
+                Text('System Status', style: _eyebrowStyle),
+                const SizedBox(height: AppSpacing.s10),
+                // Three status rows, 10 px gap between them.
+                _ServerRunningRow(
+                  latest: latest,
+                  titleStyle: _titleStyle,
+                  subtitleStyle: _subtitleStyle,
+                ),
+                const SizedBox(height: AppSpacing.s10),
+                _LanModeRow(
+                  latest: latest,
+                  titleStyle: _titleStyle,
+                  monoStyle: _monoStyle,
+                ),
+                const SizedBox(height: AppSpacing.s10),
+                _InternetAccessRow(
+                  latest: latest,
+                  titleStyle: _titleStyle,
+                  subtitleStyle: _subtitleStyle,
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -516,7 +515,10 @@ class _InternetAccessRow extends StatelessWidget {
 
 /// Upgrade callout — JSX lines 72–97.
 ///
-/// Only rendered when [FluxSidebar.currentTier] != `'ultimate'`.
+/// Self-gates on the shell-level [SettingsCubit]: hidden when the user is
+/// already on `'ultimate'`. While settings are loading the card stays
+/// visible — defaulting to "show" matches the optimistic-free assumption
+/// used everywhere else in the app.
 class _UpgradeCard extends StatelessWidget {
   const _UpgradeCard();
 
@@ -549,6 +551,10 @@ class _UpgradeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final state = context.watch<SettingsCubit>().state;
+    if (state is SettingsLoaded && state.tier == 'ultimate') {
+      return const SizedBox.shrink();
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
       child: Container(

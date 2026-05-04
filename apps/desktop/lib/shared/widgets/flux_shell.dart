@@ -35,6 +35,9 @@ import 'package:fluxora_desktop/features/command_palette/presentation/notifier/c
 import 'package:fluxora_desktop/features/command_palette/presentation/widgets/command_palette_overlay.dart';
 import 'package:fluxora_desktop/features/notifications/presentation/cubit/notifications_cubit.dart';
 import 'package:fluxora_desktop/features/notifications/presentation/widgets/notifications_panel.dart';
+import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
+import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_state.dart';
+import 'package:fluxora_desktop/features/subscription/presentation/widgets/upgrade_dialog.dart';
 import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_sidebar.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_status_bar.dart';
@@ -57,6 +60,14 @@ class FluxShell extends StatelessWidget {
         BlocProvider<NotificationsCubit>(
           create: (_) => getIt<NotificationsCubit>()..start(),
         ),
+        // Shell-scoped SettingsCubit — single source of truth for the
+        // sidebar's tier-gated upgrade callout and the startup
+        // UpgradeDialog. Settings / Subscription / Encoder screens still
+        // build their own instance for save flows; this one is read-only
+        // for shell chrome.
+        BlocProvider<SettingsCubit>(
+          create: (_) => getIt<SettingsCubit>()..loadSettings(),
+        ),
       ],
       child: _ShellBody(child: child),
     );
@@ -74,6 +85,7 @@ class _ShellBody extends StatefulWidget {
 class _ShellBodyState extends State<_ShellBody> {
   final _panelNotifier = NotificationsPanelNotifier();
   final _paletteNotifier = CommandPaletteNotifier();
+  bool _upgradeDialogShown = false;
 
   @override
   void dispose() {
@@ -89,27 +101,43 @@ class _ShellBodyState extends State<_ShellBody> {
         ? LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyK)
         : LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyK);
 
-    return NotificationsPanelScope(
-      notifier: _panelNotifier,
-      child: CommandPaletteScope(
-        notifier: _paletteNotifier,
-        child: Shortcuts(
-          shortcuts: <ShortcutActivator, Intent>{
-            paletteShortcut: const _OpenCommandPaletteIntent(),
-          },
-          child: Actions(
-            actions: <Type, Action<Intent>>{
-              _OpenCommandPaletteIntent:
-                  CallbackAction<_OpenCommandPaletteIntent>(
-                onInvoke: (_) {
-                  _paletteNotifier.toggle();
-                  return null;
-                },
-              ),
+    return BlocListener<SettingsCubit, SettingsState>(
+      // Fire the upgrade dialog once per app launch — only after settings
+      // resolve and only when the user is not already on `'ultimate'`.
+      // Mirrors the gate on the sidebar's `_UpgradeCard`.
+      listenWhen: (prev, curr) =>
+          curr is SettingsLoaded && prev is! SettingsLoaded,
+      listener: (context, state) {
+        if (_upgradeDialogShown) return;
+        if (state is! SettingsLoaded) return;
+        if (state.tier == 'ultimate') return;
+        _upgradeDialogShown = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          showUpgradeDialog(context);
+        });
+      },
+      child: NotificationsPanelScope(
+        notifier: _panelNotifier,
+        child: CommandPaletteScope(
+          notifier: _paletteNotifier,
+          child: Shortcuts(
+            shortcuts: <ShortcutActivator, Intent>{
+              paletteShortcut: const _OpenCommandPaletteIntent(),
             },
-            child: Focus(
-              autofocus: true,
-              child: Scaffold(
+            child: Actions(
+              actions: <Type, Action<Intent>>{
+                _OpenCommandPaletteIntent:
+                    CallbackAction<_OpenCommandPaletteIntent>(
+                  onInvoke: (_) {
+                    _paletteNotifier.toggle();
+                    return null;
+                  },
+                ),
+              },
+              child: Focus(
+                autofocus: true,
+                child: Scaffold(
                 backgroundColor: AppColors.bgRoot,
                 body: SafeArea(
                   child: ValueListenableBuilder<bool>(
@@ -196,6 +224,7 @@ class _ShellBodyState extends State<_ShellBody> {
           ),
         ),
       ),
+    ),
     );
   }
 }
