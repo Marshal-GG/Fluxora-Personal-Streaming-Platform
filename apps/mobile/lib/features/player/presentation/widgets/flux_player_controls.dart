@@ -30,6 +30,9 @@ class FluxPlayerControls extends StatefulWidget {
     required this.controller,
     required this.title,
     required this.onBack,
+    this.hdrFormat,
+    this.tonemapped = false,
+    this.onTonemapChanged,
     super.key,
   });
 
@@ -37,6 +40,20 @@ class FluxPlayerControls extends StatefulWidget {
   final PlayerControlsController controller;
   final String title;
   final VoidCallback onBack;
+
+  /// Source HDR format for the current stream (e.g. `"HDR10"`).  Null
+  /// hides the HDR badge.  Provided by the player_screen from
+  /// `PlayerReady.hdrFormat`.
+  final String? hdrFormat;
+
+  /// True when the server is currently tonemapping HDR → SDR.  Drives
+  /// the toggle's checkmark in the overflow menu.
+  final bool tonemapped;
+
+  /// Invoked when the operator toggles tonemap.  Player_screen wires
+  /// this to `PlayerCubit.setTonemap(bool)`.  Null disables the toggle
+  /// item in the overflow menu.
+  final ValueChanged<bool>? onTonemapChanged;
 
   @override
   State<FluxPlayerControls> createState() => _FluxPlayerControlsState();
@@ -82,6 +99,79 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
     // the time we redraw we'll be in a small window where the overlay
     // would be useless chrome.
     widget.controller.hide();
+  }
+
+  /// Bottom sheet wired to the 3-dot icon in the top bar.  Hosts options
+  /// that don't deserve a permanent button — currently the HDR → SDR
+  /// tonemap toggle (only shown when the source is HDR).  Future
+  /// additions like a quality / speed picker live here too.
+  Future<void> _showOverflowMenu() async {
+    final isHdr = widget.hdrFormat != null;
+    final canTonemap = isHdr && widget.onTonemapChanged != null;
+    if (!canTonemap) {
+      // Nothing to show yet — the menu would be an empty sheet.  Don't
+      // open it; gives the operator a hint that the icon is reserved
+      // for future controls without making it look broken.
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1626),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: Icon(
+                widget.tonemapped
+                    ? Icons.hdr_off_rounded
+                    : Icons.hdr_on_rounded,
+                color: Colors.white,
+              ),
+              title: const Text(
+                'Tone-map HDR to SDR',
+                style: TextStyle(color: Colors.white),
+              ),
+              subtitle: Text(
+                widget.tonemapped
+                    ? 'Server is converting BT.2020 PQ to BT.709 (slower).'
+                    : 'Source is ${widget.hdrFormat}; tap to convert if '
+                        'colours look washed.',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.6),
+                  fontSize: 12,
+                ),
+              ),
+              trailing: Switch(
+                value: widget.tonemapped,
+                onChanged: (v) {
+                  Navigator.of(ctx).pop();
+                  widget.onTonemapChanged?.call(v);
+                },
+              ),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                widget.onTonemapChanged?.call(!widget.tonemapped);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -371,9 +461,11 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                   child: _TopBar(
                     title: widget.title,
                     onBack: widget.onBack,
-                    onMore: () {},
+                    onMore: _showOverflowMenu,
                     onPip: _pipSupported == true ? _enterPip : null,
                     sleepActive: _sleepDuration != null,
+                    hdrFormat: widget.hdrFormat,
+                    tonemapped: widget.tonemapped,
                   ),
                 ),
               ),
@@ -517,6 +609,8 @@ class _TopBar extends StatelessWidget {
     required this.onMore,
     required this.onPip,
     required this.sleepActive,
+    this.hdrFormat,
+    this.tonemapped = false,
   });
 
   final String title;
@@ -528,6 +622,15 @@ class _TopBar extends StatelessWidget {
   /// instead of rendering a no-op chip.
   final VoidCallback? onPip;
   final bool sleepActive;
+
+  /// HDR format of the source — drives the `HDR10` / `HLG` / `DV` chip
+  /// next to the PIP icon.  Null hides the chip entirely (SDR sources).
+  final String? hdrFormat;
+
+  /// True when the server is currently tonemapping HDR → SDR; the chip
+  /// switches from a violet `HDR10` to a neutral `SDR` to make the
+  /// override state visible at a glance.
+  final bool tonemapped;
 
   @override
   Widget build(BuildContext context) {
@@ -558,6 +661,14 @@ class _TopBar extends StatelessWidget {
               padding: EdgeInsets.only(right: 4),
               child: Icon(Icons.bedtime,
                   color: AppColors.violetTint, size: 18),
+            ),
+          if (hdrFormat != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: _HdrChip(
+                format: hdrFormat!,
+                tonemapped: tonemapped,
+              ),
             ),
           if (onPip != null)
             IconButton(
@@ -1010,6 +1121,45 @@ class _DragHud extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Small inline pill showing the current stream's HDR format.  When
+/// the server is tonemapping HDR → SDR, the pill flips to a neutral
+/// "SDR" label so the override state is visible at a glance.
+class _HdrChip extends StatelessWidget {
+  const _HdrChip({required this.format, required this.tonemapped});
+
+  final String format; // "HDR10" / "HLG" / "DolbyVision"
+  final bool tonemapped;
+
+  String get _label {
+    if (tonemapped) return 'SDR';
+    if (format == 'DolbyVision') return 'DV';
+    return format;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = tonemapped
+        ? Colors.white.withValues(alpha: 0.15)
+        : AppColors.violet.withValues(alpha: 0.85);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        _label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.4,
+        ),
       ),
     );
   }

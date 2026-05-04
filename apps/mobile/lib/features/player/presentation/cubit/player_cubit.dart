@@ -57,6 +57,13 @@ class PlayerCubit extends Cubit<PlayerState> {
   Timer? _progressTimer;
   WebRtcSignalingService? _signaling;
 
+  // Cached `startStream` call args so `setTonemap()` can restart with the
+  // same file + name + poster after a tonemap toggle.  Cleared on
+  // `dismiss()` / `_disposeCurrentSession()`.
+  String? _lastFileId;
+  String? _lastFileName;
+  String? _lastPosterUrl;
+
   // ---------------------------------------------------------------------------
   // Public
   // ---------------------------------------------------------------------------
@@ -66,15 +73,23 @@ class PlayerCubit extends Cubit<PlayerState> {
     String fileName,
     double resumeSec, {
     String? posterUrl,
+    bool tonemap = false,
   }) async {
     // M7: when the cubit is a long-lived singleton, a second `startStream`
     // must clean up the previous session before opening the next one.
     // First-call (no prior session) is cheap — every dispose is null-guarded.
     await _disposeCurrentSession();
 
+    // Remember the call args so `setTonemap` can restart with the same
+    // file + resume position when the user toggles the HDR option mid-
+    // playback.
+    _lastFileId = fileId;
+    _lastFileName = fileName;
+    _lastPosterUrl = posterUrl;
+
     emit(const PlayerLoading());
     try {
-      final response = await _repository.startStream(fileId);
+      final response = await _repository.startStream(fileId, tonemap: tonemap);
       _sessionId = response.sessionId;
 
       final token = await _secureStorage.getAuthToken();
@@ -130,6 +145,8 @@ class PlayerCubit extends Cubit<PlayerState> {
         controller: _controller!,
         resumeSec: seekSec,
         streamPath: path,
+        hdrFormat: response.hdrFormat,
+        tonemapped: response.tonemapped,
       ));
 
       _startProgressTimer();
@@ -145,6 +162,36 @@ class PlayerCubit extends Cubit<PlayerState> {
       _log.e('Failed to start stream', error: e, stackTrace: st);
       emit(const PlayerFailure('Failed to start stream. Please try again.'));
     }
+  }
+
+  /// Toggle server-side HDR → SDR tonemapping for the current session.
+  ///
+  /// Restarts the stream with the new flag — the server has to respin
+  /// the FFmpeg pipeline because tonemap forces transcode mode (decoded
+  /// pixels needed by the zscale + Hable filter chain).  Resume position
+  /// is preserved from the player's current playback time, falling back
+  /// to the original `resumeSec` if no time is available yet.
+  ///
+  /// No-op when there's no active session, or when the cached file
+  /// arguments are missing (e.g. between dispose and the next start).
+  Future<void> setTonemap(bool enabled) async {
+    final fileId = _lastFileId;
+    final fileName = _lastFileName;
+    if (fileId == null || fileName == null) {
+      _log.w('setTonemap called with no active stream; ignoring');
+      return;
+    }
+    final currentState = state;
+    final currentMs = _player?.state.position.inMilliseconds ?? 0;
+    final fallbackSec = currentState is PlayerReady ? currentState.resumeSec : 0.0;
+    final resumeSec = currentMs > 0 ? currentMs / 1000.0 : fallbackSec;
+    await startStream(
+      fileId,
+      fileName,
+      resumeSec,
+      posterUrl: _lastPosterUrl,
+      tonemap: enabled,
+    );
   }
 
   // ---------------------------------------------------------------------------

@@ -10,9 +10,13 @@ class PlayerRepositoryImpl implements PlayerRepository {
   final ApiClient _apiClient;
 
   @override
-  Future<StreamStartResponse> startStream(String fileId) =>
+  Future<StreamStartResponse> startStream(
+    String fileId, {
+    bool tonemap = false,
+  }) =>
       _apiClient.post<StreamStartResponse>(
         Endpoints.streamStart(fileId),
+        queryParameters: tonemap ? const {'tonemap': 'true'} : null,
         fromJson: (data) =>
             StreamStartResponse.fromJson(data as Map<String, dynamic>),
       );

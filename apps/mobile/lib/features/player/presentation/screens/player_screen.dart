@@ -238,6 +238,10 @@ class _PlayerViewState extends State<_PlayerView>
                         controller: controller,
                         fileName: fileName,
                         controlsController: _controlsController,
+                        hdrFormat: state.hdrFormat,
+                        tonemapped: state.tonemapped,
+                        onTonemapChanged: (v) =>
+                            context.read<PlayerCubit>().setTonemap(v),
                       ),
                       _MinimizeHandle(
                         onUpdate: _onMinimizeUpdate,
@@ -324,11 +328,17 @@ class _VideoView extends StatelessWidget {
     required this.controller,
     required this.fileName,
     required this.controlsController,
+    this.hdrFormat,
+    this.tonemapped = false,
+    this.onTonemapChanged,
   });
 
   final VideoController controller;
   final String fileName;
   final PlayerControlsController controlsController;
+  final String? hdrFormat;
+  final bool tonemapped;
+  final ValueChanged<bool>? onTonemapChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -345,6 +355,9 @@ class _VideoView extends StatelessWidget {
           controller: controlsController,
           title: fileName,
           onBack: () => Navigator.of(context).pop(),
+          hdrFormat: hdrFormat,
+          tonemapped: tonemapped,
+          onTonemapChanged: onTonemapChanged,
         ),
       ],
     );

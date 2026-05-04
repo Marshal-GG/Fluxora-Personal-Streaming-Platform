@@ -1,7 +1,7 @@
 import 'package:fluxora_mobile/features/player/domain/entities/stream_start_response.dart';
 
 abstract class PlayerRepository {
-  Future<StreamStartResponse> startStream(String fileId);
+  Future<StreamStartResponse> startStream(String fileId, {bool tonemap = false});
   Future<void> stopStream(String sessionId);
   Future<void> updateProgress(String sessionId, double progressSec);
 }

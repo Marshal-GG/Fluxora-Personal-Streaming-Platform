@@ -30,6 +30,8 @@ class PlayerReady extends PlayerState {
     required this.controller,
     this.resumeSec = 0.0,
     this.streamPath = StreamPath.hls,
+    this.hdrFormat,
+    this.tonemapped = false,
   });
 
   final String sessionId;
@@ -41,6 +43,20 @@ class PlayerReady extends PlayerState {
   /// The active streaming transport.
   final StreamPath streamPath;
 
+  /// Source HDR format if any: "HDR10" / "HLG" / "DolbyVision" / null
+  /// (SDR).  Drives the HDR badge in the player chrome.
+  final String? hdrFormat;
+
+  /// True when the server is currently tonemapping HDR → SDR for this
+  /// session.  Drives the toggle in the player's overflow menu — when
+  /// true, the user has explicitly asked the server to convert; when
+  /// false, the source's HDR bitstream is being preserved (player /
+  /// display determines the final look).
+  final bool tonemapped;
+
+  /// True when the source is HDR.  Convenience alias.
+  bool get isHdrSource => hdrFormat != null && hdrFormat!.isNotEmpty;
+
   PlayerReady copyWith({StreamPath? streamPath}) => PlayerReady(
         sessionId: sessionId,
         fileName: fileName,
@@ -48,6 +64,8 @@ class PlayerReady extends PlayerState {
         controller: controller,
         resumeSec: resumeSec,
         streamPath: streamPath ?? this.streamPath,
+        hdrFormat: hdrFormat,
+        tonemapped: tonemapped,
       );
 }
 
