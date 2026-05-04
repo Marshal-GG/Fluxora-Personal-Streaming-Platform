@@ -7,7 +7,6 @@
 
 ## When this is worth doing
 
-- ✅ The "first 30 minutes" setup in your `CONTRIBUTING.md` has more than 5 steps
 - ✅ Your project requires specific tool versions (Python 3.11, Node 22, Flutter 3.41)
 - ✅ Contributors include people on different OSes (Windows, macOS, Linux)
 - ✅ You want GitHub Codespaces support

@@ -22,7 +22,6 @@ Fluxora/
 ├── docs/           # Architecture, planning, design docs
 ├── scripts/        # Build, release, CI scripts
 │
-├── CLAUDE.md
 ├── DESIGN.md
 ├── README.md
 └── .github/        # GitHub Actions CI/CD
