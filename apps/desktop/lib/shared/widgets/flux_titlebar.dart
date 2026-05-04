@@ -12,12 +12,15 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/widgets/fluxora_logo.dart';
 
+import 'package:fluxora_desktop/features/notifications/presentation/cubit/notifications_cubit.dart';
+import 'package:fluxora_desktop/features/notifications/presentation/cubit/notifications_state.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_shell.dart';
 
 /// Pixel-matched 36 px titlebar.
@@ -227,10 +230,10 @@ class _NotificationsBellButtonState extends State<_NotificationsBellButton> {
               border: Border.all(color: const Color(0x0DFFFFFF)),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: const Stack(
+            child: Stack(
               clipBehavior: Clip.none,
               children: [
-                Center(
+                const Center(
                   child: Icon(
                     Icons.notifications_none_rounded,
                     size: 13,
@@ -240,7 +243,14 @@ class _NotificationsBellButtonState extends State<_NotificationsBellButton> {
                 Positioned(
                   top: 4,
                   right: 4,
-                  child: _BellDot(),
+                  child: BlocSelector<NotificationsCubit,
+                      NotificationsState, int>(
+                    selector: (s) =>
+                        s is NotificationsLoaded ? s.unreadCount : 0,
+                    builder: (_, count) => count > 0
+                        ? const _BellDot()
+                        : const SizedBox.shrink(),
+                  ),
                 ),
               ],
             ),

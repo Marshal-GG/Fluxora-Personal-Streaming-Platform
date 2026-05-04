@@ -54,12 +54,20 @@ class NotificationsCubit extends Cubit<NotificationsState> {
     emit(NotificationsLoaded(items: items, unreadCount: unread));
   }
 
+  /// Marks one notification read. No-ops if the item is already read so the
+  /// server doesn't 404 on stale taps. Rethrows on transport failure so the
+  /// UI can surface a SnackBar.
   Future<void> markRead(String id) async {
+    final current = state;
+    if (current is NotificationsLoaded) {
+      final existing = _findById(current.items, id);
+      if (existing != null && existing.readAt != null) return;
+    }
     try {
       await _repository.markRead(id);
-      final current = state;
-      if (current is! NotificationsLoaded) return;
-      final updated = current.items
+      final after = state;
+      if (after is! NotificationsLoaded) return;
+      final updated = after.items
           .map((n) => n.id == id
               ? n.copyWith(readAt: DateTime.now().toIso8601String())
               : n)
@@ -67,9 +75,11 @@ class NotificationsCubit extends Cubit<NotificationsState> {
       _emitLoaded(updated);
     } catch (e, st) {
       _log.e('markRead failed', error: e, stackTrace: st);
+      rethrow;
     }
   }
 
+  /// Marks every unread notification read. Rethrows on transport failure.
   Future<void> markAllRead() async {
     try {
       await _repository.markAllRead();
@@ -82,9 +92,13 @@ class NotificationsCubit extends Cubit<NotificationsState> {
       _emitLoaded(updated);
     } catch (e, st) {
       _log.e('markAllRead failed', error: e, stackTrace: st);
+      rethrow;
     }
   }
 
+  /// Dismisses a notification. Rethrows on transport failure so the UI can
+  /// surface a SnackBar (the local list is only updated after the server
+  /// confirms, so there's no rollback to do).
   Future<void> dismiss(String id) async {
     try {
       await _repository.dismiss(id);
@@ -93,7 +107,15 @@ class NotificationsCubit extends Cubit<NotificationsState> {
       _emitLoaded(current.items.where((n) => n.id != id).toList());
     } catch (e, st) {
       _log.e('dismiss failed', error: e, stackTrace: st);
+      rethrow;
     }
+  }
+
+  AppNotification? _findById(List<AppNotification> items, String id) {
+    for (final n in items) {
+      if (n.id == id) return n;
+    }
+    return null;
   }
 
   @override

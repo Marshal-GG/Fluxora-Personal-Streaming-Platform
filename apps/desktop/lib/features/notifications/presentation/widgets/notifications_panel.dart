@@ -17,6 +17,7 @@ import 'package:fluxora_core/entities/app_notification.dart';
 
 import 'package:fluxora_desktop/features/notifications/presentation/cubit/notifications_cubit.dart';
 import 'package:fluxora_desktop/features/notifications/presentation/cubit/notifications_state.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_shell.dart';
 
 // ── Panel toggle notifier ─────────────────────────────────────────────────────
 
@@ -99,7 +100,7 @@ class _NotificationsPanelState extends State<NotificationsPanel> {
   }
 }
 
-class _PanelBody extends StatelessWidget {
+class _PanelBody extends StatefulWidget {
   const _PanelBody({
     required this.filter,
     required this.onFilterChanged,
@@ -115,8 +116,37 @@ class _PanelBody extends StatelessWidget {
   final VoidCallback onClose;
 
   @override
+  State<_PanelBody> createState() => _PanelBodyState();
+}
+
+class _PanelBodyState extends State<_PanelBody>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 220),
+  );
+  late final Animation<Offset> _slide = Tween<Offset>(
+    begin: const Offset(1, 0),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic));
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    return SlideTransition(
+      position: _slide,
+      child: DecoratedBox(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
@@ -136,11 +166,11 @@ class _PanelBody extends StatelessWidget {
       ),
       child: Column(
         children: [
-          _Header(onClose: onClose),
+          _Header(onClose: widget.onClose),
           _FilterBar(
-            filter: filter,
-            filters: filters,
-            onChanged: onFilterChanged,
+            filter: widget.filter,
+            filters: widget.filters,
+            onChanged: widget.onFilterChanged,
           ),
           Expanded(
             child: BlocBuilder<NotificationsCubit, NotificationsState>(
@@ -163,7 +193,7 @@ class _PanelBody extends StatelessWidget {
                       ),
                     ),
                   NotificationsLoaded(:final items) => () {
-                      final visible = filtered(items);
+                      final visible = widget.filtered(items);
                       if (visible.isEmpty) return const _EmptyState();
                       return _NotificationList(items: visible);
                     }(),
@@ -174,6 +204,7 @@ class _PanelBody extends StatelessWidget {
           const _Footer(),
         ],
       ),
+    ),
     );
   }
 }
@@ -234,8 +265,7 @@ class _Header extends StatelessWidget {
           _IconBtn(
             icon: Icons.done_all,
             tooltip: 'Mark all as read',
-            onTap: () =>
-                context.read<NotificationsCubit>().markAllRead(),
+            onTap: () => _markAllReadWithFeedback(context),
           ),
           const SizedBox(width: 4),
           _IconBtn(
@@ -246,6 +276,33 @@ class _Header extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+Future<void> _markAllReadWithFeedback(BuildContext context) async {
+  final cubit = context.read<NotificationsCubit>();
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await cubit.markAllRead();
+  } catch (_) {
+    messenger.showSnackBar(const SnackBar(
+      content: Text('Could not mark notifications as read'),
+    ));
+  }
+}
+
+Future<void> _dismissWithFeedback(
+  BuildContext context,
+  String id,
+) async {
+  final cubit = context.read<NotificationsCubit>();
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await cubit.dismiss(id);
+  } catch (_) {
+    messenger.showSnackBar(const SnackBar(
+      content: Text('Could not dismiss notification'),
+    ));
   }
 }
 
@@ -403,6 +460,7 @@ class _NotificationRow extends StatelessWidget {
       child: GestureDetector(
         onTap: () {
           cubit.markRead(n.id);
+          NotificationsPanelScope.of(context).close();
           final route = _routeForKind(n.relatedKind);
           context.go(route);
         },
@@ -481,7 +539,7 @@ class _NotificationRow extends StatelessWidget {
               _IconBtn(
                 icon: Icons.close,
                 tooltip: 'Dismiss',
-                onTap: () => cubit.dismiss(n.id),
+                onTap: () => _dismissWithFeedback(context, n.id),
                 size: 26,
               ),
             ],
@@ -551,25 +609,15 @@ class _Footer extends StatelessWidget {
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: Color(0x0DFFFFFF))),
       ),
+      // The prototype's footer paired "Notification Settings" with
+      // "Mark all as read", but desktop has no notifications-prefs surface
+      // yet — keep just the action and right-align it. Re-introduce the
+      // settings link once a real prefs section ships under `/settings`.
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisAlignment: MainAxisAlignment.end,
         children: [
           GestureDetector(
-            onTap: () => context.go('/settings'),
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: Text(
-                'Notification Settings',
-                style: AppTypography.bodySmall.copyWith(
-                  color: AppColors.violet,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ),
-          GestureDetector(
-            onTap: () =>
-                context.read<NotificationsCubit>().markAllRead(),
+            onTap: () => _markAllReadWithFeedback(context),
             child: MouseRegion(
               cursor: SystemMouseCursors.click,
               child: Text(

@@ -7,9 +7,10 @@ import 'package:fluxora_core/network/endpoints.dart';
 import 'package:logger/logger.dart';
 import 'package:fluxora_desktop/features/notifications/domain/repositories/notifications_repository.dart';
 
-// TODO(M8): Replace polling with WS /api/v1/ws/notifications once desktop
-// gains a proper WebSocket wrapper that supports the same HMAC-bearer auth
-// pattern used by the server's `get_current_user_ws` dependency.
+// Polling is the v1 transport for desktop notifications, matching the same
+// design choice used by `SystemStatsCubit` — see that cubit's header for
+// rationale (no WebSocket wrapper with HMAC-bearer auth on desktop yet).
+// `WS /api/v1/ws/notifications` exists server-side; switch to it post-v1.
 class NotificationsRepositoryImpl implements NotificationsRepository {
   NotificationsRepositoryImpl({required ApiClient apiClient})
       : _apiClient = apiClient;
@@ -25,10 +26,12 @@ class NotificationsRepositoryImpl implements NotificationsRepository {
       _apiClient.get(
         Endpoints.notifications,
         queryParameters: {
-          if (onlyUnread) 'unread_only': 'true',
+          if (onlyUnread) 'unread': 'true',
           'limit': '$limit',
         },
-        fromJson: (json) => (json['notifications'] as List<dynamic>)
+        // Server returns a bare JSON array (`response_model=list[...]`), not
+        // a `{"notifications": [...]}` envelope.
+        fromJson: (json) => (json as List<dynamic>)
             .map(
               (e) => AppNotification.fromJson(e as Map<String, dynamic>),
             )
@@ -52,15 +55,23 @@ class NotificationsRepositoryImpl implements NotificationsRepository {
 
   /// Polls [Endpoints.notifications] every 5 s, emitting new notifications as
   /// they arrive.  Duplicates (same `id`) are filtered client-side.
+  ///
+  /// `seen` is capped at [_seenCap] entries (FIFO eviction) so a long-running
+  /// session doesn't accumulate IDs without bound. Each poll pulls at most
+  /// `_pollLimit` rows, so the cap is generous enough that we never evict an
+  /// ID we'd see again on the very next tick.
   @override
   Stream<AppNotification> liveStream() async* {
     final seen = <String>{};
     while (true) {
       await Future<void>.delayed(const Duration(seconds: 5));
       try {
-        final items = await list(limit: 20);
+        final items = await list(limit: _pollLimit);
         for (final n in items) {
           if (seen.add(n.id)) {
+            if (seen.length > _seenCap) {
+              seen.remove(seen.first);
+            }
             yield n;
           }
         }
@@ -71,4 +82,7 @@ class NotificationsRepositoryImpl implements NotificationsRepository {
       }
     }
   }
+
+  static const int _pollLimit = 20;
+  static const int _seenCap = 500;
 }
