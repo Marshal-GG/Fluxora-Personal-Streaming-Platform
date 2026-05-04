@@ -1,7 +1,7 @@
 # GPU & Encoder UX Plan — Desktop Settings + Server-Side Orchestration
 
 > **Category:** Planning
-> **Status:** Drafted 2026-05-04. **Slice A shipped 2026-05-04** (encoder availability surfacing + advisor + active-encoder strip). Slices B + C awaiting owner approval.
+> **Status:** Drafted 2026-05-04. **Slice A shipped 2026-05-04** (encoder availability surfacing + advisor + active-encoder strip). **Slice B shipped 2026-05-04** (hardware probe + `/transcoding/devices` + Detected Hardware card). Slice C (multi-encoder fallback chain) awaiting owner approval.
 > **Goal:** Make the operator's GPU + encoder reality *visible* in the desktop control panel, then *intelligent* (recommendations + automatic fallback), then *resilient* (multi-encoder routing under load).
 > **Scope:** Server (`apps/server/`) + Desktop (`apps/desktop/`). Mobile shows the active encoder per-stream as a footnote only — no UI re-architecture.
 
@@ -82,7 +82,7 @@ Three slices, each independently shippable. **Slice A is the value-per-effort sw
 
 **Mock entries deletable after Slice A:** none yet — Slice A is additive UI.
 
-### Slice B — "What hardware is in this box?" (~1 day)
+### Slice B — "What hardware is in this box?" ✅ shipped 2026-05-04
 
 **New endpoint, GPU detection, hardware cards.**
 

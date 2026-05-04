@@ -1,4 +1,5 @@
 import 'package:fluxora_core/entities/encoder_advice.dart';
+import 'package:fluxora_core/entities/hardware_devices.dart';
 import 'package:fluxora_core/entities/transcoding_status.dart';
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/network/endpoints.dart';
@@ -22,5 +23,12 @@ class TranscodingRepositoryImpl implements TranscodingRepository {
         Endpoints.transcodingAdvisor,
         fromJson: (json) =>
             EncoderAdvice.fromJson(json as Map<String, dynamic>),
+      );
+
+  @override
+  Future<HardwareDevices> devices() => _apiClient.get(
+        Endpoints.transcodingDevices,
+        fromJson: (json) =>
+            HardwareDevices.fromJson(json as Map<String, dynamic>),
       );
 }

@@ -10,7 +10,9 @@ import 'package:fluxora_desktop/core/di/injector.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_state.dart';
 import 'package:fluxora_desktop/features/transcoding/domain/repositories/transcoding_repository.dart';
+import 'package:fluxora_desktop/features/transcoding/presentation/cubit/hardware_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/transcoding_cubit.dart';
+import 'package:fluxora_desktop/features/transcoding/presentation/widgets/detected_hardware_card.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/widgets/encoder_status_panel.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
@@ -58,6 +60,14 @@ class SettingsScreen extends StatelessWidget {
           create: (_) => TranscodingCubit(
             repository: getIt<TranscodingRepository>(),
           )..start(),
+        ),
+        // Powers the Detected Hardware card.  One-shot on screen open;
+        // server caches the probe for its lifetime so re-fetching is cheap
+        // when the operator clicks the Re-detect refresh button.
+        BlocProvider(
+          create: (_) => HardwareCubit(
+            repository: getIt<TranscodingRepository>(),
+          )..load(),
         ),
       ],
       child: const _SettingsView(),
@@ -1124,6 +1134,14 @@ class _StreamingTab extends StatelessWidget {
         EncoderRecommendationBanner(
           onApplyRecommendation: onEncoderChanged,
         ),
+
+        const SizedBox(height: 14),
+
+        // Detected hardware card — Slice B.  CPU + GPU inventory from
+        // /api/v1/transcoding/devices, with vendor pills + per-vendor
+        // encoder-support hints (registry-derived; pair with the
+        // EncoderStatusPanel below to see what FFmpeg actually has).
+        const DetectedHardwareCard(),
 
         const SizedBox(height: 14),
 

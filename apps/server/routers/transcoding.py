@@ -1,13 +1,14 @@
-"""Transcoding status + advisor — desktop Transcoding / Settings screens.
+"""Transcoding status + advisor + devices — desktop Transcoding / Settings.
 
 | Method | Path                          | Auth           |
 |--------|-------------------------------|----------------|
 | GET    | /api/v1/transcoding/status    | localhost only |
 | GET    | /api/v1/transcoding/advisor   | localhost only |
+| GET    | /api/v1/transcoding/devices   | localhost only |
 
-Localhost-only because both expose operator-level metrics (GPU utilization,
-VRAM, list of every active session, encoder recommendations).  Mobile
-clients do not consume these.
+Localhost-only because every endpoint here exposes operator-level metrics
+(GPU utilization, VRAM, list of every active session, encoder recommendations,
+detected hardware).  Mobile clients do not consume these.
 """
 
 import logging
@@ -19,7 +20,12 @@ from pydantic import BaseModel
 from database.db import get_db
 from models.transcoding import TranscodingStatusResponse
 from routers.deps import require_local_caller
-from services import encoder_advisor, settings_service, transcoding_service
+from services import (
+    encoder_advisor,
+    hardware_probe,
+    settings_service,
+    transcoding_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +37,30 @@ class AdvisorResponse(BaseModel):
     reason_code: str  # 'cpu_fallback' | 'failed_active' | 'hevc_compat' | 'none'
     reason_text: str
     severity: str  # 'info' | 'warning' | 'none'
+
+
+class CpuInfo(BaseModel):
+    vendor: str
+    model: str
+    threads: int
+
+
+class GpuInfo(BaseModel):
+    vendor: str  # nvidia | intel | amd | apple | unknown
+    model: str
+    vram_mb: int | None = None
+    driver_version: str | None = None
+    # VAAPI render-node path on Linux; null on other platforms.
+    dev_path: str | None = None
+    # Encoder names from the registry whose vendor matches AND whose
+    # platform support set includes the current OS.  Pair with
+    # /transcoding/status's `available_encoders` to see the truth.
+    encoder_support: list[str]
+
+
+class DevicesResponse(BaseModel):
+    cpus: list[CpuInfo]
+    gpus: list[GpuInfo]
 
 
 @router.get("/status", response_model=TranscodingStatusResponse)
@@ -67,3 +97,17 @@ async def get_advisor(
         reason_text=rec.reason_text,
         severity=rec.severity,
     )
+
+
+@router.get("/devices", response_model=DevicesResponse)
+async def get_devices(
+    _local: None = Depends(require_local_caller),
+) -> DevicesResponse:
+    """Return detected CPU + GPU hardware on the server host.
+
+    Result is cached for the lifetime of the server process — hardware
+    doesn't change at runtime, and probes are slow (~500 ms cold on
+    Windows).  Slice B of the GPU UX plan.
+    """
+    payload = await hardware_probe.detect_hardware()
+    return DevicesResponse(**payload)

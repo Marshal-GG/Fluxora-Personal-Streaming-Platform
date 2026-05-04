@@ -1367,6 +1367,56 @@ All producer call-sites are wrapped in `try/except` with logging — an activity
 
 ---
 
+### `GET /api/v1/transcoding/devices`
+**Description:** Detected CPU + GPU inventory on the server host. Drives the desktop's "Detected Hardware" card and (later) the VAAPI device-path picker. Result is cached for the lifetime of the server process — hardware doesn't change at runtime, and probes are slow (~500 ms cold on Windows). Slice B of the GPU UX plan.
+**Auth:** Localhost only — `require_local_caller`.
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "cpus": [
+    {"vendor": "Intel", "model": "Core i7-9750H @ 2.60GHz", "threads": 12}
+  ],
+  "gpus": [
+    {
+      "vendor": "intel",
+      "model": "Intel(R) UHD Graphics 630",
+      "vram_mb": 1024,
+      "driver_version": "26.20.100.7262",
+      "dev_path": null,
+      "encoder_support": ["h264_qsv", "hevc_qsv"]
+    },
+    {
+      "vendor": "nvidia",
+      "model": "NVIDIA GeForce RTX 2060",
+      "vram_mb": 6144,
+      "driver_version": "596.36",
+      "dev_path": null,
+      "encoder_support": ["h264_nvenc", "hevc_nvenc"]
+    }
+  ]
+}
+```
+
+**Per-platform probe commands:**
+| OS | CPU | GPU |
+|----|-----|-----|
+| Linux | `/proc/cpuinfo` | `lspci -nn -d ::0300` + `nvidia-smi -L` + `/dev/dri/render*` |
+| Windows | `wmic cpu get Name,NumberOfLogicalProcessors` | `wmic path Win32_VideoController` + `nvidia-smi --query-gpu=…` |
+| macOS | `sysctl -n machdep.cpu.brand_string` | `system_profiler SPDisplaysDataType -json` |
+
+**Notes:**
+- All probes are best-effort. A missing tool / parse failure logs at WARNING and falls through to an empty list rather than raising.
+- `vendor` is normalised to one of `nvidia` / `intel` / `amd` / `apple` / `unknown` from free-form vendor-or-model strings.
+- `vram_mb` on Windows comes from `wmic path Win32_VideoController.AdapterRAM` which caps at ~4 GB on 32-bit builds; we supplement NVIDIA rows with `nvidia-smi`'s accurate VRAM total.
+- `dev_path` is the Linux VAAPI render-node path (`/dev/dri/renderD128` etc.); always `null` on Windows / macOS.
+- `encoder_support` is **registry-derived** (`encoder_registry.py` filtered by vendor + current `sys.platform`), not probed. Pair with `/transcoding/status`'s `available_encoders` to know what FFmpeg actually has.
+
+**Errors:** `403` not from localhost
+
+---
+
 ### `GET /api/v1/logs`
 **Description:** List structured log records from the server's JSON log file with filtering and cursor-based pagination.  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  

@@ -13,7 +13,7 @@
 
 ---
 
-## `apps/server` — Phases 1–6 partially complete (297 passing tests; ruff + black clean)
+## `apps/server` — Phases 1–6 partially complete (312 passing tests; ruff + black clean)
 
 - Full FastAPI lifespan, mDNS (`AsyncZeroconf`), structured JSON logging (`python-json-logger`), rotating log file
 - **Routers:** info (+ healthz), auth (`/auth/clients/me` profile + `/me/stats` + `/me/continue-watching`), files (upload/delete/recent/**search**), library, stream (sessions/progress, **503 surfaces FFmpeg stderr tail**), ws, signal, settings (transcoding + 18 extended fields + `transcoding_hwaccel_device`), orders (paginated + portal-url), groups, notifications, activity, profile, webhook, transcoding (**status + advisor**), logs (REST + WS)
@@ -59,7 +59,7 @@
 
 ---
 
-## `apps/desktop` — Phases 1–5 in progress (63 passing tests; Dart SDK `>=3.9.0`)
+## `apps/desktop` — Phases 1–5 in progress (71 passing tests; Dart SDK `>=3.9.0`)
 
 | Surface | Status |
 |---------|--------|

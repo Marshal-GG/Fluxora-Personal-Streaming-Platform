@@ -828,3 +828,111 @@ GPU is RTX-class with AV1 NVDEC support (cuvid initialised) but rejected this sp
 - **Watch the user's next AV1 playback attempt** — the server log should show one of: (a) success on first try (cuvid worked), (b) `cuvid decoder rejected source ... retrying without cuvid hint` then success (software fallback worked), or (c) both attempts failed with both errors logged (operator must re-encode or upgrade FFmpeg).
 - **HDR tonemap is the natural follow-up** if the cuvid retry succeeds but playback shows wrong colors.
 ---
+
+## [2026-05-04] — GPU UX Slice B: hardware probe + Detected Hardware card
+**Phase:** Phase 6 — GPU & Encoder UX
+**Status:** Slice B complete; Slice C (multi-encoder fallback chain) pending owner approval.
+
+### What Was Done
+
+Slice B of the GPU UX plan (`docs/10_planning/10_gpu_ux_plan.md` §3) — surfacing the host's actual CPU + GPU inventory so the operator can see which hardware is available *before* configuring an encoder.
+
+1. **Server — `services/hardware_probe.py`** (~310 lines).
+   - Per-platform CPU + GPU enumeration with `_run(args, timeout)` helper that's strict-timeout (~3 s) and returns None on any subprocess failure (probes are best-effort, never raise).
+   - **Linux GPU:** `lspci -nn -d ::0300` for VGA-class devices + `nvidia-smi --query-gpu=name,memory.total,driver_version` for richer NVIDIA detail + walks `/dev/dri/render*` for VAAPI device paths (assigns the first non-NVIDIA GPU the first render node).
+   - **Windows GPU:** `wmic path Win32_VideoController get Name,AdapterRAM,DriverVersion /format:csv` + supplements NVIDIA rows from `nvidia-smi` (because `wmic AdapterRAM` caps at ~4 GB on 32-bit builds).
+   - **macOS GPU:** `system_profiler SPDisplaysDataType -json` parsing `sppci_model` + `spdisplays_vram`.
+   - **CPU probes:** `/proc/cpuinfo` (Linux), `wmic cpu get Name,NumberOfLogicalProcessors` (Windows), `sysctl -n machdep.cpu.brand_string` (macOS).
+   - Vendor normalisation via `_vendor_from_pci_or_name(text)` — maps free-form vendor strings ("Intel(R) Corporation Iris Xe Graphics", "Advanced Micro Devices, Inc. [AMD/ATI] Navi 31", "NVIDIA GeForce RTX 4070") to canonical `nvidia` / `intel` / `amd` / `apple` / `unknown`.
+   - `_encoder_support_for_vendor(vendor)` returns registry encoder names whose vendor matches AND whose `platforms` set includes `sys.platform` — keeps macOS hosts from advertising VAAPI just because an AMD GPU is installed.
+   - Result cached for the server-process lifetime (`_CACHE`); `reset_cache()` test hook clears it. `detect_hardware()` is the public entry.
+2. **Server — `GET /api/v1/transcoding/devices`** (`apps/server/routers/transcoding.py`):
+   - New `CpuInfo` / `GpuInfo` / `DevicesResponse` Pydantic models.
+   - Local-only (`require_local_caller`).
+   - Returns the cached probe result; one ~500 ms cold call on first request.
+3. **Server — 15 new tests** in `tests/test_hardware_probe.py`:
+   - Vendor normalisation across NVIDIA / Intel / AMD variants + unknown.
+   - Encoder-support derivation across software / unknown.
+   - NVIDIA probe parses `nvidia-smi` CSV (single + multi-GPU) + handles missing binary.
+   - Windows wmic CSV parser handles header + multiple rows, supplements NVIDIA from `nvidia-smi` for accurate VRAM.
+   - `detect_hardware()` caches across calls (no double-probe).
+   - Unsupported platform returns empty.
+   - `/transcoding/devices` endpoint returns the probe payload + handles empty probe gracefully.
+   - **Server suite 297 → 312 passing.**
+   - Smoke-test on the operator's actual machine returned a clean payload (Intel UHD 630 + NVIDIA RTX 2060 + i7-9750H).
+4. **Desktop — `HardwareCubit` + `DetectedHardwareCard`**:
+   - New `HardwareDevices` / `CpuInfo` / `GpuInfo` freezed entities in `packages/fluxora_core/lib/entities/hardware_devices.dart`.
+   - New `Endpoints.transcodingDevices`.
+   - `TranscodingRepository.devices()` + impl.
+   - `HardwareCubit` is **one-shot** (server already caches the probe; no need to poll). Explicit `refresh()` lets the operator re-fetch after, say, plugging in an eGPU + restarting the server.
+   - New `DetectedHardwareCard` widget (`apps/desktop/lib/features/transcoding/presentation/widgets/`):
+     - Header with refresh button.
+     - One CPU tile + one GPU tile per detected device.
+     - GPU tiles show vendor pill (NVIDIA = success / Intel = info / AMD = error / Apple = purple), model, VRAM (formatted GB / MB), driver version, dev_path on Linux, and a wrap of `encoder_support` badges in monospace.
+     - Empty / loading / failure states all rendered cleanly.
+   - Wired into Settings → Streaming above the Quality card (between the recommendation banner and the Quality block). Operator can finally see "this machine has an RTX 2060 with 6 GB VRAM and these are the encoders that *could* run" before touching the dropdown.
+   - **8 new widget tests** (`test/features/transcoding/detected_hardware_card_test.dart`) — loading spinner, failure copy, empty-state, CPU + GPU tile rendering with vendor pills + VRAM + driver + encoder badges, MB-vs-GB VRAM formatting, refresh button visibility per state.
+   - **Desktop suite 63 → 71 passing.**
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `apps/server/services/hardware_probe.py` |
+| Created | `apps/server/tests/test_hardware_probe.py` (15 cases) |
+| Created | `packages/fluxora_core/lib/entities/hardware_devices.dart` (+ freezed parts) |
+| Created | `apps/desktop/lib/features/transcoding/presentation/cubit/hardware_cubit.dart` |
+| Created | `apps/desktop/lib/features/transcoding/presentation/widgets/detected_hardware_card.dart` |
+| Created | `apps/desktop/test/features/transcoding/detected_hardware_card_test.dart` (8 cases) |
+| Modified | `apps/server/routers/transcoding.py` (`/devices` endpoint + Pydantic models) |
+| Modified | `packages/fluxora_core/lib/network/endpoints.dart` (`transcodingDevices`) |
+| Modified | `packages/fluxora_core/lib/fluxora_core.dart` (export `hardware_devices`) |
+| Modified | `apps/desktop/lib/features/transcoding/domain/repositories/transcoding_repository.dart` (`devices()` method) |
+| Modified | `apps/desktop/lib/features/transcoding/data/repositories/transcoding_repository_impl.dart` (impl) |
+| Modified | `apps/desktop/lib/features/settings/presentation/screens/settings_screen.dart` (provide HardwareCubit; render DetectedHardwareCard between recommendation banner + Quality card) |
+| Modified | `docs/04_api/01_api_contracts.md` (`/devices` section + per-platform probe table) |
+| Modified | `docs/05_infrastructure/02_url_inventory.md` (`/devices` row) |
+| Modified | `docs/00_overview/current_status.md` (server tests 297 → 312, desktop 63 → 71) |
+| Modified | `docs/10_planning/10_gpu_ux_plan.md` (Slice B marked ✅ shipped) |
+
+### Decisions Made
+- **Cache for the server-process lifetime, no re-probe heuristic.** Hardware doesn't change at runtime; a manual "Re-detect" UI button + server restart covers the eGPU / driver-update case. Avoids the temptation to re-probe on every settings save.
+- **Probe is one-shot from the desktop's perspective.** The server caches; the cubit is one-shot. No `Timer.periodic` like `TranscodingCubit` — that would just hammer the server cache for no benefit.
+- **`encoder_support` is registry-derived, not probed.** The probe knows the GPU vendor + the current OS; the registry knows which encoders that vendor + OS combination *could* run. The intersection with `available_encoders` (from `/transcoding/status`) is the truth — `encoder_support` alone is the *capability ceiling*. This is documented in the api-contracts notes so callers don't get confused.
+- **Best-effort on every probe failure.** `wmic` missing on Win11 25H2+ → empty list, log a warning, render the empty-state card. No exceptions thrown; the rest of the Streaming tab keeps rendering.
+- **Vendor-coloured pills.** NVIDIA-green / Intel-blue / AMD-red / Apple-purple matches each vendor's brand reasonably and helps the eye sort multi-GPU hosts (Optimus laptops, eGPU setups).
+- **Drop the per-codec NVDEC capability matrix from this slice.** RTX 20 vs RTX 30 vs RTX 40 NVDEC AV1 support could be inferred from the model string but it's brittle (driver version matters too). Surfacing the GPU model + leaving the operator to look up capabilities is a fine v1; richer capability detection is a Slice C+ enhancement.
+
+### Blockers / Open Issues
+- **Per-codec NVDEC capability matrix** would let `_input_decoder_args` refuse `av1_cuvid` upfront on a Turing card instead of the current "try cuvid → cuvid rejects → fall back". Slice C territory if it becomes painful.
+- **`wmic` deprecation on Win11 25H2+.** The probe will return empty when `wmic` is removed; the eventual fix is a PowerShell + Get-CimInstance fallback. Not a Slice B blocker because Win11 23H2 (current LTS) still ships `wmic`.
+- **VAAPI device-path picker not yet rewired.** Slice B's plan §2 mentioned replacing the VAAPI free-text input with a `FluxSelect` populated from `/devices`; deferred to a Linux-focused polish round (Windows/macOS hosts don't see the field anyway because the active encoder isn't VAAPI on those platforms).
+
+### Issues / Sharp Edges Discovered
+- **`wmic AdapterRAM` is 32-bit-capped.** A 12 GB RTX 4070 reports as ~4 GB through `wmic`. Workaround: supplement NVIDIA rows from `nvidia-smi` (which returns the full VRAM in MB). Documented in the probe's docstring + the api-contracts notes.
+- **`wmic` CSV output uses CRLF + a `Node` column header that varies between Windows builds.** Parser builds `header_indices: dict[str, int]` from the first non-empty header row instead of assuming column positions. Cleanly handles missing columns.
+- **`/proc/cpuinfo` doesn't have a "thread count" field directly.** Use `os.cpu_count()` for thread count and grep `model name` for the human-readable string.
+- **Smoke-test on the operator's machine surfaced an Optimus laptop** (i7-9750H + UHD 630 + RTX 2060). Both GPUs detected correctly; encoder_support correctly excluded VAAPI from both (Linux-only) and VideoToolbox (macOS-only). This is the kind of hybrid-GPU setup Slice C's chain ordering will care about.
+
+### Suggested Next Steps (priority order)
+1. **Restart the server** to expose `/transcoding/devices`. The desktop's Detected Hardware card will populate on next Settings → Streaming open.
+2. **Slice C decision** — multi-encoder fallback chain. Plan §3 row 3, ~3 days. Largest engineering, requires Slice B's hardware data for the chain UI.
+3. **VAAPI device-path picker rewire** is a small follow-on (~half day) when a Linux operator surface needs it.
+4. **HDR tonemap on transcode** path — separate from Slice B/C, addresses the "wrong colors when transcoding HDR" failure mode that's adjacent to the AV1 cuvid issue. ~half day.
+5. **Per-codec NVDEC capability matrix** — could fold into Slice C.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` performed by the agent — owner commits separately.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()`.
+- [x] No silent exceptions — every probe failure logs at WARNING and returns empty.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps — `nvidia-smi` / `wmic` / `lspci` / `system_profiler` are all OS-supplied tools.
+- [x] No layer-boundary violations — probe is pure server logic; widget reads from the cubit; cubit owns the repository call.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+
+### Next Agent Should
+- **Confirm Slice B against the operator's real desktop** — opening Settings → Streaming should show the new card with the Intel UHD 630 + RTX 2060 + i7-9750H detected.
+- **Wait for owner's call on Slice C** before starting — the multi-encoder priority chain is meaningful engineering and the owner should weigh in on the decisions §4 of the plan.
+---

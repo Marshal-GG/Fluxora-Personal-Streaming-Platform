@@ -69,6 +69,7 @@ class Endpoints {
   // Transcoding status
   static const String transcodingStatus = '$_base/transcoding/status';
   static const String transcodingAdvisor = '$_base/transcoding/advisor';
+  static const String transcodingDevices = '$_base/transcoding/devices';
 
   // Profile
   static const String profile = '$_base/profile';
