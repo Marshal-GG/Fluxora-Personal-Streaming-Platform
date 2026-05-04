@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:logger/logger.dart';
 import 'package:multicast_dns/multicast_dns.dart';
 import 'package:fluxora_core/entities/server_info.dart';
@@ -15,9 +17,33 @@ class ServerDiscoveryRepositoryImpl implements ServerDiscoveryRepository {
 
   static const String _serviceType = '_fluxora._tcp.local.';
 
+  /// `multicast_dns` defaults its socket factory to bind with
+  /// `reusePort: true`, which the Dart VM only supports on Linux desktop.
+  /// On Android the `RawDatagramSocket.bind` call throws
+  /// "`reusePort` not supported on this platform" and discovery never
+  /// starts.  Override the factory with the same body but `reusePort:
+  /// false` — `reuseAddress: true` is enough for mDNS multicast on the
+  /// loopback / wlan interface.
+  static Future<RawDatagramSocket> _socketFactory(
+    dynamic host,
+    int port, {
+    bool reuseAddress = true,
+    bool reusePort = false,
+    int ttl = 255,
+  }) {
+    return RawDatagramSocket.bind(
+      host,
+      port,
+      reuseAddress: reuseAddress,
+      reusePort: false,
+      ttl: ttl,
+    );
+  }
+
   @override
   Stream<DiscoveredServer> discoverViaMulticast() async* {
-    final client = MDnsClient();
+    final client =
+        MDnsClient(rawDatagramSocketFactory: _socketFactory);
     try {
       await client.start();
       await for (final PtrResourceRecord ptr
