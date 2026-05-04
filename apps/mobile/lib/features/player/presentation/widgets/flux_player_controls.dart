@@ -16,6 +16,7 @@ import 'package:flutter/services.dart';
 import 'package:fluxora_core/fluxora_core.dart';
 import 'package:media_kit/media_kit.dart' show Player;
 import 'package:screen_brightness/screen_brightness.dart';
+import 'package:fluxora_mobile/features/player/data/services/pip_service.dart';
 import 'package:fluxora_mobile/features/player/presentation/controllers/player_controls_controller.dart';
 import 'package:fluxora_mobile/features/player/presentation/sheets/audio_subs_sheet.dart';
 import 'package:fluxora_mobile/features/player/presentation/sheets/cast_sheet.dart';
@@ -68,11 +69,29 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
 
   Sheet get activeSheet => _activeSheet;
 
+  // PIP availability — probed once on first build via [PipService].
+  // Stays null until the probe resolves; the top-bar button is hidden in
+  // that window (a single frame on Android, permanently on iOS / desktop).
+  bool? _pipSupported;
+
+  Future<void> _enterPip() async {
+    final w = widget.player.state.width ?? 16;
+    final h = widget.player.state.height ?? 9;
+    await PipService.enter(width: w, height: h);
+    // Hide the controls overlay once we've asked the system for PIP — by
+    // the time we redraw we'll be in a small window where the overlay
+    // would be useless chrome.
+    widget.controller.hide();
+  }
+
   @override
   void initState() {
     super.initState();
     widget.controller.show();
     widget.controller.addListener(_onChange);
+    PipService.isSupported().then((ok) {
+      if (mounted) setState(() => _pipSupported = ok);
+    });
   }
 
   @override
@@ -353,6 +372,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                     title: widget.title,
                     onBack: widget.onBack,
                     onMore: () {},
+                    onPip: _pipSupported == true ? _enterPip : null,
                     sleepActive: _sleepDuration != null,
                   ),
                 ),
@@ -495,12 +515,18 @@ class _TopBar extends StatelessWidget {
     required this.title,
     required this.onBack,
     required this.onMore,
+    required this.onPip,
     required this.sleepActive,
   });
 
   final String title;
   final VoidCallback onBack;
   final VoidCallback onMore;
+
+  /// Picture-in-Picture entry point.  `null` when the platform doesn't
+  /// support PIP (iOS, desktop, Android 7 or older) so the icon hides
+  /// instead of rendering a no-op chip.
+  final VoidCallback? onPip;
   final bool sleepActive;
 
   @override
@@ -532,6 +558,16 @@ class _TopBar extends StatelessWidget {
               padding: EdgeInsets.only(right: 4),
               child: Icon(Icons.bedtime,
                   color: AppColors.violetTint, size: 18),
+            ),
+          if (onPip != null)
+            IconButton(
+              tooltip: 'Picture-in-picture',
+              icon: const Icon(
+                Icons.picture_in_picture_alt_rounded,
+                color: Colors.white,
+              ),
+              onPressed: onPip,
+              splashRadius: 22,
             ),
           IconButton(
             tooltip: 'More',

@@ -10,6 +10,8 @@ class SecureStorage {
   static const String _keyServerUrl = 'server_url';
   static const String _keyRemoteUrl = 'remote_url';
   static const String _keyClientId = 'client_id';
+  static const String _keyBgPlaybackEnabled = 'bg_playback_enabled';
+  static const String _keyBgPlaybackPromptShown = 'bg_playback_prompt_shown';
 
   static final _log = Logger();
 
@@ -118,6 +120,65 @@ class SecureStorage {
       return await _storage.read(key: _keyClientId);
     } catch (e, st) {
       _log.e('Failed to read client ID', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  // ── Player polish: background-playback preference (Phase 3) ────────────────
+  // Persisted in flutter_secure_storage rather than shared_preferences to
+  // avoid pulling another dep — secure storage's overhead is irrelevant for
+  // a once-per-session bool read.
+
+  /// `true` when the user has opted to keep audio playing while the app
+  /// is in the background.  Defaults to `false` (the safer / less
+  /// surprising option).  Set after the user answers the first-time
+  /// prompt or toggles the option in Profile → Playback.
+  Future<bool> getBackgroundPlaybackEnabled() async {
+    try {
+      final raw = await _storage.read(key: _keyBgPlaybackEnabled);
+      return raw == 'true';
+    } catch (e, st) {
+      _log.e('Failed to read bg-playback pref', error: e, stackTrace: st);
+      return false;
+    }
+  }
+
+  Future<void> setBackgroundPlaybackEnabled(bool value) async {
+    try {
+      await _storage.write(
+        key: _keyBgPlaybackEnabled,
+        value: value ? 'true' : 'false',
+      );
+    } catch (e, st) {
+      _log.e('Failed to write bg-playback pref', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  /// Whether the first-time bg-playback confirmation prompt has been
+  /// shown.  Once true the player no longer interrupts the user; the
+  /// answer (enabled / disabled) drives behaviour from Profile
+  /// → Playback.
+  Future<bool> getBackgroundPlaybackPromptShown() async {
+    try {
+      final raw = await _storage.read(key: _keyBgPlaybackPromptShown);
+      return raw == 'true';
+    } catch (e, st) {
+      _log.e('Failed to read bg-playback prompt flag',
+          error: e, stackTrace: st);
+      return false;
+    }
+  }
+
+  Future<void> setBackgroundPlaybackPromptShown(bool value) async {
+    try {
+      await _storage.write(
+        key: _keyBgPlaybackPromptShown,
+        value: value ? 'true' : 'false',
+      );
+    } catch (e, st) {
+      _log.e('Failed to write bg-playback prompt flag',
+          error: e, stackTrace: st);
       rethrow;
     }
   }

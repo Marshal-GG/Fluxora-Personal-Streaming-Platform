@@ -14,6 +14,7 @@ import 'package:fluxora_mobile/features/notifications/data/repositories/notifica
 import 'package:fluxora_mobile/features/notifications/domain/repositories/notifications_repository.dart';
 import 'package:fluxora_mobile/features/notifications/presentation/cubit/notifications_cubit.dart';
 import 'package:fluxora_mobile/features/player/data/repositories/player_repository_impl.dart';
+import 'package:fluxora_mobile/features/player/data/services/fluxora_audio_handler.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
 import 'package:fluxora_mobile/features/profile/presentation/cubit/profile_cubit.dart';
@@ -70,10 +71,18 @@ Future<void> setupInjector() async {
   // M7: PlayerCubit doubles as the `PlaybackProvider` per plan §9.2 —
   // singleton scope so playback survives the fullscreen player popping
   // and the mini-player can subscribe to the same state.
+  //
+  // Player polish round (2026-05-04): the optional `audioHandler` is
+  // looked up at construction time so it's null in unit tests (where
+  // audio_service hasn't been initialised) and present in production
+  // (registered in `main.dart` after `AudioService.init`).
   getIt.registerLazySingleton<PlayerCubit>(
     () => PlayerCubit(
       repository: getIt<PlayerRepository>(),
       secureStorage: getIt<SecureStorage>(),
+      audioHandler: getIt.isRegistered<FluxoraAudioHandler>()
+          ? getIt<FluxoraAudioHandler>()
+          : null,
     ),
   );
 

@@ -13,6 +13,14 @@ class MockPlayerRepository extends Mock implements PlayerRepository {}
 class MockSecureStorage extends Mock implements SecureStorage {}
 
 void main() {
+  // PlayerCubit registers a WidgetsBindingObserver in its constructor
+  // (Phase 3 — background-playback preference).  The binding has to
+  // exist before the cubit can call `WidgetsBinding.instance` — for
+  // unit tests that means initialising the test binding once at the
+  // top of `main`.  Idempotent so it's safe even if some other test
+  // setup already called it.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late MockPlayerRepository repository;
   late MockSecureStorage secureStorage;
 

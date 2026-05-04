@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  audio_service notification small-icon.
+
+  Android tints notification icons system-defined; full-color drawables
+  render as solid blocks instead of glyphs (documented in
+  `docs/12_guidelines/03_gotchas.md`).  This file is the white-on-
+  transparent silhouette of the Fluxora F-mark, sized for a 24dp
+  small-icon slot.
+
+  The vector path is a simplified F glyph — a single horizontal bar at
+  the top, a shorter middle bar at the y-mid, and the vertical stem on
+  the left.  Sized to fill ~80% of the 24dp box so it doesn't appear
+  small next to the system clock + other shade icons.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M6,3 H19 V7 H10 V11 H17 V15 H10 V21 H6 Z" />
+</vector>

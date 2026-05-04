@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
 import 'package:media_kit/media_kit.dart' show Media, Player;
@@ -7,6 +8,7 @@ import 'package:media_kit_video/media_kit_video.dart' show VideoController;
 import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
 import 'package:fluxora_core/network/network_path_detector.dart';
+import 'package:fluxora_mobile/features/player/data/services/fluxora_audio_handler.dart';
 import 'package:fluxora_mobile/features/player/data/services/webrtc_signaling_service.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.dart';
@@ -21,12 +23,32 @@ class PlayerCubit extends Cubit<PlayerState> {
   PlayerCubit({
     required PlayerRepository repository,
     required SecureStorage secureStorage,
+    FluxoraAudioHandler? audioHandler,
   })  : _repository = repository,
         _secureStorage = secureStorage,
-        super(const PlayerInitial());
+        _audioHandler = audioHandler,
+        super(const PlayerInitial()) {
+    _lifecycleObserver = _PlayerLifecycleObserver(this);
+    WidgetsBinding.instance.addObserver(_lifecycleObserver);
+  }
 
   final PlayerRepository _repository;
   final SecureStorage _secureStorage;
+
+  /// Optional — null in unit tests where the OS audio_service hasn't
+  /// been initialised.  Production wires it via the injector.
+  final FluxoraAudioHandler? _audioHandler;
+
+  late final _PlayerLifecycleObserver _lifecycleObserver;
+
+  /// Set when the cubit auto-pauses on background and the app's
+  /// background-playback preference is currently disabled.  Drives the
+  /// first-time prompt: when the user comes back, the player_screen
+  /// reads this and (if the prompt hasn't been shown yet) asks whether
+  /// they'd like to keep playing through future minimisations.
+  bool _autoPausedOnBackground = false;
+  bool get wasAutoPausedOnBackground => _autoPausedOnBackground;
+  void clearAutoPausedFlag() => _autoPausedOnBackground = false;
   static final _log = Logger();
 
   Player? _player;
@@ -39,7 +61,12 @@ class PlayerCubit extends Cubit<PlayerState> {
   // Public
   // ---------------------------------------------------------------------------
 
-  Future<void> startStream(String fileId, String fileName, double resumeSec) async {
+  Future<void> startStream(
+    String fileId,
+    String fileName,
+    double resumeSec, {
+    String? posterUrl,
+  }) async {
     // M7: when the cubit is a long-lived singleton, a second `startStream`
     // must clean up the previous session before opening the next one.
     // First-call (no prior session) is cheap — every dispose is null-guarded.
@@ -80,6 +107,20 @@ class PlayerCubit extends Cubit<PlayerState> {
       final seekSec = response.resumeSec > 0 ? response.resumeSec : resumeSec;
       if (seekSec > 0) {
         await _player!.seek(Duration(milliseconds: (seekSec * 1000).toInt()));
+      }
+
+      // Hook the OS media session (lockscreen / notification card / BT
+      // headset).  Best-effort — if audio_service hasn't initialised
+      // (unit tests, embedded preview) this is a no-op.
+      try {
+        await _audioHandler?.bind(
+          player: _player!,
+          id: fileId,
+          title: fileName,
+          artUri: posterUrl,
+        );
+      } catch (e, st) {
+        _log.w('AudioHandler.bind failed', error: e, stackTrace: st);
       }
 
       emit(PlayerReady(
@@ -232,6 +273,14 @@ class PlayerCubit extends Cubit<PlayerState> {
     }
     await _signaling?.close();
     _signaling = null;
+    // Detach from the OS media session before disposing the Player —
+    // otherwise the handler holds stream subscriptions to the Player and
+    // the dispose will throw.
+    try {
+      await _audioHandler?.detach();
+    } catch (e, st) {
+      _log.w('AudioHandler.detach failed', error: e, stackTrace: st);
+    }
     await _player?.dispose();
     _player = null;
     _controller = null;
@@ -246,9 +295,64 @@ class PlayerCubit extends Cubit<PlayerState> {
     if (state is! PlayerInitial) emit(const PlayerInitial());
   }
 
+  // ---------------------------------------------------------------------------
+  // Lifecycle (Phase 3 — background-playback preference)
+  // ---------------------------------------------------------------------------
+
+  /// Called by [_PlayerLifecycleObserver] when the OS reports the app
+  /// has been backgrounded.  When the user has *not* opted into
+  /// background playback we pause the player so the audio doesn't keep
+  /// running silently — Android's foreground service from
+  /// [audio_service] keeps the lockscreen card alive either way.
+  Future<void> _onAppBackgrounded() async {
+    final p = _player;
+    if (p == null) return;
+    if (state is! PlayerReady) return;
+    if (!p.state.playing) return;
+
+    bool enabled;
+    try {
+      enabled = await _secureStorage.getBackgroundPlaybackEnabled();
+    } catch (e, st) {
+      _log.w('Could not read bg-playback pref — defaulting to disabled',
+          error: e, stackTrace: st);
+      enabled = false;
+    }
+    if (enabled) return;
+
+    try {
+      await p.pause();
+      _autoPausedOnBackground = true;
+    } catch (e, st) {
+      _log.w('Auto-pause on background failed', error: e, stackTrace: st);
+    }
+  }
+
   @override
   Future<void> close() async {
+    WidgetsBinding.instance.removeObserver(_lifecycleObserver);
     await _disposeCurrentSession();
     await super.close();
+  }
+}
+
+/// Tiny [WidgetsBindingObserver] sidecar — the cubit isn't a Widget so
+/// it can't implement the binding observer mixin directly.  Mounted in
+/// the cubit's constructor and removed in [PlayerCubit.close].  Only
+/// the `paused` event is forwarded; the cubit doesn't auto-resume on
+/// `resumed` because the user might have intentionally walked away.
+class _PlayerLifecycleObserver with WidgetsBindingObserver {
+  _PlayerLifecycleObserver(this._cubit);
+
+  final PlayerCubit _cubit;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      // Fire-and-forget — the observer interface is sync but the cubit
+      // method is async.  Failures are logged inside _onAppBackgrounded.
+      _cubit._onAppBackgrounded();
+    }
   }
 }

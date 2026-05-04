@@ -507,11 +507,7 @@ class _SettingsList extends StatelessWidget {
         label: 'Downloads',
         sub: 'Quality · auto-delete',
       ),
-      const _SettingsRow(
-        icon: Icons.wifi_outlined,
-        label: 'Playback',
-        sub: 'Wi-Fi only · streaming quality',
-      ),
+      const _BackgroundPlaybackToggleRow(),
       const _SettingsRow(
         icon: Icons.public_outlined,
         label: 'Language & region',
@@ -616,6 +612,72 @@ class _SettingsRow extends StatelessWidget {
             color: AppColors.textDim,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Inline toggle row for the "Continue playing in background" pref
+/// (Phase 3 — Player polish round, 2026-05-04).  Tapping the row OR
+/// the [Switch] flips the value.  Reads on first build via
+/// [SecureStorage]; subsequent rebuilds keep the in-memory copy so the
+/// switch animates smoothly.
+class _BackgroundPlaybackToggleRow extends StatefulWidget {
+  const _BackgroundPlaybackToggleRow();
+
+  @override
+  State<_BackgroundPlaybackToggleRow> createState() =>
+      _BackgroundPlaybackToggleRowState();
+}
+
+class _BackgroundPlaybackToggleRowState
+    extends State<_BackgroundPlaybackToggleRow> {
+  /// Null while the initial read is in flight; the toggle stays
+  /// non-interactive until the saved value is known so we don't flip
+  /// twice in quick succession.
+  bool? _enabled;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final v = await GetIt.I<SecureStorage>().getBackgroundPlaybackEnabled();
+    if (mounted) setState(() => _enabled = v);
+  }
+
+  Future<void> _toggle(bool next) async {
+    setState(() => _enabled = next);
+    try {
+      final storage = GetIt.I<SecureStorage>();
+      await storage.setBackgroundPlaybackEnabled(next);
+      // Toggling explicitly counts as having seen the prompt — no need
+      // to ask again on next backgrounding.
+      await storage.setBackgroundPlaybackPromptShown(true);
+    } catch (_) {
+      // Revert UI on persistence failure so the displayed state stays
+      // honest about what's saved.
+      if (mounted) setState(() => _enabled = !next);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final value = _enabled ?? false;
+    final ready = _enabled != null;
+    return FluxRow(
+      icon: Icons.podcasts_rounded,
+      label: 'Background playback',
+      sub: value
+          ? 'Audio keeps playing when you minimize the app'
+          : 'Pauses when you minimize the app',
+      onTap: ready ? () => _toggle(!value) : () {},
+      trailing: Switch.adaptive(
+        value: value,
+        onChanged: ready ? _toggle : null,
+        activeThumbColor: AppColors.violet,
       ),
     );
   }

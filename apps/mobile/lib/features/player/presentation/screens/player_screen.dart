@@ -35,7 +35,12 @@ class PlayerScreen extends StatelessWidget {
     if (!_resume && file != null) {
       // Fire-and-forget — the cubit is a singleton, this just (re)attaches
       // a stream session. `_disposeCurrentSession` cleans up any prior.
-      cubit.startStream(file!.id, file!.title ?? file!.name, file!.resumeSec);
+      cubit.startStream(
+        file!.id,
+        file!.title ?? file!.name,
+        file!.resumeSec,
+        posterUrl: file!.posterUrl,
+      );
     }
     return BlocProvider<PlayerCubit>.value(
       value: cubit,
@@ -51,7 +56,8 @@ class _PlayerView extends StatefulWidget {
   State<_PlayerView> createState() => _PlayerViewState();
 }
 
-class _PlayerViewState extends State<_PlayerView> {
+class _PlayerViewState extends State<_PlayerView>
+    with WidgetsBindingObserver {
   final PlayerControlsController _controlsController =
       PlayerControlsController();
   bool _showResumeBanner = false;
@@ -62,9 +68,17 @@ class _PlayerViewState extends State<_PlayerView> {
   double _dragOffset = 0.0;
   static const double _dismissThreshold = 150.0;
 
+  // Background-playback first-time prompt — Phase 3.  Set when the
+  // cubit auto-paused on backgrounding AND the user hasn't yet been
+  // asked whether they'd like to keep playback going.  The actual
+  // dialog fires on the next AppLifecycleState.resumed event so the
+  // user sees it after they come back to the app.
+  bool _bgPromptPending = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -75,10 +89,99 @@ class _PlayerViewState extends State<_PlayerView> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controlsController.dispose();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      // Capture intent: the cubit will set wasAutoPausedOnBackground
+      // *during* the lifecycle event, but reading it from here would
+      // race.  Mark the flag — we'll consult the cubit on resume.
+      _bgPromptPending = true;
+    } else if (state == AppLifecycleState.resumed && _bgPromptPending) {
+      _bgPromptPending = false;
+      _maybeShowBackgroundPlaybackPrompt();
+    }
+  }
+
+  Future<void> _maybeShowBackgroundPlaybackPrompt() async {
+    if (!mounted) return;
+    final cubit = context.read<PlayerCubit>();
+    if (!cubit.wasAutoPausedOnBackground) return;
+    cubit.clearAutoPausedFlag();
+
+    final storage = GetIt.I<SecureStorage>();
+    final shown = await storage.getBackgroundPlaybackPromptShown();
+    if (shown || !mounted) return;
+
+    final keep = await showDialog<bool>(
+      context: context,
+      barrierColor: const Color(0xCC0F0C24),
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF0F0C24),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: AppColors.borderSubtle),
+        ),
+        title: Text(
+          'Keep playing in the background?',
+          style: AppTypography.h2.copyWith(color: AppColors.textBright),
+        ),
+        content: Text(
+          'When you minimize the app or lock your screen, Fluxora can '
+          'either keep audio playing (with controls on the lockscreen) '
+          'or pause until you come back. You can change this later in '
+          'Profile → Playback.',
+          style: AppTypography.body.copyWith(color: AppColors.textMutedV2),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: Text(
+              'Pause when minimized',
+              style: AppTypography.body.copyWith(color: AppColors.textBright),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: Text(
+              'Keep playing',
+              style: AppTypography.body.copyWith(
+                color: AppColors.violetTint,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    // Persist whichever way the user answered, plus mark the prompt
+    // shown so we don't re-ask on every backgrounding.  A null
+    // dialog-dismiss (back button) is treated as "keep current
+    // behaviour" — we still mark the prompt shown so we don't pester.
+    final value = keep ?? false;
+    try {
+      await storage.setBackgroundPlaybackEnabled(value);
+      await storage.setBackgroundPlaybackPromptShown(true);
+    } catch (_) {
+      // Storage failure isn't actionable here; cubit will retry the
+      // pref read on the next backgrounding.
+    }
+    // If the user said "keep playing", resume now — they were just
+    // auto-paused.
+    if (value && mounted) {
+      final cubitState = context.read<PlayerCubit>().state;
+      if (cubitState is PlayerReady) {
+        await cubitState.player.play();
+      }
+    }
   }
 
   void _onMinimizeUpdate(DragUpdateDetails d) {
