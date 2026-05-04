@@ -65,6 +65,24 @@ class EncoderMeta:
     platforms: frozenset[str]
     """``sys.platform`` values where this encoder can exist."""
 
+    concurrent_session_cap: int | None = None
+    """Soft cap on concurrent FFmpeg sessions for this encoder.
+
+    Used by ``services/session_router.py`` (Slice C) to transparently fall
+    through to the next encoder in the operator's priority chain when this
+    encoder's live-session count is at the cap.
+
+    NVIDIA NVENC consumer cards (GeForce / non-Quadro) cap at **3** concurrent
+    sessions in the driver — exceeding it returns ``OpenEncodeSessionEx
+    failed: out of memory`` from cuvid.  Newer drivers + RTX 40+ have lifted
+    this on some cards, but 3 is the safe default; we treat it as a *soft*
+    cap and let the operator force-select via the priority chain anyway.
+
+    ``None`` means no enforced cap — software encoders are bandwidth-bound
+    rather than session-bound; QSV / VAAPI / VideoToolbox have no
+    documented session cap on consumer hardware.
+    """
+
     def pre_input_args(self, device: str | None = None) -> list[str]:
         """Return FFmpeg args that must appear **before** ``-i``.
 
@@ -215,6 +233,7 @@ ENCODER_REGISTRY: dict[str, EncoderMeta] = {
         vf_chain=None,
         segment_fmt="mpegts",
         platforms=frozenset({"linux", "win32"}),
+        concurrent_session_cap=3,
     ),
     "hevc_nvenc": EncoderMeta(
         name="hevc_nvenc",
@@ -227,6 +246,7 @@ ENCODER_REGISTRY: dict[str, EncoderMeta] = {
         vf_chain=None,
         segment_fmt="fmp4",
         platforms=frozenset({"linux", "win32"}),
+        concurrent_session_cap=3,
     ),
     # ── Intel Quick Sync ──────────────────────────────────────────────────────
     "h264_qsv": EncoderMeta(

@@ -38,6 +38,7 @@ async def update_settings(
     transcoding_preset: str | None = None,
     transcoding_crf: int | None = None,
     transcoding_hwaccel_device: str | None = None,
+    transcoding_chain: list[str] | None = None,
     # General
     language: str | None = None,
     auto_start_on_boot: bool | None = None,
@@ -76,6 +77,29 @@ async def update_settings(
             valid_tiers = ", ".join(sorted(VALID_TIERS))
             raise ValueError(f"Invalid tier: {tier!r}. Must be one of {valid_tiers}")
 
+    # --- transcoding_chain validation + JSON encode ---
+    # Reject chains that reference encoders the registry doesn't know
+    # about and chains where every entry is the same — both indicate
+    # misconfiguration that would silently degrade the operator's
+    # routing.  An empty list means "use the default chain"; allowed.
+    encoded_chain: str | None = None
+    if transcoding_chain is not None:
+        from services.encoder_registry import ENCODER_REGISTRY
+        from services.session_router import encode_chain
+
+        for entry in transcoding_chain:
+            if entry not in ENCODER_REGISTRY:
+                known = ", ".join(sorted(ENCODER_REGISTRY))
+                raise ValueError(
+                    f"Unknown encoder in transcoding_chain: {entry!r}. "
+                    f"Must be one of {known}"
+                )
+        if transcoding_chain and len(set(transcoding_chain)) == 1:
+            raise ValueError(
+                "transcoding_chain must contain distinct encoders or be empty"
+            )
+        encoded_chain = encode_chain(transcoding_chain)
+
     # Build dynamic field list: (column_name, value) for every non-None kwarg.
     # Boolean fields are stored as integers in SQLite.
     _bool_fields = {
@@ -101,6 +125,7 @@ async def update_settings(
         "transcoding_preset": "transcoding_preset",
         "transcoding_crf": "transcoding_crf",
         "transcoding_hwaccel_device": "transcoding_hwaccel_device",
+        "transcoding_chain": "transcoding_chain",
         "language": "language",
         "auto_start_on_boot": "auto_start_on_boot",
         "auto_restart_on_crash": "auto_restart_on_crash",
@@ -131,6 +156,10 @@ async def update_settings(
         "transcoding_preset": transcoding_preset,
         "transcoding_crf": transcoding_crf,
         "transcoding_hwaccel_device": transcoding_hwaccel_device,
+        # Stored as a JSON-encoded TEXT column; the chain is encoded once
+        # at the validation step above so the dynamic UPDATE only sees the
+        # serialised form.
+        "transcoding_chain": encoded_chain,
         "language": language,
         "auto_start_on_boot": auto_start_on_boot,
         "auto_restart_on_crash": auto_restart_on_crash,
@@ -204,6 +233,7 @@ def _defaults() -> dict:
         "transcoding_preset": "veryfast",
         "transcoding_crf": 23,
         "transcoding_hwaccel_device": None,
+        "transcoding_chain": None,
         "language": "en",
         "auto_start_on_boot": 0,
         "auto_restart_on_crash": 1,

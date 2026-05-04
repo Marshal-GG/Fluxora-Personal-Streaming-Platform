@@ -1,4 +1,5 @@
 import 'package:fluxora_core/entities/encoder_advice.dart';
+import 'package:fluxora_core/entities/fallback_event.dart';
 import 'package:fluxora_core/entities/hardware_devices.dart';
 import 'package:fluxora_core/entities/transcoding_status.dart';
 import 'package:fluxora_core/network/api_client.dart';
@@ -30,5 +31,12 @@ class TranscodingRepositoryImpl implements TranscodingRepository {
         Endpoints.transcodingDevices,
         fromJson: (json) =>
             HardwareDevices.fromJson(json as Map<String, dynamic>),
+      );
+
+  @override
+  Future<FallbackHistory> fallbackHistory() => _apiClient.get(
+        Endpoints.transcodingFallbackHistory,
+        fromJson: (json) =>
+            FallbackHistory.fromJson(json as Map<String, dynamic>),
       );
 }

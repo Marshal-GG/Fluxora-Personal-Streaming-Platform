@@ -145,3 +145,62 @@ async def test_existing_fields_still_work(client: AsyncClient) -> None:
     # Extended fields must still be present with their defaults
     assert body["language"] == "en"
     assert body["session_timeout_minutes"] == 60
+
+
+# ── transcoding_chain (Slice C) ──────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_transcoding_chain_round_trips_as_list(client: AsyncClient):
+    res = await client.patch(
+        "/api/v1/settings",
+        json={"transcoding_chain": ["h264_nvenc", "h264_qsv", "libx264"]},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["transcoding_chain"] == [
+        "h264_nvenc",
+        "h264_qsv",
+        "libx264",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_transcoding_chain_rejects_unknown_encoder(client: AsyncClient):
+    res = await client.patch(
+        "/api/v1/settings",
+        json={"transcoding_chain": ["h264_nvenc", "made_up_encoder"]},
+    )
+    assert res.status_code == 422
+    detail = res.json()["detail"]
+    # detail can be a Pydantic-list or our wrapped service ValueError str.
+    assert "made_up_encoder" in str(detail)
+
+
+@pytest.mark.asyncio
+async def test_transcoding_chain_rejects_all_duplicates(client: AsyncClient):
+    """A chain like [libx264, libx264] is meaningless — surface as 422."""
+    res = await client.patch(
+        "/api/v1/settings",
+        json={"transcoding_chain": ["libx264", "libx264"]},
+    )
+    assert res.status_code == 422
+    assert "distinct" in str(res.json()["detail"])
+
+
+@pytest.mark.asyncio
+async def test_transcoding_chain_empty_list_clears(client: AsyncClient):
+    """An empty list means 'use the default chain' — stored as null in DB,
+    surfaced as null in the response."""
+    # First populate it.
+    await client.patch(
+        "/api/v1/settings",
+        json={"transcoding_chain": ["h264_nvenc", "libx264"]},
+    )
+    # Now clear it.
+    res = await client.patch(
+        "/api/v1/settings",
+        json={"transcoding_chain": []},
+    )
+    assert res.status_code == 200
+    assert res.json()["transcoding_chain"] is None

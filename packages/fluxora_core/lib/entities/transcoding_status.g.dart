@@ -43,6 +43,7 @@ _ActiveTranscodeSession _$ActiveTranscodeSessionFromJson(
   fps: (json['fps'] as num?)?.toDouble(),
   speedX: (json['speed_x'] as num?)?.toDouble(),
   progress: (json['progress'] as num?)?.toDouble(),
+  encoderUsed: json['encoder_used'] as String?,
 );
 
 Map<String, dynamic> _$ActiveTranscodeSessionToJson(
@@ -57,6 +58,7 @@ Map<String, dynamic> _$ActiveTranscodeSessionToJson(
   'fps': instance.fps,
   'speed_x': instance.speedX,
   'progress': instance.progress,
+  'encoder_used': instance.encoderUsed,
 };
 
 _TranscodingStatus _$TranscodingStatusFromJson(Map<String, dynamic> json) =>

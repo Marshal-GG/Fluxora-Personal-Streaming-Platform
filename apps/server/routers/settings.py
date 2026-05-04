@@ -34,6 +34,13 @@ def _to_response(row: dict) -> UserSettingsResponse:
     for col in _BOOL_COLS:
         if col in fields:
             fields[col] = bool(fields[col])
+    # transcoding_chain is stored as JSON-encoded TEXT; decode for the
+    # response so the desktop sees a list (or null for "use default").
+    if "transcoding_chain" in fields:
+        from services.session_router import parse_chain
+
+        chain = parse_chain(fields["transcoding_chain"])
+        fields["transcoding_chain"] = chain or None
     # License-status fields come from the service enrichment, not the raw row.
     fields["license_status"] = row.get("license_status", "none")
     fields["license_tier"] = row.get("license_tier")

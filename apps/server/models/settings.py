@@ -75,6 +75,12 @@ class UserSettingsResponse(BaseModel):
     transcoding_crf: int
     # Optional VAAPI device path (Linux only). NULL = auto (/dev/dri/renderD128).
     transcoding_hwaccel_device: str | None = None
+    # Operator's encoder priority chain — list of registry encoder names
+    # tried in order on every transcode session.  When the first entry is
+    # at its concurrent_session_cap (NVENC = 3 on consumer cards) the
+    # session_router falls through to the next.  Empty list / None means
+    # "use the default chain": [transcoding_encoder, "libx264"].
+    transcoding_chain: list[str] | None = None
     # General
     language: str = "en"
     auto_start_on_boot: bool = False
@@ -111,6 +117,11 @@ class UpdateSettingsBody(BaseModel):
     transcoding_crf: int | None = Field(default=None, ge=0, le=51)
     # VAAPI device path — only meaningful on Linux with h264_vaapi / hevc_vaapi.
     transcoding_hwaccel_device: str | None = None
+    # Operator's encoder priority chain (Slice C).  Empty list / None
+    # means "use the default chain".  Each entry must be a known encoder
+    # in the registry (validated at the service layer, not here, because
+    # the registry isn't a Pydantic-friendly Literal).
+    transcoding_chain: list[str] | None = None
     # General
     language: str | None = None
     auto_start_on_boot: bool | None = None

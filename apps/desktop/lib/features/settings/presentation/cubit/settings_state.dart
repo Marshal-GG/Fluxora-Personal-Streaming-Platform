@@ -23,6 +23,7 @@ final class SettingsLoaded extends SettingsState {
     required this.transcodingEncoder,
     required this.transcodingPreset,
     required this.transcodingCrf,
+    this.transcodingChain,
     this.remoteUrl,
     this.remoteAccessStatus,
   });
@@ -35,6 +36,11 @@ final class SettingsLoaded extends SettingsState {
   final String transcodingEncoder;
   final String transcodingPreset;
   final int transcodingCrf;
+
+  /// Operator's encoder priority chain (Slice C). `null` means "use the
+  /// default chain" (`[transcodingEncoder, libx264]`). Drives the
+  /// EncoderPriorityList widget.
+  final List<String>? transcodingChain;
 
   /// The server's configured public URL (Cloudflare Tunnel), read from
   /// `GET /api/v1/info`. `null` when the server has no `FLUXORA_PUBLIC_URL`
@@ -58,6 +64,7 @@ final class SettingsLoaded extends SettingsState {
       transcodingEncoder: transcodingEncoder,
       transcodingPreset: transcodingPreset,
       transcodingCrf: transcodingCrf,
+      transcodingChain: transcodingChain,
       remoteUrl: remoteUrl != null ? remoteUrl() : this.remoteUrl,
       remoteAccessStatus: remoteAccessStatus != null
           ? remoteAccessStatus()

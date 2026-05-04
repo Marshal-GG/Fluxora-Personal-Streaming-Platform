@@ -43,6 +43,12 @@ abstract class ActiveTranscodeSession with _$ActiveTranscodeSession {
     double? fps,
     double? speedX,
     double? progress,
+    /// Encoder this session is actually using (e.g. `h264_nvenc`).
+    /// Differs from the operator's first-choice encoder when the chain
+    /// fell over to a backup; null on stream-copy sessions (no encoder
+    /// involved).  Drives the "Encoder" column in the active-sessions
+    /// table.
+    String? encoderUsed,
   }) = _ActiveTranscodeSession;
 
   factory ActiveTranscodeSession.fromJson(Map<String, dynamic> json) =>

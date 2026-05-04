@@ -1,14 +1,16 @@
-"""Transcoding status + advisor + devices — desktop Transcoding / Settings.
+"""Transcoding status + advisor + devices + fallback-history.
 
-| Method | Path                          | Auth           |
-|--------|-------------------------------|----------------|
-| GET    | /api/v1/transcoding/status    | localhost only |
-| GET    | /api/v1/transcoding/advisor   | localhost only |
-| GET    | /api/v1/transcoding/devices   | localhost only |
+| Method | Path                                    | Auth           |
+|--------|-----------------------------------------|----------------|
+| GET    | /api/v1/transcoding/status              | localhost only |
+| GET    | /api/v1/transcoding/advisor             | localhost only |
+| GET    | /api/v1/transcoding/devices             | localhost only |
+| GET    | /api/v1/transcoding/fallback-history    | localhost only |
 
 Localhost-only because every endpoint here exposes operator-level metrics
 (GPU utilization, VRAM, list of every active session, encoder recommendations,
-detected hardware).  Mobile clients do not consume these.
+detected hardware, encoder routing decisions).  Mobile clients do not
+consume these.
 """
 
 import logging
@@ -23,6 +25,7 @@ from routers.deps import require_local_caller
 from services import (
     encoder_advisor,
     hardware_probe,
+    session_router,
     settings_service,
     transcoding_service,
 )
@@ -61,6 +64,18 @@ class GpuInfo(BaseModel):
 class DevicesResponse(BaseModel):
     cpus: list[CpuInfo]
     gpus: list[GpuInfo]
+
+
+class FallbackEventEntry(BaseModel):
+    timestamp: str
+    session_id: str
+    requested_encoder: str
+    actual_encoder: str
+    reason: str  # 'configured' | 'gpu_session_cap_hit' | 'all_encoders_saturated' | 'encoder_unknown'
+
+
+class FallbackHistoryResponse(BaseModel):
+    events: list[FallbackEventEntry]
 
 
 @router.get("/status", response_model=TranscodingStatusResponse)
@@ -111,3 +126,16 @@ async def get_devices(
     """
     payload = await hardware_probe.detect_hardware()
     return DevicesResponse(**payload)
+
+
+@router.get("/fallback-history", response_model=FallbackHistoryResponse)
+async def get_fallback_history(
+    _local: None = Depends(require_local_caller),
+) -> FallbackHistoryResponse:
+    """Return recent encoder routing decisions from session_router.
+
+    Backed by an in-memory ring buffer (max 50 events) — historical
+    analysis across server restarts uses ``stream_sessions.encoder_used``
+    instead.  Slice C of the GPU UX plan.
+    """
+    return FallbackHistoryResponse(events=session_router.get_history())

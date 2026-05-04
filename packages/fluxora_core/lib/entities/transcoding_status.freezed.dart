@@ -322,7 +322,12 @@ as String?,
 /// @nodoc
 mixin _$ActiveTranscodeSession {
 
- String get id; String? get clientId; String? get clientName; String? get mediaTitle; String? get inputCodec; String? get outputCodec; double? get fps; double? get speedX; double? get progress;
+ String get id; String? get clientId; String? get clientName; String? get mediaTitle; String? get inputCodec; String? get outputCodec; double? get fps; double? get speedX; double? get progress;/// Encoder this session is actually using (e.g. `h264_nvenc`).
+/// Differs from the operator's first-choice encoder when the chain
+/// fell over to a backup; null on stream-copy sessions (no encoder
+/// involved).  Drives the "Encoder" column in the active-sessions
+/// table.
+ String? get encoderUsed;
 /// Create a copy of ActiveTranscodeSession
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -335,16 +340,16 @@ $ActiveTranscodeSessionCopyWith<ActiveTranscodeSession> get copyWith => _$Active
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is ActiveTranscodeSession&&(identical(other.id, id) || other.id == id)&&(identical(other.clientId, clientId) || other.clientId == clientId)&&(identical(other.clientName, clientName) || other.clientName == clientName)&&(identical(other.mediaTitle, mediaTitle) || other.mediaTitle == mediaTitle)&&(identical(other.inputCodec, inputCodec) || other.inputCodec == inputCodec)&&(identical(other.outputCodec, outputCodec) || other.outputCodec == outputCodec)&&(identical(other.fps, fps) || other.fps == fps)&&(identical(other.speedX, speedX) || other.speedX == speedX)&&(identical(other.progress, progress) || other.progress == progress));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is ActiveTranscodeSession&&(identical(other.id, id) || other.id == id)&&(identical(other.clientId, clientId) || other.clientId == clientId)&&(identical(other.clientName, clientName) || other.clientName == clientName)&&(identical(other.mediaTitle, mediaTitle) || other.mediaTitle == mediaTitle)&&(identical(other.inputCodec, inputCodec) || other.inputCodec == inputCodec)&&(identical(other.outputCodec, outputCodec) || other.outputCodec == outputCodec)&&(identical(other.fps, fps) || other.fps == fps)&&(identical(other.speedX, speedX) || other.speedX == speedX)&&(identical(other.progress, progress) || other.progress == progress)&&(identical(other.encoderUsed, encoderUsed) || other.encoderUsed == encoderUsed));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,clientId,clientName,mediaTitle,inputCodec,outputCodec,fps,speedX,progress);
+int get hashCode => Object.hash(runtimeType,id,clientId,clientName,mediaTitle,inputCodec,outputCodec,fps,speedX,progress,encoderUsed);
 
 @override
 String toString() {
-  return 'ActiveTranscodeSession(id: $id, clientId: $clientId, clientName: $clientName, mediaTitle: $mediaTitle, inputCodec: $inputCodec, outputCodec: $outputCodec, fps: $fps, speedX: $speedX, progress: $progress)';
+  return 'ActiveTranscodeSession(id: $id, clientId: $clientId, clientName: $clientName, mediaTitle: $mediaTitle, inputCodec: $inputCodec, outputCodec: $outputCodec, fps: $fps, speedX: $speedX, progress: $progress, encoderUsed: $encoderUsed)';
 }
 
 
@@ -355,7 +360,7 @@ abstract mixin class $ActiveTranscodeSessionCopyWith<$Res>  {
   factory $ActiveTranscodeSessionCopyWith(ActiveTranscodeSession value, $Res Function(ActiveTranscodeSession) _then) = _$ActiveTranscodeSessionCopyWithImpl;
 @useResult
 $Res call({
- String id, String? clientId, String? clientName, String? mediaTitle, String? inputCodec, String? outputCodec, double? fps, double? speedX, double? progress
+ String id, String? clientId, String? clientName, String? mediaTitle, String? inputCodec, String? outputCodec, double? fps, double? speedX, double? progress, String? encoderUsed
 });
 
 
@@ -372,7 +377,7 @@ class _$ActiveTranscodeSessionCopyWithImpl<$Res>
 
 /// Create a copy of ActiveTranscodeSession
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? clientId = freezed,Object? clientName = freezed,Object? mediaTitle = freezed,Object? inputCodec = freezed,Object? outputCodec = freezed,Object? fps = freezed,Object? speedX = freezed,Object? progress = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? clientId = freezed,Object? clientName = freezed,Object? mediaTitle = freezed,Object? inputCodec = freezed,Object? outputCodec = freezed,Object? fps = freezed,Object? speedX = freezed,Object? progress = freezed,Object? encoderUsed = freezed,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,clientId: freezed == clientId ? _self.clientId : clientId // ignore: cast_nullable_to_non_nullable
@@ -383,7 +388,8 @@ as String?,outputCodec: freezed == outputCodec ? _self.outputCodec : outputCodec
 as String?,fps: freezed == fps ? _self.fps : fps // ignore: cast_nullable_to_non_nullable
 as double?,speedX: freezed == speedX ? _self.speedX : speedX // ignore: cast_nullable_to_non_nullable
 as double?,progress: freezed == progress ? _self.progress : progress // ignore: cast_nullable_to_non_nullable
-as double?,
+as double?,encoderUsed: freezed == encoderUsed ? _self.encoderUsed : encoderUsed // ignore: cast_nullable_to_non_nullable
+as String?,
   ));
 }
 
@@ -468,10 +474,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String? clientId,  String? clientName,  String? mediaTitle,  String? inputCodec,  String? outputCodec,  double? fps,  double? speedX,  double? progress)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String? clientId,  String? clientName,  String? mediaTitle,  String? inputCodec,  String? outputCodec,  double? fps,  double? speedX,  double? progress,  String? encoderUsed)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _ActiveTranscodeSession() when $default != null:
-return $default(_that.id,_that.clientId,_that.clientName,_that.mediaTitle,_that.inputCodec,_that.outputCodec,_that.fps,_that.speedX,_that.progress);case _:
+return $default(_that.id,_that.clientId,_that.clientName,_that.mediaTitle,_that.inputCodec,_that.outputCodec,_that.fps,_that.speedX,_that.progress,_that.encoderUsed);case _:
   return orElse();
 
 }
@@ -489,10 +495,10 @@ return $default(_that.id,_that.clientId,_that.clientName,_that.mediaTitle,_that.
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String? clientId,  String? clientName,  String? mediaTitle,  String? inputCodec,  String? outputCodec,  double? fps,  double? speedX,  double? progress)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String? clientId,  String? clientName,  String? mediaTitle,  String? inputCodec,  String? outputCodec,  double? fps,  double? speedX,  double? progress,  String? encoderUsed)  $default,) {final _that = this;
 switch (_that) {
 case _ActiveTranscodeSession():
-return $default(_that.id,_that.clientId,_that.clientName,_that.mediaTitle,_that.inputCodec,_that.outputCodec,_that.fps,_that.speedX,_that.progress);case _:
+return $default(_that.id,_that.clientId,_that.clientName,_that.mediaTitle,_that.inputCodec,_that.outputCodec,_that.fps,_that.speedX,_that.progress,_that.encoderUsed);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -509,10 +515,10 @@ return $default(_that.id,_that.clientId,_that.clientName,_that.mediaTitle,_that.
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String? clientId,  String? clientName,  String? mediaTitle,  String? inputCodec,  String? outputCodec,  double? fps,  double? speedX,  double? progress)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String? clientId,  String? clientName,  String? mediaTitle,  String? inputCodec,  String? outputCodec,  double? fps,  double? speedX,  double? progress,  String? encoderUsed)?  $default,) {final _that = this;
 switch (_that) {
 case _ActiveTranscodeSession() when $default != null:
-return $default(_that.id,_that.clientId,_that.clientName,_that.mediaTitle,_that.inputCodec,_that.outputCodec,_that.fps,_that.speedX,_that.progress);case _:
+return $default(_that.id,_that.clientId,_that.clientName,_that.mediaTitle,_that.inputCodec,_that.outputCodec,_that.fps,_that.speedX,_that.progress,_that.encoderUsed);case _:
   return null;
 
 }
@@ -524,7 +530,7 @@ return $default(_that.id,_that.clientId,_that.clientName,_that.mediaTitle,_that.
 @JsonSerializable()
 
 class _ActiveTranscodeSession implements ActiveTranscodeSession {
-  const _ActiveTranscodeSession({required this.id, this.clientId, this.clientName, this.mediaTitle, this.inputCodec, this.outputCodec, this.fps, this.speedX, this.progress});
+  const _ActiveTranscodeSession({required this.id, this.clientId, this.clientName, this.mediaTitle, this.inputCodec, this.outputCodec, this.fps, this.speedX, this.progress, this.encoderUsed});
   factory _ActiveTranscodeSession.fromJson(Map<String, dynamic> json) => _$ActiveTranscodeSessionFromJson(json);
 
 @override final  String id;
@@ -536,6 +542,12 @@ class _ActiveTranscodeSession implements ActiveTranscodeSession {
 @override final  double? fps;
 @override final  double? speedX;
 @override final  double? progress;
+/// Encoder this session is actually using (e.g. `h264_nvenc`).
+/// Differs from the operator's first-choice encoder when the chain
+/// fell over to a backup; null on stream-copy sessions (no encoder
+/// involved).  Drives the "Encoder" column in the active-sessions
+/// table.
+@override final  String? encoderUsed;
 
 /// Create a copy of ActiveTranscodeSession
 /// with the given fields replaced by the non-null parameter values.
@@ -550,16 +562,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _ActiveTranscodeSession&&(identical(other.id, id) || other.id == id)&&(identical(other.clientId, clientId) || other.clientId == clientId)&&(identical(other.clientName, clientName) || other.clientName == clientName)&&(identical(other.mediaTitle, mediaTitle) || other.mediaTitle == mediaTitle)&&(identical(other.inputCodec, inputCodec) || other.inputCodec == inputCodec)&&(identical(other.outputCodec, outputCodec) || other.outputCodec == outputCodec)&&(identical(other.fps, fps) || other.fps == fps)&&(identical(other.speedX, speedX) || other.speedX == speedX)&&(identical(other.progress, progress) || other.progress == progress));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _ActiveTranscodeSession&&(identical(other.id, id) || other.id == id)&&(identical(other.clientId, clientId) || other.clientId == clientId)&&(identical(other.clientName, clientName) || other.clientName == clientName)&&(identical(other.mediaTitle, mediaTitle) || other.mediaTitle == mediaTitle)&&(identical(other.inputCodec, inputCodec) || other.inputCodec == inputCodec)&&(identical(other.outputCodec, outputCodec) || other.outputCodec == outputCodec)&&(identical(other.fps, fps) || other.fps == fps)&&(identical(other.speedX, speedX) || other.speedX == speedX)&&(identical(other.progress, progress) || other.progress == progress)&&(identical(other.encoderUsed, encoderUsed) || other.encoderUsed == encoderUsed));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,clientId,clientName,mediaTitle,inputCodec,outputCodec,fps,speedX,progress);
+int get hashCode => Object.hash(runtimeType,id,clientId,clientName,mediaTitle,inputCodec,outputCodec,fps,speedX,progress,encoderUsed);
 
 @override
 String toString() {
-  return 'ActiveTranscodeSession(id: $id, clientId: $clientId, clientName: $clientName, mediaTitle: $mediaTitle, inputCodec: $inputCodec, outputCodec: $outputCodec, fps: $fps, speedX: $speedX, progress: $progress)';
+  return 'ActiveTranscodeSession(id: $id, clientId: $clientId, clientName: $clientName, mediaTitle: $mediaTitle, inputCodec: $inputCodec, outputCodec: $outputCodec, fps: $fps, speedX: $speedX, progress: $progress, encoderUsed: $encoderUsed)';
 }
 
 
@@ -570,7 +582,7 @@ abstract mixin class _$ActiveTranscodeSessionCopyWith<$Res> implements $ActiveTr
   factory _$ActiveTranscodeSessionCopyWith(_ActiveTranscodeSession value, $Res Function(_ActiveTranscodeSession) _then) = __$ActiveTranscodeSessionCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String? clientId, String? clientName, String? mediaTitle, String? inputCodec, String? outputCodec, double? fps, double? speedX, double? progress
+ String id, String? clientId, String? clientName, String? mediaTitle, String? inputCodec, String? outputCodec, double? fps, double? speedX, double? progress, String? encoderUsed
 });
 
 
@@ -587,7 +599,7 @@ class __$ActiveTranscodeSessionCopyWithImpl<$Res>
 
 /// Create a copy of ActiveTranscodeSession
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? clientId = freezed,Object? clientName = freezed,Object? mediaTitle = freezed,Object? inputCodec = freezed,Object? outputCodec = freezed,Object? fps = freezed,Object? speedX = freezed,Object? progress = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? clientId = freezed,Object? clientName = freezed,Object? mediaTitle = freezed,Object? inputCodec = freezed,Object? outputCodec = freezed,Object? fps = freezed,Object? speedX = freezed,Object? progress = freezed,Object? encoderUsed = freezed,}) {
   return _then(_ActiveTranscodeSession(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,clientId: freezed == clientId ? _self.clientId : clientId // ignore: cast_nullable_to_non_nullable
@@ -598,7 +610,8 @@ as String?,outputCodec: freezed == outputCodec ? _self.outputCodec : outputCodec
 as String?,fps: freezed == fps ? _self.fps : fps // ignore: cast_nullable_to_non_nullable
 as double?,speedX: freezed == speedX ? _self.speedX : speedX // ignore: cast_nullable_to_non_nullable
 as double?,progress: freezed == progress ? _self.progress : progress // ignore: cast_nullable_to_non_nullable
-as double?,
+as double?,encoderUsed: freezed == encoderUsed ? _self.encoderUsed : encoderUsed // ignore: cast_nullable_to_non_nullable
+as String?,
   ));
 }
 

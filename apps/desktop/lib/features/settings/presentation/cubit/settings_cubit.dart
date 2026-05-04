@@ -35,6 +35,7 @@ class SettingsCubit extends Cubit<SettingsState> {
       String transcodingEncoder = 'libx264';
       String transcodingPreset = 'veryfast';
       int transcodingCrf = 23;
+      List<String>? transcodingChain;
 
       try {
         final data = await _apiClient.get<Map<String, dynamic>>(
@@ -50,6 +51,10 @@ class SettingsCubit extends Cubit<SettingsState> {
         transcodingPreset =
             data['transcoding_preset'] as String? ?? transcodingPreset;
         transcodingCrf = data['transcoding_crf'] as int? ?? transcodingCrf;
+        final rawChain = data['transcoding_chain'];
+        if (rawChain is List) {
+          transcodingChain = rawChain.whereType<String>().toList();
+        }
       } catch (e) {
         _log.w('Could not fetch server settings (server may be offline): $e');
       }
@@ -77,6 +82,7 @@ class SettingsCubit extends Cubit<SettingsState> {
         transcodingEncoder: transcodingEncoder,
         transcodingPreset: transcodingPreset,
         transcodingCrf: transcodingCrf,
+        transcodingChain: transcodingChain,
         remoteUrl: remoteUrl,
       ));
     } catch (e, st) {
@@ -137,6 +143,11 @@ class SettingsCubit extends Cubit<SettingsState> {
     String? transcodingEncoder,
     String? transcodingPreset,
     int? transcodingCrf,
+    /// Operator's encoder priority chain (Slice C). `null` means "leave
+    /// the existing chain unchanged"; an empty list `[]` clears the
+    /// chain so the server falls back to the default; a non-empty list
+    /// replaces it.
+    List<String>? transcodingChain,
   }) async {
     final trimmedUrl = serverUrl.trim();
     final trimmedName = serverName.trim();
@@ -191,6 +202,7 @@ class SettingsCubit extends Cubit<SettingsState> {
           'transcoding_encoder': ?transcodingEncoder,
           'transcoding_preset': ?transcodingPreset,
           'transcoding_crf': ?transcodingCrf,
+          'transcoding_chain': ?transcodingChain,
         },
       );
       emit(SettingsSaved(

@@ -11,8 +11,10 @@ import 'package:fluxora_desktop/core/router/app_router.dart';
 import 'package:fluxora_desktop/features/activity/domain/repositories/activity_repository.dart';
 import 'package:fluxora_desktop/features/activity/presentation/cubit/activity_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/domain/repositories/transcoding_repository.dart';
+import 'package:fluxora_desktop/features/transcoding/presentation/cubit/fallback_history_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/transcoding_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/transcoding_state.dart';
+import 'package:fluxora_desktop/features/transcoding/presentation/widgets/fallback_history_panel.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
@@ -40,6 +42,15 @@ class TranscodingScreen extends StatelessWidget {
           // when the operator reopens this tab.
           create: (_) =>
               ActivityCubit(GetIt.I<ActivityRepository>())..start(),
+        ),
+        BlocProvider<FallbackHistoryCubit>(
+          // Slower 5 s polling — fallback events are rare and we just
+          // need to surface a new event before the operator's attention
+          // drifts.  Drives the FallbackHistoryPanel below the active
+          // sessions card; collapses to nothing when there are no events.
+          create: (_) => FallbackHistoryCubit(
+            repository: GetIt.I<TranscodingRepository>(),
+          )..start(),
         ),
       ],
       child: const _TranscodingView(),
@@ -90,6 +101,14 @@ class _TranscodingView extends StatelessWidget {
 
                 // ── Active sessions card ─────────────────────────────────
                 _ActiveSessionsCard(txStatus: loaded),
+
+                const SizedBox(height: AppSpacing.s18),
+
+                // ── Recent encoder fallbacks (Slice C) ───────────────────
+                // Collapses to nothing when the ring buffer is empty;
+                // surfaces above the fold whenever the session_router
+                // has had to fall through to a backup encoder.
+                const FallbackHistoryPanel(),
               ],
             );
           },
@@ -368,6 +387,22 @@ class _SessionRow extends StatelessWidget {
               const SizedBox(width: AppSpacing.s12),
               Row(
                 children: [
+                  // Slice C — show the encoder this session is actually
+                  // using.  Null on stream-copy (pill labelled "copy");
+                  // any name from the registry shows verbatim.  This is
+                  // what answers "is NVENC actually running for this
+                  // file?" without making the operator dig through logs.
+                  if (atx?.encoderUsed != null)
+                    FluxChip(
+                      atx!.encoderUsed!,
+                      color: FluxChipColor.purple,
+                    )
+                  else
+                    const FluxChip(
+                      'stream-copy',
+                      color: FluxChipColor.info,
+                    ),
+                  const SizedBox(width: AppSpacing.s8),
                   if (fps != null || speed != null)
                     FluxChip(
                       [

@@ -243,7 +243,7 @@ async def _list_active_sessions(
     """Active sessions joined with media_files + clients for the UI."""
     async with db.execute(
         """
-        SELECT s.id, s.client_id, s.progress_sec,
+        SELECT s.id, s.client_id, s.progress_sec, s.encoder_used,
                m.title       AS media_title,
                m.name        AS media_name,
                m.duration_sec,
@@ -281,6 +281,7 @@ async def _list_active_sessions(
                 "fps": None,
                 "speed_x": None,
                 "progress": progress,
+                "encoder_used": row["encoder_used"],
             }
         )
     return sessions

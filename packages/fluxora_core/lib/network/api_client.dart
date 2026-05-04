@@ -218,10 +218,15 @@ class ApiClient {
   Future<T> post<T>(
     String path, {
     dynamic data,
+    Map<String, dynamic>? queryParameters,
     T Function(dynamic)? fromJson,
   }) async {
     try {
-      final response = await _dio.post<dynamic>(path, data: data);
+      final response = await _dio.post<dynamic>(
+        path,
+        data: data,
+        queryParameters: queryParameters,
+      );
       if (fromJson != null) return fromJson(response.data);
       return response.data as T;
     } on DioException catch (e) {

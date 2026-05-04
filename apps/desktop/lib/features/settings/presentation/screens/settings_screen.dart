@@ -13,6 +13,7 @@ import 'package:fluxora_desktop/features/transcoding/domain/repositories/transco
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/hardware_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/transcoding_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/widgets/detected_hardware_card.dart';
+import 'package:fluxora_desktop/features/transcoding/presentation/widgets/encoder_priority_list.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/widgets/encoder_status_panel.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
@@ -111,6 +112,10 @@ class _SettingsViewState extends State<_SettingsView> {
   String _transcodingEncoder = 'libx264';
   String _transcodingPreset = 'veryfast';
   double _transcodingCrf = 23;
+  // Slice C — operator's encoder priority chain.  null means "use the
+  // default chain" server-side; an explicit list (including empty) is
+  // treated as the operator's choice and PATCHed on save.
+  List<String>? _transcodingChain;
   bool _enablePairingRequired = true;
   bool _enableLogExport = false;
   String _selectedTier = 'free';
@@ -131,7 +136,18 @@ class _SettingsViewState extends State<_SettingsView> {
         _transcodingPreset != s.transcodingPreset ||
         _transcodingCrf.round() != s.transcodingCrf ||
         (_licenseCtrl.text.trim().isEmpty ? null : _licenseCtrl.text.trim()) !=
-            s.licenseKey;
+            s.licenseKey ||
+        !_listEquals(_transcodingChain, s.transcodingChain);
+  }
+
+  static bool _listEquals(List<String>? a, List<String>? b) {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -196,6 +212,11 @@ class _SettingsViewState extends State<_SettingsView> {
           : 'libx264';
       _transcodingPreset = s.transcodingPreset;
       _transcodingCrf = s.transcodingCrf.toDouble();
+      // Sanitise the loaded chain the same way: drop any encoder that
+      // isn't in the desktop's known list (server validates this too,
+      // but we want a clean UI even when the DB has a stale entry).
+      _transcodingChain =
+          s.transcodingChain?.where(validIds.contains).toList();
       _initialized = true;
     }
     _loadedSnapshot = s;
@@ -211,6 +232,10 @@ class _SettingsViewState extends State<_SettingsView> {
     final trimmedLicense = _licenseCtrl.text.trim();
     final loadedLicense = _loadedSnapshot?.licenseKey ?? '';
     final licenseChanged = trimmedLicense != loadedLicense;
+    // Only PATCH transcoding_chain when it's been edited from the loaded
+    // value.  null in this list means "leave unchanged on the server".
+    final loadedChain = _loadedSnapshot?.transcodingChain;
+    final chainChanged = !_listEquals(_transcodingChain, loadedChain);
     context.read<SettingsCubit>().saveSettings(
           serverUrl: _urlCtrl.text,
           serverName: _nameCtrl.text,
@@ -221,6 +246,7 @@ class _SettingsViewState extends State<_SettingsView> {
           transcodingEncoder: _transcodingEncoder,
           transcodingPreset: _transcodingPreset,
           transcodingCrf: _transcodingCrf.round(),
+          transcodingChain: chainChanged ? (_transcodingChain ?? const []) : null,
         );
   }
 
@@ -317,6 +343,10 @@ class _SettingsViewState extends State<_SettingsView> {
                         defaultQuality: _defaultQuality,
                         onQualityChanged: (v) => setState(() { _defaultQuality = v; }),
                         maxStreams: loaded?.maxConcurrentStreams ?? 1,
+                        chain: _transcodingChain ?? const [],
+                        onChainChanged: (v) => setState(() {
+                          _transcodingChain = v;
+                        }),
                       ),
                     'security'  => _SecurityTab(
                         licenseCtrl: _licenseCtrl,
@@ -1101,6 +1131,8 @@ class _StreamingTab extends StatelessWidget {
     required this.defaultQuality,
     required this.onQualityChanged,
     required this.maxStreams,
+    required this.chain,
+    required this.onChainChanged,
   });
 
   final bool enabled;
@@ -1115,6 +1147,11 @@ class _StreamingTab extends StatelessWidget {
   final String defaultQuality;
   final ValueChanged<String> onQualityChanged;
   final int maxStreams;
+  /// Slice C — operator's encoder priority chain.  Empty list = "use the
+  /// default chain server-side".  The widget is controlled; mutations
+  /// fire [onChainChanged].
+  final List<String> chain;
+  final ValueChanged<List<String>> onChainChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1253,6 +1290,30 @@ class _StreamingTab extends StatelessWidget {
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 width: 80,
+              ),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 14),
+
+        // Encoder priority chain (advanced) — Slice C.  Drag to reorder;
+        // when the first encoder hits its concurrent-session cap (NVENC
+        // = 3 on consumer cards), session_router falls through to the
+        // next entry.  Empty list means "use the default chain".
+        _SettingBlock(
+          icon: Icons.layers_outlined,
+          title: 'Encoder priority chain (advanced)',
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s14,
+                vertical: AppSpacing.s10,
+              ),
+              child: EncoderPriorityList(
+                chain: chain,
+                allEncoders: _kEncoders,
+                onChanged: onChainChanged,
               ),
             ),
           ],

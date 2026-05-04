@@ -40,6 +40,11 @@ class ActiveTranscodeSession(BaseModel):
     fps: float | None = None
     speed_x: float | None = None
     progress: float | None = Field(default=None, ge=0, le=1)
+    # Encoder this session is actually using — populated by session_router
+    # at start time (Slice C).  Differs from the operator's first-choice
+    # encoder when the chain fell over to a backup (NVENC at session cap,
+    # etc.).  Null on stream-copy sessions (no encoder involved).
+    encoder_used: str | None = None
 
 
 class TranscodingStatusResponse(BaseModel):
