@@ -6,6 +6,11 @@
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<!-- QR-code pairing scanner — `mobile_scanner` opens the camera to read
+	     the QR rendered by the desktop control panel.  Camera is only used
+	     when the user opens the Scan-QR screen from /connect. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Fluxora uses your camera to scan the QR code shown in the desktop control panel and pair with your home server.</string>
 	<key>CFBundleDisplayName</key>
 	<string>Fluxora Mobile</string>
 	<key>CFBundleExecutable</key>

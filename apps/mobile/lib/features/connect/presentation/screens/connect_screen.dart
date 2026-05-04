@@ -65,18 +65,27 @@ class _ConnectViewState extends State<_ConnectView> {
                 const SizedBox(height: AppSizes.s10),
                 Expanded(child: _buildBody(context, state)),
                 const SizedBox(height: AppSizes.s4),
-                _showManual
-                    ? _buildManualEntry(context)
-                    : SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton(
-                          onPressed: () =>
-                              setState(() => _showManual = true),
-                          child: const Text(
-                            'Enter server address manually',
-                          ),
+                if (_showManual)
+                  _buildManualEntry(context)
+                else
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      ElevatedButton.icon(
+                        onPressed: () => context.push(Routes.scanQr),
+                        icon: const Icon(Icons.qr_code_scanner, size: 18),
+                        label: const Text('Scan QR code'),
+                      ),
+                      const SizedBox(height: AppSizes.s2),
+                      OutlinedButton(
+                        onPressed: () =>
+                            setState(() => _showManual = true),
+                        child: const Text(
+                          'Enter server address manually',
                         ),
                       ),
+                    ],
+                  ),
                 const SizedBox(height: AppSizes.s4),
               ],
             ),

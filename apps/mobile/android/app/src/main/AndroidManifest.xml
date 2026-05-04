@@ -3,6 +3,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
+    <!-- QR-code pairing scanner — `mobile_scanner` opens the camera to read
+         the QR rendered by the desktop control panel.  Camera is only
+         used when the user opens the Scan-QR screen from /connect; not
+         used anywhere else in the app. -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:label="Fluxora"
         android:name="${applicationName}"

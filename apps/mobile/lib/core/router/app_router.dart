@@ -10,6 +10,7 @@ import 'package:fluxora_mobile/features/auth/presentation/screens/pairing_screen
 import 'package:fluxora_mobile/features/auth/presentation/screens/reconnect_screen.dart';
 import 'package:fluxora_mobile/features/connect/domain/entities/discovered_server.dart';
 import 'package:fluxora_mobile/features/connect/presentation/screens/connect_screen.dart';
+import 'package:fluxora_mobile/features/connect/presentation/screens/scan_qr_screen.dart';
 import 'package:fluxora_mobile/features/detail/presentation/screens/detail_screen.dart';
 // Downloads screen is hidden in v1 (decision §5 row 4); the file stays
 // in tree so re-enabling for v1.1 / Phase E is a one-line restoration.
@@ -43,6 +44,12 @@ abstract class Routes {
   /// against the saved server; the operator approves it again and a
   /// fresh token replaces the dead one.
   static const String reconnect = '/reconnect';
+
+  /// QR-code pairing scanner — fallback path when mDNS discovery can't
+  /// reach the server.  Camera reads the canonical
+  /// `fluxora://pair?host=&port=&name=` payload rendered by the desktop
+  /// control panel (see `PairingUri`).
+  static const String scanQr = '/scan-qr';
 
   static const String home = '/home';
   static const String library = '/library';
@@ -105,6 +112,10 @@ final GoRouter appRouter = GoRouter(
     GoRoute(
       path: Routes.reconnect,
       builder: (context, state) => const ReconnectScreen(),
+    ),
+    GoRoute(
+      path: Routes.scanQr,
+      builder: (context, state) => const ScanQrScreen(),
     ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) =>
@@ -188,7 +199,8 @@ Future<String?> _guardRedirect(
 
   final onPublicRoute = state.matchedLocation == Routes.connect ||
       state.matchedLocation == Routes.pairing ||
-      state.matchedLocation == Routes.reconnect;
+      state.matchedLocation == Routes.reconnect ||
+      state.matchedLocation == Routes.scanQr;
   final isAuthenticated = token != null && serverUrl != null;
 
   // Authenticated users hitting /connect or /pairing get bounced to /home.
