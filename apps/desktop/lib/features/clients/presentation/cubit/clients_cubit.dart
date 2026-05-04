@@ -93,4 +93,39 @@ class ClientsCubit extends Cubit<ClientsState> {
       }
     }
   }
+
+  /// Revoke an already-approved client.  Calls `DELETE /auth/revoke/{id}`
+  /// — kills the bearer immediately so any in-flight request from that
+  /// device starts 401-ing on the next round-trip.  See
+  /// [ClientsRepository.revokeClient] for the semantic difference vs
+  /// [reject].
+  Future<void> revoke(String clientId) async {
+    final current = state;
+    if (current is! ClientsLoaded) return;
+
+    emit(current.copyWith(
+      processingIds: {...current.processingIds, clientId},
+    ));
+
+    try {
+      await _repository.revokeClient(clientId);
+      await load();
+    } on ApiException catch (e, st) {
+      _log.e('Revoke failed for $clientId', error: e, stackTrace: st);
+      final next = state;
+      if (next is ClientsLoaded) {
+        emit(next.copyWith(
+          processingIds: {...next.processingIds}..remove(clientId),
+        ));
+      }
+    } catch (e, st) {
+      _log.e('Revoke failed for $clientId', error: e, stackTrace: st);
+      final next = state;
+      if (next is ClientsLoaded) {
+        emit(next.copyWith(
+          processingIds: {...next.processingIds}..remove(clientId),
+        ));
+      }
+    }
+  }
 }

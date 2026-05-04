@@ -72,13 +72,21 @@ class _ClientsViewState extends State<_ClientsView> {
       }).toList();
     }
 
-    // Status filter
-    if (_statusFilter != 'All') {
+    // Status filter.  Default 'All' hides revoked / rejected clients so
+    // the operator's working list is just active devices — there's a
+    // dedicated "Revoked" filter to bring them back.  Without this
+    // default-hide, every revoked device piles up in the table forever
+    // since the server keeps the row for audit history.
+    if (_statusFilter == 'All') {
+      result = result
+          .where((c) => c.status != ClientStatus.rejected)
+          .toList();
+    } else {
       result = result.where((c) {
         return switch (_statusFilter) {
           'Online' => c.status == ClientStatus.approved && c.isTrusted,
-          'Offline' => c.status == ClientStatus.rejected,
           'Pending' => c.status == ClientStatus.pending,
+          'Revoked' => c.status == ClientStatus.rejected,
           _ => true,
         };
       }).toList();
@@ -247,10 +255,11 @@ class _ClientsViewState extends State<_ClientsView> {
         ),
         const SizedBox(width: AppSpacing.s10),
 
-        // Status popup
+        // Status popup.  'All' default-hides revoked clients (see
+        // _applyFilters); 'Revoked' is the explicit way to see them.
         _FilterDropdown(
           label: _statusFilter == 'All' ? 'All Status' : _statusFilter,
-          options: const ['All', 'Online', 'Offline', 'Pending'],
+          options: const ['All', 'Online', 'Pending', 'Revoked'],
           selected: _statusFilter,
           onSelected: (v) => setState(() => _statusFilter = v),
         ),
@@ -350,8 +359,12 @@ class _ClientsViewState extends State<_ClientsView> {
                           isProcessing: state.processingIds.contains(c.id),
                           onTap: () => setState(
                               () => _selectedClientId = c.id),
-                          onRevoke: () =>
+                          onApprove: () =>
+                              context.read<ClientsCubit>().approve(c.id),
+                          onReject: () =>
                               context.read<ClientsCubit>().reject(c.id),
+                          onRevoke: () =>
+                              _confirmRevoke(context, c),
                         ))
                     .toList();
               }(),
@@ -382,14 +395,69 @@ class _ClientsViewState extends State<_ClientsView> {
     return _ClientDetailPanel(
       client: selected,
       onClose: () => setState(() => _selectedClientId = null),
+      onApprove: selected != null
+          ? () => context.read<ClientsCubit>().approve(selected!.id)
+          : null,
+      onReject: selected != null
+          ? () => context.read<ClientsCubit>().reject(selected!.id)
+          : null,
       onRevoke: selected != null
-          ? () {
-              if (state is ClientsLoaded) {
-                context.read<ClientsCubit>().reject(selected!.id);
-              }
-            }
+          ? () => _confirmRevoke(context, selected!)
           : null,
     );
+  }
+
+  // ── Confirm + dispatch a destructive revoke ───────────────────────────────
+
+  Future<void> _confirmRevoke(
+    BuildContext context,
+    ClientListItem client,
+  ) async {
+    final cubit = context.read<ClientsCubit>();
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierColor: const Color(0xCC0F0C24),
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppColors.bgRaised,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadii.lg),
+          side: const BorderSide(color: AppColors.borderSubtle),
+        ),
+        title: Text(
+          'Revoke ${client.name}?',
+          style: AppTypography.h2.copyWith(color: AppColors.textBright),
+        ),
+        content: Text(
+          'The device will be signed out immediately.  Its bearer token '
+          'is dead the moment this lands — any in-flight request will '
+          '401 on the next round-trip.  The client_id is kept for audit '
+          'history; the user can pair the same device again from scratch.',
+          style: AppTypography.body.copyWith(color: AppColors.textBody),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: Text(
+              'Cancel',
+              style: AppTypography.body.copyWith(color: AppColors.textBright),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: Text(
+              'Revoke',
+              style: AppTypography.body.copyWith(
+                color: const Color(0xFFF87171),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await cubit.revoke(client.id);
+    }
   }
 }
 
@@ -616,6 +684,8 @@ class _ClientRow extends StatefulWidget {
     required this.isSelected,
     required this.isProcessing,
     required this.onTap,
+    required this.onApprove,
+    required this.onReject,
     required this.onRevoke,
   });
 
@@ -623,6 +693,8 @@ class _ClientRow extends StatefulWidget {
   final bool isSelected;
   final bool isProcessing;
   final VoidCallback onTap;
+  final VoidCallback onApprove;
+  final VoidCallback onReject;
   final VoidCallback onRevoke;
 
   @override
@@ -713,6 +785,8 @@ class _ClientRowState extends State<_ClientRow> {
                 child: _RowActions(
                   client: c,
                   isProcessing: widget.isProcessing,
+                  onApprove: widget.onApprove,
+                  onReject: widget.onReject,
                   onRevoke: widget.onRevoke,
                 ),
               ),
@@ -852,88 +926,142 @@ class _RowActions extends StatelessWidget {
   const _RowActions({
     required this.client,
     required this.isProcessing,
+    required this.onApprove,
+    required this.onReject,
     required this.onRevoke,
   });
 
   final ClientListItem client;
   final bool isProcessing;
+  final VoidCallback onApprove;
+  final VoidCallback onReject;
   final VoidCallback onRevoke;
 
   @override
   Widget build(BuildContext context) {
+    if (isProcessing) {
+      return const Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          SizedBox(
+            width: 26,
+            height: 26,
+            child: Center(
+              child: SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                    strokeWidth: 1.5, color: AppColors.violet),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        // View (eye) — opens detail panel (handled by row tap); visual only here
-        const Tooltip(
-          message: 'View client details',
-          child: _SmallIconButton(
-            icon: Icons.remove_red_eye_outlined,
-            onTap: null, // row tap handles selection
-          ),
-        ),
-        const SizedBox(width: 4),
-        // Stop stream — disabled (no per-client stream-stop endpoint)
-        const Tooltip(
-          message: 'Stop stream',
-          child: _SmallIconButton(
-            icon: Icons.stop_circle_outlined,
-            onTap: null,
-          ),
-        ),
-        const SizedBox(width: 4),
-        // More options — popup with Revoke
-        isProcessing
-            ? const SizedBox(
-                width: 26,
-                height: 26,
-                child: Center(
-                  child: SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 1.5, color: AppColors.violet),
-                  ),
-                ),
-              )
-            : PopupMenuButton<String>(
-                tooltip: '',
-                icon: const Icon(Icons.more_vert_rounded,
-                    size: 12, color: AppColors.textMutedV2),
-                iconSize: 12,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(maxWidth: 130),
-                color: AppColors.bgRaised,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadii.sm),
-                  side: const BorderSide(color: Color(0x14FFFFFF)),
-                ),
-                onSelected: (val) {
-                  if (val == 'revoke') onRevoke();
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem<String>(
-                    value: 'revoke',
-                    height: 32,
-                    child: Row(
-                      children: [
-                        Icon(Icons.block_rounded,
-                            size: 12, color: Color(0xFFF87171)),
-                        SizedBox(width: 8),
-                        Text(
-                          'Revoke',
-                          style: TextStyle(
-                            fontFamily: 'Inter',
-                            fontSize: 12,
-                            color: Color(0xFFF87171),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+      children: switch (client.status) {
+        ClientStatus.pending => [
+            // Pending: prominent green Approve check + red X Reject.  These
+            // are the operator's first-touch decision on a new device — the
+            // mobile is sitting on the "waiting for approval" panel until
+            // one of these fires.
+            Tooltip(
+              message: 'Approve pair request',
+              child: _ColoredIconButton(
+                icon: Icons.check_rounded,
+                tint: const Color(0xFF10B981),
+                onTap: onApprove,
               ),
-      ],
+            ),
+            const SizedBox(width: 4),
+            Tooltip(
+              message: 'Reject pair request',
+              child: _ColoredIconButton(
+                icon: Icons.close_rounded,
+                tint: const Color(0xFFF87171),
+                onTap: onReject,
+              ),
+            ),
+          ],
+        ClientStatus.approved => [
+            // Approved: Revoke is the only meaningful destructive action.
+            // No more-vert popup — exposing one option behind a hidden
+            // affordance was the bug the user reported.
+            Tooltip(
+              message: 'Revoke this device',
+              child: _ColoredIconButton(
+                icon: Icons.block_rounded,
+                tint: const Color(0xFFF87171),
+                onTap: onRevoke,
+              ),
+            ),
+          ],
+        ClientStatus.rejected => [
+            // Rejected / revoked rows are hidden by default (see the 'All'
+            // filter in _applyFilters); when the operator surfaces them via
+            // the 'Revoked' filter there's no further action — pairing has
+            // to start from the device.
+            const Tooltip(
+              message: 'Revoked — re-pair from the device',
+              child: _SmallIconButton(
+                icon: Icons.history_rounded,
+                onTap: null,
+              ),
+            ),
+          ],
+      },
+    );
+  }
+}
+
+/// Larger 28×28 colored action chip for primary row affordances.  Reserved
+/// for the destructive / decisive operator actions (approve / reject /
+/// revoke) so the pending-row Approve+Reject pair reads as a clear
+/// fork-in-the-road choice instead of a pair of muted dots.
+class _ColoredIconButton extends StatefulWidget {
+  const _ColoredIconButton({
+    required this.icon,
+    required this.tint,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color tint;
+  final VoidCallback onTap;
+
+  @override
+  State<_ColoredIconButton> createState() => _ColoredIconButtonState();
+}
+
+class _ColoredIconButtonState extends State<_ColoredIconButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: widget.tint.withValues(alpha: _hovered ? 0.22 : 0.14),
+            border: Border.all(
+              color: widget.tint.withValues(alpha: _hovered ? 0.55 : 0.4),
+            ),
+            borderRadius: BorderRadius.circular(7),
+          ),
+          child: Center(
+            child: Icon(widget.icon, size: 14, color: widget.tint),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1110,11 +1238,15 @@ class _ClientDetailPanel extends StatelessWidget {
   const _ClientDetailPanel({
     required this.client,
     required this.onClose,
+    required this.onApprove,
+    required this.onReject,
     required this.onRevoke,
   });
 
   final ClientListItem? client;
   final VoidCallback onClose;
+  final VoidCallback? onApprove;
+  final VoidCallback? onReject;
   final VoidCallback? onRevoke;
 
   @override
@@ -1132,6 +1264,8 @@ class _ClientDetailPanel extends StatelessWidget {
           : _PopulatedDetailPanel(
               client: client!,
               onClose: onClose,
+              onApprove: onApprove,
+              onReject: onReject,
               onRevoke: onRevoke,
             ),
     );
@@ -1201,11 +1335,15 @@ class _PopulatedDetailPanel extends StatelessWidget {
   const _PopulatedDetailPanel({
     required this.client,
     required this.onClose,
+    required this.onApprove,
+    required this.onReject,
     required this.onRevoke,
   });
 
   final ClientListItem client;
   final VoidCallback onClose;
+  final VoidCallback? onApprove;
+  final VoidCallback? onReject;
   final VoidCallback? onRevoke;
 
   @override
@@ -1329,36 +1467,51 @@ class _PopulatedDetailPanel extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.s10),
 
-          const _DetailActionTile(
-            icon: Icons.message_outlined,
-            label: 'Send Message',
-            color: AppColors.textMutedV2,
-            onTap: null, // TODO: no backend endpoint for sending messages
+          // Status-aware action stack — mirrors the row actions but with
+          // labelled tiles instead of icon-only chips.
+          ..._statusActionTiles(),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _statusActionTiles() {
+    switch (client.status) {
+      case ClientStatus.pending:
+        return [
+          _DetailActionTile(
+            icon: Icons.check_rounded,
+            label: 'Approve pair request',
+            color: const Color(0xFF10B981),
+            onTap: onApprove,
           ),
           const SizedBox(height: 4),
           _DetailActionTile(
             icon: Icons.close_rounded,
-            label: 'Disconnect Client',
+            label: 'Reject pair request',
+            color: const Color(0xFFF87171),
+            onTap: onReject,
+          ),
+        ];
+      case ClientStatus.approved:
+        return [
+          _DetailActionTile(
+            icon: Icons.block_rounded,
+            label: 'Revoke this device',
             color: const Color(0xFFF87171),
             onTap: onRevoke,
           ),
-          const SizedBox(height: 4),
-          const _DetailActionTile(
-            icon: Icons.block_rounded,
-            label: 'Block Client',
-            color: Color(0xFFF87171),
-            onTap: null, // TODO: no backend block endpoint
-          ),
-          const SizedBox(height: 4),
+        ];
+      case ClientStatus.rejected:
+        return [
           const _DetailActionTile(
             icon: Icons.history_rounded,
-            label: 'View Playback History',
+            label: 'Revoked — re-pair from the device',
             color: AppColors.textMutedV2,
-            onTap: null, // TODO: no backend playback history endpoint
+            onTap: null,
           ),
-        ],
-      ),
-    );
+        ];
+    }
   }
 
   List<Widget> _buildInfoRows() {

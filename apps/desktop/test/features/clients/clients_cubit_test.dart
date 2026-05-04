@@ -257,4 +257,67 @@ void main() {
       expect: () => [],
     );
   });
+
+  group('ClientsCubit.revoke', () {
+    blocTest<ClientsCubit, ClientsState>(
+      'adds client to processingIds then reloads after revoke',
+      build: () {
+        when(() => mockRepo.revokeClient('client-1')).thenAnswer((_) async {});
+        when(() => mockRepo.getClients())
+            .thenAnswer((_) async => [approvedClient, pendingClient]);
+        return buildCubit();
+      },
+      seed: () => ClientsLoaded(clients: [approvedClient, pendingClient]),
+      act: (cubit) => cubit.revoke('client-1'),
+      expect: () => [
+        isA<ClientsLoaded>().having(
+          (s) => s.processingIds,
+          'processingIds during request',
+          {'client-1'},
+        ),
+        isA<ClientsLoading>(),
+        isA<ClientsLoaded>(),
+      ],
+      verify: (_) {
+        // Revoke must call DELETE /auth/revoke (revokeClient on the repo),
+        // not POST /auth/reject — the two have different semantics.  The
+        // test pins this contract so a future refactor can't silently
+        // route revoke through rejectClient again.
+        verify(() => mockRepo.revokeClient('client-1')).called(1);
+        verifyNever(() => mockRepo.rejectClient(any()));
+        verify(() => mockRepo.getClients()).called(1);
+      },
+    );
+
+    blocTest<ClientsCubit, ClientsState>(
+      'removes processingId when revoke throws',
+      build: () {
+        when(() => mockRepo.revokeClient(any())).thenThrow(
+          const ApiException(message: 'Server error', statusCode: 500),
+        );
+        return buildCubit();
+      },
+      seed: () => ClientsLoaded(clients: [approvedClient]),
+      act: (cubit) => cubit.revoke('client-1'),
+      expect: () => [
+        isA<ClientsLoaded>().having(
+          (s) => s.processingIds,
+          'processingIds set during request',
+          {'client-1'},
+        ),
+        isA<ClientsLoaded>().having(
+          (s) => s.processingIds,
+          'processingIds cleared after failure',
+          isEmpty,
+        ),
+      ],
+    );
+
+    blocTest<ClientsCubit, ClientsState>(
+      'revoke is a no-op when state is not ClientsLoaded',
+      build: () => buildCubit(),
+      act: (cubit) => cubit.revoke('client-1'),
+      expect: () => [],
+    );
+  });
 }

@@ -24,4 +24,8 @@ class ClientsRepositoryImpl implements ClientsRepository {
   @override
   Future<void> rejectClient(String clientId) =>
       _apiClient.post<void>(Endpoints.authReject(clientId));
+
+  @override
+  Future<void> revokeClient(String clientId) =>
+      _apiClient.delete(Endpoints.authRevoke(clientId));
 }
