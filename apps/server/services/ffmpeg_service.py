@@ -573,6 +573,14 @@ async def _spawn_ffmpeg_attempt(
     playlist never appeared in time; the stderr tail is drained and the
     process killed.  The session's stderr file is unlinked in either
     case so retries get a fresh capture.
+
+    The process is launched with `cwd=playlist.parent` (the session
+    directory) so the HLS muxer's `-hls_fmp4_init_filename` — which only
+    accepts a basename — resolves to `<session_dir>/init.mp4` instead
+    of the server-process cwd.  Without this the bundled FFmpeg writes
+    the init segment next to whatever directory the server was launched
+    from (e.g. `apps/server/init.mp4`) while the playlist's
+    `#EXT-X-MAP URI` points at the session dir, producing a 404.
     """
     stderr_fd, stderr_path = tempfile.mkstemp(
         prefix=f"fluxora-ffmpeg-{session_id}-", suffix=".log"
@@ -583,6 +591,7 @@ async def _spawn_ffmpeg_attempt(
             *cmd,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=stderr_fd,
+            cwd=str(playlist.parent),
         )
     finally:
         try:
