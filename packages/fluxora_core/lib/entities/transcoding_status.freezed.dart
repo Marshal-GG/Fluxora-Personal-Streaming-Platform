@@ -15,7 +15,17 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$EncoderLoad {
 
- String get encoder; int get activeSessions; double? get gpuUtilizationPercent; int? get vramUsedMb; double? get cpuUtilizationPercent;
+ String get encoder; int get activeSessions; double? get gpuUtilizationPercent; int? get vramUsedMb; double? get cpuUtilizationPercent;/// Underlying GPU engine name ("cuda" / "qsv" / "vaapi" / "videotoolbox"),
+/// or null for software encoders.  Drives the active-encoder strip's
+/// "GPU vs CPU" badge.
+ String? get gpuEngine;/// True if the encoder's last self-test passed; false if it failed; null
+/// if it hasn't been tested yet.  Software encoders always pass.
+ bool? get encoderTestPassed;/// First non-empty stderr line from the failed self-test.  Drives the
+/// failed-encoder modal copy.  Null on pass / not-yet-tested.
+ String? get encoderTestError;/// ISO-8601 UTC timestamp of the last self-test.  Surfaced as "tested
+/// HH:MM" in the encoder status panel so operators know when self-test
+/// data was last refreshed.
+ String? get encoderTestedAt;
 /// Create a copy of EncoderLoad
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -28,16 +38,16 @@ $EncoderLoadCopyWith<EncoderLoad> get copyWith => _$EncoderLoadCopyWithImpl<Enco
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is EncoderLoad&&(identical(other.encoder, encoder) || other.encoder == encoder)&&(identical(other.activeSessions, activeSessions) || other.activeSessions == activeSessions)&&(identical(other.gpuUtilizationPercent, gpuUtilizationPercent) || other.gpuUtilizationPercent == gpuUtilizationPercent)&&(identical(other.vramUsedMb, vramUsedMb) || other.vramUsedMb == vramUsedMb)&&(identical(other.cpuUtilizationPercent, cpuUtilizationPercent) || other.cpuUtilizationPercent == cpuUtilizationPercent));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is EncoderLoad&&(identical(other.encoder, encoder) || other.encoder == encoder)&&(identical(other.activeSessions, activeSessions) || other.activeSessions == activeSessions)&&(identical(other.gpuUtilizationPercent, gpuUtilizationPercent) || other.gpuUtilizationPercent == gpuUtilizationPercent)&&(identical(other.vramUsedMb, vramUsedMb) || other.vramUsedMb == vramUsedMb)&&(identical(other.cpuUtilizationPercent, cpuUtilizationPercent) || other.cpuUtilizationPercent == cpuUtilizationPercent)&&(identical(other.gpuEngine, gpuEngine) || other.gpuEngine == gpuEngine)&&(identical(other.encoderTestPassed, encoderTestPassed) || other.encoderTestPassed == encoderTestPassed)&&(identical(other.encoderTestError, encoderTestError) || other.encoderTestError == encoderTestError)&&(identical(other.encoderTestedAt, encoderTestedAt) || other.encoderTestedAt == encoderTestedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,encoder,activeSessions,gpuUtilizationPercent,vramUsedMb,cpuUtilizationPercent);
+int get hashCode => Object.hash(runtimeType,encoder,activeSessions,gpuUtilizationPercent,vramUsedMb,cpuUtilizationPercent,gpuEngine,encoderTestPassed,encoderTestError,encoderTestedAt);
 
 @override
 String toString() {
-  return 'EncoderLoad(encoder: $encoder, activeSessions: $activeSessions, gpuUtilizationPercent: $gpuUtilizationPercent, vramUsedMb: $vramUsedMb, cpuUtilizationPercent: $cpuUtilizationPercent)';
+  return 'EncoderLoad(encoder: $encoder, activeSessions: $activeSessions, gpuUtilizationPercent: $gpuUtilizationPercent, vramUsedMb: $vramUsedMb, cpuUtilizationPercent: $cpuUtilizationPercent, gpuEngine: $gpuEngine, encoderTestPassed: $encoderTestPassed, encoderTestError: $encoderTestError, encoderTestedAt: $encoderTestedAt)';
 }
 
 
@@ -48,7 +58,7 @@ abstract mixin class $EncoderLoadCopyWith<$Res>  {
   factory $EncoderLoadCopyWith(EncoderLoad value, $Res Function(EncoderLoad) _then) = _$EncoderLoadCopyWithImpl;
 @useResult
 $Res call({
- String encoder, int activeSessions, double? gpuUtilizationPercent, int? vramUsedMb, double? cpuUtilizationPercent
+ String encoder, int activeSessions, double? gpuUtilizationPercent, int? vramUsedMb, double? cpuUtilizationPercent, String? gpuEngine, bool? encoderTestPassed, String? encoderTestError, String? encoderTestedAt
 });
 
 
@@ -65,14 +75,18 @@ class _$EncoderLoadCopyWithImpl<$Res>
 
 /// Create a copy of EncoderLoad
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? encoder = null,Object? activeSessions = null,Object? gpuUtilizationPercent = freezed,Object? vramUsedMb = freezed,Object? cpuUtilizationPercent = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? encoder = null,Object? activeSessions = null,Object? gpuUtilizationPercent = freezed,Object? vramUsedMb = freezed,Object? cpuUtilizationPercent = freezed,Object? gpuEngine = freezed,Object? encoderTestPassed = freezed,Object? encoderTestError = freezed,Object? encoderTestedAt = freezed,}) {
   return _then(_self.copyWith(
 encoder: null == encoder ? _self.encoder : encoder // ignore: cast_nullable_to_non_nullable
 as String,activeSessions: null == activeSessions ? _self.activeSessions : activeSessions // ignore: cast_nullable_to_non_nullable
 as int,gpuUtilizationPercent: freezed == gpuUtilizationPercent ? _self.gpuUtilizationPercent : gpuUtilizationPercent // ignore: cast_nullable_to_non_nullable
 as double?,vramUsedMb: freezed == vramUsedMb ? _self.vramUsedMb : vramUsedMb // ignore: cast_nullable_to_non_nullable
 as int?,cpuUtilizationPercent: freezed == cpuUtilizationPercent ? _self.cpuUtilizationPercent : cpuUtilizationPercent // ignore: cast_nullable_to_non_nullable
-as double?,
+as double?,gpuEngine: freezed == gpuEngine ? _self.gpuEngine : gpuEngine // ignore: cast_nullable_to_non_nullable
+as String?,encoderTestPassed: freezed == encoderTestPassed ? _self.encoderTestPassed : encoderTestPassed // ignore: cast_nullable_to_non_nullable
+as bool?,encoderTestError: freezed == encoderTestError ? _self.encoderTestError : encoderTestError // ignore: cast_nullable_to_non_nullable
+as String?,encoderTestedAt: freezed == encoderTestedAt ? _self.encoderTestedAt : encoderTestedAt // ignore: cast_nullable_to_non_nullable
+as String?,
   ));
 }
 
@@ -157,10 +171,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String encoder,  int activeSessions,  double? gpuUtilizationPercent,  int? vramUsedMb,  double? cpuUtilizationPercent)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String encoder,  int activeSessions,  double? gpuUtilizationPercent,  int? vramUsedMb,  double? cpuUtilizationPercent,  String? gpuEngine,  bool? encoderTestPassed,  String? encoderTestError,  String? encoderTestedAt)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _EncoderLoad() when $default != null:
-return $default(_that.encoder,_that.activeSessions,_that.gpuUtilizationPercent,_that.vramUsedMb,_that.cpuUtilizationPercent);case _:
+return $default(_that.encoder,_that.activeSessions,_that.gpuUtilizationPercent,_that.vramUsedMb,_that.cpuUtilizationPercent,_that.gpuEngine,_that.encoderTestPassed,_that.encoderTestError,_that.encoderTestedAt);case _:
   return orElse();
 
 }
@@ -178,10 +192,10 @@ return $default(_that.encoder,_that.activeSessions,_that.gpuUtilizationPercent,_
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String encoder,  int activeSessions,  double? gpuUtilizationPercent,  int? vramUsedMb,  double? cpuUtilizationPercent)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String encoder,  int activeSessions,  double? gpuUtilizationPercent,  int? vramUsedMb,  double? cpuUtilizationPercent,  String? gpuEngine,  bool? encoderTestPassed,  String? encoderTestError,  String? encoderTestedAt)  $default,) {final _that = this;
 switch (_that) {
 case _EncoderLoad():
-return $default(_that.encoder,_that.activeSessions,_that.gpuUtilizationPercent,_that.vramUsedMb,_that.cpuUtilizationPercent);case _:
+return $default(_that.encoder,_that.activeSessions,_that.gpuUtilizationPercent,_that.vramUsedMb,_that.cpuUtilizationPercent,_that.gpuEngine,_that.encoderTestPassed,_that.encoderTestError,_that.encoderTestedAt);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -198,10 +212,10 @@ return $default(_that.encoder,_that.activeSessions,_that.gpuUtilizationPercent,_
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String encoder,  int activeSessions,  double? gpuUtilizationPercent,  int? vramUsedMb,  double? cpuUtilizationPercent)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String encoder,  int activeSessions,  double? gpuUtilizationPercent,  int? vramUsedMb,  double? cpuUtilizationPercent,  String? gpuEngine,  bool? encoderTestPassed,  String? encoderTestError,  String? encoderTestedAt)?  $default,) {final _that = this;
 switch (_that) {
 case _EncoderLoad() when $default != null:
-return $default(_that.encoder,_that.activeSessions,_that.gpuUtilizationPercent,_that.vramUsedMb,_that.cpuUtilizationPercent);case _:
+return $default(_that.encoder,_that.activeSessions,_that.gpuUtilizationPercent,_that.vramUsedMb,_that.cpuUtilizationPercent,_that.gpuEngine,_that.encoderTestPassed,_that.encoderTestError,_that.encoderTestedAt);case _:
   return null;
 
 }
@@ -213,7 +227,7 @@ return $default(_that.encoder,_that.activeSessions,_that.gpuUtilizationPercent,_
 @JsonSerializable()
 
 class _EncoderLoad implements EncoderLoad {
-  const _EncoderLoad({required this.encoder, required this.activeSessions, this.gpuUtilizationPercent, this.vramUsedMb, this.cpuUtilizationPercent});
+  const _EncoderLoad({required this.encoder, required this.activeSessions, this.gpuUtilizationPercent, this.vramUsedMb, this.cpuUtilizationPercent, this.gpuEngine, this.encoderTestPassed, this.encoderTestError, this.encoderTestedAt});
   factory _EncoderLoad.fromJson(Map<String, dynamic> json) => _$EncoderLoadFromJson(json);
 
 @override final  String encoder;
@@ -221,6 +235,20 @@ class _EncoderLoad implements EncoderLoad {
 @override final  double? gpuUtilizationPercent;
 @override final  int? vramUsedMb;
 @override final  double? cpuUtilizationPercent;
+/// Underlying GPU engine name ("cuda" / "qsv" / "vaapi" / "videotoolbox"),
+/// or null for software encoders.  Drives the active-encoder strip's
+/// "GPU vs CPU" badge.
+@override final  String? gpuEngine;
+/// True if the encoder's last self-test passed; false if it failed; null
+/// if it hasn't been tested yet.  Software encoders always pass.
+@override final  bool? encoderTestPassed;
+/// First non-empty stderr line from the failed self-test.  Drives the
+/// failed-encoder modal copy.  Null on pass / not-yet-tested.
+@override final  String? encoderTestError;
+/// ISO-8601 UTC timestamp of the last self-test.  Surfaced as "tested
+/// HH:MM" in the encoder status panel so operators know when self-test
+/// data was last refreshed.
+@override final  String? encoderTestedAt;
 
 /// Create a copy of EncoderLoad
 /// with the given fields replaced by the non-null parameter values.
@@ -235,16 +263,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _EncoderLoad&&(identical(other.encoder, encoder) || other.encoder == encoder)&&(identical(other.activeSessions, activeSessions) || other.activeSessions == activeSessions)&&(identical(other.gpuUtilizationPercent, gpuUtilizationPercent) || other.gpuUtilizationPercent == gpuUtilizationPercent)&&(identical(other.vramUsedMb, vramUsedMb) || other.vramUsedMb == vramUsedMb)&&(identical(other.cpuUtilizationPercent, cpuUtilizationPercent) || other.cpuUtilizationPercent == cpuUtilizationPercent));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _EncoderLoad&&(identical(other.encoder, encoder) || other.encoder == encoder)&&(identical(other.activeSessions, activeSessions) || other.activeSessions == activeSessions)&&(identical(other.gpuUtilizationPercent, gpuUtilizationPercent) || other.gpuUtilizationPercent == gpuUtilizationPercent)&&(identical(other.vramUsedMb, vramUsedMb) || other.vramUsedMb == vramUsedMb)&&(identical(other.cpuUtilizationPercent, cpuUtilizationPercent) || other.cpuUtilizationPercent == cpuUtilizationPercent)&&(identical(other.gpuEngine, gpuEngine) || other.gpuEngine == gpuEngine)&&(identical(other.encoderTestPassed, encoderTestPassed) || other.encoderTestPassed == encoderTestPassed)&&(identical(other.encoderTestError, encoderTestError) || other.encoderTestError == encoderTestError)&&(identical(other.encoderTestedAt, encoderTestedAt) || other.encoderTestedAt == encoderTestedAt));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,encoder,activeSessions,gpuUtilizationPercent,vramUsedMb,cpuUtilizationPercent);
+int get hashCode => Object.hash(runtimeType,encoder,activeSessions,gpuUtilizationPercent,vramUsedMb,cpuUtilizationPercent,gpuEngine,encoderTestPassed,encoderTestError,encoderTestedAt);
 
 @override
 String toString() {
-  return 'EncoderLoad(encoder: $encoder, activeSessions: $activeSessions, gpuUtilizationPercent: $gpuUtilizationPercent, vramUsedMb: $vramUsedMb, cpuUtilizationPercent: $cpuUtilizationPercent)';
+  return 'EncoderLoad(encoder: $encoder, activeSessions: $activeSessions, gpuUtilizationPercent: $gpuUtilizationPercent, vramUsedMb: $vramUsedMb, cpuUtilizationPercent: $cpuUtilizationPercent, gpuEngine: $gpuEngine, encoderTestPassed: $encoderTestPassed, encoderTestError: $encoderTestError, encoderTestedAt: $encoderTestedAt)';
 }
 
 
@@ -255,7 +283,7 @@ abstract mixin class _$EncoderLoadCopyWith<$Res> implements $EncoderLoadCopyWith
   factory _$EncoderLoadCopyWith(_EncoderLoad value, $Res Function(_EncoderLoad) _then) = __$EncoderLoadCopyWithImpl;
 @override @useResult
 $Res call({
- String encoder, int activeSessions, double? gpuUtilizationPercent, int? vramUsedMb, double? cpuUtilizationPercent
+ String encoder, int activeSessions, double? gpuUtilizationPercent, int? vramUsedMb, double? cpuUtilizationPercent, String? gpuEngine, bool? encoderTestPassed, String? encoderTestError, String? encoderTestedAt
 });
 
 
@@ -272,14 +300,18 @@ class __$EncoderLoadCopyWithImpl<$Res>
 
 /// Create a copy of EncoderLoad
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? encoder = null,Object? activeSessions = null,Object? gpuUtilizationPercent = freezed,Object? vramUsedMb = freezed,Object? cpuUtilizationPercent = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? encoder = null,Object? activeSessions = null,Object? gpuUtilizationPercent = freezed,Object? vramUsedMb = freezed,Object? cpuUtilizationPercent = freezed,Object? gpuEngine = freezed,Object? encoderTestPassed = freezed,Object? encoderTestError = freezed,Object? encoderTestedAt = freezed,}) {
   return _then(_EncoderLoad(
 encoder: null == encoder ? _self.encoder : encoder // ignore: cast_nullable_to_non_nullable
 as String,activeSessions: null == activeSessions ? _self.activeSessions : activeSessions // ignore: cast_nullable_to_non_nullable
 as int,gpuUtilizationPercent: freezed == gpuUtilizationPercent ? _self.gpuUtilizationPercent : gpuUtilizationPercent // ignore: cast_nullable_to_non_nullable
 as double?,vramUsedMb: freezed == vramUsedMb ? _self.vramUsedMb : vramUsedMb // ignore: cast_nullable_to_non_nullable
 as int?,cpuUtilizationPercent: freezed == cpuUtilizationPercent ? _self.cpuUtilizationPercent : cpuUtilizationPercent // ignore: cast_nullable_to_non_nullable
-as double?,
+as double?,gpuEngine: freezed == gpuEngine ? _self.gpuEngine : gpuEngine // ignore: cast_nullable_to_non_nullable
+as String?,encoderTestPassed: freezed == encoderTestPassed ? _self.encoderTestPassed : encoderTestPassed // ignore: cast_nullable_to_non_nullable
+as bool?,encoderTestError: freezed == encoderTestError ? _self.encoderTestError : encoderTestError // ignore: cast_nullable_to_non_nullable
+as String?,encoderTestedAt: freezed == encoderTestedAt ? _self.encoderTestedAt : encoderTestedAt // ignore: cast_nullable_to_non_nullable
+as String?,
   ));
 }
 

@@ -12,6 +12,10 @@ _EncoderLoad _$EncoderLoadFromJson(Map<String, dynamic> json) => _EncoderLoad(
   gpuUtilizationPercent: (json['gpu_utilization_percent'] as num?)?.toDouble(),
   vramUsedMb: (json['vram_used_mb'] as num?)?.toInt(),
   cpuUtilizationPercent: (json['cpu_utilization_percent'] as num?)?.toDouble(),
+  gpuEngine: json['gpu_engine'] as String?,
+  encoderTestPassed: json['encoder_test_passed'] as bool?,
+  encoderTestError: json['encoder_test_error'] as String?,
+  encoderTestedAt: json['encoder_tested_at'] as String?,
 );
 
 Map<String, dynamic> _$EncoderLoadToJson(_EncoderLoad instance) =>
@@ -21,6 +25,10 @@ Map<String, dynamic> _$EncoderLoadToJson(_EncoderLoad instance) =>
       'gpu_utilization_percent': instance.gpuUtilizationPercent,
       'vram_used_mb': instance.vramUsedMb,
       'cpu_utilization_percent': instance.cpuUtilizationPercent,
+      'gpu_engine': instance.gpuEngine,
+      'encoder_test_passed': instance.encoderTestPassed,
+      'encoder_test_error': instance.encoderTestError,
+      'encoder_tested_at': instance.encoderTestedAt,
     };
 
 _ActiveTranscodeSession _$ActiveTranscodeSessionFromJson(

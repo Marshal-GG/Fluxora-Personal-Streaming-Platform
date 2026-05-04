@@ -36,12 +36,31 @@ class TranscodingCubit extends Cubit<TranscodingState> {
 
   Future<void> _tick() async {
     // Only emit loading on first load to avoid flicker during polls.
+    if (isClosed) return;
     if (state is TranscodingInitial) emit(const TranscodingLoading());
     try {
       final result = await _repository.status();
-      emit(TranscodingLoaded(result));
+      // Cubit may have closed while the awaited HTTP call was in flight
+      // (user navigated away from Settings).  Bail before emit to avoid
+      // `Cannot emit new states after calling close`.
+      if (isClosed) return;
+      // Advisor is fetched alongside but its failure is non-fatal — the
+      // status screen renders fine without a recommendation banner.
+      // Preserve any prior advice on transient failure so the banner
+      // doesn't flicker when one tick's advisor call dies.
+      var advice = state is TranscodingLoaded
+          ? (state as TranscodingLoaded).advice
+          : null;
+      try {
+        advice = await _repository.advisor();
+      } catch (e, st) {
+        _log.w('Advisor poll failed (non-fatal)', error: e, stackTrace: st);
+      }
+      if (isClosed) return;
+      emit(TranscodingLoaded(result, advice: advice));
     } catch (e, st) {
       _log.e('TranscodingCubit poll failed', error: e, stackTrace: st);
+      if (isClosed) return;
       // Only surface failure on first load; preserve last known state on
       // subsequent poll errors so the UI doesn't blank out.
       if (state is TranscodingInitial || state is TranscodingLoading) {

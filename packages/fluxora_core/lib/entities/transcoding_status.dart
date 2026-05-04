@@ -11,6 +11,20 @@ abstract class EncoderLoad with _$EncoderLoad {
     double? gpuUtilizationPercent,
     int? vramUsedMb,
     double? cpuUtilizationPercent,
+    /// Underlying GPU engine name ("cuda" / "qsv" / "vaapi" / "videotoolbox"),
+    /// or null for software encoders.  Drives the active-encoder strip's
+    /// "GPU vs CPU" badge.
+    String? gpuEngine,
+    /// True if the encoder's last self-test passed; false if it failed; null
+    /// if it hasn't been tested yet.  Software encoders always pass.
+    bool? encoderTestPassed,
+    /// First non-empty stderr line from the failed self-test.  Drives the
+    /// failed-encoder modal copy.  Null on pass / not-yet-tested.
+    String? encoderTestError,
+    /// ISO-8601 UTC timestamp of the last self-test.  Surfaced as "tested
+    /// HH:MM" in the encoder status panel so operators know when self-test
+    /// data was last refreshed.
+    String? encoderTestedAt,
   }) = _EncoderLoad;
 
   factory EncoderLoad.fromJson(Map<String, dynamic> json) =>

@@ -35,8 +35,11 @@ class TranscodingScreen extends StatelessWidget {
           )..start(),
         ),
         BlocProvider<ActivityCubit>(
+          // start() polls /stream/sessions every 2 s.  Without polling
+          // the active-sessions list + per-session progress only update
+          // when the operator reopens this tab.
           create: (_) =>
-              ActivityCubit(GetIt.I<ActivityRepository>())..loadSessions(),
+              ActivityCubit(GetIt.I<ActivityRepository>())..start(),
         ),
       ],
       child: const _TranscodingView(),

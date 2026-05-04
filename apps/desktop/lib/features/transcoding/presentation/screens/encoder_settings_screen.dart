@@ -233,11 +233,17 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
   }
 
   void _save(BuildContext context, SettingsLoaded state) {
+    // Encoder Settings only edits transcoder fields — never re-send
+    // licenseKey here.  Re-sending the loaded value would 422 the entire
+    // PATCH whenever the stored key is malformed (Pydantic validator
+    // rejects anything that isn't FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>).
+    // The Settings → General tab is the only place the license can be
+    // edited or cleared.
     context.read<SettingsCubit>().saveSettings(
           serverUrl: state.serverUrl,
           serverName: state.serverName,
           tier: state.tier,
-          licenseKey: state.licenseKey,
+          licenseKey: null,
           transcodingEncoder: _encoder,
           transcodingPreset: _preset,
           transcodingCrf: _crf,
@@ -486,14 +492,21 @@ class _EncoderDropdown extends StatelessWidget {
   final ValueChanged<String?> onChanged;
 
   static const _encoders = [
+    // Software
     ('libx264', 'Software (x264)'),
     ('libx265', 'Software (x265)'),
+    // NVIDIA NVENC
     ('h264_nvenc', 'NVIDIA NVENC H.264'),
     ('hevc_nvenc', 'NVIDIA NVENC HEVC'),
+    // Intel Quick Sync
     ('h264_qsv', 'Intel QuickSync H.264'),
     ('hevc_qsv', 'Intel QuickSync HEVC'),
+    // AMD / Linux VA-API
     ('h264_vaapi', 'VAAPI H.264'),
-    ('h264_amf', 'AMD AMF H.264'),
+    ('hevc_vaapi', 'VAAPI HEVC'),
+    // Apple VideoToolbox (macOS only)
+    ('h264_videotoolbox', 'VideoToolbox H.264'),
+    ('hevc_videotoolbox', 'VideoToolbox HEVC'),
   ];
 
   @override

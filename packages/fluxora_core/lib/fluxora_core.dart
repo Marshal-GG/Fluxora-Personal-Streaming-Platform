@@ -1,5 +1,6 @@
 export 'entities/activity_event.dart';
 export 'entities/app_notification.dart';
+export 'entities/encoder_advice.dart';
 export 'entities/profile.dart';
 export 'entities/client.dart';
 export 'entities/client_profile.dart';
