@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 import shutil
 import sys
 import tempfile
@@ -155,13 +156,20 @@ async def probe_video(file_path: str) -> dict | None:
     }
 
 
-async def _resolve_source_codec(db, file_path: str, file_id: str | None) -> str | None:
-    """Return the source video codec name, probing on-demand if needed.
+async def _resolve_source_metadata(
+    db,
+    file_path: str,
+) -> tuple[str | None, str | None]:
+    """Return ``(codec_name, hdr_format)`` for the source file.
 
     Files scanned before migration 016 (or before the FFprobe-at-scan
-    step) have `codec_name IS NULL` — they would silently transcode even
+    step) have NULL codec_name — they would silently transcode even
     when the source is stream-copy-eligible.  Probe lazily and persist
     the result so the next playback of the same file is fast.
+
+    ``hdr_format`` is one of ``"HDR10"`` / ``"HLG"`` / ``"DolbyVision"`` /
+    ``None`` (SDR).  Drives the tonemap decision in start_stream when the
+    operator has asked for HDR sources to be converted to SDR.
     """
     async with db.execute(
         "SELECT id, codec_name, width, height, hdr_format FROM media_files"
@@ -170,9 +178,9 @@ async def _resolve_source_codec(db, file_path: str, file_id: str | None) -> str 
     ) as cur:
         row = await cur.fetchone()
     if row is None:
-        return None
+        return None, None
     if row["codec_name"]:
-        return row["codec_name"]
+        return row["codec_name"], row["hdr_format"]
 
     # Lazy probe — one ffprobe invocation, ~200 ms.  Cheaper than even
     # 1 s of unnecessary transcoding.
@@ -186,7 +194,7 @@ async def _resolve_source_codec(db, file_path: str, file_id: str | None) -> str 
             exc_info=True,
         )
     if info is None:
-        return None
+        return None, None
 
     # Persist the probe result so the next play is constant-time.  We
     # already have the row id; mirror `library_service._persist_probe`
@@ -215,7 +223,13 @@ async def _resolve_source_codec(db, file_path: str, file_id: str | None) -> str 
             file_path,
             exc_info=True,
         )
-    return info["codec_name"]
+    return info["codec_name"], info["hdr_format"]
+
+
+async def _resolve_source_codec(db, file_path: str, file_id: str | None) -> str | None:
+    """Back-compat wrapper — returns just the codec name."""
+    codec, _ = await _resolve_source_metadata(db, file_path)
+    return codec
 
 
 # NVIDIA cuvid hardware-decoder names by source codec.  FFmpeg's
@@ -245,6 +259,29 @@ _NVIDIA_CUVID_BY_CODEC: dict[str, str] = {
 }
 
 
+# zscale + tonemap filter chain that converts BT.2020 PQ HDR10 → BT.709
+# SDR with Hable tonemapping.  Result is yuv420p ready for any 8-bit
+# encoder (libx264, h264_nvenc, h264_qsv, etc.).
+#
+# Steps:
+# 1. `zscale=t=linear:npl=100`   — un-PQ the transfer to linear light
+# 2. `format=gbrpf32le`          — float planar so tonemap has headroom
+# 3. `zscale=p=bt709`            — gamut: BT.2020 → BT.709 primaries
+# 4. `tonemap=tonemap=hable:desat=0` — Hable curve, no desaturation
+# 5. `zscale=t=bt709:m=bt709:r=tv,format=yuv420p` — back to TV-range 8-bit
+#
+# Hable is the default for a reason: it preserves highlight detail
+# better than `linear` / `gamma` on a wide range of source content.
+# `desat=0` keeps the saturated colours rather than washing them — most
+# game capture sources benefit from the full saturation.
+_HDR_TO_SDR_VF = (
+    "zscale=t=linear:npl=100,format=gbrpf32le,"
+    "zscale=p=bt709,"
+    "tonemap=tonemap=hable:desat=0,"
+    "zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
+)
+
+
 def _input_decoder_args(
     source_codec: str | None,
     encoder_meta: EncoderMeta,
@@ -266,15 +303,21 @@ def _input_decoder_args(
     return ["-c:v", decoder]
 
 
-# Substrings in FFmpeg stderr that indicate the cuvid hardware decoder
+# Substrings in FFmpeg stderr that indicate the GPU input pipeline
 # rejected the source.  When we see any of these in a failed-attempt's
-# stderr tail, retry the pipeline once without the cuvid hint so the
+# stderr tail, retry the pipeline with `use_gpu_input=False` so the
 # software decoder gets a chance — covers HDR / 12-bit / 4:4:4 sources
-# that NVDEC AV1 (or similar) won't accept on the operator's GPU.
+# that NVDEC won't accept (cuvid-tagged errors), AV1 sources on Turing
+# GPUs without AV1 NVDEC ("Your platform doesn't support hardware
+# accelerated AV1 decoding"), and any other case where `-hwaccel cuda`
+# itself fails to initialise for the input.
 _CUVID_FAILURE_MARKERS: tuple[str, ...] = (
     "cuvid is not supported",
     "not supported with this chroma format",
-    "cuvid",  # broad catch-all — any cuvid-tagged error in the tail
+    "cuvid",  # any cuvid-tagged error in the tail
+    "hwaccel initialisation returned error",
+    "doesn't support hardware accelerated",
+    "hardware is lacking required capabilities",
 )
 
 
@@ -290,35 +333,58 @@ def _build_ffmpeg_cmd(
     source_codec: str | None,
     direct_remux: bool,
     direct_remux_hevc: bool,
-    use_cuvid: bool,
+    use_gpu_input: bool,
+    apply_hdr_tonemap: bool = False,
 ) -> list[str]:
     """Compose the FFmpeg command line.
 
-    Split out from ``start_stream`` so the cuvid-failure retry path can
-    rebuild the command with ``use_cuvid=False`` without duplicating the
-    HLS flag block.
+    ``use_gpu_input=True`` (first attempt) injects the encoder's
+    pre-input ``-hwaccel`` flags AND the cuvid input-decoder hint when
+    applicable.  ``use_gpu_input=False`` (retry path after a CUDA-input
+    failure) drops *both* — frames stay on the CPU through software
+    decode and only land on the GPU at NVENC encode time via FFmpeg's
+    automatic upload.  Slower than the all-GPU path but works on any
+    GPU + FFmpeg combination, which is what makes it a sensible retry.
     """
     cmd: list[str] = [_ffmpeg_bin(), "-hide_banner", "-loglevel", "error"]
 
-    if not direct_remux:
+    if not direct_remux and use_gpu_input:
         # Pre-input hardware acceleration flags (empty list for software).
         cmd.extend(meta.pre_input_args(device=hwaccel_device))
         # Force the input decoder when FFmpeg's auto-selection is known
         # to break (e.g. AV1 software decode on the bundled build).
-        # Skipped on the retry pass after a cuvid failure.
-        if use_cuvid:
-            cmd.extend(_input_decoder_args(source_codec, meta))
+        cmd.extend(_input_decoder_args(source_codec, meta))
 
     cmd.extend(["-i", file_path])
 
     if direct_remux:
+        # Stream-copy preserves the source's HDR bitstream.  Tonemap
+        # cannot apply here — it requires decoded pixels; the caller is
+        # responsible for forcing transcode mode (direct_remux=False)
+        # whenever apply_hdr_tonemap is True.
         cmd.extend(["-c:v", "copy"])
     else:
         cmd.extend(meta.video_codec_args(preset, crf))
-        cmd.extend(meta.filter_args())
+        # Combine the tonemap chain with the encoder's own filter chain
+        # (VAAPI needs `format=nv12|vaapi,hwupload`).  Tonemap runs first
+        # — it operates on CPU pixels, then the result feeds into VAAPI
+        # upload if needed.
+        encoder_vf = meta.vf_chain  # raw string from registry, may be None
+        chains = [c for c in (
+            _HDR_TO_SDR_VF if apply_hdr_tonemap else None,
+            encoder_vf,
+        ) if c]
+        if chains:
+            cmd.extend(["-vf", ",".join(chains)])
 
     cmd.extend(["-c:a", "aac", "-b:a", "128k"])
 
+    # fmp4 segments for HEVC sources (Apple HLS spec compliance) and for
+    # transcode-mode encoders whose registry says fmp4.  The bundled
+    # FFmpeg's HLS muxer is unreliable about writing the init segment
+    # under stream-copy — `_ensure_fmp4_init_segment()` generates one
+    # ourselves if FFmpeg skipped it, so the playlist's `#EXT-X-MAP URI`
+    # always points at a real file.
     use_fmp4 = direct_remux_hevc or (
         not direct_remux and meta.segment_fmt == "fmp4"
     )
@@ -334,6 +400,13 @@ def _build_ffmpeg_cmd(
     if use_fmp4:
         cmd.extend(common_hls + [
             "-hls_segment_type", "fmp4",
+            # Pin the init-segment filename explicitly so the playlist's
+            # #EXT-X-MAP URI matches what's actually written to disk.
+            # FFmpeg's default for unnamed fmp4 init segments varies between
+            # builds — some produce `init.mp4`, others embed init data into
+            # `seg00000.m4s`.  Without this flag the player gets a playlist
+            # pointing at `init.mp4` but the file doesn't exist → 404.
+            "-hls_fmp4_init_filename", "init.mp4",
             "-hls_segment_filename", str(session_dir / "seg%05d.m4s"),
             str(playlist),
         ])
@@ -347,9 +420,145 @@ def _build_ffmpeg_cmd(
 
 
 def _is_cuvid_failure(stderr_tail: str) -> bool:
-    """Heuristically classify a stderr tail as a cuvid-rejection failure."""
+    """Heuristically classify a stderr tail as a GPU-input-pipeline failure.
+
+    Name kept for back-compat with tests; in practice it now matches both
+    cuvid-tagged errors AND the broader "hwaccel cuda failed to set up"
+    family that surfaces when AV1 NVDEC is unavailable on the GPU
+    (Turing, etc.).
+    """
     lower = stderr_tail.lower()
     return any(marker in lower for marker in _CUVID_FAILURE_MARKERS)
+
+
+def _write_static_vod_playlist(
+    *,
+    playlist: Path,
+    duration_sec: float,
+    hls_time: float,
+    use_fmp4: bool,
+    init_filename: str = "init.mp4",
+) -> int:
+    """Pre-emit a complete VOD playlist listing every segment FFmpeg will
+    eventually write.
+
+    Without this, the player loads FFmpeg's incrementally-growing playlist
+    and the seek bar only spans the segments written so far — extending
+    over the encode duration.  With a static playlist the player sees the
+    file's full duration immediately and can seek anywhere.  When the user
+    seeks ahead of FFmpeg's current write position, the HLS router waits
+    briefly for the requested segment to appear before falling back to 404.
+
+    Returns the number of segments listed.
+
+    Limitation: stream-copy aligns segments to source keyframes, so actual
+    segment durations may exceed ``hls_time`` by a few seconds.  The
+    predicted segment count is therefore an upper bound; the playlist
+    may list a few segments at the tail that FFmpeg doesn't end up
+    writing.  Players retry-then-skip on 404 within reason; the
+    operator-visible effect is a small stutter at end-of-file in the
+    worst case.
+    """
+    if duration_sec <= 0 or hls_time <= 0:
+        return 0
+    n = max(1, math.ceil(duration_sec / hls_time))
+    last_dur = duration_sec - (n - 1) * hls_time
+    if last_dur <= 0:
+        last_dur = hls_time
+    target_dur = max(1, math.ceil(hls_time))
+    extension = "m4s" if use_fmp4 else "ts"
+
+    lines: list[str] = [
+        "#EXTM3U",
+        # VERSION 6 is needed for `#EXT-X-MAP` (init segment) per Apple HLS spec.
+        f"#EXT-X-VERSION:{6 if use_fmp4 else 3}",
+        f"#EXT-X-TARGETDURATION:{target_dur}",
+        "#EXT-X-PLAYLIST-TYPE:VOD",
+        "#EXT-X-MEDIA-SEQUENCE:0",
+    ]
+    if use_fmp4:
+        lines.append(f'#EXT-X-MAP:URI="{init_filename}"')
+    for i in range(n):
+        dur = last_dur if i == n - 1 else hls_time
+        lines.append(f"#EXTINF:{dur:.6f},")
+        lines.append(f"seg{i:05d}.{extension}")
+    lines.append("#EXT-X-ENDLIST")
+    playlist.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return n
+
+
+async def _ensure_fmp4_init_segment(
+    session_dir: Path,
+    file_path: str,
+    audio_aac_kbps: int = 128,
+) -> bool:
+    """Generate `<session_dir>/init.mp4` if FFmpeg's HLS muxer didn't.
+
+    The bundled FFmpeg's HLS muxer is unreliable about writing the
+    fmp4 init segment under stream-copy — segments get written but
+    `init.mp4` is silently skipped, leaving the playlist's
+    `#EXT-X-MAP URI="init.mp4"` pointing at a missing file → player
+    refuses to start playback (404 from the HLS router).
+
+    This generates an init-only fragmented mp4 by re-running FFmpeg
+    against the source with ``-t 0.04`` (≈one frame) + the same
+    fragmentation flags the HLS muxer uses (`empty_moov` puts the
+    moov at the head of the file; `default_base_moof` + `frag_keyframe`
+    are the standard fmp4 set).  The resulting file has the moov box
+    matching the source's video config + the AAC config we'd produce
+    in the segments.  Players parse the moov, set up the decoder, and
+    skip the tiny mdat without complaint.
+
+    Returns True if a file now exists at `init.mp4` (whether we wrote
+    it or it was already there); False on failure.
+    """
+    init_path = session_dir / "init.mp4"
+    if init_path.exists() and init_path.stat().st_size > 0:
+        return True
+
+    try:
+        ffmpeg = _ffmpeg_bin()
+    except FileNotFoundError:
+        return False
+
+    # `-map 0:a:0?` makes the audio track optional — silent video files
+    # (no audio stream at index 0) don't error out.
+    # `-t 0.04` writes ≈1 frame at 25 fps; the moov header is what the
+    # player actually reads, the tiny mdat is skipped.
+    cmd = [
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+        "-i", file_path,
+        "-map", "0:v:0", "-c:v", "copy",
+        "-map", "0:a:0?", "-c:a", "aac", "-b:a", f"{audio_aac_kbps}k",
+        "-t", "0.04",
+        "-movflags", "+empty_moov+default_base_moof+frag_keyframe",
+        "-f", "mp4",
+        str(init_path),
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=10.0)
+    except (TimeoutError, OSError):
+        logger.warning(
+            "Manual fmp4 init-segment generation failed for %s",
+            file_path,
+            exc_info=True,
+        )
+        return False
+
+    if proc.returncode != 0:
+        logger.warning(
+            "Manual fmp4 init-segment generation exited with code %d for %s",
+            proc.returncode,
+            file_path,
+        )
+        return False
+
+    return init_path.exists() and init_path.stat().st_size > 0
 
 
 async def _spawn_ffmpeg_attempt(
@@ -416,6 +625,8 @@ async def start_stream(
     file_path: str,
     session_id: str,
     hls_root: Path,
+    *,
+    tonemap_hdr: bool = False,
 ) -> Path:
     """Spawn FFmpeg for HLS output; return the .m3u8 playlist path.
 
@@ -445,15 +656,63 @@ async def start_stream(
     succeeds or when the failure is unrelated to cuvid.
     """
     from database.db import get_db
-    from services import settings_service
+    from services import session_router, settings_service
 
     db = await get_db()
     settings_row = await settings_service.get_settings(db)
 
-    encoder: str = settings_row.get("transcoding_encoder", "libx264") or "libx264"
+    default_encoder: str = (
+        settings_row.get("transcoding_encoder", "libx264") or "libx264"
+    )
     preset: str = settings_row.get("transcoding_preset", "veryfast") or "veryfast"
     crf: int = int(settings_row.get("transcoding_crf", 23) or 23)
     hwaccel_device: str | None = settings_row.get("transcoding_hwaccel_device")
+
+    source_codec, hdr_format = await _resolve_source_metadata(db, file_path)
+
+    # Tonemap is only meaningful when both: (a) the source is HDR and
+    # (b) the caller asked for it.  Anything else is a no-op.
+    apply_hdr_tonemap = bool(tonemap_hdr and hdr_format)
+
+    direct_remux_h264 = source_codec == "h264"
+    direct_remux_hevc = source_codec in ("hevc", "h265")
+    direct_remux = direct_remux_h264 or direct_remux_hevc
+
+    # Tonemap requires decoded pixels, so it forces transcode mode even
+    # for h264 / hevc sources we'd otherwise stream-copy.  The tonemap
+    # filter chain runs CPU-side; CUDA hwaccel input would push frames
+    # into VRAM and the zscale/tonemap filters can't read them.  Drop
+    # the GPU-input pipeline for tonemap sessions.
+    if apply_hdr_tonemap and direct_remux:
+        logger.info(
+            "Tonemap requested for HDR source — overriding stream-copy "
+            "for session"
+        )
+        direct_remux = False
+        direct_remux_h264 = False
+        direct_remux_hevc = False
+
+    # Stream-copy doesn't invoke any encoder, so it bypasses the router
+    # entirely.  Transcode mode consults the router so the operator's
+    # priority chain (Slice C) gets a chance to fall over to a different
+    # encoder when the first choice is at its concurrent-session cap.
+    if direct_remux:
+        encoder = default_encoder
+    else:
+        chain_raw = settings_row.get("transcoding_chain")
+        chain = session_router.parse_chain(chain_raw)
+        if not chain:
+            # Back-compat default: try the operator's configured encoder
+            # first, then fall through to libx264.  Existing installs that
+            # never touched the chain UI get this for free.
+            chain = (
+                [default_encoder, "libx264"]
+                if default_encoder != "libx264"
+                else ["libx264"]
+            )
+        encoder, route_reason = session_router.pick_encoder(
+            chain, session_id, default_encoder=default_encoder
+        )
 
     meta: EncoderMeta = ENCODER_REGISTRY.get(encoder, ENCODER_REGISTRY["libx264"])
     if meta.name != encoder:
@@ -461,14 +720,16 @@ async def start_stream(
             "Unknown encoder %r in settings — falling back to libx264", encoder
         )
 
-    source_codec = await _resolve_source_codec(db, file_path, None)
-    direct_remux_h264 = source_codec == "h264"
-    direct_remux_hevc = source_codec in ("hevc", "h265")
-    direct_remux = direct_remux_h264 or direct_remux_hevc
-
     session_dir = hls_root / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
+    # `playlist` is what the client requests via the HLS router.  We
+    # pre-emit a static VOD playlist there listing every segment FFmpeg
+    # will eventually write, so the player's seek bar shows full
+    # duration upfront.  FFmpeg writes its own incremental playlist to
+    # `_ff_playlist.m3u8` (we use it only as the "FFmpeg has produced
+    # output" sentinel; it's never served to the client).
     playlist = session_dir / "playlist.m3u8"
+    ff_playlist = session_dir / "_ff_playlist.m3u8"
 
     use_fmp4 = direct_remux_hevc or (
         not direct_remux and meta.segment_fmt == "fmp4"
@@ -487,11 +748,18 @@ async def start_stream(
         source_codec or "<unknown>",
     )
 
-    # First attempt — with cuvid hint if applicable.
+    # Tonemap forces software input — zscale/tonemap operate on CPU
+    # pixels.  Skipping GPU input on the first attempt avoids the
+    # guaranteed `Impossible to convert between the formats supported`
+    # round-trip.
+    first_attempt_gpu_input = not apply_hdr_tonemap
+
+    # First attempt — full GPU input pipeline (-hwaccel cuda + cuvid hint),
+    # unless tonemap is forcing CPU.
     cmd = _build_ffmpeg_cmd(
         file_path=file_path,
         session_dir=session_dir,
-        playlist=playlist,
+        playlist=ff_playlist,
         meta=meta,
         preset=preset,
         crf=crf,
@@ -499,18 +767,27 @@ async def start_stream(
         source_codec=source_codec,
         direct_remux=direct_remux,
         direct_remux_hevc=direct_remux_hevc,
-        use_cuvid=True,
+        use_gpu_input=first_attempt_gpu_input,
+        apply_hdr_tonemap=apply_hdr_tonemap,
     )
     succeeded, tail, returncode = await _spawn_ffmpeg_attempt(
-        cmd, session_id, playlist
+        cmd, session_id, ff_playlist
     )
 
-    # Retry once if cuvid blew up — software decode might still work.
-    cuvid_was_used = bool(_input_decoder_args(source_codec, meta))
-    if not succeeded and cuvid_was_used and _is_cuvid_failure(tail):
+    # Retry once if the GPU input pipeline failed — software decode
+    # piping into NVENC encode is slower but works on any GPU + FFmpeg.
+    # Only retry when the first attempt actually invoked GPU input
+    # (transcode mode + non-software encoder + GPU input wasn't already
+    # disabled for tonemap).
+    used_gpu_input = (
+        first_attempt_gpu_input
+        and not direct_remux
+        and meta.vendor != "software"
+    )
+    if not succeeded and used_gpu_input and _is_cuvid_failure(tail):
         logger.warning(
-            "cuvid decoder rejected source (session=%s); retrying without "
-            "cuvid hint.  Original stderr tail:\n%s",
+            "GPU input pipeline rejected source (session=%s); retrying "
+            "with software decode.  Original stderr tail:\n%s",
             session_id,
             tail or "<empty>",
         )
@@ -525,17 +802,89 @@ async def start_stream(
             source_codec=source_codec,
             direct_remux=direct_remux,
             direct_remux_hevc=direct_remux_hevc,
-            use_cuvid=False,
+            use_gpu_input=False,
+            apply_hdr_tonemap=apply_hdr_tonemap,
         )
         succeeded, tail, returncode = await _spawn_ffmpeg_attempt(
             cmd, session_id, playlist
         )
 
     if succeeded:
+        # If the playlist is fmp4, make sure init.mp4 actually exists on
+        # disk — bundled FFmpeg builds skip writing it under stream-copy
+        # despite the `-hls_fmp4_init_filename` flag.  No-op when FFmpeg
+        # already wrote it (file exists).
+        if use_fmp4:
+            try:
+                wrote = await _ensure_fmp4_init_segment(session_dir, file_path)
+                if not wrote:
+                    logger.warning(
+                        "Could not generate fmp4 init segment for session=%s; "
+                        "playback may fail with a 404 on init.mp4",
+                        session_id,
+                    )
+            except Exception:
+                logger.warning(
+                    "Manual init-segment generation raised for session=%s",
+                    session_id,
+                    exc_info=True,
+                )
+
+        # Pre-emit a static VOD playlist listing every segment FFmpeg
+        # will eventually write.  Player sees full duration on its
+        # scrubber instead of watching it grow over the encode time.
+        # Best-effort — when duration is unknown we skip and fall back
+        # to FFmpeg's incremental playlist by copying it once.
+        try:
+            duration_sec: float | None = None
+            async with db.execute(
+                "SELECT duration_sec FROM media_files WHERE path = ?",
+                (file_path,),
+            ) as cur:
+                drow = await cur.fetchone()
+            if drow and drow["duration_sec"]:
+                duration_sec = float(drow["duration_sec"])
+            if duration_sec and duration_sec > 0:
+                segment_hls_time = 10.0 if direct_remux else 6.0
+                count = _write_static_vod_playlist(
+                    playlist=playlist,
+                    duration_sec=duration_sec,
+                    hls_time=segment_hls_time,
+                    use_fmp4=use_fmp4,
+                )
+                logger.info(
+                    "Static VOD playlist: session=%s segments=%d duration=%.1fs",
+                    session_id,
+                    count,
+                    duration_sec,
+                )
+            else:
+                # Duration unknown — fall back to FFmpeg's incremental
+                # playlist (copied to the served path so the route still
+                # finds it).  Player's seek bar will grow as before, but
+                # at least playback starts.
+                if ff_playlist.exists():
+                    playlist.write_bytes(ff_playlist.read_bytes())
+                logger.warning(
+                    "Static VOD playlist skipped — no duration known for session=%s",
+                    session_id,
+                )
+        except Exception:
+            logger.warning(
+                "Static VOD playlist write raised for session=%s",
+                session_id,
+                exc_info=True,
+            )
+
         return playlist
 
-    # Both attempts failed (or the only attempt did) — surface the
-    # captured stderr tail to the operator-facing notification.
+    # Both attempts failed (or the only attempt did) — release the encoder
+    # slot we reserved (if any) so a stuck failure doesn't leave the cap
+    # accounting permanently inflated, then surface the captured stderr
+    # tail to the operator-facing notification.
+    from services import session_router
+
+    session_router.release_session(session_id)
     if returncode is not None:
         logger.error(
             "FFmpeg exited prematurely with code %d: session=%s\n"
@@ -564,6 +913,8 @@ async def start_stream(
 
 async def stop_stream(session_id: str) -> None:
     """Kill the FFmpeg process for a session."""
+    from services import session_router
+
     proc = _active.pop(session_id, None)
     if proc and proc.returncode is None:
         try:
@@ -576,6 +927,9 @@ async def stop_stream(session_id: str) -> None:
         except ProcessLookupError:
             pass
         logger.info("FFmpeg stopped: session=%s", session_id)
+    # Free the session's slot in the encoder cap accounting (no-op if the
+    # session was stream-copy and never reserved a slot).
+    session_router.release_session(session_id)
     # Whether stop_stream is called after a clean run or after start_stream
     # already drained + dropped the stderr file, _drop_stderr is a no-op
     # when there's nothing to remove.

@@ -296,7 +296,7 @@ async def test_stream_blocked_when_library_not_in_allowed_set(
         json={"client_id": "stream-test-client"},
     )
 
-    async def _mock_start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
         playlist.write_text("#EXTM3U\n")
@@ -332,7 +332,7 @@ async def test_stream_allowed_when_library_in_allowed_set(
         json={"client_id": "stream-test-client"},
     )
 
-    async def _mock_start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
         playlist.write_text("#EXTM3U\n")
@@ -367,7 +367,7 @@ async def test_stream_blocked_outside_time_window(
         json={"client_id": "stream-test-client"},
     )
 
-    async def _mock_start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
         playlist.write_text("#EXTM3U\n")
@@ -404,7 +404,7 @@ async def test_stream_unrestricted_when_inactive_group(
     )
     await client.patch(f"/api/v1/groups/{group['id']}", json={"status": "inactive"})
 
-    async def _mock_start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
         playlist.write_text("#EXTM3U\n")
@@ -453,7 +453,7 @@ async def test_intersection_of_allowed_libraries_across_groups(
             json={"client_id": "stream-test-client"},
         )
 
-    async def _mock_start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
         playlist.write_text("#EXTM3U\n")

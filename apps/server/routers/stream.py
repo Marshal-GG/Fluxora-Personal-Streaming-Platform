@@ -20,6 +20,7 @@ from services import (
     group_service,
     library_service,
     notification_service,
+    session_router,
     settings_service,
 )
 
@@ -62,9 +63,20 @@ def _playlist_url(request: Request, session_id: str) -> str:
 async def start_stream(
     file_id: str,
     request: Request,
+    tonemap: bool = False,
     db: aiosqlite.Connection = Depends(get_db),
     client: aiosqlite.Row = Depends(validate_token),
 ) -> StreamStartResponse:
+    """Start an HLS streaming session for ``file_id``.
+
+    Query params:
+        tonemap: When ``true`` and the source is HDR (HDR10 / HLG /
+            DolbyVision per `media_files.hdr_format`), the server forces
+            transcode mode + applies a zscale + Hable tonemap chain to
+            convert BT.2020 PQ → BT.709 SDR.  No-op for SDR sources.
+            Default ``false`` (preserves the source's HDR bitstream when
+            stream-copying).
+    """
     file_row = await library_service.get_file(db, file_id)
     if file_row is None:
         raise HTTPException(
@@ -98,7 +110,10 @@ async def start_stream(
 
     try:
         await ffmpeg_service.start_stream(
-            file_row["path"], session_id, settings.hls_tmp_path
+            file_row["path"],
+            session_id,
+            settings.hls_tmp_path,
+            tonemap_hdr=tonemap,
         )
     except FileNotFoundError as exc:
         raise HTTPException(
@@ -139,13 +154,17 @@ async def start_stream(
             detail=f"FFmpeg failed: {ffmpeg_error}",
         ) from exc
 
+    # session_router publishes the actual encoder choice (or None if this
+    # was a stream-copy session that never invoked an encoder).  Persist
+    # it so the active-sessions UI shows what's running per session.
+    encoder_used = session_router.get_session_encoder(session_id)
     await db.execute(
         """
         INSERT INTO stream_sessions
-            (id, file_id, client_id, started_at, connection_type)
-        VALUES (?, ?, ?, ?, 'lan')
+            (id, file_id, client_id, started_at, connection_type, encoder_used)
+        VALUES (?, ?, ?, ?, 'lan', ?)
         """,
-        (session_id, file_id, client["id"], now),
+        (session_id, file_id, client["id"], now, encoder_used),
     )
     await db.commit()
 
@@ -163,11 +182,17 @@ async def start_stream(
     except Exception:
         logger.warning("Failed to record stream.start activity event", exc_info=True)
 
+    hdr_format = file_row.get("hdr_format")
     return StreamStartResponse(
         session_id=session_id,
         file_id=file_id,
         playlist_url=_playlist_url(request, session_id),
         resume_sec=file_row.get("last_progress_sec") or 0.0,
+        hdr_format=hdr_format,
+        # `tonemapped` only true when the *source* is HDR AND the
+        # operator asked for tonemap.  An SDR file with `tonemap=true`
+        # passes through unchanged, so the badge stays off.
+        tonemapped=bool(tonemap and hdr_format),
     )
 
 
@@ -340,13 +365,36 @@ async def serve_hls(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
         )
 
+    # When the static VOD playlist (see `_write_static_vod_playlist`) is
+    # in use, the player can request segments before FFmpeg has written
+    # them — typical when the user seeks ahead of the current encode
+    # position.  Wait briefly so a transient miss doesn't surface as a
+    # hard error; if FFmpeg genuinely never produces this segment (file
+    # ended early, encode failed) we still 404 after the timeout.
+    if not resolved.exists() and (
+        filename.startswith("seg") or filename == "init.mp4"
+    ):
+        import asyncio as _asyncio
+
+        for _ in range(50):  # up to 5 s @ 100 ms
+            await _asyncio.sleep(0.1)
+            if resolved.exists():
+                break
+
     if not resolved.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Segment not found"
         )
 
+    # Content-Type matters: fmp4 segments + the init segment must be
+    # `video/mp4` (or media_kit / Safari refuse to parse them); mpegts
+    # segments are `video/MP2T`; the playlist itself is the Apple HLS
+    # MIME type.  Mis-typing the init segment in particular causes
+    # silent playback failure because the player can't extract the moov.
     if filename.endswith(".m3u8"):
         media_type = "application/vnd.apple.mpegurl"
+    elif filename.endswith(".m4s") or filename.endswith(".mp4"):
+        media_type = "video/mp4"
     else:
         media_type = "video/MP2T"
 

@@ -45,7 +45,9 @@ async def _insert_file(test_db) -> str:
 def _mock_start_stream(playlist_path: Path):
     """Return an async mock that writes a minimal m3u8 and resolves to playlist_path."""
 
-    async def _start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _start(
+        file_path: str, session_id: str, hls_root: Path, **_
+    ) -> Path:
         playlist_path.parent.mkdir(parents=True, exist_ok=True)
         playlist_path.write_text("#EXTM3U\n#EXT-X-VERSION:3\n")
         return playlist_path
@@ -100,7 +102,7 @@ async def test_start_stream_success(
 
     captured_session_id: list[str] = []
 
-    async def _mock_start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
         captured_session_id.append(session_id)
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
@@ -130,7 +132,7 @@ async def test_get_session(client: AsyncClient, monkeypatch, test_db, tmp_path):
     headers = {"Authorization": f"Bearer {token}"}
     file_id = await _insert_file(test_db)
 
-    async def _mock_start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
         playlist.write_text("#EXTM3U\n")
@@ -167,7 +169,7 @@ async def test_stop_stream(client: AsyncClient, monkeypatch, test_db, tmp_path):
     headers = {"Authorization": f"Bearer {token}"}
     file_id = await _insert_file(test_db)
 
-    async def _mock_start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
         playlist.write_text("#EXTM3U\n")
@@ -221,7 +223,7 @@ async def test_stop_stream_wrong_client(
     headers = {"Authorization": f"Bearer {token}"}
     file_id = await _insert_file(test_db)
 
-    async def _mock_start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
         playlist.write_text("#EXTM3U\n")
@@ -251,7 +253,7 @@ async def test_serve_hls_playlist(client: AsyncClient, monkeypatch, test_db, tmp
     headers = {"Authorization": f"Bearer {token}"}
     file_id = await _insert_file(test_db)
 
-    async def _mock_start(file_path: str, session_id: str, hls_root: Path) -> Path:
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
         playlist.write_text("#EXTM3U\n#EXT-X-VERSION:3\n")
@@ -371,10 +373,347 @@ def test_is_cuvid_failure_detects_generic_cuvid_tag():
 
 def test_is_cuvid_failure_does_not_match_unrelated_failures():
     """Generic decode errors / file-not-found / encoder errors must NOT
-    trigger the cuvid retry — we only retry when cuvid itself rejected."""
+    trigger the cuvid retry — software fallback won't help for those."""
     from services.ffmpeg_service import _is_cuvid_failure
 
     assert _is_cuvid_failure("Error opening input: No such file or directory") is False
     assert _is_cuvid_failure("[av1 @ 0x1] Failed to get pixel format") is False
     assert _is_cuvid_failure("") is False
     assert _is_cuvid_failure("Could not open codec libx264") is False
+
+
+def test_is_cuvid_failure_detects_av1_nvdec_unavailable_on_turing():
+    """RTX 2060 (Turing) has no AV1 NVDEC.  Surfaces as
+    `Your platform doesn't support hardware accelerated AV1 decoding`
+    + `Failed setup for format cuda: hwaccel initialisation returned
+    error`.  Retry must drop the entire CUDA input pipeline, not just
+    the cuvid hint."""
+    from services.ffmpeg_service import _is_cuvid_failure
+
+    tail = (
+        "[av1 @ 0x1] Failed setup for format cuda: hwaccel initialisation "
+        "returned error.\n"
+        "[av1 @ 0x1] Your platform doesn't support hardware accelerated "
+        "AV1 decoding.\n"
+    )
+    assert _is_cuvid_failure(tail) is True
+
+
+def test_is_cuvid_failure_detects_hwaccel_init_error():
+    """Generic `-hwaccel cuda` setup failures must trigger the retry."""
+    from services.ffmpeg_service import _is_cuvid_failure
+
+    assert _is_cuvid_failure(
+        "[hevc @ 0x1] Failed setup for format cuda: hwaccel initialisation "
+        "returned error."
+    ) is True
+
+
+def test_is_cuvid_failure_detects_lacking_capabilities():
+    """`Hardware is lacking required capabilities` is the specific
+    NVDEC-doesn't-support-this-codec error from libavutil."""
+    from services.ffmpeg_service import _is_cuvid_failure
+
+    assert _is_cuvid_failure(
+        "[av1 @ 0x1] Hardware is lacking required capabilities"
+    ) is True
+
+
+# ── _ensure_fmp4_init_segment ───────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_ensure_fmp4_init_segment_skips_when_file_already_exists(
+    tmp_path,
+):
+    """If FFmpeg's HLS muxer DID write init.mp4, don't regenerate it —
+    just return True without spawning anything."""
+    from unittest.mock import AsyncMock, patch
+
+    from services.ffmpeg_service import _ensure_fmp4_init_segment
+
+    init_path = tmp_path / "init.mp4"
+    init_path.write_bytes(b"existing init segment moov data")
+
+    mock = AsyncMock()
+    with patch(
+        "services.ffmpeg_service.asyncio.create_subprocess_exec", mock
+    ):
+        result = await _ensure_fmp4_init_segment(tmp_path, "irrelevant.mp4")
+
+    assert result is True
+    assert mock.call_count == 0  # short-circuited; no FFmpeg spawned
+
+
+@pytest.mark.asyncio
+async def test_ensure_fmp4_init_segment_treats_zero_byte_file_as_missing(
+    tmp_path,
+):
+    """A zero-byte init.mp4 (FFmpeg created the file but wrote nothing)
+    should trigger regeneration."""
+    from unittest.mock import AsyncMock, patch
+
+    from services.ffmpeg_service import _ensure_fmp4_init_segment
+
+    (tmp_path / "init.mp4").write_bytes(b"")  # 0 bytes
+
+    fake_proc = AsyncMock()
+    fake_proc.wait = AsyncMock(return_value=0)
+    fake_proc.returncode = 0
+
+    async def fake_create(*args, **kwargs):
+        # Simulate FFmpeg writing real bytes to the path before exit.
+        (tmp_path / "init.mp4").write_bytes(b"new init data")
+        return fake_proc
+
+    with (
+        patch(
+            "services.ffmpeg_service.asyncio.create_subprocess_exec",
+            side_effect=fake_create,
+        ),
+        patch("services.ffmpeg_service._ffmpeg_bin", return_value="ffmpeg"),
+    ):
+        result = await _ensure_fmp4_init_segment(tmp_path, "src.mp4")
+
+    assert result is True
+    assert (tmp_path / "init.mp4").stat().st_size > 0
+
+
+@pytest.mark.asyncio
+async def test_ensure_fmp4_init_segment_returns_false_on_ffmpeg_missing(
+    tmp_path,
+):
+    from unittest.mock import patch
+
+    from services.ffmpeg_service import _ensure_fmp4_init_segment
+
+    with patch(
+        "services.ffmpeg_service._ffmpeg_bin",
+        side_effect=FileNotFoundError("no ffmpeg"),
+    ):
+        result = await _ensure_fmp4_init_segment(tmp_path, "src.mp4")
+
+    assert result is False
+    assert not (tmp_path / "init.mp4").exists()
+
+
+# ── HDR tonemap path ────────────────────────────────────────────────────────
+
+
+def test_build_ffmpeg_cmd_injects_tonemap_chain_when_requested(tmp_path):
+    """apply_hdr_tonemap=True must inject the zscale + Hable chain
+    into -vf ahead of any encoder filter chain."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        apply_hdr_tonemap=True,
+    )
+    # The -vf chain must be present and contain the tonemap step.
+    assert "-vf" in cmd
+    vf_value = cmd[cmd.index("-vf") + 1]
+    assert "tonemap=tonemap=hable" in vf_value
+    assert "zscale=t=linear" in vf_value
+    assert "format=yuv420p" in vf_value
+
+
+def test_build_ffmpeg_cmd_omits_tonemap_when_not_requested(tmp_path):
+    """The default path must NOT inject the tonemap chain — passing it
+    through libx264 unconditionally would re-process every SDR file."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="h264",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        apply_hdr_tonemap=False,
+    )
+    # libx264 has no encoder vf_chain, so no -vf flag at all.
+    assert "-vf" not in cmd
+
+
+def test_build_ffmpeg_cmd_chains_tonemap_with_vaapi_filters(tmp_path):
+    """VAAPI's `format=nv12|vaapi,hwupload` filter chain must be appended
+    *after* the tonemap chain so the GPU upload step sees yuv420p output."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["h264_vaapi"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device="/dev/dri/renderD128",
+        source_codec="hevc",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        apply_hdr_tonemap=True,
+    )
+    vf_value = cmd[cmd.index("-vf") + 1]
+    # Tonemap chain comes first, then the VAAPI upload filter.
+    tonemap_pos = vf_value.find("tonemap=")
+    hwupload_pos = vf_value.find("hwupload")
+    assert tonemap_pos >= 0
+    assert hwupload_pos >= 0
+    assert tonemap_pos < hwupload_pos
+
+
+def test_build_ffmpeg_cmd_keeps_stream_copy_unchanged_with_tonemap(tmp_path):
+    """direct_remux=True ignores apply_hdr_tonemap — the caller is
+    responsible for forcing transcode mode (see start_stream's
+    apply_hdr_tonemap branch).  No -vf is injected."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=True,  # streamcopy
+        direct_remux_hevc=True,
+        use_gpu_input=False,
+        apply_hdr_tonemap=True,
+    )
+    assert "-c:v" in cmd
+    # Stream-copy: -c:v copy
+    assert cmd[cmd.index("-c:v") + 1] == "copy"
+    assert "-vf" not in cmd
+
+
+# ── _write_static_vod_playlist ──────────────────────────────────────────────
+
+
+def test_write_static_vod_playlist_lists_every_segment(tmp_path):
+    """A 30-second clip at hls_time=10 produces 3 segments listed in the
+    playlist; the seek bar in any HLS-VOD player will span all 30 s
+    without waiting for FFmpeg to finish writing."""
+    from services.ffmpeg_service import _write_static_vod_playlist
+
+    playlist = tmp_path / "playlist.m3u8"
+    n = _write_static_vod_playlist(
+        playlist=playlist,
+        duration_sec=30.0,
+        hls_time=10.0,
+        use_fmp4=False,
+    )
+    assert n == 3
+    text = playlist.read_text(encoding="utf-8")
+    assert "#EXT-X-PLAYLIST-TYPE:VOD" in text
+    assert "#EXT-X-ENDLIST" in text
+    assert "seg00000.ts" in text
+    assert "seg00001.ts" in text
+    assert "seg00002.ts" in text
+    assert "seg00003.ts" not in text
+
+
+def test_write_static_vod_playlist_handles_partial_last_segment(tmp_path):
+    """A 25-second clip at hls_time=10 → 3 segments where the last is 5 s."""
+    from services.ffmpeg_service import _write_static_vod_playlist
+
+    playlist = tmp_path / "playlist.m3u8"
+    _write_static_vod_playlist(
+        playlist=playlist,
+        duration_sec=25.0,
+        hls_time=10.0,
+        use_fmp4=False,
+    )
+    text = playlist.read_text(encoding="utf-8")
+    # Sum of EXTINF durations should equal source duration (within FP tolerance).
+    import re
+    extinfs = re.findall(r"#EXTINF:([\d.]+),", text)
+    total = sum(float(d) for d in extinfs)
+    assert abs(total - 25.0) < 0.01
+
+
+def test_write_static_vod_playlist_emits_init_segment_for_fmp4(tmp_path):
+    """fmp4 playlists need #EXT-X-MAP pointing at init.mp4 — the player
+    fetches it before any segment to set up the decoder."""
+    from services.ffmpeg_service import _write_static_vod_playlist
+
+    playlist = tmp_path / "playlist.m3u8"
+    _write_static_vod_playlist(
+        playlist=playlist,
+        duration_sec=10.0,
+        hls_time=10.0,
+        use_fmp4=True,
+    )
+    text = playlist.read_text(encoding="utf-8")
+    assert '#EXT-X-MAP:URI="init.mp4"' in text
+    assert "seg00000.m4s" in text
+    # VERSION 6 required for #EXT-X-MAP per Apple HLS spec.
+    assert "#EXT-X-VERSION:6" in text
+
+
+def test_write_static_vod_playlist_zero_duration_writes_nothing(tmp_path):
+    """Duration unknown / zero → return 0 + no playlist file written."""
+    from services.ffmpeg_service import _write_static_vod_playlist
+
+    playlist = tmp_path / "playlist.m3u8"
+    n = _write_static_vod_playlist(
+        playlist=playlist,
+        duration_sec=0.0,
+        hls_time=10.0,
+        use_fmp4=False,
+    )
+    assert n == 0
+    assert not playlist.exists()
+
+
+@pytest.mark.asyncio
+async def test_resolve_source_metadata_returns_codec_and_hdr(tmp_path, test_db):
+    """Verify the (codec, hdr_format) tuple comes back from the DB row
+    when both fields are populated."""
+    import uuid
+    from datetime import UTC, datetime
+
+    from services.ffmpeg_service import _resolve_source_metadata
+
+    file_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    await test_db.execute(
+        """
+        INSERT INTO media_files
+            (id, path, name, extension, size_bytes, duration_sec,
+             library_id, tmdb_id, codec_name, hdr_format,
+             created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_id, "/m/test.mkv", "test.mkv", ".mkv", 1024, 120.0,
+            None, None, "hevc", "HDR10",
+            now, now,
+        ),
+    )
+    await test_db.commit()
+
+    codec, hdr = await _resolve_source_metadata(test_db, "/m/test.mkv")
+    assert codec == "hevc"
+    assert hdr == "HDR10"
