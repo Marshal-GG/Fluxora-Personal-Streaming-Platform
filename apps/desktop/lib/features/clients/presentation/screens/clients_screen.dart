@@ -10,6 +10,7 @@ import 'package:fluxora_core/entities/enums.dart';
 import 'package:fluxora_desktop/features/clients/domain/repositories/clients_repository.dart';
 import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_cubit.dart';
 import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_state.dart';
+import 'package:fluxora_desktop/features/clients/presentation/widgets/pair_device_dialog.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
@@ -124,10 +125,15 @@ class _ClientsViewState extends State<_ClientsView> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // ── Page header ──────────────────────────────────────
-                      const PageHeader(
+                      PageHeader(
                         title: 'Clients',
                         subtitle:
                             'Manage connected devices and client access',
+                        actions: FluxButton(
+                          icon: Icons.qr_code_2_rounded,
+                          onPressed: () => showPairDeviceDialog(context),
+                          child: const Text('Pair device'),
+                        ),
                       ),
 
                       // ── Stat tiles ───────────────────────────────────────
