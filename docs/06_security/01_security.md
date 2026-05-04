@@ -2,7 +2,7 @@
 
 > **Category:** Security  
 > **Status:** Active  
-> **Last Updated:** 2026-05-04 (Phase A backfill plan §8.5 bug 1 fix — same-`client_id` re-pair now resets the row to `pending` and invalidates the prior token; new bearer-protected `GET /auth/clients/me`). 2026-05-01 added Cloudflare Tunnel threat model + admin-route hardening
+> **Last Updated:** 2026-05-04 (Phase B QA round — added QR-code pairing flow doc + mDNS-fallback narrative; the QR carries only network location, not credentials, so the operator-approve security model is unchanged. Phase A backfill plan §8.5 bug 1 fix — same-`client_id` re-pair now resets the row to `pending` and invalidates the prior token; new bearer-protected `GET /auth/clients/me`). 2026-05-01 added Cloudflare Tunnel threat model + admin-route hardening
 
 ---
 
@@ -52,6 +52,24 @@ New Device:
   8.  Server → Returns { status: "rejected" }
   9.  Client → Shows "Access denied" screen
 ```
+
+### QR-code pairing (Phase B QA round)
+
+The mobile pairing flow has three entry points to "I know which server to pair with":
+
+1. **mDNS auto-discovery** — the default. `_fluxora._tcp.local.` SRV record lands on the mobile `MDnsClient`; tap the surfaced server tile.
+2. **QR-code scan** — fallback when mDNS doesn't reach (router AP isolation, mobile on guest VLAN, multicast blocked). Operator opens the desktop Clients screen → "Pair device" → mobile reads the rendered QR via `mobile_scanner`.
+3. **Manual entry** — typed `IP:port`. Last-resort path; no scanning hardware required.
+
+QR payload format (parsed by `apps/mobile/lib/features/connect/domain/pairing_uri.dart`, rendered by `apps/desktop/lib/features/clients/presentation/widgets/pair_device_dialog.dart`):
+
+```
+fluxora://pair?host=<lan_ip>&port=<server_port>&name=<server_name>
+```
+
+The QR contains **only the network location** of the server. It does **not** carry a bearer token, an HMAC seed, or any pre-authorising claim. A stranger who photographs the QR off the operator's screen learns nothing useful: they would still have to send `POST /auth/request-pair` and wait for the operator to manually approve their device on the desktop. The pairing security model from Phase A (operator-in-the-loop trust) is unchanged — QR scanning is purely a discovery convenience.
+
+The mobile parser also accepts plain `http://host:port` URLs so a power-user can drop their server URL into any QR generator without using the desktop dialog.
 
 ### Re-pair from the same `client_id` (migration 016, Phase A)
 
