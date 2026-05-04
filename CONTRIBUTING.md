@@ -79,7 +79,7 @@ mkdir -p ~/.fluxora
 cat > ~/.fluxora/.env <<'EOF'
 TOKEN_HMAC_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
 FLUXORA_LICENSE_SECRET=$(python -c "import secrets; print(secrets.token_hex(32))")
-FLUXORA_PORT=8080
+FLUXORA_PORT=8000
 FLUXORA_LOG_LEVEL=DEBUG
 EOF
 ```
@@ -90,7 +90,7 @@ New-Item -ItemType Directory -Force "$env:APPDATA\Fluxora"
 @"
 TOKEN_HMAC_KEY=$([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
 FLUXORA_LICENSE_SECRET=$([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
-FLUXORA_PORT=8080
+FLUXORA_PORT=8000
 FLUXORA_LOG_LEVEL=DEBUG
 "@ | Set-Content "$env:APPDATA\Fluxora\.env"
 ```
@@ -107,12 +107,12 @@ See [`docs/05_infrastructure/01_infrastructure.md` § Environment variables](./d
 
 ```bash
 cd apps/server
-uvicorn main:app --host 0.0.0.0 --port 8080 --reload
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 `--reload` watches Python files and restarts on save. Drop it for production-ish runs.
 
-Verify: `curl http://localhost:8080/api/v1/info` → JSON with `server_name` and `version`.
+Verify: `curl http://localhost:8000/api/v1/info` → JSON with `server_name` and `version`.
 
 ### Mobile
 
@@ -125,7 +125,7 @@ flutter run -d "Pixel 6"     # specific device
 flutter run -d chrome        # if you really want web
 ```
 
-The app's first screen is server discovery — your local server should appear via mDNS. If not, manual IP entry works (`http://192.168.x.x:8080`).
+The app's first screen is server discovery — your local server should appear via mDNS. If not, manual IP entry works (`http://192.168.x.x:8000`).
 
 ### Desktop
 
@@ -134,7 +134,7 @@ cd apps/desktop
 flutter run -d windows       # or -d macos / -d linux
 ```
 
-The desktop control panel hits `localhost:8080` directly. No pairing flow — it's privileged via `validate_token_or_local`.
+The desktop control panel hits `localhost:8000` directly. No pairing flow — it's privileged via `validate_token_or_local`.
 
 ### All three at once (VS Code)
 

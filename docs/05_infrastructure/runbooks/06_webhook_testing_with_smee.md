@@ -1,6 +1,6 @@
 # Runbook: Testing inbound webhooks locally with smee.io
 
-> **What:** Pattern for receiving webhooks from third-party services (Polar, Stripe, GitHub, Slack, etc.) on your laptop while developing. The third party can't reach `localhost:8080` directly — smee.io bridges that gap for free.
+> **What:** Pattern for receiving webhooks from third-party services (Polar, Stripe, GitHub, Slack, etc.) on your laptop while developing. The third party can't reach `localhost:8000` directly — smee.io bridges that gap for free.
 > **Estimated time:** 5 minutes to set up.
 
 ---
@@ -38,7 +38,7 @@ For dev-only webhook testing, **smee.io is the right choice** because:
                                                                     ┌──────────────────┐
                                                                     │ Your local server│
                                                                     │ http://127.0.0.1:│
-                                                                    │ 8080/webhook/... │
+                                                                    │ 8000/webhook/... │
                                                                     └──────────────────┘
 ```
 
@@ -68,12 +68,12 @@ npm install -g smee-client
 Or run it ad-hoc without installing:
 
 ```bash
-npx smee-client --url https://smee.io/<your-channel-id> --target http://127.0.0.1:8080/api/v1/webhook/polar
+npx smee-client --url https://smee.io/<your-channel-id> --target http://127.0.0.1:8000/api/v1/webhook/polar
 ```
 
 That single command:
 - Connects to your smee.io channel
-- Forwards each received POST to `http://127.0.0.1:8080/api/v1/webhook/polar`
+- Forwards each received POST to `http://127.0.0.1:8000/api/v1/webhook/polar`
 - Prints each delivery to stdout
 
 Leave it running in a terminal during webhook dev work.

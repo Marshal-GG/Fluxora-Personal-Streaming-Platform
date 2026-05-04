@@ -26,12 +26,12 @@ Because webhooks require a publicly accessible URL, local development requires a
 
 ### 1. Prerequisites
 Ensure you have Node.js installed, then you can run the smee-client via `npx`.
-Ensure your local Fluxora server is running on `127.0.0.1:8080`.
+Ensure your local Fluxora server is running on `127.0.0.1:8000`.
 
 ### 2. Start the Smee Client
 Run the following command to forward payloads from smee.io to your local server:
 ```bash
-npx smee-client --url https://smee.io/WkO5Z0u3uE5cM0d --target http://127.0.0.1:8080/api/v1/webhook/polar
+npx smee-client --url https://smee.io/WkO5Z0u3uE5cM0d --target http://127.0.0.1:8000/api/v1/webhook/polar
 ```
 *Note: We explicitly use `127.0.0.1` instead of `localhost` to avoid Node.js IPv6 `::1` resolution issues when Uvicorn is bound to IPv4 `0.0.0.0`.*
 

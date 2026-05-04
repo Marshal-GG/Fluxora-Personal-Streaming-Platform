@@ -20,7 +20,7 @@ class SettingsCubit extends Cubit<SettingsState> {
   final ApiClient _apiClient;
   static final _log = Logger();
 
-  static const String _defaultUrl = 'http://localhost:8080';
+  static const String _defaultUrl = 'http://localhost:8000';
 
   Future<void> loadSettings() async {
     emit(const SettingsLoading());
@@ -159,7 +159,7 @@ class SettingsCubit extends Cubit<SettingsState> {
     final uri = Uri.tryParse(trimmedUrl);
     if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
       emit(const SettingsError(
-        message: 'Invalid URL. Example: http://192.168.1.10:8080',
+        message: 'Invalid URL. Example: http://192.168.1.10:8000',
       ));
       return;
     }

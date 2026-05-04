@@ -10,7 +10,7 @@ This runbook is project-agnostic. Substitute the placeholders for your specific 
 | `<APEX>` | The domain you own | `example.dev` |
 | `<HOSTNAME>` | The single-level subdomain you want clients to use | `myapp-api.example.dev` |
 | `<TUNNEL_NAME>` | Friendly name for the tunnel | `myapp-home` |
-| `<PORT>` | Local port the service listens on | `8080` |
+| `<PORT>` | Local port the service listens on | `8000` |
 | `<USER>` | Your Windows username (for path examples) | `alice` |
 
 ---

@@ -33,7 +33,7 @@ cloudflared --version
 echo ""
 echo "✓ Devcontainer ready."
 echo ""
-echo "  Server:    cd apps/server && uvicorn main:app --reload --host 0.0.0.0 --port 8080"
+echo "  Server:    cd apps/server && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
 echo "  Web:       cd apps/web_landing && npm run dev"
 echo "  Tests:     cd apps/server && python -m pytest -q"
 echo "  Mobile:    flutter test (from apps/mobile or apps/desktop)"

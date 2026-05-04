@@ -35,7 +35,7 @@ class _ConnectView extends StatefulWidget {
 
 class _ConnectViewState extends State<_ConnectView> {
   final _ipController = TextEditingController();
-  final _portController = TextEditingController(text: '8080');
+  final _portController = TextEditingController(text: '8000');
   bool _showManual = false;
 
   @override
@@ -150,7 +150,7 @@ class _ConnectViewState extends State<_ConnectView> {
 
   void _connectManually(BuildContext context) {
     final ip = _ipController.text.trim();
-    final port = int.tryParse(_portController.text.trim()) ?? 8080;
+    final port = int.tryParse(_portController.text.trim()) ?? 8000;
     if (ip.isEmpty) return;
     final server = DiscoveredServer(name: ip, ip: ip, port: port);
     GetIt.I<ApiClient>().configure(localBaseUrl: server.url);

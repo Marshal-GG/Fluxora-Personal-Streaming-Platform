@@ -18,8 +18,8 @@ void main() {
   late _MockSecureStorage mockStorage;
   late _MockApiClient mockApiClient;
 
-  const kDefaultUrl = 'http://localhost:8080';
-  const kSavedUrl = 'http://192.168.1.10:8080';
+  const kDefaultUrl = 'http://localhost:8000';
+  const kSavedUrl = 'http://192.168.1.10:8000';
 
   setUp(() {
     mockStorage = _MockSecureStorage();
@@ -312,7 +312,7 @@ void main() {
       'emits SettingsError when URL has no HTTP scheme',
       build: buildCubit,
       act: (cubit) => cubit.saveSettings(
-        serverUrl: '192.168.1.10:8080',
+        serverUrl: '192.168.1.10:8000',
         serverName: 'Test',
         tier: 'free',
       ),

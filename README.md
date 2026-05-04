@@ -127,7 +127,7 @@
 ```bash
 cd apps/server
 pip install -e .[dev]
-uvicorn main:app --reload --host 0.0.0.0 --port 8080
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Requires `TOKEN_HMAC_KEY` in `%APPDATA%\Fluxora\.env` (Windows) or `~/.fluxora/.env` (macOS / Linux).

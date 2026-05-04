@@ -16,7 +16,7 @@ void main() {
   late _MockSecureStorage mockStorage;
   late AuthRepositoryImpl repo;
 
-  const serverUrl = 'http://192.168.1.10:8080';
+  const serverUrl = 'http://192.168.1.10:8000';
   const authToken = 'tok-abc123';
   const clientId = 'client-xyz';
   const remoteUrl = 'https://fluxora-api.example.dev';

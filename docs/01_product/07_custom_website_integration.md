@@ -71,10 +71,10 @@ a `POST /api/v1/webhook/polar` event from Polar. Without this, **no license key 
 The project uses [smee.io](https://smee.io/) as a relay because it handles NAT/firewall
 issues reliably. The dev channel is already configured:
 
-1. Start your local Fluxora server on `127.0.0.1:8080`.
+1. Start your local Fluxora server on `127.0.0.1:8000`.
 2. In a separate terminal, run:
    ```bash
-   npx smee-client --url https://smee.io/WkO5Z0u3uE5cM0d --target http://127.0.0.1:8080/api/v1/webhook/polar
+   npx smee-client --url https://smee.io/WkO5Z0u3uE5cM0d --target http://127.0.0.1:8000/api/v1/webhook/polar
    ```
 3. In **Polar Dashboard → Settings → Webhooks**, set the endpoint URL to:
    ```
@@ -90,7 +90,7 @@ issues reliably. The dev channel is already configured:
 **For production (permanent public URL):**
 
 When you're ready for live payments, expose the server using one of:
-- A VPS with a reverse proxy (nginx → `127.0.0.1:8080`) and a domain of your choice.
+- A VPS with a reverse proxy (nginx → `127.0.0.1:8000`) and a domain of your choice.
 - A persistent tunnel service (e.g., Cloudflare Tunnel, ngrok paid).
 
 Update the Polar webhook endpoint URL in the dashboard to your new public address:

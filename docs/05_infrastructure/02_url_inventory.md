@@ -19,7 +19,7 @@ Canonical reference for every URL Fluxora touches today and every URL that needs
 
 ## A. Server REST Endpoints
 
-All paths are under the base `http://{server_ip}:8080` on LAN or `https://fluxora-api.marshalx.dev` over WAN (Cloudflare Tunnel). Auth column uses the project's dependency naming.
+All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxora-api.marshalx.dev` over WAN (Cloudflare Tunnel). Auth column uses the project's dependency naming.
 
 ### `info` router
 
@@ -170,7 +170,7 @@ All WebSocket paths are mounted at the same base as REST. Loopback connections (
 
 | URL | Purpose | Backed by | Status |
 |-----|---------|-----------|--------|
-| `https://fluxora-api.marshalx.dev` | Public entry point to the home Fluxora server (REST + WS control plane; HLS blocked) | Cloudflare Tunnel `fluxora-home` → home PC `:8080` | Live ✅ |
+| `https://fluxora-api.marshalx.dev` | Public entry point to the home Fluxora server (REST + WS control plane; HLS blocked) | Cloudflare Tunnel `fluxora-home` → home PC `:8000` | Live ✅ |
 | `https://fluxora.marshalx.dev` | Marketing landing page | Firebase Hosting — Next.js static export | Live ✅ |
 | `https://uat.fluxora.marshalx.dev` | UAT / staging landing page | Firebase Hosting (`uat` channel) | Live ✅ |
 | `https://marshalx.dev` | Owner brand apex | Cloudflare DNS (proxy off; apex is Firebase) | Live ✅ |

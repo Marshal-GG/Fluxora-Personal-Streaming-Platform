@@ -302,7 +302,7 @@ const List<(String, String)> _kFaq = [
   ),
   (
     'The server is unreachable — what should I check?',
-    'Verify the server is running and the URL in Settings matches. On Windows, check that the firewall allows port 8080. Ensure FFmpeg is installed and visible on PATH.',
+    'Verify the server is running and the URL in Settings matches. On Windows, check that the firewall allows port 8000. Ensure FFmpeg is installed and visible on PATH.',
   ),
 ];
 

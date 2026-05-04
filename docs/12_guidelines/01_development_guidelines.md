@@ -388,7 +388,7 @@ cd apps/server
 pip install -e .[dev]
 
 # Run development server
-uvicorn main:app --reload --host 0.0.0.0 --port 8080
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 # Run tests
 pytest tests/ -v
@@ -800,7 +800,7 @@ const key = functions.config().tmdb.key;
 # config.py
 class Settings(BaseSettings):
     tmdb_api_key: str | None = None  # optional — degrade gracefully if absent
-    server_port: int = 8080
+    server_port: int = 8000
 
     class Config:
         env_file = "~/.fluxora/.env"  # user's home dir, never the repo

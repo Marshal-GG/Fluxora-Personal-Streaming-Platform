@@ -50,7 +50,7 @@ All runbooks use these placeholders. Define them once for your project before yo
 | `<APP_DIR>` | Path to the static-site source in your repo | `apps/web_landing` |
 | `<BUILD_OUTPUT>` | Static-site build output dir | `out` |
 | `<USER>` | Local Windows username | (whoever) |
-| `<PORT>` | Local service port | `8080` |
+| `<PORT>` | Local service port | `8000` |
 
 ---
 

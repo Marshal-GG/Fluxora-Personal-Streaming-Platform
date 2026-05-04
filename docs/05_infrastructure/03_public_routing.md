@@ -56,13 +56,13 @@ Routing `.ts` HLS segments through Cloudflare Tunnel works technically but burns
 
 | Tier | Endpoints | LAN behavior | WAN behavior |
 |------|-----------|--------------|--------------|
-| **Control** | `GET /api/v1/info`, `GET /api/v1/info/stats`, `POST /api/v1/auth/request-pair`, `GET /api/v1/auth/status/{id}`, `DELETE /api/v1/auth/revoke/{id}`, `GET /api/v1/library`, `POST /api/v1/library`, `GET/DELETE /api/v1/library/{id}`, `POST /api/v1/library/{id}/scan`, `GET /api/v1/files`, `GET /api/v1/files/{id}`, `POST /api/v1/files/upload`, `DELETE /api/v1/files/{id}`, `GET /api/v1/groups`, `GET /api/v1/groups/{id}`, `GET /api/v1/groups/{id}/members`, `GET /api/v1/notifications`, `POST /api/v1/notifications/{id}/read`, `POST /api/v1/notifications/read-all`, `DELETE /api/v1/notifications/{id}`, `GET /api/v1/activity`, `GET /api/v1/logs` | direct (`http://lan-ip:8080`) | through `https://fluxora-api.marshalx.dev` |
+| **Control** | `GET /api/v1/info`, `GET /api/v1/info/stats`, `POST /api/v1/auth/request-pair`, `GET /api/v1/auth/status/{id}`, `DELETE /api/v1/auth/revoke/{id}`, `GET /api/v1/library`, `POST /api/v1/library`, `GET/DELETE /api/v1/library/{id}`, `POST /api/v1/library/{id}/scan`, `GET /api/v1/files`, `GET /api/v1/files/{id}`, `POST /api/v1/files/upload`, `DELETE /api/v1/files/{id}`, `GET /api/v1/groups`, `GET /api/v1/groups/{id}`, `GET /api/v1/groups/{id}/members`, `GET /api/v1/notifications`, `POST /api/v1/notifications/{id}/read`, `POST /api/v1/notifications/read-all`, `DELETE /api/v1/notifications/{id}`, `GET /api/v1/activity`, `GET /api/v1/logs` | direct (`http://lan-ip:8000`) | through `https://fluxora-api.marshalx.dev` |
 | **Stream init** | `POST /api/v1/stream/start/{id}`, `PATCH /api/v1/stream/{id}/progress`, `GET /api/v1/stream/{id}` | direct | through `https://fluxora-api.marshalx.dev` |
-| **Signaling** | `WS /api/v1/ws/status`, `WS /api/v1/ws/signal`, `WS /api/v1/ws/stats`, `WS /api/v1/ws/notifications` | direct (`ws://lan-ip:8080`) | `wss://fluxora-api.marshalx.dev/...` |
+| **Signaling** | `WS /api/v1/ws/status`, `WS /api/v1/ws/signal`, `WS /api/v1/ws/stats`, `WS /api/v1/ws/notifications` | direct (`ws://lan-ip:8000`) | `wss://fluxora-api.marshalx.dev/...` |
 | **Media (HLS)** | `GET /api/v1/hls/{session}/playlist.m3u8`, `GET /api/v1/hls/{session}/seg*.ts` | direct | **REJECTED** at server middleware — clients must negotiate WebRTC |
 | **Media (WebRTC)** | n/a — peer-to-peer over data channel | direct | direct via STUN/TURN |
 | **Webhook (Polar)** | `POST /api/v1/webhook/polar` | n/a (Polar can't reach LAN) | through `https://fluxora-api.marshalx.dev` (Polar endpoint config) |
-| **Signaling (logs)** | `WS /api/v1/ws/logs` | direct (`ws://lan-ip:8080`) | `wss://fluxora-api.marshalx.dev/...` |
+| **Signaling (logs)** | `WS /api/v1/ws/logs` | direct (`ws://lan-ip:8000`) | `wss://fluxora-api.marshalx.dev/...` |
 | **Localhost-only admin** | `GET/PATCH /api/v1/settings`, `POST /api/v1/auth/approve/{id}`, `POST /api/v1/auth/reject/{id}`, `GET /api/v1/auth/clients`, `GET /api/v1/orders`, `GET /api/v1/orders/portal-url`, `GET /api/v1/transcoding/status`, `GET /api/v1/stream/sessions`, `POST /api/v1/info/restart`, `POST /api/v1/info/stop`, `POST /api/v1/groups`, `PATCH /api/v1/groups/{id}`, `DELETE /api/v1/groups/{id}`, `POST /api/v1/groups/{id}/members`, `DELETE /api/v1/groups/{id}/members/{cid}`, `GET /api/v1/profile`, `PATCH /api/v1/profile` | direct (loopback only) | **never reached over WAN** — `require_local_caller` 403s remote callers |
 
 > **Note on `/info/stats`:** This endpoint is currently no-auth and exposes uptime, LAN IP, CPU/RAM percentages, network throughput, and active stream count. None of these fields are PII or secret-equivalent — same risk class as `/info`. Acceptable to keep no-auth on WAN. Add an aggressive `slowapi` rate-limit (e.g. `60/minute`) when the routing lands so it can't be used as a free monitoring drain. The `public_address` field within the response is currently always `null` — Phase 2.6 below populates it.
@@ -123,7 +123,7 @@ This is the runbook reproduction of what was actually done. Use it for disaster 
    credentials-file: C:\Users\<user>\.cloudflared\<UUID>.json
    ingress:
      - hostname: fluxora-api.marshalx.dev
-       service: http://127.0.0.1:8080   # NOT localhost — see pitfall #5 below
+       service: http://127.0.0.1:8000   # NOT localhost — see pitfall #5 below
      - service: http_status:404
    ```
 
@@ -155,7 +155,7 @@ This is the runbook reproduction of what was actually done. Use it for disaster 
    ```powershell
    curl.exe -fsS https://fluxora-api.marshalx.dev/api/v1/info
    ```
-   With FastAPI running on `:8080`, returns the same JSON as the local `curl`. Without FastAPI running, returns 502 — also confirms the tunnel itself is reachable.
+   With FastAPI running on `:8000`, returns the same JSON as the local `curl`. Without FastAPI running, returns 502 — also confirms the tunnel itself is reachable.
 
 #### Setup record — what's currently live
 
@@ -179,7 +179,7 @@ Backup priorities are documented in [`05_backup_and_recovery.md`](./05_backup_an
 2. **Service config divergence.** Editing `~/.cloudflared/config.yml` AFTER `service install` doesn't take effect — the service reads from the systemprofile copy. Either re-run `service install` (which re-copies) or manually `Copy-Item` + `Restart-Service`.
 3. **PowerShell `curl` alias.** `curl https://...` in PowerShell calls `Invoke-WebRequest`, which has different output. Use `curl.exe` explicitly for the smoke test.
 4. **PATH not refreshed after winget install.** Existing terminals still see the old PATH. Open a new shell (or refresh PATH manually) before running `cloudflared`.
-5. **`localhost` resolves to IPv6 first on Windows.** cloudflared dials `[::1]:8080`, FastAPI binds IPv4 (`127.0.0.1` or `0.0.0.0`), connection refused. Use `http://127.0.0.1:8080` in the ingress (NOT `http://localhost:8080`). The error in foreground logs reads: `dial tcp [::1]:8080: connectex: No connection could be made because the target machine actively refused it`. Telltale.
+5. **`localhost` resolves to IPv6 first on Windows.** cloudflared dials `[::1]:8000`, FastAPI binds IPv4 (`127.0.0.1` or `0.0.0.0`), connection refused. Use `http://127.0.0.1:8000` in the ingress (NOT `http://localhost:8000`). The error in foreground logs reads: `dial tcp [::1]:8000: connectex: No connection could be made because the target machine actively refused it`. Telltale.
 6. **`Copy-Item` doesn't auto-create parent directories.** `C:\Windows\System32\config\systemprofile\.cloudflared\` doesn't exist by default — `service install` only creates it if it copies files there, which on 2025.8.1 it doesn't always do. `New-Item -ItemType Directory -Path <dst> -Force` first, then `Copy-Item`.
 7. **Service install snapshot vs. live config.** `cloudflared service install` registers a service that reads from `LocalSystem`'s `.cloudflared\` directory at runtime — but the install command does NOT auto-copy files there on every version. After editing the user-level config, you must mirror it to the systemprofile path AND restart the service. The "single source of truth + symlink" approach (`New-Item -ItemType SymbolicLink ...`) is cleaner if you'll be editing config often.
 
@@ -256,7 +256,7 @@ The desktop `SystemStatsCard` (which already consumes `/info/stats`) gets a gree
 
 ```dart
 final client = ApiClient(
-  localBaseUrl: 'http://192.168.1.10:8080',
+  localBaseUrl: 'http://192.168.1.10:8000',
   remoteBaseUrl: 'https://fluxora-api.marshalx.dev',
   // lanCheck defaults to NetworkPathDetector.isLan
 );

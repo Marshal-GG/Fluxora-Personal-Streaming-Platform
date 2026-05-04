@@ -87,9 +87,9 @@ Here's a working template for a Python-server project (Fluxora's `apps/server` f
     }
   },
 
-  "forwardPorts": [8080],
+  "forwardPorts": [8000],
   "portsAttributes": {
-    "8080": {
+    "8000": {
       "label": "Server",
       "onAutoForward": "notify"
     }
@@ -105,7 +105,7 @@ Key parts:
 - **`features`** — pre-built add-ons (GitHub CLI, common shells, etc.) — see [containers.dev/features](https://containers.dev/features)
 - **`postCreateCommand`** — runs once, after the container is built. Install your project deps here
 - **`customizations.vscode.extensions`** — VS Code auto-installs these inside the container
-- **`forwardPorts`** — exposes container ports to your host so `localhost:8080` works
+- **`forwardPorts`** — exposes container ports to your host so `localhost:8000` works
 - **`remoteUser`** — runs commands as a non-root user (matches host UID for clean file permissions)
 
 ---

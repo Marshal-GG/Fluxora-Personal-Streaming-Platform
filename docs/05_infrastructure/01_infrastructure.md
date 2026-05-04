@@ -102,7 +102,7 @@ Settings can also be overridden via environment variables (same names, uppercase
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `TOKEN_HMAC_KEY` | *(required)* | HMAC-SHA256 key for token hashing — generate once with `secrets.token_hex(32)` |
-| `FLUXORA_PORT` | `8000` | HTTP server port — set to `8080` to match uvicorn `--port 8080` |
+| `FLUXORA_PORT` | `8000` | HTTP server port — must match the uvicorn `--port` flag |
 | `FLUXORA_HOST` | `0.0.0.0` | Bind address |
 | `FLUXORA_DB_PATH` | `~/.fluxora/fluxora.db` | SQLite database path |
 | `FLUXORA_HLS_TMP` | `~/.fluxora/hls/` | HLS segment temp directory |
@@ -417,8 +417,8 @@ Tracked here so the deferral is intentional, not forgotten:
 
 | Task | Command |
 |------|---------|
-| Run server | `cd apps/server && uvicorn main:app --host 0.0.0.0 --port 8080` |
-| Run server (reload) | `cd apps/server && uvicorn main:app --host 0.0.0.0 --port 8080 --reload` |
+| Run server | `cd apps/server && uvicorn main:app --host 0.0.0.0 --port 8000` |
+| Run server (reload) | `cd apps/server && uvicorn main:app --host 0.0.0.0 --port 8000 --reload` |
 | Run mobile (dev) | `cd apps/mobile && flutter run` |
 | Run desktop (dev) | `cd apps/desktop && flutter run -d windows` |
 | Run Python tests | `cd apps/server && pytest tests/ -v` |
@@ -428,7 +428,7 @@ Tracked here so the deferral is intentional, not forgotten:
 
 | Config | Description |
 |--------|-------------|
-| `Server` | Uvicorn on `:8080` with debugger attached — breakpoints work |
+| `Server` | Uvicorn on `:8000` with debugger attached — breakpoints work |
 | `Server (reload)` | Same + `--reload` for auto-restart on file save |
 | `Mobile` / `Mobile (profile)` / `Mobile (release)` | Flutter debug on connected device, three flutter modes |
 | `Desktop` / `Desktop (profile)` / `Desktop (release)` | Flutter debug on Windows, three flutter modes |

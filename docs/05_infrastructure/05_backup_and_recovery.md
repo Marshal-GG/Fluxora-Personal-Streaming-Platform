@@ -100,7 +100,7 @@ A backup that lives only on the same disk as the original is not a backup. Two p
 2. Stop the freshly-started service (it created an empty `fluxora.db`).
 3. Copy the backed-up data dir into place — overwrite the empty install.
 4. Copy `~/.cloudflared/<tunnel-id>.json` back into place.
-5. Start the service. Verify with `curl http://localhost:8080/api/v1/info`.
+5. Start the service. Verify with `curl http://localhost:8000/api/v1/info`.
 6. (If running) verify `cloudflared` reconnects with `cloudflared tunnel info <id>`.
 
 ### Scenario 2: New machine entirely
@@ -161,8 +161,8 @@ A 5-minute drill that catches 90% of backup failures:
 
 1. On a **different** machine (or a VM, or a temp dir), restore the latest backup.
 2. Start the server pointing at the restored data dir.
-3. `curl http://localhost:8080/api/v1/info` — server starts.
-4. `curl http://localhost:8080/api/v1/library` — library listings load.
+3. `curl http://localhost:8000/api/v1/info` — server starts.
+4. `curl http://localhost:8000/api/v1/library` — library listings load.
 5. `sqlite3 fluxora.db "SELECT count(*) FROM polar_orders;"` — order history intact.
 6. Issue and validate a fresh license key — confirms `FLUXORA_LICENSE_SECRET` was backed up correctly.
 

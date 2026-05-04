@@ -340,7 +340,7 @@ apps/desktop/lib/
 │
 ├── core/
 │   ├── di/
-│   │   └── injector.dart        # get_it: ApiClient (localhost:8080), all repositories, OrdersCubit factory, SettingsCubit factory
+│   │   └── injector.dart        # get_it: ApiClient (localhost:8000), all repositories, OrdersCubit factory, SettingsCubit factory
 │   └── router/
 │       └── app_router.dart      # GoRouter + Routes + ShellRoute wrapping AppShell (Dart 3.8 wildcard params)
 │

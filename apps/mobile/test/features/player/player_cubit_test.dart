@@ -28,7 +28,7 @@ void main() {
   const tFileName = 'Inception.mkv';
   const tSessionId = 'session-abc';
   const tPlaylistUrl =
-      'http://192.168.1.1:8080/api/v1/hls/session-abc/playlist.m3u8';
+      'http://192.168.1.1:8000/api/v1/hls/session-abc/playlist.m3u8';
   const tToken = 'tok_test';
 
   const tResponse = StreamStartResponse(
