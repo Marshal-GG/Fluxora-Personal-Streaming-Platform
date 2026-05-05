@@ -224,6 +224,7 @@ To prevent widespread key sharing while maintaining privacy, Phase 5 will introd
 | TURN credentials | `~/.fluxora/config.json` | Read-only file; not exposed via API |
 | Fluxora license keys | SQLite `user_settings` / `polar_orders` | Entitlement tokens; never logged or returned in webhook responses |
 | Polar customer email | SQLite `polar_orders` | migration 009: stored for manual owner lookup; not returned in API responses |
+| Support bundle exports | Generated on demand by `POST /api/v1/info/support-bundle` (localhost-only) | Operator-initiated field-debug archive. Redaction policy: `user_settings.tmdb_api_key` / `user_settings.license_key` / `user_settings.email` are replaced with the literal string `***REDACTED***` when non-null; null stays null so "never configured" stays distinguishable from "had a value, redacted". `database/schema.sql` is `sqlite_master` DDL only — never row data, so bearer-token hashes / client emails / poster URLs / paths never enter the bundle. Logs (`logs/*`) are included verbatim from the rotating log file — the project rule "never log tokens, passwords, or any PII" (CLAUDE.md hard prohibition #8) is the upstream guarantee that the log files do not carry secrets in the first place. **Operator responsibility**: the bundle file is unencrypted at rest after download; treat it like any debug capture (don't post to a public issue tracker without a quick scan first). |
 
 ---
 

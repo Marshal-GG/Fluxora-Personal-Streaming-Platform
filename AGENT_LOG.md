@@ -503,3 +503,116 @@ Pre-existing latent gap closed as a side effect of routing the heartbeat through
 - **Stale-baseline audit** on `m3_dashboard_golden_test.dart` — either regenerate or re-skip until the `golden_toolkit` migration.
 - **Audit `last_seen` consumers** on mobile + desktop now that the field actually refreshes per-request.
 ---
+
+## [2026-05-06] — F6 shipped: support bundle export endpoint + Help screen wire-up
+**Phase:** Phase 5 desktop redesign — post-M10 polish (§11.1 follow-up)
+**Status:** Complete
+
+### What Was Done
+
+The "Generate Bundle" button on the Help screen's Diagnostics card has been disabled since M7 (ship blocker for any field-debug round). Per the prior session's "Next Agent Should" note, F6 was the highest-leverage remaining §11.1 follow-up — the TMDB ISP-block investigation last week would have been twice as fast with a one-click "send me your last N hours of state."
+
+#### Server
+
+- **`apps/server/services/support_bundle_service.py`** (new). Builds a gzipped tar in memory. Members:
+  - `metadata.json` — `generated_at`, `server_version`, `python_version`, `platform`, `platform_machine`, `data_dir`.
+  - `system/stats.json` — one psutil snapshot via `system_stats.collect(db)`.
+  - `system/encoders.json` — encoder self-test results (passed / error / tested_at / suggestion per encoder) read via the new `transcoding_service.get_test_results()` accessor.
+  - `settings/redacted.json` — `user_settings` row dumped to JSON, with `tmdb_api_key` / `license_key` / `email` replaced by `***REDACTED***` sentinel when non-null. Null values stay null so the bundle distinguishes "never configured" from "had a value, redacted".
+  - `database/schema.sql` — `sqlite_master.sql` DDL only. Rejects rows where `name LIKE 'sqlite_%'` so internal tables stay out. Never carries row data — the test asserts `INSERT` does not appear and a `CanaryDevice` insert does not bleed in.
+  - `logs/<filename>` — active rotating log file + up to 4 rotated siblings. Capped at 5 to bound memory.
+- **Failure-isolation policy:** every sub-collector wrapped in try/except. A single failure ships a partial bundle with `_collect_error: <repr>` markers in the affected member rather than aborting the download. Test asserts `system_stats.collect` raising still produces a valid bundle.
+- **`apps/server/services/transcoding_service.get_test_results()`** (new public accessor) — returns a shallow copy of `_TEST_RESULTS`. Added so the bundle service does not reach into module-private state. Preserves the existing pattern of `get_status()` being the heavy-lifting public API while exposing just the slice the bundle needs.
+- **`apps/server/routers/info.py`** — new `POST /info/support-bundle`, `require_local_caller` guard. Returns `Response(content=payload, media_type="application/gzip", headers={"Content-Disposition": f'attachment; filename="{filename}"'})`. Filename format: `fluxora-support-<UTC YYYYMMDD_HHMMSS>.tar.gz`.
+- **`apps/server/tests/test_support_bundle.py`** (new, 9 tests). Coverage:
+  - bundle contains expected top-level members
+  - filename has timestamp prefix + `.tar.gz` extension
+  - secret settings get redacted (asserted by absence of the real values in the gzip payload bytes, not just by inspecting the JSON)
+  - null secrets stay null
+  - schema dump has CREATE statements but no INSERT statements or row data (canary INSERT before bundle generation)
+  - metadata fields present
+  - sub-collector failure isolation (force `system_stats.collect` to raise; bundle still ships with `_collect_error`)
+  - localhost endpoint returns gzip + Content-Disposition; non-localhost returns 403
+
+Server suite **477 → 486** passing.
+
+#### Frontend
+
+- **`packages/fluxora_core/lib/network/endpoints.dart`** — `infoSupportBundle = '$_base/info/support-bundle'`.
+- **`packages/fluxora_core/lib/network/api_client.dart`** — new `postBytes(path, {data, queryParameters}) -> ({Uint8List bytes, String? filename})`. Sets `responseType: ResponseType.bytes` on the underlying Dio call; parses Content-Disposition's `filename="<name>"` (RFC 6266 simple form) into the returned record. Reuses the existing `_rethrow` ApiException-mapping path. First binary response method on the client; documented as "for binary downloads (support bundles, archive exports, etc.)".
+- **`apps/desktop/lib/features/help/presentation/screens/help_screen.dart`** — `_DiagnosticsCard` converted from `StatelessWidget` → `StatefulWidget`. New `_DiagnosticsCardState._generate()` wires:
+  1. Set `_busy = true`; capture `messenger` from current `context` *before* the await (mounted-after-async pattern).
+  2. `getIt<ApiClient>().postBytes(Endpoints.infoSupportBundle)` — returns `(bytes, filename)`.
+  3. `FilePicker.saveFile(dialogTitle, fileName: result.filename ?? 'fluxora-support.tar.gz', type: FileType.custom, allowedExtensions: ['gz'])` — null = user cancelled, silent return.
+  4. `File(savePath).writeAsBytes(result.bytes, flush: true)`.
+  5. Snackbar with "Saved support bundle to $savePath".
+  - Catches `Exception`, logger.e with stack trace, snackbar with "Could not generate support bundle. See logs."
+  - Button label switches to "Generating…" while busy; disabled during the call.
+  - Card subtitle updated to mention "Secrets are redacted before export." so the user knows what they're sharing before they click Generate.
+
+`flutter analyze` clean (desktop 26.9 s, fluxora_core 8.3 s).
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `apps/server/services/support_bundle_service.py` |
+| Created | `apps/server/tests/test_support_bundle.py` (+9 tests) |
+| Modified | `apps/server/services/transcoding_service.py` (+ new public `get_test_results()` accessor) |
+| Modified | `apps/server/routers/info.py` (+ `POST /info/support-bundle`) |
+| Modified | `packages/fluxora_core/lib/network/endpoints.dart` (+ `infoSupportBundle`) |
+| Modified | `packages/fluxora_core/lib/network/api_client.dart` (+ `postBytes` returning `({Uint8List bytes, String? filename})`) |
+| Modified | `apps/desktop/lib/features/help/presentation/screens/help_screen.dart` (`_DiagnosticsCard` stateful + wire) |
+| Modified | `docs/11_design/desktop_redesign_plan.md` (F6 row flipped to Done with full implementation summary; new 2026-05-06 change-log entry) |
+| Modified | `docs/04_api/01_api_contracts.md` (full endpoint spec for `POST /info/support-bundle`; added to localhost-only auth-modes row) |
+| Modified | `docs/09_backend/01_backend_architecture.md` (`support_bundle_service` row + `transcoding_service.get_test_results()` row) |
+| Modified | `docs/06_security/01_security.md` (Sensitive Data Handling row for support bundles) |
+| Modified | `docs/00_overview/current_status.md` (test count 477 → 486; routers + services lines updated; new 2026-05-06 paragraph) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Decisions Made
+
+- **`postBytes` on the shared ApiClient, not a one-shot in the help screen.** First binary endpoint, but unlikely to be the last (encoder benchmark, eventual export-library tarball, etc. would all want the same). Adding a typed method on the shared client now beats sprinkling raw `getIt<Dio>()` calls later. Returns a record `({bytes, filename})` because Content-Disposition is the right place to source the default save name.
+- **Gzipped tar, not zip.** `tarfile` + `gzip` are stdlib; `zipfile` is also stdlib but tar+gz is the universal Linux/macOS pattern and is well-supported by Windows 11's built-in extractor since 22H2. Single-file output with one extension (`.tar.gz`) reads cleaner than a `.zip` of mixed-mime members.
+- **Build in memory, not stream.** Bundles cap at ~50 MB on a normal home server (logs are biggest at 10 MB × 5 rotations max; everything else is JSON kilobytes). Memory cost is bounded; streaming-tar would have meant either generating-on-demand (FastAPI `StreamingResponse` + async generator) or temp file (cleanup risk if request aborts). Buffered is the simpler safer default.
+- **Public `get_test_results()` over reaching into `_TEST_RESULTS`.** Module-private convention exists for a reason. The bundle service is in the same package but not the same module — exposing a one-line accessor (returns a copy) is the right boundary. The new accessor also gives any future consumer the same clean read path.
+- **Sub-collector failure isolation, not all-or-nothing.** Operator's case for needing the bundle is "something is broken." The most common collectors-might-fail scenarios — psutil flake on a weird platform, schema corruption, encoder probe state cleared — are exactly the situations where the partial bundle is most useful. `_collect_error` markers tell the receiving engineer what is missing without lying about it.
+- **No streaming, no token-based download.** Considered a two-step "request a bundle, get a one-shot URL, fetch bytes from the URL" flow to allow large bundles. Rejected — the localhost-only constraint means the operator's machine *is* the server's machine, the bytes never leave that box during generation, and the OS file picker handles the disk write. Two-step adds state without benefit.
+- **Subtitle copy includes "Secrets are redacted before export."** Trust signal — the operator clicks Generate knowing the bundle is safe to attach to a public issue. Without that assurance the button stays scary.
+
+### Blockers / Open Issues
+
+- **Tunneled `last_ip` carries through to the bundle.** `settings/redacted.json` doesn't include the `clients` table at all (settings dump is `user_settings` only), but if a future iteration adds a `clients_summary` member it should respect the same tunneling caveat documented in [`gotchas.md`](docs/12_guidelines/03_gotchas.md) — record `last_ip` only when it's a real public IP we want to share.
+- **No size cap on the response.** A misconfigured server with a 100 GB log file and disabled rotation would stream that file into memory then return 100 GB. The default rotation (10 MB × 5) bounds this; if rotation is ever disabled by mistake the bundle endpoint would OOM the server. Not worth a hard cap today (the operational shape is single-tenant home server), but worth a cap if we ever ship a multi-tenant build.
+
+### Issues / Sharp Edges Discovered
+
+- **`file_picker` 11.0.2 dropped the `FilePicker.platform` accessor.** The package's older `FilePicker.platform.saveFile(...)` form is gone in 11.x; `FilePicker.saveFile(...)` is now a static. The library_screen had migrated to the new form; help_screen didn't (was first wire-up). Caught by `flutter analyze`. Worth a `gotchas.md` entry if more file_picker call sites land — the type checker catches it cleanly so the cost is low, but the pattern of "API moved to static" repeats in Flutter packages and is easy to miss in PR review.
+- **`response.headers.value('content-disposition')` is the right Dio API for a single-valued header.** `headers.map['content-disposition']` returns `List<String>?` and forces an empty-list / null dance; `.value(...)` returns the `String?` directly. Used in `ApiClient.postBytes`.
+- **`postBytes` had to import `dart:typed_data` for `Uint8List`.** Without that import the symbol resolves through `flutter` re-exports in app code but not in the `fluxora_core` package (no Flutter dep). Easy miss because the IDE auto-completes the type without flagging the import.
+
+### Proactive Suggestions for Next Work
+
+1. **F10 — Encoder benchmark endpoint** is the last shippable §11.1 item. `POST /api/v1/transcoding/benchmark` running a 10 s lavfi probe per available encoder, returning fps + speed + quality metrics. Wires the disabled "Run Benchmark" button on Encoder Settings. Similar shape to F6 (one server endpoint + one frontend wire-up).
+2. **Audit other `pubspec.yaml` deps for major-version moves** the way `file_picker.platform → static` change happened. `dio` 6.x is in early adoption, `flutter_bloc` 9.x is settled, but the 5.x → 6.x dio jump removed several APIs. Worth a one-pass before next dep refresh.
+3. **Add `FilePicker.saveFile` to gotchas.md** if a third call site shows up — pattern is "package version was bumped, static method moved, only flutter_analyze catches it."
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced. Help screen wire uses the project `Logger()` pattern.
+- [x] No silent exceptions. Help screen catches `Exception`, logs with stack trace, surfaces snackbar; service-level sub-collectors log WARNING with `repr(exc)`.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps. `tarfile` + `gzip` are stdlib; `file_picker` was already in the desktop pubspec; `url_launcher` was added in the F5 chunk earlier today.
+- [x] No layer-boundary violations. New service lives at `services/support_bundle_service.py`; new accessor on `transcoding_service`; router glue only in `routers/info.py`.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+- [x] No raw SQL string concatenation. Schema dump uses bound parameters; the new accessor reads `sqlite_master` via parameterised SELECT.
+- [x] No bearer tokens / PII logged. Service logs only the byte size + log file count on success; sub-collector failure logs include `repr(exc)` of the exception, never the underlying secret.
+
+### Next Agent Should
+
+- **F10 encoder benchmark endpoint** if completing the §11.1 sweep is the goal.
+- **Push the 4 unpushed commits** if the operator wants today's work on the remote.
+- **Verify the support bundle end-to-end on the operator's machine** — restart the server, click Generate Bundle on Help screen, confirm the saved `.tar.gz` extracts cleanly with the expected member tree.
+---

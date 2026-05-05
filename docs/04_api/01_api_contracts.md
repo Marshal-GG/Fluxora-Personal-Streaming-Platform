@@ -35,7 +35,7 @@ Authorization: Bearer {auth_token}
 |------|-----------|---------|
 | Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints, `GET /auth/clients/me` |
 | Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /info/stats`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity`, `GET /logs` — desktop control panel needs no token |
-| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /info/restart`, `POST /info/stop`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
+| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /info/restart`, `POST /info/stop`, `POST /info/support-bundle`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
 | No auth | — | `/info`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
 
 **Heartbeat side effect (migration 023, 2026-05-06):** every successful `validate_token` resolution writes `clients.last_seen = NOW()` and `clients.last_ip = request.client.host` for the resolving client. This is best-effort — wrapped in try/except + WARNING log so a transient SQLite write failure can't 401 a valid request — but it changes the semantics of `last_seen` from "frozen at pair / approval" to "live within one poll cycle." Tunneled requests (cloudflared) record the loopback IP because `CF-Connecting-IP` isn't consumed in this path; documented limitation. See [`docs/03_data/02_database_schema.md`](../03_data/02_database_schema.md) migration 023 row.
@@ -98,6 +98,34 @@ Authorization: Bearer {auth_token}
 ```json
 { "status": "shutdown_requested" }
 ```
+
+---
+
+### `POST /api/v1/info/support-bundle`
+**Description:** Generate an in-memory gzipped tar archive of operator-side debug state for field triage. Builds the bundle synchronously and returns the bytes — caller saves to disk via OS file picker. Bundle stays well under 50 MB on a normal home server (logs are the largest member; rotation caps individual log files at ~10 MB and the bundle includes at most 5 log files).  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented (2026-05-06)
+
+**Response:** `200 OK`
+- `Content-Type: application/gzip`
+- `Content-Disposition: attachment; filename="fluxora-support-<UTC stamp>.tar.gz"` (e.g. `fluxora-support-20260506_143055.tar.gz`)
+- Body: gzipped tar bytes
+
+Archive structure:
+```
+metadata.json         # generated_at, server_version, python_version, platform, data_dir
+system/stats.json     # one psutil snapshot via system_stats.collect()
+system/encoders.json  # encoder self-test results from transcoding_service.get_test_results()
+settings/redacted.json  # user_settings row, with secret fields replaced (see redaction below)
+database/schema.sql   # sqlite_master DDL only — never row data
+logs/<filename>       # active rotating log file + up to 4 rotated siblings
+```
+
+**Redaction policy** (`settings/redacted.json`): the fields `tmdb_api_key`, `license_key`, `email` from `user_settings` are replaced with the string `***REDACTED***` when their value is non-null; null values stay null. This preserves the "this was configured" signal for triage without leaking the value. All other settings fields round-trip verbatim.
+
+**Failure-isolation policy:** each sub-collector (`metadata`, `stats`, `settings`, `schema`, `encoders`, `logs`) is wrapped in try/except. A single collector failure ships a partial bundle whose corresponding member contains `{"_collect_error": "<repr>"}` rather than failing the whole download. The `metadata.json` member is generated first and is the most likely to succeed.
+
+**Errors:** `403` not from localhost.
 
 ---
 
