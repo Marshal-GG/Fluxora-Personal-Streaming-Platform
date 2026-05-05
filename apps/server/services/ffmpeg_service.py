@@ -106,11 +106,18 @@ def _detect_hdr_format(stream: dict) -> str | None:
 
 
 async def probe_video(file_path: str) -> dict | None:
-    """Run ffprobe on the first video stream; return width/height/codec/hdr.
+    """Run ffprobe; return width/height/codec/hdr/duration_sec.
 
     Returns None when ffprobe is not installed, the file is not a decodable
     video, or the stream list is empty. Callers must treat the response as
     advisory — scan completion never depends on probe success.
+
+    ``duration_sec`` is read from the container's ``format.duration`` because
+    a stream-level ``duration`` field is unreliable for many MKV/WebM sources
+    (matroska reports duration on the container only).  Required for the
+    static VOD playlist generator in ``start_stream`` — when this is None
+    the player falls back to FFmpeg's growing playlist and the seek bar
+    only spans segments written so far.
     """
     ffprobe = _ffprobe_bin()
     if ffprobe is None:
@@ -149,11 +156,7 @@ async def probe_video(file_path: str) -> dict | None:
     stream = streams[0]
     width = stream.get("width")
     height = stream.get("height")
-    # Duration usually lives on the format object (covers most containers
-    # cleanly); fall back to the per-stream duration only if missing.
-    # A "0.000000" string is meaningless for HLS planning — treat it as
-    # unknown so the static VOD playlist generator falls back to the
-    # incremental playlist instead of emitting a single-segment list.
+
     duration_sec: float | None = None
     fmt = data.get("format") or {}
     raw_duration = fmt.get("duration")
@@ -164,6 +167,7 @@ async def probe_video(file_path: str) -> dict | None:
                 duration_sec = d
         except (TypeError, ValueError):
             pass
+
     return {
         "width": int(width) if isinstance(width, int) else None,
         "height": int(height) if isinstance(height, int) else None,
@@ -222,7 +226,8 @@ async def _resolve_source_metadata(
     try:
         await db.execute(
             "UPDATE media_files SET width = ?, height = ?, codec_name = ?,"
-            "  hdr_format = ?, duration_sec = COALESCE(?, duration_sec),"
+            "  hdr_format = ?,"
+            "  duration_sec = COALESCE(?, duration_sec),"
             "  updated_at = ?"
             " WHERE id = ?",
             (
@@ -364,8 +369,17 @@ def _build_ffmpeg_cmd(
     decode and only land on the GPU at NVENC encode time via FFmpeg's
     automatic upload.  Slower than the all-GPU path but works on any
     GPU + FFmpeg combination, which is what makes it a sensible retry.
+
+    Loglevel is ``warning`` for transcode sessions and ``error`` for
+    stream-copy.  Transcode failures (unsupported pixel format, missing
+    decoder, hwaccel rejection) frequently surface as warnings that
+    FFmpeg suppresses under ``error`` — leaving the operator with
+    ``<no stderr captured>`` when the process is killed.  Stream-copy
+    is verbose enough at ``warning`` to be noisy in production, and
+    its failure modes already surface as errors.
     """
-    cmd: list[str] = [_ffmpeg_bin(), "-hide_banner", "-loglevel", "error"]
+    loglevel = "warning" if not direct_remux else "error"
+    cmd: list[str] = [_ffmpeg_bin(), "-hide_banner", "-loglevel", loglevel]
 
     if not direct_remux and use_gpu_input:
         # Pre-input hardware acceleration flags (empty list for software).
@@ -584,14 +598,33 @@ async def _spawn_ffmpeg_attempt(
     cmd: list[str],
     session_id: str,
     playlist: Path,
-) -> tuple[bool, str, int | None]:
-    """Run one FFmpeg attempt; return (succeeded, stderr_tail, returncode).
+    *,
+    playlist_timeout_sec: float = 10.0,
+) -> tuple[bool, str, int | None, bool]:
+    """Run one FFmpeg attempt; return (succeeded, stderr_tail, returncode, killed_after_timeout).
 
-    On success the playlist appeared within 10 s and the process is still
-    running.  On failure the process either exited prematurely or the
-    playlist never appeared in time; the stderr tail is drained and the
-    process killed.  The session's stderr file is unlinked in either
-    case so retries get a fresh capture.
+    On success the playlist appeared within ``playlist_timeout_sec`` and
+    the process is still running.  On failure the process either exited
+    prematurely (``killed_after_timeout=False``) or the playlist never
+    appeared in time and we terminated the process ourselves
+    (``killed_after_timeout=True``).  The stderr tail is drained and
+    the session's stderr file is unlinked in either failure case so
+    retries get a fresh capture.
+
+    ``playlist_timeout_sec`` is pipeline-aware: stream-copy and
+    NVENC-only transcodes finish their first segment within seconds, so
+    the default 10 s is fine.  HDR→SDR tonemap runs on the CPU at ~0.6×
+    realtime — a 6-second source segment takes ~10 wall-seconds, which
+    means callers with tonemap enabled MUST raise this to 60 s+ or the
+    timeout will kill FFmpeg right as it produces the first segment.
+    Software-only transcodes sit in between and use 30 s.
+
+    Why ``killed_after_timeout`` is a separate flag: on Windows
+    ``proc.terminate()`` calls ``TerminateProcess(handle, 1)``, which
+    sets ``proc.returncode = 1`` even though FFmpeg never voluntarily
+    exited with that code.  Without this flag the caller can't tell a
+    real "FFmpeg crashed with exit 1" from "we killed it after a
+    timeout" — both look like exit code 1 from the outside.
 
     The process is launched with `cwd=playlist.parent` (the session
     directory) so the HLS muxer's `-hls_fmp4_init_filename` — which only
@@ -620,20 +653,29 @@ async def _spawn_ffmpeg_attempt(
             pass
 
     _active[session_id] = proc
-    logger.info("FFmpeg started: session=%s pid=%d", session_id, proc.pid)
+    logger.info(
+        "FFmpeg started: session=%s pid=%d playlist_timeout=%.0fs",
+        session_id,
+        proc.pid,
+        playlist_timeout_sec,
+    )
 
-    for _ in range(100):
+    poll_interval = 0.1
+    poll_iterations = max(1, int(playlist_timeout_sec / poll_interval))
+    for _ in range(poll_iterations):
         if playlist.exists():
-            return True, "", None
+            return True, "", None, False
         if proc.returncode is not None:
             tail = _drain_stderr(session_id)
             _drop_stderr(session_id)
             _active.pop(session_id, None)
-            return False, tail, proc.returncode
-        await asyncio.sleep(0.1)
+            return False, tail, proc.returncode, False
+        await asyncio.sleep(poll_interval)
 
-    # Playlist never appeared within 10 s but the process is still alive —
-    # kill it and capture whatever stderr exists.
+    # Playlist never appeared within the budget but the process is still
+    # alive — kill it and capture whatever stderr exists.  The
+    # killed_after_timeout flag tells the caller this is *our* exit
+    # code, not FFmpeg's.
     try:
         proc.terminate()
         try:
@@ -646,7 +688,7 @@ async def _spawn_ffmpeg_attempt(
     tail = _drain_stderr(session_id)
     _drop_stderr(session_id)
     _active.pop(session_id, None)
-    return False, tail, proc.returncode
+    return False, tail, proc.returncode, True
 
 
 async def start_stream(
@@ -782,6 +824,19 @@ async def start_stream(
     # round-trip.
     first_attempt_gpu_input = not apply_hdr_tonemap
 
+    # Pipeline-aware playlist-appearance timeout.  See the docstring on
+    # ``_spawn_ffmpeg_attempt`` for the wall-time math behind these
+    # choices: tonemap is CPU-only at ~0.6× realtime so the first
+    # 6-second segment lands at ~10 wall-seconds — anything tighter
+    # than 60 s timeout-kills a healthy tonemap session.  Software-only
+    # transcodes are slower than hardware but faster than tonemap.
+    if apply_hdr_tonemap:
+        playlist_timeout_sec = 60.0
+    elif not direct_remux and meta.vendor == "software":
+        playlist_timeout_sec = 30.0
+    else:
+        playlist_timeout_sec = 10.0
+
     # First attempt — full GPU input pipeline (-hwaccel cuda + cuvid hint),
     # unless tonemap is forcing CPU.
     cmd = _build_ffmpeg_cmd(
@@ -798,8 +853,8 @@ async def start_stream(
         use_gpu_input=first_attempt_gpu_input,
         apply_hdr_tonemap=apply_hdr_tonemap,
     )
-    succeeded, tail, returncode = await _spawn_ffmpeg_attempt(
-        cmd, session_id, ff_playlist
+    succeeded, tail, returncode, killed_after_timeout = await _spawn_ffmpeg_attempt(
+        cmd, session_id, ff_playlist, playlist_timeout_sec=playlist_timeout_sec,
     )
 
     # Retry once if the GPU input pipeline failed — software decode
@@ -833,8 +888,12 @@ async def start_stream(
             use_gpu_input=False,
             apply_hdr_tonemap=apply_hdr_tonemap,
         )
-        succeeded, tail, returncode = await _spawn_ffmpeg_attempt(
-            cmd, session_id, playlist
+        # Software-decode retry is materially slower than the GPU-input
+        # first attempt, so bump the timeout up one tier.  A 10 s budget
+        # would just timeout-kill the retry on slow sources.
+        retry_timeout_sec = max(playlist_timeout_sec, 30.0)
+        succeeded, tail, returncode, killed_after_timeout = await _spawn_ffmpeg_attempt(
+            cmd, session_id, playlist, playlist_timeout_sec=retry_timeout_sec,
         )
 
     if succeeded:
@@ -913,6 +972,33 @@ async def start_stream(
     from services import session_router
 
     session_router.release_session(session_id)
+    if killed_after_timeout:
+        # We terminated FFmpeg ourselves because the playlist never
+        # appeared in time.  proc.returncode is set (TerminateProcess on
+        # Windows = 1) but it's *our* exit code, not FFmpeg's — surfacing
+        # it as "exit code 1" sent the operator hunting for an FFmpeg
+        # bug that doesn't exist.
+        hint = (
+            " — likely a slow tonemap or software transcode on this CPU"
+            if apply_hdr_tonemap or (not direct_remux and meta.vendor == "software")
+            else ""
+        )
+        logger.error(
+            "FFmpeg killed after %.0fs timeout: session=%s no first segment%s\n"
+            "FFmpeg stderr (last 4 KB):\n%s",
+            playlist_timeout_sec,
+            session_id,
+            hint,
+            tail or "<no stderr captured>",
+        )
+        first_line = next(
+            (line for line in tail.splitlines() if line.strip()),
+            f"no output within {playlist_timeout_sec:.0f}s",
+        )
+        raise RuntimeError(
+            f"FFmpeg killed after {playlist_timeout_sec:.0f}s timeout"
+            f" (no first segment{hint}): {first_line}"
+        )
     if returncode is not None:
         logger.error(
             "FFmpeg exited prematurely with code %d: session=%s\n"

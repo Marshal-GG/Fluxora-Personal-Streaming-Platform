@@ -717,3 +717,230 @@ async def test_resolve_source_metadata_returns_codec_and_hdr(tmp_path, test_db):
     codec, hdr = await _resolve_source_metadata(test_db, "/m/test.mkv")
     assert codec == "hevc"
     assert hdr == "HDR10"
+
+
+# ── _build_ffmpeg_cmd loglevel selection ────────────────────────────────────
+
+
+def test_build_ffmpeg_cmd_uses_warning_loglevel_for_transcode(tmp_path):
+    """Transcode sessions must use ``-loglevel warning`` so that
+    suppressed-under-error failures (unsupported pixel format, missing
+    decoder, hwaccel rejection) actually reach our captured stderr.
+    The whole point of the new diagnostic regime is that
+    ``<no stderr captured>`` should never appear when FFmpeg had
+    something to say."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="vp9",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        apply_hdr_tonemap=False,
+    )
+    assert "-loglevel" in cmd
+    assert cmd[cmd.index("-loglevel") + 1] == "warning"
+
+
+def test_build_ffmpeg_cmd_uses_error_loglevel_for_stream_copy(tmp_path):
+    """Stream-copy keeps ``-loglevel error`` — its hot path is fully
+    re-muxing source bitstream, which is verbose at ``warning`` (every
+    keyframe gets a heuristic note from the HLS muxer) and noisy in
+    the operator's log without adding diagnostic value."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="h264",
+        direct_remux=True,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        apply_hdr_tonemap=False,
+    )
+    assert cmd[cmd.index("-loglevel") + 1] == "error"
+
+
+# ── _spawn_ffmpeg_attempt: pipeline-aware timeout + killed_after_timeout ────
+
+
+def _fake_subprocess_proc(*, returncode_seq: list[int | None], pid: int = 4321):
+    """Build an AsyncMock that mimics ``asyncio.subprocess.Process``.
+
+    ``returncode_seq`` is consumed one entry at a time on each access of
+    ``proc.returncode`` — pass ``[None, None, ..., 0]`` to simulate a
+    process that's alive for the first N polls and then exits.
+    Using a list lets us simulate "exited mid-poll-loop" cleanly.
+    """
+    from unittest.mock import AsyncMock, PropertyMock, MagicMock
+
+    proc = MagicMock()
+    proc.pid = pid
+    state = {"seq": list(returncode_seq), "final": returncode_seq[-1]}
+
+    def _get_returncode(_self=None):
+        if state["seq"]:
+            return state["seq"].pop(0)
+        return state["final"]
+
+    type(proc).returncode = property(lambda self: _get_returncode())
+
+    async def _wait():
+        # Drain whatever the seq still has; final returncode wins.
+        return state["final"] if state["final"] is not None else 0
+
+    proc.wait = AsyncMock(side_effect=_wait)
+    proc.terminate = MagicMock()
+    proc.kill = MagicMock()
+    return proc
+
+
+@pytest.mark.asyncio
+async def test_spawn_attempt_succeeds_when_playlist_appears(tmp_path):
+    """The happy path — playlist file exists on the first poll, FFmpeg
+    is still running, return (True, "", None, False)."""
+    from unittest.mock import AsyncMock, patch
+
+    from services import ffmpeg_service
+
+    playlist = tmp_path / "playlist.m3u8"
+    playlist.write_text("#EXTM3U\n")  # exists from the first iteration
+
+    fake_proc = _fake_subprocess_proc(returncode_seq=[None])
+
+    with patch(
+        "asyncio.create_subprocess_exec",
+        new=AsyncMock(return_value=fake_proc),
+    ):
+        succeeded, tail, returncode, killed = await ffmpeg_service._spawn_ffmpeg_attempt(
+            ["ffmpeg", "-i", "x.mp4"],
+            session_id="success-sid",
+            playlist=playlist,
+            playlist_timeout_sec=2.0,
+        )
+
+    assert succeeded is True
+    assert tail == ""
+    assert returncode is None
+    assert killed is False
+    fake_proc.terminate.assert_not_called()
+    # Cleanup state on the module so the test doesn't leak into others.
+    ffmpeg_service._active.pop("success-sid", None)
+    ffmpeg_service._stderr_paths.pop("success-sid", None)
+
+
+@pytest.mark.asyncio
+async def test_spawn_attempt_returns_killed_after_timeout_when_playlist_never_appears(tmp_path):
+    """The HDR-tonemap regression case: process is healthy, never
+    voluntarily exits, but the playlist budget runs out.  We must
+    return killed_after_timeout=True so the error path can surface
+    a meaningful diagnostic instead of "exit code 1"."""
+    from unittest.mock import AsyncMock, patch
+
+    from services import ffmpeg_service
+
+    playlist = tmp_path / "playlist.m3u8"  # never created
+
+    fake_proc = _fake_subprocess_proc(returncode_seq=[None])
+
+    with patch(
+        "asyncio.create_subprocess_exec",
+        new=AsyncMock(return_value=fake_proc),
+    ):
+        succeeded, tail, returncode, killed = await ffmpeg_service._spawn_ffmpeg_attempt(
+            ["ffmpeg", "-i", "x.mp4"],
+            session_id="timeout-sid",
+            playlist=playlist,
+            playlist_timeout_sec=0.3,  # short to keep the test snappy
+        )
+
+    assert succeeded is False
+    assert killed is True
+    fake_proc.terminate.assert_called_once()
+    ffmpeg_service._active.pop("timeout-sid", None)
+    ffmpeg_service._stderr_paths.pop("timeout-sid", None)
+
+
+@pytest.mark.asyncio
+async def test_spawn_attempt_returns_not_killed_when_process_exits_prematurely(tmp_path):
+    """Process voluntarily exits before the playlist appears — that's a
+    real FFmpeg failure (bad codec, missing input, etc.) and the
+    caller should see killed_after_timeout=False so the operator gets
+    "FFmpeg exited prematurely with code N" instead of the timeout
+    diagnostic."""
+    from unittest.mock import AsyncMock, patch
+
+    from services import ffmpeg_service
+
+    playlist = tmp_path / "playlist.m3u8"  # never created
+
+    # Returncode is None on first poll (alive), 2 thereafter (exited).
+    fake_proc = _fake_subprocess_proc(returncode_seq=[None, 2])
+
+    with patch(
+        "asyncio.create_subprocess_exec",
+        new=AsyncMock(return_value=fake_proc),
+    ):
+        succeeded, tail, returncode, killed = await ffmpeg_service._spawn_ffmpeg_attempt(
+            ["ffmpeg", "-i", "x.mp4"],
+            session_id="exit-sid",
+            playlist=playlist,
+            playlist_timeout_sec=2.0,
+        )
+
+    assert succeeded is False
+    assert killed is False
+    assert returncode == 2
+    fake_proc.terminate.assert_not_called()
+    ffmpeg_service._active.pop("exit-sid", None)
+    ffmpeg_service._stderr_paths.pop("exit-sid", None)
+
+
+@pytest.mark.asyncio
+async def test_spawn_attempt_respects_supplied_timeout(tmp_path):
+    """The timeout parameter must drive how long we wait — a 0.2 s
+    timeout returns timeout-killed in well under 1 s; a 5 s timeout
+    would block the test indefinitely on the same input."""
+    import time
+    from unittest.mock import AsyncMock, patch
+
+    from services import ffmpeg_service
+
+    playlist = tmp_path / "playlist.m3u8"  # never appears
+
+    fake_proc = _fake_subprocess_proc(returncode_seq=[None])
+
+    with patch(
+        "asyncio.create_subprocess_exec",
+        new=AsyncMock(return_value=fake_proc),
+    ):
+        t0 = time.perf_counter()
+        succeeded, _tail, _rc, killed = await ffmpeg_service._spawn_ffmpeg_attempt(
+            ["ffmpeg", "-i", "x.mp4"],
+            session_id="budget-sid",
+            playlist=playlist,
+            playlist_timeout_sec=0.2,
+        )
+        elapsed = time.perf_counter() - t0
+
+    assert succeeded is False
+    assert killed is True
+    # Should be at least the timeout, but well under 5× — generous bound
+    # to keep the test stable on a busy CI box.
+    assert 0.18 <= elapsed < 1.5
+    ffmpeg_service._active.pop("budget-sid", None)
+    ffmpeg_service._stderr_paths.pop("budget-sid", None)

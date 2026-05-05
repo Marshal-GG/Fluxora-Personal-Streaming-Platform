@@ -142,6 +142,18 @@ Per-call import cost is ~µs after the first call (Python caches modules); the s
 
 ---
 
+## "FFmpeg failed: exit code 1" with `<no stderr captured>` actually means we killed it ourselves
+
+**Symptom:** server logs `FFmpeg exited prematurely with code 1: session=<sid>\nFFmpeg stderr (last 4 KB):\n<no stderr captured>`. Operator notification says "FFmpeg failed: exit code 1". No clue what went wrong.
+
+**Root cause:** `_spawn_ffmpeg_attempt` polls for the playlist file to appear within 10 s. CPU-bound pipelines (HDR→SDR tonemap with `zscale` runs at ~0.6× realtime; software AV1 decode + NVENC encode similar) can't produce the first segment within that window. After 10 s, `proc.terminate()` is called. On Windows, `terminate()` is `TerminateProcess(handle, 1)` — which **sets the returncode to 1** even though FFmpeg never voluntarily exited with code 1. Combined with `-loglevel error` and stderr buffering, FFmpeg never flushes any error-class output before being killed, so the captured stderr is empty.
+
+**Why this is misleading:** the diagnostic looks like a real FFmpeg crash. Operators chase nonexistent codec / driver / source-file bugs. The actual answer is "FFmpeg was working fine; we didn't wait long enough".
+
+**Fix (shipped 2026-05-05, Commit 1 of [`docs/10_planning/11_streaming_pipeline_issues.md`](../10_planning/11_streaming_pipeline_issues.md)):** `_spawn_ffmpeg_attempt` now accepts `playlist_timeout_sec`. `start_stream` selects 60 s for tonemap, 30 s for software transcode, 10 s for stream-copy + hardware transcode (cuvid retry bumps to ≥30 s). The function returns `killed_after_timeout: bool` in its tuple so the error path can distinguish "we killed it" from a real FFmpeg crash and emit "FFmpeg killed after Ns timeout — likely slow tonemap or software transcode on this CPU" instead of "exit code 1". `_build_ffmpeg_cmd` switches transcode sessions to `-loglevel warning` so suppressed-under-error stderr finally reaches the captured tempfile; stream-copy stays `error`.
+
+---
+
 ## HLS playlist grows during encode unless pre-emitted as VOD
 
 **Symptom:** the player's seek bar starts at 0 s and grows in real time over the encode duration. The user cannot seek past FFmpeg's current write position — attempts to do so result in a 404 on the requested segment.
