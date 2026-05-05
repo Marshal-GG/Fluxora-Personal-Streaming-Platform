@@ -136,6 +136,17 @@ def classify_encoder_failure(encoder: str, error: str | None) -> str | None:
 _TEST_RESULTS: dict[str, EncoderTestResult] = {}
 
 
+def get_test_results() -> dict[str, EncoderTestResult]:
+    """Read-only snapshot of the encoder self-test cache.
+
+    Used by `services/support_bundle_service.py` to capture the most
+    recent probe results without re-running them. Returns a shallow
+    copy so callers can iterate without holding a reference to the
+    live mutable dict.
+    """
+    return dict(_TEST_RESULTS)
+
+
 # ── encoder discovery ──────────────────────────────────────────────────────
 
 

@@ -4,12 +4,13 @@ import os
 import signal
 
 import aiosqlite
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 
 from config import settings
 from database.db import get_db
 from models.settings import ServerInfoResponse, SystemStatsResponse
 from routers.deps import require_local_caller, validate_token_or_local
+from services import support_bundle_service
 from services.system_stats_service import system_stats
 
 logger = logging.getLogger(__name__)
@@ -107,3 +108,24 @@ async def stop_server(
     """Schedule a graceful server shutdown. Localhost-only."""
     asyncio.create_task(_trigger_shutdown(restart=False))
     return {"status": "shutdown_requested"}
+
+
+@router.post("/info/support-bundle")
+async def download_support_bundle(
+    db: aiosqlite.Connection = Depends(get_db),
+    _local: None = Depends(require_local_caller),
+) -> Response:
+    """Generate a gzipped tar of operator-side debug state.
+
+    Localhost-only. Bundle contents are deliberately conservative:
+    the redacted user_settings replaces secret fields with the
+    sentinel `***REDACTED***`, schema dump carries no row data, and
+    bearer tokens never appear anywhere in the archive. See
+    `services/support_bundle_service.py` for the full content list.
+    """
+    filename, payload = await support_bundle_service.generate_support_bundle(db)
+    return Response(
+        content=payload,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
