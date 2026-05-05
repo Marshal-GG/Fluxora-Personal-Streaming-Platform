@@ -246,6 +246,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     _asyncio.create_task(_self_test_task())
 
+    # 8c. Backfill duration_sec on rows that pre-date the probe-writes-
+    # duration fix.  Without this, the static VOD playlist generator
+    # in start_stream falls back to FFmpeg's growing playlist and the
+    # mobile/desktop seek bar only spans segments written so far.
+    # Background task — non-blocking, idempotent across restarts.
+    async def _duration_backfill_task() -> None:
+        try:
+            from database.db import get_db as _get_db
+            from services import library_service as _ls
+
+            _db3 = await _get_db()
+            updated = await _ls.backfill_missing_durations(_db3)
+            if updated:
+                logger.info(
+                    "Duration backfill: probed %d media row(s) on startup",
+                    updated,
+                )
+        except Exception:
+            logger.warning("Duration backfill failed", exc_info=True)
+
+    _asyncio.create_task(_duration_backfill_task())
+
     # 9. Start mDNS broadcast
     await start_discovery(settings.fluxora_server_name, settings.fluxora_port)
 

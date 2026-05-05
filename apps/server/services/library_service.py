@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import shutil
 import uuid
 from datetime import UTC, datetime
@@ -13,6 +14,32 @@ from services.ffmpeg_service import probe_video
 from services.tmdb_service import TmdbService
 
 logger = logging.getLogger(__name__)
+
+
+def _is_valid_absolute_media_path(path_str: str) -> bool:
+    """Reject obviously-corrupt paths before they hit FFmpeg.
+
+    Three known failure modes have produced unreadable rows in the past:
+
+    1. ``root_paths`` accidentally consumed as a JSON-encoded string
+       instead of a parsed list — ``root_paths[0]`` returns the literal
+       ``'['`` character, so the joined path becomes ``[\\filename.ext``
+       with no drive letter.  FFmpeg later fails with ``Error opening
+       input: No such file or directory`` and the user sees a transcode
+       notification with no actionable diagnostic.
+    2. Windows path missing the drive letter (``\\filename.ext``).
+    3. Empty or whitespace-only path.
+
+    Returns False for any of these so ``scan_library`` /
+    ``upload_file_to_library`` can refuse the row before INSERT.
+    """
+    if not path_str or not path_str.strip():
+        return False
+    if not os.path.isabs(path_str):
+        return False
+    if path_str.startswith("[") or "\x00" in path_str:
+        return False
+    return True
 
 _MEDIA_EXTENSIONS = {
     ".mp4",
@@ -501,6 +528,14 @@ async def scan_library(
 
         for file_path in candidates:
             path_str = str(file_path)
+            if not _is_valid_absolute_media_path(path_str):
+                logger.warning(
+                    "Refusing to ingest media row with invalid path: %r "
+                    "(library=%s)",
+                    path_str,
+                    library_id,
+                )
+                continue
             async with db.execute(
                 "SELECT id FROM media_files WHERE path = ?", (path_str,)
             ) as cur:
@@ -573,11 +608,15 @@ async def scan_library(
 async def _persist_probe(
     db: aiosqlite.Connection, file_id: str, file_path: Path
 ) -> None:
-    """Probe the file via ffprobe and persist width/height/codec/hdr.
+    """Probe the file via ffprobe and persist width/height/codec/hdr/duration.
 
     No-op for non-video extensions or when ffprobe returns nothing useful.
     Best-effort — failures are logged and swallowed so they cannot abort a
     library scan.
+
+    ``duration_sec`` is required by the static VOD playlist generator in
+    ``ffmpeg_service.start_stream``; without it the mobile/desktop seek bar
+    grows segment-by-segment instead of spanning the full file immediately.
     """
     if file_path.suffix.lower() not in _PROBEABLE_EXTENSIONS:
         return
@@ -592,6 +631,7 @@ async def _persist_probe(
         """
         UPDATE media_files
            SET width = ?, height = ?, codec_name = ?, hdr_format = ?,
+               duration_sec = COALESCE(?, duration_sec),
                updated_at = ?
          WHERE id = ?
         """,
@@ -600,10 +640,84 @@ async def _persist_probe(
             info["height"],
             info["codec_name"],
             info["hdr_format"],
+            info.get("duration_sec"),
             datetime.now(UTC).isoformat(),
             file_id,
         ),
     )
+
+
+async def backfill_missing_durations(
+    db: aiosqlite.Connection, *, batch_size: int = 50, max_rows: int = 5000
+) -> int:
+    """Probe rows with NULL duration_sec on probeable extensions.
+
+    The static VOD playlist generator in ``ffmpeg_service.start_stream``
+    requires ``duration_sec`` to pre-compute the segment list — without
+    it the player falls back to FFmpeg's growing playlist and the seek
+    bar only spans segments written so far.  Files scanned before the
+    probe-writes-duration fix have NULL ``duration_sec``; this runs at
+    startup to bring them up to date.
+
+    Iterates in batches of ``batch_size`` so we yield to the event loop
+    between probes (each ffprobe spawn is ~100-300ms on Windows).  Caps
+    out at ``max_rows`` total updates per invocation so a multi-thousand
+    library can't pin the event loop forever on a single startup.
+
+    Returns the count of rows successfully updated.  Best-effort —
+    individual probe failures are logged and skipped.
+    """
+    placeholders = ",".join("?" * len(_PROBEABLE_EXTENSIONS))
+    ext_list = list(_PROBEABLE_EXTENSIONS)
+
+    total_updated = 0
+    last_seen_id: str | None = None
+    while total_updated < max_rows:
+        if last_seen_id is None:
+            sql = (
+                f"SELECT id, path, extension FROM media_files"
+                f" WHERE duration_sec IS NULL"
+                f"   AND lower(extension) IN ({placeholders})"
+                f" ORDER BY id LIMIT ?"
+            )
+            params = [*ext_list, batch_size]
+        else:
+            # Keyset pagination on `id` — avoids re-fetching the same
+            # rows when a probe failed to fill duration_sec (e.g.
+            # ffprobe missing, file unreadable).  Without this, those
+            # rows would loop forever.
+            sql = (
+                f"SELECT id, path, extension FROM media_files"
+                f" WHERE duration_sec IS NULL"
+                f"   AND lower(extension) IN ({placeholders})"
+                f"   AND id > ?"
+                f" ORDER BY id LIMIT ?"
+            )
+            params = [*ext_list, last_seen_id, batch_size]
+        async with db.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+        if not rows:
+            break
+
+        for r in rows:
+            last_seen_id = r["id"]
+            path = Path(r["path"])
+            if not path.is_file():
+                continue
+            try:
+                await _persist_probe(db, r["id"], path)
+                total_updated += 1
+            except Exception:
+                logger.warning(
+                    "Duration backfill probe raised for id=%s",
+                    r["id"],
+                    exc_info=True,
+                )
+            await asyncio.sleep(0)
+
+        await db.commit()
+
+    return total_updated
 
 
 async def _enrich_with_tmdb(
@@ -657,11 +771,30 @@ async def upload_file_to_library(
     if row is None:
         raise ValueError(f"Library not found: {library_id}")
 
-    root_paths: list[str] = row["root_paths"]
+    root_paths = row["root_paths"]
     if not root_paths:
         raise ValueError("Library has no root paths configured.")
 
+    # Defensive — `get_library` parses the JSON-encoded root_paths column
+    # before returning, but a buggy code path in 2026-04 once handed
+    # through the raw JSON string, causing `root_paths[0]` to return the
+    # literal `[` character.  The resulting `Path('[') / filename` was
+    # written to the DB with a corrupt path that FFmpeg later refused to
+    # open.  This guard makes that failure mode loud rather than silent.
+    if not isinstance(root_paths, list) or not all(
+        isinstance(p, str) for p in root_paths
+    ):
+        raise ValueError(
+            "Library root_paths is malformed; expected list[str], got "
+            f"{type(root_paths).__name__}.  Refusing to upload."
+        )
+
     target_dir = Path(root_paths[0])
+    if not target_dir.is_absolute():
+        raise ValueError(
+            f"Library root_paths[0] is not absolute: {root_paths[0]!r}.  "
+            "Refusing to upload."
+        )
     target_dir.mkdir(parents=True, exist_ok=True)
 
     if not file.filename:
@@ -679,6 +812,10 @@ async def upload_file_to_library(
     except ValueError:
         raise ValueError("Invalid filename: path traversal detected.")
     path_str = str(file_path)
+    if not _is_valid_absolute_media_path(path_str):
+        raise ValueError(
+            f"Constructed upload path failed validation: {path_str!r}."
+        )
 
     # Save the file to disk
     def _save_file():

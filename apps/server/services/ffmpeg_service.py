@@ -122,6 +122,7 @@ async def probe_video(file_path: str) -> dict | None:
         "-print_format",
         "json",
         "-show_streams",
+        "-show_format",
         "-select_streams",
         "v:0",
         file_path,
@@ -148,11 +149,27 @@ async def probe_video(file_path: str) -> dict | None:
     stream = streams[0]
     width = stream.get("width")
     height = stream.get("height")
+    # Duration usually lives on the format object (covers most containers
+    # cleanly); fall back to the per-stream duration only if missing.
+    # A "0.000000" string is meaningless for HLS planning — treat it as
+    # unknown so the static VOD playlist generator falls back to the
+    # incremental playlist instead of emitting a single-segment list.
+    duration_sec: float | None = None
+    fmt = data.get("format") or {}
+    raw_duration = fmt.get("duration")
+    if raw_duration is not None:
+        try:
+            d = float(raw_duration)
+            if d > 0:
+                duration_sec = d
+        except (TypeError, ValueError):
+            pass
     return {
         "width": int(width) if isinstance(width, int) else None,
         "height": int(height) if isinstance(height, int) else None,
         "codec_name": stream.get("codec_name"),
         "hdr_format": _detect_hdr_format(stream),
+        "duration_sec": duration_sec,
     }
 
 
@@ -205,13 +222,15 @@ async def _resolve_source_metadata(
     try:
         await db.execute(
             "UPDATE media_files SET width = ?, height = ?, codec_name = ?,"
-            "  hdr_format = ?, updated_at = ?"
+            "  hdr_format = ?, duration_sec = COALESCE(?, duration_sec),"
+            "  updated_at = ?"
             " WHERE id = ?",
             (
                 info["width"],
                 info["height"],
                 info["codec_name"],
                 info["hdr_format"],
+                info.get("duration_sec"),
                 datetime.now(UTC).isoformat(),
                 row["id"],
             ),
