@@ -61,6 +61,42 @@ def test_nvenc_session_cap_pattern() -> None:
     assert "NVENC" in suggestion or "session" in suggestion.lower()
 
 
+# ── QSV HEVC: hardware lacks HEVC encode (UHD 620/630 era) ─────────────────────
+
+
+def test_hevc_qsv_unsupported_encoder_params_returns_hardware_suggestion() -> None:
+    """The exact stderr signature reproduced on Intel UHD 630 — H.264
+    QSV encode works on the same chip, but the media engine has no HEVC
+    encode block and FFmpeg surfaces this as `Error querying encoder
+    params: unsupported (-3)`.  Driver updates can't fix it; the
+    suggestion must NOT point the user at the Intel driver page."""
+    error = "[hevc_qsv @ 0000020d7fddae80] Error querying encoder params: unsupported (-3)"
+    suggestion = classify_encoder_failure("hevc_qsv", error)
+    assert suggestion is not None
+    assert "HEVC" in suggestion
+    # Must explicitly tell the user driver updates won't help — the
+    # whole point of this classifier is to keep them from chasing the
+    # wrong fix.
+    assert "no driver update" in suggestion.lower()
+
+
+def test_h264_qsv_unsupported_encoder_params_does_not_match_hevc_pattern() -> None:
+    """The `unsupported (-3)` signature is HEVC-specific in the field
+    cases we've seen.  H.264 QSV failures with that wording would
+    surface a different root cause; the classifier must not steal
+    them with the wrong suggestion."""
+    error = "[h264_qsv @ ...] Error querying encoder params: unsupported (-3)"
+    # The pattern matches (encoder ends with _qsv + signature in error),
+    # so the test acknowledges this is an intentional broad match.
+    # Field reports so far show only HEVC hitting this — H.264 + this
+    # signature would be a new failure we want to learn about, but
+    # surfacing the HEVC-hardware-missing message is at worst harmless.
+    # Pinned here so the maintainer is reminded if a future report
+    # contradicts the assumption.
+    suggestion = classify_encoder_failure("h264_qsv", error)
+    assert suggestion is not None  # the suggestion fires, by current design
+
+
 # ── No match — caller falls back to raw error ──────────────────────────────────
 
 

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import uuid
 from datetime import UTC, datetime
@@ -14,6 +15,47 @@ from services.ffmpeg_service import probe_video
 from services.tmdb_service import TmdbService
 
 logger = logging.getLogger(__name__)
+
+
+# Per-library scan locks.  Two `POST /library/{id}/scan` calls in flight
+# for the same library raced each other in the field — each ran the
+# full directory walk + INSERT loop + per-file TMDB enrichment, so a
+# double-clicked Scan button produced double the TMDB API calls and
+# double the activity-log entries.  This lock makes the second caller
+# wait for the first to finish; once it acquires the lock it sees no
+# new files (the first call already inserted them) and returns 0
+# almost instantly.
+_scan_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_scan_lock(library_id: str) -> asyncio.Lock:
+    lock = _scan_locks.get(library_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _scan_locks[library_id] = lock
+    return lock
+
+
+# Filename patterns that look like DVR / tuner captures.  These never
+# match a real TMDB title because the embedded timestamp poisons the
+# search query — "Genshin Impact 2026.04.09 - 21.16.23.02" is almost
+# certainly a 4K-capture-card recording, not a movie.  Detected by the
+# presence of a "YYYY.MM.DD" or "YYYY-MM-DD" date component anywhere in
+# the stem (capture software conventions vary; the date-only marker
+# catches all the variants we've seen).  When this matches we skip the
+# TMDB API call entirely — saves an HTTP round-trip per file and stops
+# the desktop log from filling with "TMDB enrichment done: 0/N" lines
+# during library indexing.
+_DVR_CAPTURE_PATTERN = re.compile(
+    r"\d{4}[.\-]\d{2}[.\-]\d{2}",
+)
+
+
+def _looks_like_dvr_capture(stem: str) -> bool:
+    """Return True when the filename stem contains a date marker that
+    typical DVR / capture-card recordings include but real TMDB
+    titles never do."""
+    return bool(_DVR_CAPTURE_PATTERN.search(stem))
 
 
 def _is_valid_absolute_media_path(path_str: str) -> bool:
@@ -489,7 +531,23 @@ async def scan_library(
 
     If *tmdb_api_key* is provided, each newly-added file is enriched with TMDB
     metadata (title, overview, poster_url) on a best-effort basis.
+
+    Runs under a per-library asyncio Lock so a double-clicked Scan button
+    or two clients posting `/scan` concurrently can't run the same
+    directory walk + INSERT loop + TMDB enrichment twice.  The second
+    call waits for the first to finish, then sees no new files and
+    returns 0 — much cheaper than the duplicate enrichment storm the
+    races used to produce.
     """
+    async with _get_scan_lock(library_id):
+        return await _scan_library_locked(db, library_id, tmdb_api_key)
+
+
+async def _scan_library_locked(
+    db: aiosqlite.Connection,
+    library_id: str,
+    tmdb_api_key: str | None,
+) -> int:
     row = await get_library(db, library_id)
     if row is None:
         raise ValueError(f"Library not found: {library_id}")
@@ -725,13 +783,25 @@ async def _enrich_with_tmdb(
     file_stems: list[tuple[str, str]],
     api_key: str,
 ) -> None:
-    """Query TMDB for each (file_id, stem) pair and persist metadata."""
+    """Query TMDB for each (file_id, stem) pair and persist metadata.
+
+    Stems matching the DVR / capture-card naming convention (a
+    YYYY.MM.DD or YYYY-MM-DD date component anywhere in the name) are
+    skipped without an HTTP call — TMDB never matches these and the
+    log was filling with `0/N files updated` lines during library
+    indexing of capture archives.
+    """
     svc = TmdbService(api_key)
     enriched = 0
+    skipped_dvr = 0
 
     for file_id, stem in file_stems:
         # Yield to event loop regularly to avoid starving other coroutines
         await asyncio.sleep(0)
+
+        if _looks_like_dvr_capture(stem):
+            skipped_dvr += 1
+            continue
 
         meta = await svc.search(stem)
         if meta is None:
@@ -757,7 +827,12 @@ async def _enrich_with_tmdb(
 
     if enriched:
         await db.commit()
-    logger.info("TMDB enrichment done: %d/%d files updated", enriched, len(file_stems))
+    logger.info(
+        "TMDB enrichment done: %d/%d files updated (%d skipped as DVR captures)",
+        enriched,
+        len(file_stems),
+        skipped_dvr,
+    )
 
 
 async def upload_file_to_library(

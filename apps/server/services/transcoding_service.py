@@ -112,6 +112,22 @@ def classify_encoder_failure(encoder: str, error: str | None) -> str | None:
             "max-streams setting or use a Quadro / RTX-A driver patch."
         )
 
+    # Intel QSV HEVC — `Error querying encoder params: unsupported (-3)`
+    # surfaces on iGPUs whose hardware media engine supports H.264 encode
+    # but not HEVC encode.  UHD 620/630 (Kaby Lake / Coffee Lake era) are
+    # the common offenders — H.264 QSV works fine on the same chip but
+    # hevc_qsv fails with this exact stderr signature.  The user can't
+    # fix this without different hardware, but the message keeps them
+    # from chasing driver updates that won't help.
+    if encoder.endswith("_qsv") and "error querying encoder params" in err:
+        return (
+            "This Intel iGPU's hardware media engine doesn't support HEVC "
+            "encoding — H.264 Quick Sync still works on the same chip "
+            "and will be used instead.  No driver update can fix this; "
+            "HEVC encode requires newer Intel hardware (Ice Lake / Tiger "
+            "Lake or later)."
+        )
+
     return None
 
 
