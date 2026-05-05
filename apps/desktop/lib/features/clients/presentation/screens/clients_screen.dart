@@ -11,6 +11,7 @@ import 'package:fluxora_desktop/features/clients/domain/repositories/clients_rep
 import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_cubit.dart';
 import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_state.dart';
 import 'package:fluxora_desktop/features/clients/presentation/widgets/pair_device_dialog.dart';
+import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
@@ -145,7 +146,7 @@ class _ClientsViewState extends State<_ClientsView> {
                       ),
 
                       // ── Stat tiles ───────────────────────────────────────
-                      _buildStatTiles(state),
+                      _buildStatTiles(context, state),
                       const SizedBox(height: AppSpacing.s18),
 
                       // ── Filter row ───────────────────────────────────────
@@ -170,13 +171,16 @@ class _ClientsViewState extends State<_ClientsView> {
 
   // ── Stat tiles ─────────────────────────────────────────────────────────────
 
-  Widget _buildStatTiles(ClientsState state) {
+  Widget _buildStatTiles(BuildContext context, ClientsState state) {
     final clients =
         state is ClientsLoaded ? state.clients : <ClientListItem>[];
     final total = clients.length;
     final online = clients
         .where((c) => c.status == ClientStatus.approved && c.isTrusted)
         .length;
+    final activeStreams = context
+            .select<SystemStatsCubit, int?>((c) => c.state.latest?.activeStreams)
+        ?? 0;
 
     return Row(
       children: [
@@ -207,14 +211,12 @@ class _ClientsViewState extends State<_ClientsView> {
         const SizedBox(width: AppSpacing.s14),
         Expanded(
           child: Semantics(
-            label: 'Active Streams not available',
-            child: const StatTile(
+            label: 'Active Streams $activeStreams',
+            child: StatTile(
               icon: Icons.play_circle_outline_rounded,
               label: 'Active Streams',
-              // TODO: read from SystemStatsCubit.state.latest?.activeStreams
-              // once SystemStatsCubit is accessible from this widget tree.
-              value: '—',
-              color: Color(0xFF3B82F6),
+              value: '$activeStreams',
+              color: const Color(0xFF3B82F6),
               accent: AppColors.textMutedV2,
             ),
           ),
@@ -741,12 +743,12 @@ class _ClientRowState extends State<_ClientRow> {
                 flex: 10,
                 child: _DeviceCell(platform: c.platform),
               ),
-              // IP Address — no ipAddress field on ClientListItem in v1
-              const Expanded(
+              // IP Address — populated by `clients.last_ip` (migration 023).
+              Expanded(
                 flex: 11,
                 child: Text(
-                  '—',
-                  style: TextStyle(
+                  c.lastIp ?? '—',
+                  style: const TextStyle(
                     fontFamily: 'JetBrains Mono',
                     fontSize: 12,
                     color: AppColors.textMutedV2,
@@ -763,17 +765,19 @@ class _ClientRowState extends State<_ClientRow> {
                 flex: 10,
                 child: _LastActiveCell(lastSeen: c.lastSeen),
               ),
-              // Current Stream
-              const Expanded(
+              // Current Stream — joined from stream_sessions in
+              // auth_service.list_clients (active_session.media_title).
+              Expanded(
                 flex: 16,
                 child: Text(
-                  // TODO: join per-client active session once a
-                  // per-client session list endpoint is available.
-                  '—',
+                  c.activeSession?.mediaTitle ?? '—',
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontFamily: 'Inter',
                     fontSize: 12,
-                    color: AppColors.textFaint,
+                    color: c.activeSession?.mediaTitle != null
+                        ? AppColors.textBody
+                        : AppColors.textFaint,
                   ),
                 ),
               ),
@@ -1450,8 +1454,10 @@ class _PopulatedDetailPanel extends StatelessWidget {
           ..._buildInfoRows(),
 
           // ── Active Session ────────────────────────────────────────────────
-          // TODO: render active session block once a per-client session join
-          // is available from the backend. Currently no session data.
+          if (client.activeSession != null) ...[
+            const SizedBox(height: AppSpacing.s16),
+            _ActiveSessionBlock(session: client.activeSession!),
+          ],
 
           const SizedBox(height: AppSpacing.s16),
 
@@ -1518,7 +1524,7 @@ class _PopulatedDetailPanel extends StatelessWidget {
     final rows = [
       ('Device Type', _deviceTypeLabel(client.platform), false),
       ('OS', client.platform.name, false),
-      ('IP Address', '—', false), // no ipAddress field on ClientListItem
+      ('IP Address', client.lastIp ?? '—', false),
       ('First Connected', '—', false), // no backend field
       ('Last Active', _formatRelative(client.lastSeen), false),
       ('Total Sessions', '—', false), // no backend field
@@ -1560,6 +1566,83 @@ class _PopulatedDetailPanel extends StatelessWidget {
         ),
       );
     }).toList();
+  }
+}
+
+// ── Active session block ──────────────────────────────────────────────────────
+
+class _ActiveSessionBlock extends StatelessWidget {
+  const _ActiveSessionBlock({required this.session});
+
+  final ActiveSessionInfo session;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = session.mediaTitle ?? 'Active session';
+    final encoder = session.encoderUsed ?? 'unknown';
+    final elapsed = _formatElapsed(session.startedAt);
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.s12),
+      decoration: BoxDecoration(
+        color: const Color(0x1410B981), // emerald 8 % — "live" tint
+        border: Border.all(color: const Color(0x3310B981)),
+        borderRadius: BorderRadius.circular(AppRadii.sm),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              StatusDot(status: DotStatus.streaming, size: 6),
+              SizedBox(width: 6),
+              Text(
+                'Currently Streaming',
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF10B981),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            title,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: 'Inter',
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: AppColors.textBright,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Encoder $encoder · $elapsed',
+            style: const TextStyle(
+              fontFamily: 'JetBrains Mono',
+              fontSize: 11,
+              color: AppColors.textMutedV2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _formatElapsed(DateTime startedAt) {
+    final delta = DateTime.now().toUtc().difference(startedAt.toUtc());
+    if (delta.inHours >= 1) {
+      final h = delta.inHours;
+      final m = delta.inMinutes.remainder(60);
+      return '${h}h ${m}m';
+    }
+    if (delta.inMinutes >= 1) {
+      return '${delta.inMinutes}m';
+    }
+    return '${delta.inSeconds.clamp(0, 59)}s';
   }
 }
 
