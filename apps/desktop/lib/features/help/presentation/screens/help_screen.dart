@@ -5,7 +5,11 @@
 /// Right column: support links + system status + diagnostics.
 library;
 
+import 'dart:io' show File;
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:get_it/get_it.dart';
 import 'package:logger/logger.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -13,6 +17,8 @@ import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_radii.dart';
 import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
+import 'package:fluxora_core/network/api_client.dart';
+import 'package:fluxora_core/network/endpoints.dart';
 
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
@@ -650,8 +656,55 @@ class _StatusRow extends StatelessWidget {
   }
 }
 
-class _DiagnosticsCard extends StatelessWidget {
+class _DiagnosticsCard extends StatefulWidget {
   const _DiagnosticsCard();
+
+  @override
+  State<_DiagnosticsCard> createState() => _DiagnosticsCardState();
+}
+
+class _DiagnosticsCardState extends State<_DiagnosticsCard> {
+  static final _log = Logger();
+  bool _busy = false;
+
+  Future<void> _generate() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final api = GetIt.I<ApiClient>();
+      final result = await api.postBytes(Endpoints.infoSupportBundle);
+      final defaultName =
+          result.filename ?? 'fluxora-support.tar.gz';
+
+      final savePath = await FilePicker.saveFile(
+        dialogTitle: 'Save Support Bundle',
+        fileName: defaultName,
+        type: FileType.custom,
+        allowedExtensions: const ['gz'],
+      );
+      if (savePath == null) {
+        // User cancelled — silent return; reset busy.
+        if (mounted) setState(() => _busy = false);
+        return;
+      }
+      await File(savePath).writeAsBytes(result.bytes, flush: true);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Saved support bundle to $savePath')),
+      );
+    } on Exception catch (e, st) {
+      _log.e('Support bundle generation failed', error: e, stackTrace: st);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Could not generate support bundle. See logs.'),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -669,22 +722,21 @@ class _DiagnosticsCard extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'Generate a support bundle with logs, configuration, and system info.',
+            'Generate a support bundle with logs, configuration, and system info. Secrets are redacted before export.',
             style: AppTypography.bodySmall.copyWith(
               color: AppColors.textDim,
               height: 1.5,
             ),
           ),
           const SizedBox(height: 12),
-          const SizedBox(
+          SizedBox(
             width: double.infinity,
             child: FluxButton(
               variant: FluxButtonVariant.primary,
               icon: Icons.download_outlined,
               fullWidth: true,
-              // TODO(M8): implement support bundle export
-              onPressed: null,
-              child: Text('Generate Bundle'),
+              onPressed: _busy ? null : _generate,
+              child: Text(_busy ? 'Generating…' : 'Generate Bundle'),
             ),
           ),
         ],
