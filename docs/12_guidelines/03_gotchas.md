@@ -228,3 +228,60 @@ Restart-Service Dnscache
 Or wait for the negative cache to expire (typically 15 minutes to several hours depending on TTL).  This is a Windows quirk; not reproducible on Linux / macOS.
 
 **For Fluxora specifically:** if a user reports a custom proxy URL (`fluxora-api.<your-domain>`) doesn't resolve, instruct them to use the workers.dev URL fallback or run the service-restart.  The workers.dev subdomain is functionally identical and avoids this whole class of issue.
+
+---
+
+## FastAPI dependency-injector hides positional-arg signature changes from the type checker
+
+**Symptom (2026-05-06, F2/F3 work):** added a positional `request: Request` parameter to `validate_token(...)`. Every call site that resolves through `Depends(validate_token)` keeps working (the injector binds parameters by name, not position). One direct call site at `routers/stream.py:425` — `await validate_token(credentials, db)` — silently broke at runtime: `credentials` was being passed as the new `request` argument, surfacing as `AttributeError: 'Connection' object has no attribute 'credentials'` from inside `get_trusted_client_by_token`. Pyright / mypy did not catch it because Python's gradual typing is permissive about positional argument count for async functions.
+
+**Root cause:** FastAPI's dependency injector inspects function signatures and binds by name, so adding a parameter at any position is safe for `Depends()`-resolved callers. Direct calls (`await validate_token(...)`) bind positionally and break. The two coding patterns coexist in `apps/server/routers/` (most routes use `Depends`; `stream.stop_stream` and `validate_token_or_local` call directly to allow conditional auth).
+
+**Fix:**
+1. **Catch:** Always grep for direct call sites of any function used as a FastAPI dependency before changing its signature. `Grep` for `await <fn_name>\(` (excluding the `Depends(<fn_name>)` form) and update each by hand.
+2. **Test:** Keep at least one integration test per such function that exercises the non-`Depends` direct path. `test_stop_stream_wrong_client` caught the F2/F3 break — it's the kind of test that should never be deleted.
+3. **Prefer keyword args at direct call sites** (`validate_token(request=request, credentials=credentials, db=db)`) so future positional rearrangements don't break them.
+
+---
+
+## `clients.last_seen` was frozen at pair/approval before migration 023
+
+**Symptom:** Reading `clients.last_seen` and treating it as "minutes-ago freshness" returned stale data — the column was only written at `request_pair` (insert/upsert) and `approve_client` (token rotation). Any UI that displayed "Last seen 3 minutes ago" was lying about traffic volume; the value was effectively a "last paired/approved" timestamp.
+
+**Root cause:** No heartbeat path existed. `validate_token` did not write back to the row it validated against. The desktop's "Online Now" stat tile counts `is_trusted=1 AND status='approved'`, which masked the issue visually — you can be "online now" without your `last_seen` being recent.
+
+**Fix (migration 023):** `auth_service.update_client_heartbeat(db, client_id, last_ip=None)` is now called from `validate_token` after every successful resolution. Best-effort — wrapped in try/except + WARNING log so a transient SQLite write failure can't 401 a valid request.
+
+**Audit follow-up:** Anything that previously interpreted `last_seen` as a paired-at proxy now sees a live value and may surprise users. Mobile profile screen, desktop Clients table "Last Active" column, and Dashboard "Connected Clients" stat tile are the known consumers — verify each renders the new semantics correctly. Tracked in [`docs/10_planning/04_manual_tasks.md`](../10_planning/04_manual_tasks.md).
+
+---
+
+## Tunneled requests record loopback IP, not real public IP
+
+**Symptom:** `clients.last_ip` (migration 023) for any request that arrived via the Cloudflare Tunnel records `127.0.0.1`, not the device's real public IP.
+
+**Root cause:** `request.client.host` returns the immediate socket peer. For tunneled traffic, that's cloudflared forwarding from loopback. The real public IP arrives in the `CF-Connecting-IP` HTTP header, which the heartbeat path (`auth_service.update_client_heartbeat`, called from `validate_token`) does not consume.
+
+**Fix (current behaviour, intentional):** The field's primary v1 use case is **LAN device identification** for pair-debug — the operator looks at the desktop Clients table to confirm a phone is on the expected network. For that use case, the loopback IP recorded for tunneled traffic is a clear "this device isn't on LAN" signal, not a bug.
+
+**If you need the real public IP:** read `request.headers.get("CF-Connecting-IP")` in the heartbeat path, gate it behind an opt-in setting, and update [`docs/06_security/01_security.md`](../06_security/01_security.md) "Sensitive Data Handling" to reflect the new privacy surface (persisting public IPs from internet traffic is materially different from persisting LAN IPs).
+
+---
+
+## Golden-test baselines drift silently after theme cutovers
+
+**Symptom (2026-05-06):** `apps/desktop/test/goldens/m3_dashboard_golden_test.dart` fails with 62.77 % pixel diff against the stored baseline. Dashboard code untouched in the failing session — the diff is leftover drift from the V2 theme cutover whose baseline was never regenerated.
+
+**Root cause:** Theme / typography / token changes propagate through every screen at once. A single golden baseline against an old theme then fails on every run until regenerated. `flutter test` (no exclusion) surfaces it in the suite output even though the failure has nothing to do with the change being tested. False-positive "regression" signal masks real ones.
+
+**Mitigation (immediate):** When intentionally changing global theme tokens, regenerate every golden baseline in the same PR via `flutter test --tags=golden --update-goldens`. When *not* changing global tokens but a baseline is failing, investigate whether the baseline was ever updated for the last cutover — if not, regenerate or re-skip rather than treating the diff as a regression.
+
+**Mitigation (long-term):** [`golden_toolkit` is discontinued](#golden_toolkit-is-discontinued); migrating to `alchemist` or vanilla `flutter_test` `matchesGoldenFile` is queued in [`docs/10_planning/04_manual_tasks.md`](../10_planning/04_manual_tasks.md). Until then, treat the `m3_dashboard_golden_test.dart` baseline as suspect and prefer `flutter analyze` + targeted unit tests for verifying screen-level changes.
+
+---
+
+## `FluxGlassDialog` is the canonical `AlertDialog` replacement — discoverability gap
+
+**Symptom (2026-05-06, F7 work):** Replacing 5 Material `AlertDialog` instances on the Groups screen, the original audit framing said "build a `FluxDialog` primitive." `FluxGlassDialog` had been shipped at `lib/shared/widgets/flux_glass_dialog.dart` since the M3 era and was already in production use on Library / Pair Device / Subscription Upgrade — but no doc named it as the canonical replacement, so a fresh agent reading the audit had no signal.
+
+**Fix:** Doc-only. [`DESIGN.md`](../../DESIGN.md#real-glass-vs-opaque-raised-the-policy-after-2026-05-04) and [`docs/08_frontend/01_frontend_architecture.md`](../08_frontend/01_frontend_architecture.md) now both flag `FluxGlassDialog` as the canonical replacement explicitly. **Rule:** never use Material `AlertDialog` for new code; always use `FluxGlassDialog`. `Dialog`-with-custom-child patterns are also fine for special cases (Library Add/Edit uses `StatefulBuilder` inside) but they should still wrap the inner content in the `FluxGlassDialog` shell rather than rolling their own `Dialog(transparent) → BackdropFilter` boilerplate. The widget already accepts arbitrary `Widget` children for `title` / `content` / `actions`.

@@ -22,6 +22,44 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 
 ## Pending
 
+### 🔲 Regenerate (or re-skip) `m3_dashboard_golden_test.dart` baseline
+
+- **What:** The Dashboard golden test fails with **62.77 % pixel diff** against the stored baseline as of 2026-05-06. The Dashboard screen was untouched in the failing session; the diff is leftover drift from the V2 theme cutover whose baseline was never regenerated. Failing goldens in the suite output mask real regressions and erode trust in the test signal.
+- **Why:** Either the baseline reflects current code (regenerate) or the test is flaky and should opt out (re-skip until the `golden_toolkit` migration). Letting it sit half-on is the worst option.
+- **Steps:**
+  1. From `apps/desktop/`, decide intent — does the current Dashboard render match the prototype? If yes, regenerate. If a future change is queued that will touch Dashboard, prefer skip.
+  2. **Regenerate path:** `flutter test --tags=golden --update-goldens test/goldens/m3_dashboard_golden_test.dart`. Verify the new PNG visually before committing. Add the regenerated PNG + delete `test/goldens/failures/` debris.
+  3. **Re-skip path:** add `@Tags(['golden_skip'])` (or revive the dart_test.yaml tag) on the failing test only, with a comment pointing at this manual task and the discontinued-`golden_toolkit` migration item below.
+- **Trigger:** any session that runs `flutter test` and sees the failure; or before next CI re-enable.
+- **Owner:** any agent doing desktop work — quick (~5 min).
+
+### 🔲 Audit `last_seen` consumers after migration 023 changed semantics
+
+- **What:** Migration 023 (2026-05-06) changed `clients.last_seen` from "frozen at pair / approval" to "live within one poll cycle" (refreshed by `auth_service.update_client_heartbeat()` from `validate_token` on every authenticated request). Any UI that previously interpreted the field as a paired-at proxy now sees a live value and may surprise users.
+- **Why:** Both meanings render plausibly — the bug is silent. A user who previously saw "Last active: 3 days ago" because that was approval time will now see "Last active: 30 seconds ago" once the device polls. No technical regression, but a visible behaviour change worth confirming each surface handles correctly.
+- **Steps:**
+  1. **Mobile profile screen** ([`apps/mobile/lib/features/profile/`](../../apps/mobile/lib/features/profile/)) — confirm `last_seen` is rendered as "Last active" (live) and not "Connected since" (would now lie).
+  2. **Desktop Clients screen** — confirm "Last Active" column updates within a poll cycle of an authenticated request from the device. Already wired through `_LastActiveCell(lastSeen: c.lastSeen)`; should just work after migration 023, but worth eyeballing.
+  3. **Dashboard "Connected Clients" stat tile** — counts approved + trusted; doesn't read `last_seen`, so unaffected.
+  4. **Activity feed** — events use their own timestamp, not `last_seen`. Unaffected.
+- **Trigger:** after migration 023 has run on at least one production-shaped database.
+- **Owner:** any agent doing client-screen work.
+
+### 🔲 Migrate desktop golden tests off discontinued `golden_toolkit`
+
+- **What:** `golden_toolkit ^0.15.0` is flagged discontinued in pub.dev. Still works on current Flutter but will eventually break on a future SDK bump. Used in `apps/desktop/test/goldens/`.
+- **Why:** Pre-emptive — when it breaks the suite is dead and the fix sits on the critical path of whoever's mid-task at the time. Migrating now is cheap (one test file today).
+- **Options (pick one when forced or convenient):**
+  1. **`alchemist`** (Betterment) — closest API to `golden_toolkit`, actively maintained, supports CI vs local divergence (CI runs platform-agnostic, local runs platform-specific).
+  2. **Vanilla `flutter_test` `matchesGoldenFile`** — zero new dep but lose `multiScreenGolden`, `loadAppFonts`, `testGoldens` ergonomics. Higher rewrite cost.
+- **Steps:**
+  1. Convert `m3_dashboard_golden_test.dart` (the only existing golden) to chosen alternative.
+  2. Regenerate baseline.
+  3. Remove `golden_toolkit` from `apps/desktop/pubspec.yaml`.
+  4. Update `apps/desktop/test/goldens/_README.md` with the new pattern.
+- **Trigger:** when `golden_toolkit` finally breaks on a Flutter bump, OR when an agent has bandwidth before that and wants the suite stable for the next year.
+- **Owner:** any agent doing desktop test work.
+
 ### 🔲 Migrate existing `media_files.poster_url` rows to use the TMDB proxy
 
 - **What:** `FLUXORA_TMDB_IMAGE_BASE_URL` makes *new* TMDB lookups produce proxy-prefixed poster URLs (`https://<worker-host>/tmdb-img/t/p/w342/...`).  Rows enriched **before** the env var was set still hold the original `https://image.tmdb.org/t/p/w342/...` URL — and the mobile / desktop client fetches them directly, hitting whatever ISP block the original deployment was working around.  A one-shot SQL migration rewrites the existing rows.

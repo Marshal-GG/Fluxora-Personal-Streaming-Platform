@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-04 (migrations 001-021; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device, encoder sanitiser, license-key sanitiser, **encoder priority chain (Slice C), per-session encoder_used**)
+> **Status:** Active - Updated 2026-05-06 (migrations 001-023; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device, encoder sanitiser, license-key sanitiser, encoder priority chain (Slice C), per-session encoder_used, corrupt-path data cleanup, **`clients.last_ip` + per-request heartbeat**)
 
 ---
 
@@ -57,12 +57,13 @@ CREATE TABLE clients (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,         -- doubles as display_name (mobile pairing flow)
     platform    TEXT NOT NULL CHECK(platform IN ('android','ios','windows','macos','linux')),
-    last_seen   TIMESTAMP NOT NULL,
+    last_seen   TIMESTAMP NOT NULL,    -- refreshed on every authenticated request via validate_token (migration 023 changed semantics from "frozen at pair/approval" to "live")
     is_trusted  BOOLEAN NOT NULL DEFAULT 0,
     auth_token  TEXT NOT NULL,
     status      TEXT NOT NULL DEFAULT 'pending', -- added by migration 003
     email       TEXT,                  -- migration 016: optional contact captured at pair time
-    paired_at   TEXT                   -- migration 016: ISO timestamp of first approval
+    paired_at   TEXT,                  -- migration 016: ISO timestamp of first approval
+    last_ip     TEXT                   -- migration 023: socket-level IP at pair + every authenticated request; NULL until first authenticated traffic
 );
 -- status values: 'pending' | 'approved' | 'rejected'
 
@@ -257,3 +258,4 @@ CREATE INDEX IF NOT EXISTS idx_activity_type_created
 | `020_encoder_chain.sql` | Adds `transcoding_chain TEXT DEFAULT NULL` to `user_settings`. Stored as JSON-encoded list (chains are tiny + single-tenant; never queried relationally). Walked by `services/session_router.py` on every transcode session start; NULL falls back to the default chain `[transcoding_encoder, "libx264"]`. Slice C of the GPU UX plan. |
 | `021_session_encoder.sql` | Adds `encoder_used TEXT DEFAULT NULL` to `stream_sessions`. Populated by the stream router from `session_router.get_session_encoder(session_id)` on INSERT — null on stream-copy sessions. Drives the desktop's per-session encoder pill + supports historical "why did N+1 fall back yesterday?" diagnostics across server restarts (the in-memory ring buffer in `session_router` only covers the current process lifetime). |
 | `022_remove_corrupt_media_paths.sql` | One-shot data migration. Deletes `media_files` rows whose `path` is non-absolute or starts with `[\` / `[/` — the residue of a prior buggy upload path that consumed `Library.root_paths` JSON character-wise so `root_paths[0]` returned `'['`. Deletes their dependent `stream_sessions` first to satisfy the `file_id REFERENCES media_files(id)` foreign key. Idempotent: a future run finds no matching rows once `library_service._is_valid_absolute_media_path` blocks new bad rows from landing. |
+| `023_clients_last_ip.sql` | Adds nullable `last_ip TEXT` to `clients`. Populated by `auth_service.create_pair_request` (initial pair, captures `request.client.host`) and `auth_service.update_client_heartbeat` (called from the `validate_token` dependency on every authenticated request). Drives the desktop Clients screen's IP column (table + detail panel). Two semantics changes piggyback on this migration: (a) `last_seen` was previously frozen at pair / approval — the heartbeat write now refreshes it on every authenticated request too; (b) the heartbeat path is wrapped in try/except + WARNING log so a transient SQLite write failure can't 401 a valid request. **Known limitation:** when the request arrives via the Cloudflare Tunnel, `request.client.host` is the cloudflared loopback (`127.0.0.1`), not the real public IP — the `CF-Connecting-IP` header isn't currently consumed in the heartbeat path. Acceptable in v1: the field's primary use case is LAN device identification for pair-debug. |

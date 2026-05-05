@@ -1,6 +1,6 @@
 # Desktop App Redesign — Implementation Plan
 
-> **Status:** Complete — M0 backend prerequisites partially shipped, M1 foundation complete (2026-05-02), M2 shell complete, M3 Dashboard complete (2026-05-02), M4 Library + Clients complete (2026-05-02), M5 Groups + Activity + Transcoding complete (2026-05-02), M6 Logs + Settings complete (2026-05-02), M7 Subscription + Profile + Notifications + Help complete (2026-05-02), M8 Polish complete (2026-05-03), M9 Cleanup complete (2026-05-03), **M9.5 V2 theme cutover complete (2026-05-03 — unplanned follow-up; desktop is now V2-pure).** **M10 Custom window chrome complete (2026-05-03 — `window_manager` 0.5.1, `FluxTitlebar`, frameless window with native Win 11 caption-button geometry, AppUserModelID + WNDCLASSEX shell-integration fixes for Aero Peek).**
+> **Status:** ✅ Complete — every milestone (M0 → M10 + M9.5 cutover) shipped. M0 backend prerequisites all 11 sections landed (verified 2026-05-06 — full evidence in the M0 table below). M1 foundation (2026-05-02), M2 shell, M3 Dashboard (2026-05-02), M4 Library + Clients (2026-05-02), M5 Groups + Activity + Transcoding (2026-05-02), M6 Logs + Settings (2026-05-02), M7 Subscription + Profile + Notifications + Help (2026-05-02), M8 Polish (2026-05-03), M9 Cleanup (2026-05-03), **M9.5 V2 theme cutover (2026-05-03 — unplanned follow-up; desktop is now V2-pure)**, **M10 Custom window chrome (2026-05-03 — `window_manager` 0.5.1, `FluxTitlebar`, frameless window with native Win 11 caption-button geometry, AppUserModelID + WNDCLASSEX shell-integration fixes for Aero Peek).** Residual follow-ups (cosmetic — 4 backend joins / wirings) tracked in §11.
 > **Created:** 2026-05-01
 > **Owner:** Marshal
 > **Source design:** [`docs/11_design/prototype/`](./prototype/) — React/JSX prototype bundle from claude.ai/design (top-level [`README.md`](./prototype/README.md) is the agent-handoff doc; desktop port spec at [`prototype/app/desktop/README.md`](./prototype/app/desktop/README.md))
@@ -12,21 +12,23 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 
 ## Progress
 
-### M0 — Backend prerequisites *(in progress)*
+### M0 — Backend prerequisites *(✅ Done 2026-05-06)*
+
+All 11 sections shipped. Last six rows reconciled 2026-05-06 against `apps/server/` (had been stale — code shipped without the table being updated).
 
 | § | Item | Status | Landed |
 |---|------|--------|--------|
 | 7.1 | Groups feature (table, service, 8 endpoints, stream-gate) | ✅ Done | migration 011 + `routers/groups.py` + `services/group_service.py` + stream-gate hook |
 | 7.2 | Profile management (GET/PATCH + password change) | ✅ Done | migration 012 + `routers/profile.py` + `services/profile_service.py` |
-| 7.3 | Notifications | 🔲 Pending | — |
-| 7.4 | Activity feed (event log) | 🔲 Pending | — (existing endpoint lists active stream sessions only) |
+| 7.3 | Notifications | ✅ Done | migration 013 + `routers/notifications.py` (list/read/read-all/dismiss) + `services/notification_service.py` + `routers/ws.py:218` `WS /api/v1/ws/notifications` |
+| 7.4 | Activity feed (event log) | ✅ Done | migration 014 + `routers/activity.py` + `services/activity_service.py` |
 | 7.5 | Storage breakdown | ✅ Done | `GET /api/v1/library/storage-breakdown` + `library_service.get_storage_breakdown()` |
 | 7.6 | System stats stream | ✅ Done | `GET /api/v1/info/stats` + `WS /api/v1/ws/stats` + `services/system_stats_service.py` (psutil) |
 | 7.7 | Restart / stop endpoints | ✅ Done | `POST /api/v1/info/restart`, `POST /api/v1/info/stop` (localhost-only) |
-| 7.8 | Transcoding status (per-encoder load) | 🔲 Pending | — |
-| 7.9 | Logs structured filtering | 🔲 Pending | — |
-| 7.10 | Settings extension (19 columns) | 🔲 Pending | — |
-| 7.11 | Orders pagination + Polar portal URL | 🔲 Pending | — |
+| 7.8 | Transcoding status (per-encoder load) | ✅ Done | `GET /api/v1/transcoding/status` (`routers/transcoding.py:81`) + `/advisor` + `/devices` + `/fallback-history` |
+| 7.9 | Logs structured filtering | ✅ Done | `GET /api/v1/logs` (`routers/logs.py:30`, returns `LogListResponse`) + `WS /api/v1/ws/logs` for live tail |
+| 7.10 | Settings extension (18 columns) | ✅ Done | migration 015 — General/Network/Streaming/Security/Advanced fields. Plan originally listed 19; final cut was 18 (the 19th — a forward-compat `theme_accent` analogue — was folded into the existing `theme_accent` column with a single nullable placeholder per Decision §1 #4). |
+| 7.11 | Orders pagination + Polar portal URL | ✅ Done | `GET /api/v1/orders` with `cursor`/`limit` pagination (`routers/orders.py:51`) + `GET /api/v1/orders/portal-url` (localhost-only) |
 
 ### M1 — Foundation *(✅ Done 2026-05-02)*
 
@@ -55,10 +57,14 @@ This plan translates the Fluxora Desktop prototype into the existing Flutter des
 - `DashboardRepository` extended with `restartServer()` / `stopServer()`.
 - New desktop features: `storage/` + `recent_activity/` registered in DI.
 
-### M4 — Library + Clients *(🔵 In Progress)*
+### M4 — Library + Clients *(✅ Done 2026-05-02)*
 
 - **Library screen** *(✅ Done)* — full grid, stat tiles, FluxTabBar, detail panel, `StorageCubit` integration.
-- **Clients screen** *(✅ Done 2026-05-02)* — `clients_screen.dart` fully rewritten. No Material `Scaffold`/`AppBar`/`Card`/`DataTable`. Implements: `PageHeader`, 4 `StatTile`s (total/online/active streams placeholder/total connections), client-side search + status/device/sort `PopupMenuButton` filters, 7-column table in `FluxCard(padding: 0)` with hover + selected row states, visual-only pagination footer, 300 px detail panel with avatar block + 7 info rows + 4 action tiles (Disconnect Client wired to `cubit.reject()`; 3 others disabled with TODO comments). `FluxTabBar` primitive shipped as part of Library. Active Streams tile shows `—` pending `SystemStatsCubit` accessibility (TODO comment in code). IP address and per-client session columns show `—` pending backend fields.
+- **Clients screen** *(✅ Done 2026-05-02)* — `clients_screen.dart` fully rewritten. No Material `Scaffold`/`AppBar`/`Card`/`DataTable`. Implements: `PageHeader`, 4 `StatTile`s (total/online/active-streams-from-`SystemStatsCubit` 2026-05-06/total connections), client-side search + status/device/sort `PopupMenuButton` filters, 7-column table in `FluxCard(padding: 0)` with hover + selected row states, visual-only pagination footer, 300 px detail panel with avatar block + 7 info rows + emerald "Currently Streaming" block when active session present + 4 action tiles (Disconnect Client wired to `cubit.reject()`; 3 others disabled with TODO comments). `FluxTabBar` primitive shipped as part of Library.
+- **Originally deferred follow-ups, now landed 2026-05-06 (F1 + F2 + F3 in §11.1):**
+  - F1 — Active Streams stat tile reads from `SystemStatsCubit.state.latest?.activeStreams` ([clients_screen.dart](../../apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart) `_buildStatTiles`).
+  - F2 — Per-client IP address column reads `c.lastIp ?? '—'`, populated by `clients.last_ip` (migration 023) at pair time + every authenticated request.
+  - F3 — Per-client active session block + table cell read from `c.activeSession`, joined server-side in `auth_service.list_clients` via `ROW_NUMBER() OVER (PARTITION BY client_id)` against `stream_sessions WHERE ended_at IS NULL`.
 
 ### M5 — Groups + Activity + Transcoding + Encoder Settings *(✅ Done 2026-05-02)*
 
@@ -242,18 +248,18 @@ Each screen gets one PR. Order is chosen so each screen exercises a primitive th
 
 | # | Screen | Existing Cubit | New entities/Cubits | Backend gap (§7) | Status |
 |---|--------|----------------|---------------------|------------------|--------|
-| 1 | **Dashboard** | `DashboardCubit` (extend) | `StorageCubit` *(new)*, `RecentActivityCubit` *(new)* | §7.5, §7.6, §7.7 | ✅ Done |
-| 2 | **Library** | `LibraryCubit` (kept) | – | – | 🔲 Pending |
-| 3 | **Clients** | `ClientsCubit` (kept) | – | – | 🔲 Pending |
-| 4 | **Groups** | – | `GroupsCubit` *(new)* | §7.1 | 🔲 Pending |
-| 5 | **Activity** | `ActivityCubit` (kept) | – | – | 🔲 Pending |
-| 6 | **Transcoding** + Encoder Settings | `SettingsCubit` (extend) | `TranscodingCubit` *(new)* | §7.8 | 🔲 Pending |
-| 7 | **Logs** + tabs | `LogsCubit` (extend) | – | §7.9 | 🔲 Pending |
-| 8 | **Settings** + 6 tabs | `SettingsCubit` (extend) | – | §7.10 | 🔲 Pending |
-| 9 | **Subscription** + Billing + Manage | `OrdersCubit` (extend) | – | §7.11 | 🔲 Pending |
-| 10 | **Profile** | – | `ProfileCubit` *(new)* | §7.2 | 🔲 Pending |
-| 11 | **Notifications** | – | `NotificationsCubit` *(new)* | §7.3 | 🔲 Pending |
-| 12 | **Help** | – | – (static) | – | 🔲 Pending |
+| 1 | **Dashboard** | `DashboardCubit` (extend) | `StorageCubit` *(new)*, `RecentActivityCubit` *(new)* | §7.5, §7.6, §7.7 | ✅ Done 2026-05-02 |
+| 2 | **Library** | `LibraryCubit` (kept) | – | – | ✅ Done 2026-05-02 |
+| 3 | **Clients** | `ClientsCubit` (kept) | – | – | ✅ Done 2026-05-02 (cosmetic follow-ups in §11) |
+| 4 | **Groups** | – | `GroupsCubit` *(new)* | §7.1 | ✅ Done 2026-05-02 |
+| 5 | **Activity** | `ActivityCubit` (kept) | – | – | ✅ Done 2026-05-02 |
+| 6 | **Transcoding** + Encoder Settings | `SettingsCubit` (extend) | `TranscodingCubit` *(new)* | §7.8 | ✅ Done 2026-05-02 |
+| 7 | **Logs** + tabs | `LogsCubit` (extend) | – | §7.9 | ✅ Done 2026-05-02 |
+| 8 | **Settings** + 6 tabs | `SettingsCubit` (extend) | – | §7.10 | ✅ Done 2026-05-02 |
+| 9 | **Subscription** + Billing + Manage | `OrdersCubit` (extend) | – | §7.11 | ✅ Done 2026-05-02 |
+| 10 | **Profile** | – | `ProfileCubit` *(new)* | §7.2 | ✅ Done 2026-05-02 |
+| 11 | **Notifications** | – | `NotificationsCubit` *(new)* | §7.3 | ✅ Done 2026-05-02 |
+| 12 | **Help** | – | – (static) | – | ✅ Done 2026-05-02 |
 
 For each screen, the recipe is:
 1. Open the prototype's `screens/<name>.jsx` next to the editor.
@@ -687,11 +693,11 @@ Estimates are for a single dev. Halve with two devs after primitives are merged.
 
 | Milestone | Deliverable | Est. |
 |-----------|-------------|------|
-| **M0 — Backend prerequisites** | §7.1 Groups · §7.2 Profile · §7.3 Notifications (schema + endpoints + WS events) · §7.5 Storage breakdown · §7.6 System stats · §7.7 Restart/Stop · §7.8 Transcoding status · §7.9 Logs filter · §7.10 Settings extension · §7.11 Orders list + portal | 4–5 days |
-| **M1 — Foundation** | All design tokens, all primitives + widgetbook stories, FluxoraMark/Wordmark widgets, font + asset registration | 2 days |
-| **M2 — Shell** | Sidebar + status bar + new routes (replacing existing), `SystemStatsCubit`, Cmd+K palette | 1.5 days |
-| **M3 — Dashboard** | Pixel-verified Dashboard, live-tick wiring, Sparkline, Donut | 1.5 days |
-| **M4 — Library + Clients** | Both screens incl. detail panels | 2 days |
+| **M0 — Backend prerequisites** | §7.1 Groups · §7.2 Profile · §7.3 Notifications (schema + endpoints + WS events) · §7.4 Activity feed · §7.5 Storage breakdown · §7.6 System stats · §7.7 Restart/Stop · §7.8 Transcoding status · §7.9 Logs filter · §7.10 Settings extension · §7.11 Orders list + portal | 4–5 days ✅ Done 2026-05-06 |
+| **M1 — Foundation** | All design tokens, all primitives + widgetbook stories, FluxoraMark/Wordmark widgets, font + asset registration | 2 days ✅ Done 2026-05-02 |
+| **M2 — Shell** | Sidebar + status bar + new routes (replacing existing), `SystemStatsCubit`, Cmd+K palette | 1.5 days ✅ Done 2026-05-02 |
+| **M3 — Dashboard** | Pixel-verified Dashboard, live-tick wiring, Sparkline, Donut | 1.5 days ✅ Done 2026-05-02 |
+| **M4 — Library + Clients** | Both screens incl. detail panels | 2 days ✅ Done 2026-05-02 |
 | **M5 — Groups + Activity + Transcoding** | All three + Encoder Settings sub-page | 2 days ✅ Done 2026-05-02 |
 | **M6 — Logs + Settings** | Logs filtering UI + all 6 Settings tabs | 2 days |
 | **M7 — Subscription + Profile + Notifications + Help** | Subscription + Billing + Manage + Profile + Notifications overlay + Help | 2 days |
@@ -728,6 +734,25 @@ Per CLAUDE.md doc protocol §3, after M9:
 
 ## 11. Open items / risks
 
+### 11.1 Residual follow-ups (post-M10, cosmetic)
+
+These are the cells/fields the redesign deliberately landed as `—` placeholders because the backend join didn't exist yet, plus a handful of stale TODOs found during the 2026-05-06 audit. Tracked here so they don't get lost. None block the redesign milestone.
+
+| # | Item | Frontend TODO | Backend work needed | Priority |
+|---|------|---------------|---------------------|----------|
+| F1 | **Clients screen → Active Streams stat tile** ~~shows placeholder~~ now reads `SystemStatsCubit.state.latest.activeStreams` | `clients_screen.dart:208` (was `:214`) | None — done. | ✅ Done 2026-05-06 |
+| F2 | **Clients table → IP address column** ~~shows `—`~~ now reads `c.lastIp` (populated by `clients.last_ip` from migration 023; written at `request_pair` and refreshed on every authenticated request via `validate_token` heartbeat) | `clients_screen.dart` (table cell + detail-panel info row) | None — done. | ✅ Done 2026-05-06 |
+| F3 | **Clients detail panel → active session block** ~~hidden~~ now renders an emerald-tinted "Currently Streaming" block when `client.activeSession != null`; "Current Stream" table column shows the joined media title. Server-side: `auth_service.list_clients` LEFT-JOINs `stream_sessions WHERE ended_at IS NULL` with a `ROW_NUMBER() OVER (PARTITION BY client_id)` to pick the most recent in-flight session per client. | `clients_screen.dart` (table cell + new `_ActiveSessionBlock` widget) | None — done. | ✅ Done 2026-05-06 |
+| F4 | **Settings 19th column (forward-compat)** — plan budgeted 19, migration 015 shipped 18; no consumer waiting on it | n/a | If a real need surfaces, add migration `02x_*.sql` rather than back-filling 015. | Defer |
+| F5 | **Help screen → external links** ~~currently no-op~~ now opens via `url_launcher` 6.3.2 (`launchUrl(uri, mode: LaunchMode.externalApplication)`) with logger-wrapped error handling | `help_screen.dart` `_LinkRowState._open` | None — done. | ✅ Done 2026-05-06 |
+| F6 | **Help screen → support bundle export** ("download diagnostic zip") | `help_screen.dart:666` | Server: `POST /api/v1/info/support-bundle` returning a tar/zip of last-N-day logs + system_stats snapshot + redacted settings. Frontend: save dialog via `file_picker` (already in pubspec). | Low |
+| F7 | **Groups screen → ~~3~~ 5 Material `AlertDialog` calls** swapped for the existing `FluxGlassDialog` primitive — primitive already shipped at `flux_glass_dialog.dart`; the audit's "build a new primitive" assumption was wrong, `FluxGlassDialog` had been there since the M3 era. Both inner dialog widgets (`_CreateGroupDialog`, `_EditGroupDialog`) and 3 confirm/add-member dialogs swapped. Violet primary `FilledButton` for affirmative action; red for destructive. | `groups_screen.dart` (5 sites) | None — done. | ✅ Done 2026-05-06 |
+| F8 | **Subscription manage tab → `_ActionRow.onTap`** ~~`() {}`~~ now wired to `OrdersCubit.openPortal()` via `_ManageTab._openPortal()`; both "Upgrade Plan" and "Cancel Subscription" rows route through the Polar customer portal (correct per the parent comment "Actions (all deferred to portal)"). Snackbar feedback on success/failure. | `subscription_screen.dart` `_ActionRow.onTap` | None — done. | ✅ Done 2026-05-06 |
+| F9 | **Profile screen → 4 disabled action buttons** in Sessions / Danger Zone tabs (revoke session, sign out everywhere, delete account, export data) | `profile_screen.dart:984` | Server: each action needs an endpoint. Score each by spec scope before implementing — "delete account" especially has compliance implications and may be Phase 3 territory. | Defer-most |
+| F10 | **Encoder Settings → "Run Benchmark" button** disabled | `encoder_settings_screen.dart:196` | Server: `POST /api/v1/transcoding/benchmark` running a 10s test encode against each available encoder, returning fps + speed + quality metrics. | Low-med |
+
+### 11.2 Original risk register
+
 | Item | Mitigation |
 |------|------------|
 | `BackdropFilter` perf on Linux | Add `kEnableHeavyBlur` flag; benchmark M2 |
@@ -749,6 +774,9 @@ Per CLAUDE.md doc protocol §3, after M9:
 | 2026-05-02 | Claude (session) | M5 shipped: Groups screen, Activity screen (replaced), Transcoding screen, Encoder Settings sub-page. New entities: `Group`/`GroupRestrictions`/`TimeWindow`/`GroupStatus` and `TranscodingStatus`/`EncoderLoad`/`ActiveTranscodeSession`. New features: `groups/` + `transcoding/`. `RecentActivityCubit` extended with `loadAll`/`pause`/`resume`. `Routes.encoderSettings` added. DI updated. |
 | 2026-05-02 | Claude (session) | M6 shipped: Logs screen (structured rows + 4 tabs + level/source/since filters + auto-scroll while live + pause/resume + click-to-expand) and Settings screen (6-tab side-rail layout — General / Network / Streaming / Security / Advanced / About — wires all 18 §7.10 extended fields plus tier-1 fields). New form primitives: `FluxTextField`, `FluxSelect`, `FluxSwitch`, `FluxSlider`. New `LogRecord` domain entity. |
 | 2026-05-03 | Claude (session) | **Updated prototype bundle imported.** Old `docs/11_design/desktop_prototype/` replaced by `docs/11_design/prototype/` — new layout splits files into `app/desktop/`, `app/mobile/`, `app/shared/`, plus top-level `README.md`, `chats/`, `uploads/`, and per-platform `app/desktop/README.md` + `app/mobile/README.md` port specs. Diff vs prior bundle: every desktop screen / page / data file is byte-identical (only relocated). Two real UI deltas: titlebar logo removed (wordmark only), sidebar logo header removed (nav at top). All §2 source-of-truth paths updated. **Decisions §1 #5 reversed** — custom window chrome is now in scope; new Decision #6 records the sidebar logo-header removal. New §13 spec + M10 milestone added. Mobile bundle parked — `mobile_player_redesign_plan.md` still gates on completion of these desktop milestones. |
+| 2026-05-06 | Claude (session) | **Plan reconciled with code reality.** M0 prerequisite table verified: §7.3 / §7.4 / §7.8 / §7.9 / §7.10 / §7.11 marked ✅ Done with concrete landed-file evidence (had been stale — backend shipped earlier without the table being updated). M0 milestone label flipped from "(in progress)" to "(✅ Done 2026-05-06)". M4 milestone label flipped from "🔵 In Progress" to "✅ Done 2026-05-02" with deferred follow-ups itemised. §5 Screen translation order table — 11 of 12 stale "🔲 Pending" rows updated to ✅ Done. Top-of-doc Status banner rewritten: "Complete — partially shipped" → "✅ Complete — every milestone shipped". §11 split into 11.1 Residual follow-ups (F1–F10 — Clients placeholders, Help external links + support bundle, Groups FluxDialog primitive, Subscription stale `onTap`, Profile danger-zone actions, Encoder Settings benchmark) and 11.2 Original risk register. No code changes — doc-only sync. |
+| 2026-05-06 | Claude (session) | **F2 + F3 shipped: Clients screen IP column + active-session join.** Server: migration `023_clients_last_ip.sql` adds nullable `last_ip` TEXT to `clients`. `auth_service.create_pair_request` accepts `client_ip` kwarg + persists at insert/upsert (with `COALESCE` so re-pair from a known IP doesn't clobber). New `auth_service.update_client_heartbeat()` helper updates `last_seen` (+ optionally `last_ip`); called from `validate_token` dep on every authenticated request — also fixes a pre-existing latent bug where `last_seen` only updated at pair/approval. `auth_service.list_clients` rewritten to LEFT-JOIN `stream_sessions WHERE ended_at IS NULL` with a `ROW_NUMBER() OVER (PARTITION BY client_id ORDER BY started_at DESC) = 1` window to pick the single in-flight session per client. New `ActiveSessionInfo` Pydantic model + `ClientListItem.last_ip` + `active_session` fields. `routers/auth.list_clients` builds the nested response. `routers/stream.py:425` direct call site updated to match new `validate_token` signature (added `request` param). Frontend: `packages/fluxora_core` `ClientListItem` gains `lastIp` + `activeSession`; new `ActiveSessionInfo` entity. `clients_screen.dart` — IP cell at table row + detail-panel info row both read `c.lastIp ?? '—'`; "Current Stream" cell shows joined media title; new emerald-tinted `_ActiveSessionBlock` widget renders below info rows when `client.activeSession != null` (status dot + media title + encoder + elapsed-since-start in `Hh Mm` / `Mm` / `Ss`). Tests: 3 new pytest cases (request-pair persists `last_ip` from request socket, list-clients surfaces `last_ip` + `active_session`, ended sessions don't appear as active). 474 → 477 server tests passing. `flutter analyze` clean (26.7 s). **Pre-existing failure flagged**: `m3_dashboard_golden_test.dart` fails with 62.77 % pixel diff against the stored baseline — unrelated to F2/F3 (Dashboard untouched), likely V2 cutover drift; baseline needs regenerating. Added to follow-ups. |
+| 2026-05-06 | Claude (session) | **Quick-wins batch shipped: F1 + F5 + F7 + F8.** F1 — Clients screen Active Streams stat tile reads `SystemStatsCubit.state.latest?.activeStreams` (`clients_screen.dart` `_buildStatTiles` signature gained `BuildContext`; `const StatTile` dropped to allow runtime value). F5 — `url_launcher` 6.3.2 added (single new dep, established maintainer); `_LinkRowState._open()` opens external URL via `launchUrl(uri, mode: LaunchMode.externalApplication)` with `Logger`-wrapped failure paths. F7 — discovered `FluxGlassDialog` already shipped at `lib/shared/widgets/flux_glass_dialog.dart`; the original audit's "build a new primitive" assumption was wrong. Swapped **all 5** Material `AlertDialog` instances in `groups_screen.dart` (Create / Edit / Add-Member / 2× Delete confirm) to `FluxGlassDialog` with violet `FilledButton` for affirmative actions and red for destructive. F8 — Subscription manage tab `_ActionRow` `onTap: () {}` wired to `_ManageTab._openPortal()` → `OrdersCubit.openPortal()` with snackbar feedback; both "Upgrade Plan" and "Cancel Subscription" route through Polar portal per the parent comment "Actions (all deferred to portal)". `flutter analyze` clean (0 issues, 82.8 s). Net effect: every cosmetic placeholder and stale TODO from F1/F5/F7/F8 removed; the Clients / Help / Groups / Subscription surfaces now match the V2 design 1:1. F2/F3/F6/F10 still need backend work (per §11.1); F9 deferred until compliance scope is decided. |
 | 2026-05-03 | Claude (session) | **M8 deferred items shipped + M10 Custom window chrome shipped.** A11y pass completed for the 8 surfaces Sonnet didn't reach in M8 (Logs, Settings, Encoder Settings, Profile, Help, Notifications panel, Sidebar, Status bar) — `Tooltip` + `Semantics` annotations matching the existing M3-M7 pattern. Golden tests enabled via the GetIt-mock recipe (drop wrapping `MultiBlocProvider`, register mock repos in `setUp`); `dart_test.yaml` skip removed; baseline PNG regenerated; `test/goldens/_README.md` rewritten with the recipe. **M10 implemented:** `window_manager ^0.5.1` added; `main.dart` initialises with `TitleBarStyle.hidden` + `WindowOptions(size: 1440×900, minimumSize: 1332×720)`; new `lib/shared/widgets/flux_titlebar.dart` (36 px, drag region wraps wordmark + tagline, help/bell mid-right, min/max/close flush right at 46×36 px); `flux_shell.dart` restructured to mount titlebar above the existing Stack; sidebar `_LogoHeader` deleted (prototype dropped it); window-control glyphs use Segoe Fluent Icons codepoints (`U+E921` / `U+E922` / `U+E923` / `U+E8BB`) with Segoe MDL2 Assets fallback for native Win 11 visual identity. **Branding pass:** new `assets/brand/app_icon.ico` master regenerated from `logo-icon.png` with tight-crop + 8 % margin (was 59 % glyph fill → now 84 %); runtime copy synced to `windows/runner/resources/`; `Runner.rc` placeholders fixed (`com.example` → `Fluxora`, `fluxora_desktop` → `Fluxora Desktop Control Panel` for ProductName/CompanyName/LegalCopyright/FileDescription); `main.cpp` window title `L"fluxora_desktop"` → `L"Fluxora"`. **Aero Peek fix:** `win32_window.cpp` switched from `WNDCLASS` to `WNDCLASSEX` so both `hIcon` and `hIconSm` are registered (Win 11 thumbnail renderer needs the small variant); `main.cpp` calls `SetCurrentProcessExplicitAppUserModelID(L"Fluxora.Desktop")` before window creation; `shell32.lib` added in `windows/runner/CMakeLists.txt`. Tech stack + gotchas docs updated with Segoe Fluent Icons codepoint table, taskbar-icon margin recipe, Aero Peek root-cause analysis. |
 
 ---

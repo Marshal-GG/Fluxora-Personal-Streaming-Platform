@@ -19,6 +19,9 @@
 | Storage (secrets) | `flutter_secure_storage` (tokens, server URL, client ID) |
 | Routing | `go_router` v13 with async auth redirect guard |
 | DI | `get_it` — lazy singletons for repos, factories for BLoCs |
+| External URLs (desktop) | `url_launcher ^6.3.2` — used by the Help screen's "Get Help" link rows; opens via `launchUrl(uri, mode: LaunchMode.externalApplication)` with `Logger`-wrapped failure paths. Single new dep added 2026-05-06; established Flutter-team package, no existing dep covered the need. |
+| Frameless window (desktop) | `window_manager ^0.5.1` — M10 frameless titlebar |
+| QR codes (desktop pair-device) | `qr_flutter ^4.1.0` |
 
 ---
 
@@ -61,7 +64,7 @@ Routing: `/library/:id/files` registered in `app_router.dart` plus a Cmd+K comma
 - **Theming (desktop):** [`apps/desktop/lib/shared/theme/app_theme.dart`](../../apps/desktop/lib/shared/theme/app_theme.dart) wires V2 tokens through Material 3 `ThemeData` (`scaffoldBackgroundColor: bgRoot`, `colorScheme.primary: violet`, etc.) so Material defaults can't leak slate-blue. Every redesign primitive **also** owns its own `BoxDecoration` / `TextStyle` so it stays pixel-locked even outside the theme.
 - **Theming (mobile):** V2-pure as of M9 cutover (2026-05-03). [`apps/mobile/lib/shared/theme/app_theme.dart`](../../apps/mobile/lib/shared/theme/app_theme.dart) wires V2 tokens through Material 3 `ThemeData` (`scaffoldBackgroundColor: bgRoot`, `colorScheme.primary: violet`, V2 typography in `textTheme`, V2 button + card themes, new `dividerTheme`); `AppTheme.dark` getter signature unchanged. `InputDecorationTheme.fillColor` uses `AppColors.bgRaised` — opaque so the M0 background gradient does not bleed through Material `TextField` chrome. Mobile literal `Color(0xFF0F0C24)` sites (mobile theme + `FluxBottomSheet` + a couple of mobile screens) still inline the raw hex pending the mobile agent's migration to the token; desktop is fully tokenised.
 - **Surface-token policy (added 2026-05-04, refined later same day):** floating chrome must commit to *real glass* (`surfaceGlass` rgba + `BackdropFilter(blur: 20)`) or *opaque* (`bgRaised` `#0F0C24`). Translucent fill **without** blur is a layout bug. Two new shared widgets implement the real-glass path:
-  - **[`FluxGlassDialog`](../../apps/desktop/lib/shared/widgets/flux_glass_dialog.dart)** — drop-in replacement for `AlertDialog`. Wraps title/content/actions in `Dialog(transparent) → ClipRRect → BackdropFilter(blur 20) → Container(surfaceGlass + border)`. Used by all 3 library-screen dialogs (Delete confirm, Add/Edit form, Filters) and the startup [`UpgradeDialog`](../../apps/desktop/lib/features/subscription/presentation/widgets/upgrade_dialog.dart).
+  - **[`FluxGlassDialog`](../../apps/desktop/lib/shared/widgets/flux_glass_dialog.dart)** — **canonical replacement for Material `AlertDialog`**. Drop-in: `title` / `content` / `actions` slots, default `maxWidth: 480`, `blurSigma: 20`. Wraps in `Dialog(transparent) → ClipRRect → BackdropFilter(blur 20) → Container(surfaceGlass + border)`. Used by all 3 library-screen dialogs (Delete confirm, Add/Edit form, Filters), the startup [`UpgradeDialog`](../../apps/desktop/lib/features/subscription/presentation/widgets/upgrade_dialog.dart), the [Pair-Device dialog](../../apps/desktop/lib/features/clients/presentation/widgets/pair_device_dialog.dart), and (since 2026-05-06) every dialog on the [Groups screen](../../apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart) — Create / Edit / Add-Member / 2× Delete confirm. **If you need a modal, use this — never `AlertDialog`.** Affirmative actions render as `FilledButton(backgroundColor: AppColors.violet)`; destructive as `AppColors.red`.
   - **[`FluxGlassMenu`](../../apps/desktop/lib/shared/widgets/flux_glass_menu.dart)** — drop-in replacement for `PopupMenuButton`. Uses a custom `PopupRoute` that renders all menu items inside a single `BackdropFilter` so the blur covers the whole popup (a single `BackdropFilter` cannot span a stock `PopupMenuButton`'s items because each item is its own Material descendant). Used by the Library screen's Sort menu and per-card 3-dot menu. Items declared as `FluxGlassMenuItem<T>` records (value, label, icon, destructive, selected).
   
   Opaque `bgRaised` stays the default for theme-level surfaces where blur isn't worth the per-instance GPU cost (Material `Card` theme default, `AppBar` theme default, `SnackBar` theme default, `InputDecoration.fillColor`); widgets that opt into glass override per-instance. The 13-site `surfaceGlass` desktop sweep landed earlier this day under the same policy; library-screen popups + dialogs now sit on top of that as real glass.
@@ -119,6 +122,11 @@ Pixel-matched to `docs/11_design/desktop_prototype/app/components/primitives.jsx
 | `sparkline.dart` | `Sparkline({data, color, height, strokeWidth})` | `CustomPainter` with single open path |
 | `storage_donut.dart` | `StorageDonut({segments, centerText, unitText, size, strokeWidth})` + `StorageDonutSegment` | `CustomPainter` `drawArc` per segment, -90° start |
 | `page_header.dart` | `PageHeader({title, subtitle, actions})` | Standard screen header — owns vertical padding only |
+| `flux_glass_dialog.dart` | `FluxGlassDialog({title, content, actions, maxWidth, blurSigma})` | **Canonical Material `AlertDialog` replacement.** See Design System note above; do not introduce new `AlertDialog` instances. |
+| `flux_glass_menu.dart` | `FluxGlassMenu` + `FluxGlassMenuItem<T>` | Drop-in `PopupMenuButton` replacement with single-`BackdropFilter` blur covering all items. |
+| `flux_titlebar.dart` | `FluxTitlebar` | M10 36 px frameless-window titlebar (Win 11 caption-button geometry; macOS traffic-light positioning). |
+| `flux_tab_bar.dart` | `FluxTabBar` | M4 tabbed control used by Library, Logs, Subscription, etc. |
+| `flux_text_field.dart`, `flux_select.dart`, `flux_switch.dart`, `flux_slider.dart` | M6 form primitives | Violet-glass-styled drop-in replacements for Material form widgets. |
 
 ### Brand visuals — `packages/fluxora_core/lib/widgets/`
 
@@ -367,7 +375,7 @@ apps/desktop/lib/
     │   └── presentation/
     │       ├── cubit/clients_cubit.dart
     │       ├── cubit/clients_state.dart
-    │       └── screens/clients_screen.dart  # M4 redesign: PageHeader + 4 StatTiles + search/filter row + 7-column table + 300px detail panel (approve/reject/revoke wired)
+    │       └── screens/clients_screen.dart  # M4 redesign: PageHeader + 4 StatTiles (Active Streams reads from SystemStatsCubit since 2026-05-06) + search/filter row + 7-column table (IP cell reads c.lastIp; Current Stream reads c.activeSession.mediaTitle) + 300px detail panel (approve/reject/revoke wired; emerald _ActiveSessionBlock when activeSession non-null)
     │
     ├── library/                 # ✅ Implemented (Phase 5)
     │   ├── domain/repositories/library_repository.dart

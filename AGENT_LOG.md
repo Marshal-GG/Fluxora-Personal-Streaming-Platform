@@ -306,3 +306,200 @@ FLUXORA_TMDB_IMAGE_BASE_URL=https://fluxora-tmdb-proxy.marshalgcom.workers.dev/t
 - **Consider unifying error-logging patterns** across services to always use `repr(exc)`.  The empty-string-coloon issue masked the entire field investigation for hours; same footgun exists in other services that catch generic Exception.
 - **Optional refinement**: extend `_clean_tmdb_query` to extract the year and pass it as TMDB's `&year=` filter for stricter matching.  Currently we strip the year entirely; passing it back as a filter could improve precision on common-title disambiguation (`The Matrix` vs `The Matrix Reloaded`).
 ---
+
+## [2026-05-06] — Desktop redesign plan reconciled + cosmetic follow-ups quick-wins batch (F1+F5+F7+F8)
+**Phase:** Phase 5 desktop redesign — post-M10 polish
+**Status:** Complete
+
+### What Was Done
+
+User asked whether the desktop redesign plan was fully done. Audit surfaced two issues: (1) the M0 backend prerequisites table in `docs/11_design/desktop_redesign_plan.md` claimed §7.3 / §7.4 / §7.8 / §7.9 / §7.10 / §7.11 were still 🔲 Pending despite the backend code having shipped weeks earlier (had been stale for that long); (2) several cosmetic placeholders / stale TODOs remained in the redesigned screens. Reconciled the doc, then shipped the four quick-wins (F1 + F5 + F7 + F8) per the freshly-written §11.1 follow-up table.
+
+#### Plan reconciliation (doc-only)
+
+- Verified each of the 6 "pending" M0 rows against `apps/server/`: every endpoint + migration claimed by M5 / M6 / M7 has actually shipped. Marked all six ✅ Done with the concrete landed-file evidence (router + line + migration number) inline in the table.
+- Top-of-doc Status banner rewritten from "Complete — partially shipped" to "✅ Complete — every milestone shipped".
+- M4 milestone label flipped from "🔵 In Progress" to "✅ Done 2026-05-02"; deferred per-client backend joins (IP, session-count) itemised separately.
+- §5 Screen translation order table: 11 of 12 stale "🔲 Pending" rows updated to ✅ Done — only Dashboard had been correctly marked.
+- §9 milestone-breakdown table: M0 / M1 / M2 / M3 / M4 each gained the `✅ Done <date>` annotation that M5–M10 already had.
+- §11 split into 11.1 Residual follow-ups and 11.2 Original risk register. 11.1 enumerates F1–F10 — every cosmetic placeholder, every stale TODO, plus the four backend-joins blocked on real server work.
+
+#### Quick-wins shipped (code)
+
+- **F1 — Active Streams stat tile (Clients screen).** `_buildStatTiles` signature gained `BuildContext`; reads `context.select<SystemStatsCubit, int?>((c) => c.state.latest?.activeStreams) ?? 0`; `const StatTile` dropped to allow runtime value. Mirrors the same pattern Dashboard already uses at `dashboard_screen.dart:166`.
+- **F5 — Help screen external links.** `url_launcher: ^6.3.2` added to `apps/desktop/pubspec.yaml` (latest stable per `pub.dev/api/packages/url_launcher`; established Flutter team package — meets Hard Prohibition #6 + #12). New `_LinkRowState._open()` async helper — null/empty guard, `Uri.tryParse`, `launchUrl(uri, mode: LaunchMode.externalApplication)`, `Logger`-wrapped failure paths (no silent exceptions). Replaces 4 no-op rows on the Help screen ("Documentation", "Community", "Report an Issue", "What's New").
+- **F7 — Groups dialogs swap.** Discovered `FluxGlassDialog` already shipped at `lib/shared/widgets/flux_glass_dialog.dart` (used by Library + Pair Device + Subscription Upgrade dialogs). The original audit's "build a new primitive" assumption was wrong. Swapped **5** Material `AlertDialog` instances in `groups_screen.dart` (Create / Edit / Add-Member / 2× Delete confirm — original audit only counted 3 because two were inside named widget classes `_CreateGroupDialog` / `_EditGroupDialog`). Violet `FilledButton` for affirmative actions, red for destructive. `_CreateGroupDialog` and `_EditGroupDialog` `TextField` `style:` overrides removed since `FluxGlassDialog`'s default text style cascades correctly through `DefaultTextStyle.merge`.
+- **F8 — Subscription manage tab `_ActionRow`.** `_ActionRow` gained `VoidCallback? onTap`; both call sites ("Upgrade Plan" + "Cancel Subscription") now pass `() => _openPortal(context)`. New `_ManageTab._openPortal` calls `OrdersCubit.openPortal()` + shows snackbar feedback. Correct per the parent comment "Actions (all deferred to portal)" — Polar handles all subscription mutations, so every plan action route through the portal is the right call.
+
+`flutter analyze` clean (0 issues, 82.8 s).
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `docs/11_design/desktop_redesign_plan.md` (M0 table reconciled with shipped reality + landed-file evidence; M4 label updated; §5 screen-translation table updated; status banner rewritten; §11 split into 11.1 + 11.2; F1/F5/F7/F8 marked ✅ Done; two new change-log entries) |
+| Modified | `apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart` (F1 — `_buildStatTiles` reads `SystemStatsCubit.state.latest?.activeStreams`; new `system_stats_cubit.dart` import) |
+| Modified | `apps/desktop/lib/features/help/presentation/screens/help_screen.dart` (F5 — `_LinkRowState._open()` opens via `launchUrl`; `url_launcher` + `logger` imports) |
+| Modified | `apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart` (F7 — 5× `AlertDialog` → `FluxGlassDialog`; `flux_glass_dialog.dart` import) |
+| Modified | `apps/desktop/lib/features/subscription/presentation/screens/subscription_screen.dart` (F8 — `_ActionRow.onTap` param + `_ManageTab._openPortal()` helper) |
+| Modified | `apps/desktop/pubspec.yaml` (added `url_launcher: ^6.3.2`) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Docs Updated
+
+- `docs/11_design/desktop_redesign_plan.md` — M0 reconciliation, status banner rewrite, M4/M5 label fixes, §11.1 follow-up table introduced, F1/F5/F7/F8 marked ✅, two 2026-05-06 change-log entries.
+
+### Decisions Made
+
+- **Reconcile-first, code-second.** Audited the M0 table against the actual code before writing any new code so we'd know which "follow-ups" were real vs. doc drift. 6 of 6 "pending" M0 rows turned out to be stale — backend had shipped weeks ago without the table being updated. Saved an entire pretend-implementation pass.
+- **Reuse `FluxGlassDialog`, don't build a new primitive.** F7's original framing ("build a `FluxDialog` primitive") was wrong — primitive existed and was already in production use on three other screens. Adopting the existing one keeps the design system uniform and avoids a third dialog widget that would have to be reconciled later.
+- **Wire `_ActionRow` instead of deleting it.** Considered deleting the row as obsolete (since `_PortalButton` already exists at the top of the manage tab). Re-read the parent comment "Actions (all deferred to portal)" and the rows clearly serve a different UX purpose (action-oriented entry points labelled "Upgrade Plan" / "Cancel Subscription" rather than a generic "Open Portal" button). Wiring them to the same destination is the right call.
+- **Defer F2 / F3 / F6 / F10 (backend work) and F9 (compliance).** The remaining six follow-ups in §11.1 either need server endpoints that don't exist yet (F2/F3/F6/F10) or have compliance implications (F9 — "delete account" + "sign out everywhere" need a Phase 3 spec decision before implementation). Quick-wins batch was strictly the items that needed only frontend wiring or a single-dep-add.
+
+### Blockers / Open Issues
+
+- **F2 / F3 — Clients table IP + per-client active session join.** Need server changes to the `clients` table (`last_ip` column persisted at handshake/heartbeat) and an `active_session: {file, started_at, codec, ...}` join on `GET /api/v1/clients[/{id}]`. Cosmetic-only — table cells render `—`.
+- **F6 — Help screen support bundle export.** Needs `POST /api/v1/info/support-bundle` returning a tar/zip of last-N-day logs + system_stats snapshot + redacted settings. Frontend can use existing `file_picker` dep for the save dialog.
+- **F9 — Profile danger-zone actions** (revoke session, sign out everywhere, delete account, export data). Compliance-sensitive; needs explicit scope decision before any of the four endpoints land. Likely Phase 3 territory.
+- **F10 — Encoder Settings benchmark button.** Needs `POST /api/v1/transcoding/benchmark` running ~10 s test encode against each available encoder, returning fps + speed + quality metrics.
+
+### Issues / Sharp Edges Discovered
+
+- **Plan-doc drift is invisible until you compare line-by-line.** The desktop redesign plan claimed M0 was "in progress" while the rest of the file (M5 / M6 / M7 entries) described features that demonstrably required those endpoints. The doc was internally inconsistent for weeks — the change-log only catches drift if every author remembers to write to it. Worth a periodic "verify the M0/M1/... headers against the actual code" pass on any long-lived plan doc.
+- **`FluxGlassDialog` existed but wasn't discoverable from the M3-M7 task descriptions.** It was originally introduced for the Library "Remove library?" confirm dialog and quietly reused on Pair Device + Upgrade dialogs, but the redesign plan never name-dropped it as the canonical primitive. Future agents picking up dialog tasks will hit the same "should I build one?" decision unless DESIGN.md or `frontend_architecture.md` calls it out as the Material `AlertDialog` replacement.
+- **`pub outdated` reports a lot of constraint-incompatible newer versions.** 22 packages with newer-but-blocked versions and 1 discontinued (`golden_toolkit`). Not blocking — but the `golden_toolkit` discontinuation is worth a follow-up: the package recommended replacement is direct use of `flutter_test`'s `matchesGoldenFile` matcher with `flutter_test`'s baked-in golden infrastructure. Add to manual_tasks if not already there.
+
+### Proactive Suggestions for Next Work
+
+1. **F2 + F3 backend join** — single PR. Server adds `last_ip` column + handshake/heartbeat persist + active-session join on the existing `GET /api/v1/clients` response. Frontend gets two `—` cells filled in. Concrete, contained, no compliance surface.
+2. **F6 support-bundle endpoint** — one server endpoint + a button wire-up. Genuinely useful for field debugging (the TMDB ISP-block investigation last session would have been twice as fast with a one-click "send me your last N hours of logs"). New `services/support_bundle_service.py` for the redaction logic + tarball assembly.
+3. **`golden_toolkit` discontinuation follow-up** — migrate the existing golden tests off `golden_toolkit` onto `flutter_test`'s built-in `matchesGoldenFile`. Low priority (current tests still run), but the dep will eventually rot.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced. F5 + F8 use the project `Logger()` pattern.
+- [x] No silent exceptions. F5 `_open()` catches `Exception`, logs with stack trace, returns gracefully.
+- [x] No hardcoded secrets, ports, paths.
+- [x] One new pub dep added (`url_launcher: ^6.3.2`) — justified per Hard Prohibition #6: established Flutter-team package, single-purpose, primary feature is exactly what we need, no existing dep covers it. Latest version verified via pub.dev API per Hard Prohibition #12.
+- [x] No layer-boundary violations.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+
+### Next Agent Should
+
+- **F2 + F3 server join** if they want to fully clear the Clients screen of `—` placeholders. Server changes only — the frontend reads exist already, just have to plumb the new fields through.
+- **F6 support-bundle** if field-debug ergonomics are the priority. Genuinely high leverage for any user issue where logs matter.
+- **`golden_toolkit` migration** when the discontinued-dep notice becomes annoying enough. Not urgent.
+- **Defer F9** until there's a real product decision on the four danger-zone actions.
+---
+
+## [2026-05-06] — F2 + F3 shipped: Clients screen IP column + active-session join
+**Phase:** Phase 5 desktop redesign — post-M10 polish (§11.1 follow-up)
+**Status:** Complete
+
+### What Was Done
+
+Cleared the last `—` placeholders from the Clients screen by adding the backend join the redesign was always blocked on. Two follow-ups in one PR because they share the SQL surface (`clients` row + `stream_sessions` join).
+
+#### Server
+
+- **Migration `023_clients_last_ip.sql`** — `ALTER TABLE clients ADD COLUMN last_ip TEXT` (nullable). Existing rows show `—` until their next authenticated request.
+- **`auth_service.create_pair_request`** — gained `client_ip: str | None = None` kwarg. INSERT writes `last_ip`; ON CONFLICT uses `COALESCE(excluded.last_ip, clients.last_ip)` so re-pair from an unknown source (e.g. caller passes None) doesn't clobber a previously-recorded IP.
+- **`auth_service.update_client_heartbeat(db, client_id, last_ip=None)`** — new helper that touches `last_seen` (and optionally `last_ip`) for an authenticated client.
+- **`routers/deps.validate_token`** — gained `request: Request` param; calls `update_client_heartbeat(db, client["id"], last_ip=request.client.host)` after successful token validation. Wrapped in try/except + WARNING log so a transient SQLite write failure can't block an authenticated request. **Side effect:** also fixes a pre-existing latent bug — `last_seen` was previously frozen at pair/approval time and never refreshed by API traffic. The desktop's "Online Now" stat tile counts trusted+approved rows so this didn't surface as a visible bug, but `last_seen` is now actually live.
+- **`routers/auth.request_pair`** — passes `request.client.host` as `client_ip` into `create_pair_request`.
+- **`auth_service.list_clients`** — rewritten with a window-function LEFT JOIN:
+
+  ```sql
+  LEFT JOIN (
+      SELECT s.client_id, s.id AS session_id, s.started_at, s.encoder_used,
+             COALESCE(m.title, m.name) AS media_title,
+             ROW_NUMBER() OVER (PARTITION BY s.client_id ORDER BY s.started_at DESC) AS rn
+        FROM stream_sessions s
+   LEFT JOIN media_files m ON m.id = s.file_id
+       WHERE s.ended_at IS NULL
+  ) sess ON sess.client_id = c.id AND sess.rn = 1
+  ```
+
+  Defensive in case multiple in-flight sessions ever appear for one client (v1's `concurrent_session_cap` is 1 per encoder so the practical answer is always 0 or 1, but the query stays correct under future relaxation).
+- **`models/client.py`** — new `ActiveSessionInfo(BaseModel)` with `session_id` / `started_at` / `encoder_used?` / `media_title?`. `ClientListItem` extended with `last_ip: str | None = None` and `active_session: ActiveSessionInfo | None = None`.
+- **`routers/auth.list_clients`** — builds the nested `ActiveSessionInfo` from the joined columns; nulls when no in-flight session.
+- **`routers/stream.py:425`** — direct `validate_token(credentials, db)` call site updated to `validate_token(request, credentials, db)` to match the new signature. Pytest caught this — no manual code review would have.
+
+Pre-existing latent gap closed as a side effect of routing the heartbeat through `validate_token`: every authenticated request now touches `last_seen`, so a "stale" client whose `last_seen` is hours old is genuinely offline rather than just not having re-paired.
+
+#### Frontend
+
+- **`packages/fluxora_core/lib/entities/client_list_item.dart`** — new `ActiveSessionInfo` class with `sessionId`/`startedAt`/`encoderUsed?`/`mediaTitle?` + `fromJson`. `ClientListItem` gains `lastIp: String?` and `activeSession: ActiveSessionInfo?` plus `fromJson` parsing.
+- **`apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart`** —
+  - **Table row IP cell** (line ~747): reads `c.lastIp ?? '—'` (was hardcoded `'—'`). `const Expanded` dropped to allow runtime value.
+  - **Table row "Current Stream" cell** (line ~770): shows `c.activeSession?.mediaTitle ?? '—'` with `TextOverflow.ellipsis`; when populated, switches color from `textFaint` → `textBody`.
+  - **Detail-panel info row** (`_buildInfoRows()`): `('IP Address', client.lastIp ?? '—', false)` (was `('IP Address', '—', false)`).
+  - **New `_ActiveSessionBlock` widget**: emerald-tinted card (`#10B981` 8 % bg + 20 % border) rendered under the info rows when `client.activeSession != null`. Status dot (streaming) + "Currently Streaming" label + media title + `Encoder $name · $elapsed` line where `elapsed` formats like `1h 23m` / `45m` / `30s`.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `apps/server/database/migrations/023_clients_last_ip.sql` |
+| Modified | `apps/server/services/auth_service.py` (`create_pair_request` accepts `client_ip`; new `update_client_heartbeat`; `list_clients` window-function LEFT JOIN) |
+| Modified | `apps/server/routers/auth.py` (`request_pair` passes `client_ip`; `list_clients` builds nested `ActiveSessionInfo`) |
+| Modified | `apps/server/routers/deps.py` (`validate_token` gains `request: Request`; calls heartbeat) |
+| Modified | `apps/server/routers/stream.py` (line 425 — `validate_token(request, credentials, db)`) |
+| Modified | `apps/server/models/client.py` (new `ActiveSessionInfo`; `ClientListItem` gains `last_ip` + `active_session`) |
+| Modified | `apps/server/tests/test_auth.py` (+3 tests: pair persists IP, list surfaces fields, ended sessions excluded) |
+| Modified | `packages/fluxora_core/lib/entities/client_list_item.dart` (new `ActiveSessionInfo`; `ClientListItem` gains `lastIp` + `activeSession`) |
+| Modified | `apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart` (3 cell wirings + new `_ActiveSessionBlock` widget) |
+| Modified | `docs/11_design/desktop_redesign_plan.md` (§11.1 F2 + F3 marked ✅; new 2026-05-06 change-log entry) |
+| Modified | `docs/00_overview/current_status.md` (test count 474 → 477; F2/F3 paragraph appended) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Docs Updated
+
+- `docs/11_design/desktop_redesign_plan.md` — F2 + F3 status flipped to ✅ Done with file-line evidence; change-log entry appended.
+- `docs/00_overview/current_status.md` — test count bumped to 477; F2/F3 paragraph added to the "as of" header.
+
+### Decisions Made
+
+- **Heartbeat in `validate_token`, not a dedicated endpoint.** Considered adding a `POST /auth/heartbeat` for explicit pings, but every authenticated request already passes through `validate_token` — piggybacking is one line, has the right cadence (request rate, not poll rate), and it doubles as a fix for the pre-existing "`last_seen` only updates at pair/approval" bug. SQLite write throughput easily covers a home server's request volume.
+- **Window function over correlated subquery for the active-session pick.** Two alternatives considered: (a) `LEFT JOIN ... LIMIT 1` — not portable across DB engines, no ORDER BY guarantee per row; (b) correlated subquery — works but reads worse and forces a per-row plan. `ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)` is the standard idiom, SQLite has supported it since 3.25 (we require 3.40+ for json_each), and it makes the "tie-break by most recent" semantics explicit in the SQL rather than implicit in the executor.
+- **Fail-soft heartbeat write.** Wrapped `update_client_heartbeat` in try/except → WARNING log. A transient SQLite write failure (e.g. `database is locked` during a concurrent migration) shouldn't 401 a valid request. The client is still authenticated; the cosmetic refresh just gets skipped this poll.
+- **Trust `request.client.host` for `last_ip`.** Currently true behind cloudflared too — the LAN socket sees the loopback IP from cloudflared, not the original public IP. This means tunneled requests will record `127.0.0.1`. The redesign doesn't carry the "real" remote IP through `CF-Connecting-IP` here; if/when it matters we can read that header in the heartbeat path. Logged as a known limitation, not a follow-up — the desktop UI's primary use case is "what LAN IP is this device on" for pair-debug, which this captures correctly.
+
+### Blockers / Open Issues
+
+- **Pre-existing golden test failure** — `test/goldens/m3_dashboard_golden_test.dart` fails with 62.77 % pixel diff against the stored baseline. Dashboard wasn't touched in this batch; the diff is presumably leftover V2 cutover drift that was never re-baselined. Fix: regenerate baseline via `flutter test --update-goldens test/goldens/`. Tracked but not in this PR — fixing a stale golden during an unrelated change just confuses git history.
+- **Tunneled `last_ip`** — captures the loopback IP cloudflared forwards from, not the real public IP. See decisions above. Not blocking the redesign milestone since the field's primary value is for LAN device identification.
+
+### Issues / Sharp Edges Discovered
+
+- **`validate_token` direct-call site at `routers/stream.py:425`** — function signature changes that add a parameter at position 0 don't surface in mypy under FastAPI's `Depends()` mechanism because the dependency injector binds by name, not position. The direct call site (not using `Depends`) was the only path the type-checker could catch, and it didn't because Python's gradual typing is loose about call-site positional arguments to async functions. **The pytest suite caught it.** This is a small but real argument for keeping at least one integration test that exercises the `Depends`-resolved path; in this case, `test_stop_stream_wrong_client` did exactly that.
+- **`last_seen` was effectively frozen across the codebase before this change.** I started with the assumption that "every authenticated request updates `last_seen`" was already true and that I just needed to add `last_ip` alongside it. Wrong — `last_seen` was only written at pair / approval. The desktop's "online now" tile counts approved+trusted rows, which masks the bug visually. Worth a follow-up audit of the mobile profile screen and any feature that displays `last_seen` to make sure stale values aren't being interpreted as "X minutes ago".
+
+### Proactive Suggestions for Next Work
+
+1. **F6 — Support bundle export endpoint.** The next §11.1 follow-up that's still pending and field-impactful. `POST /api/v1/info/support-bundle` returning a tar/zip of last-N-day logs + `system_stats` snapshot + redacted `user_settings`. Frontend uses existing `file_picker` dep for save dialog.
+2. **F10 — Encoder benchmark endpoint.** `POST /api/v1/transcoding/benchmark` running a 10 s lavfi probe per available encoder, returning fps + speed + quality metrics. Wires to the disabled "Run Benchmark" button on the Encoder Settings screen.
+3. **`m3_dashboard_golden_test.dart` regenerate** — when the `dart_test.yaml` skip is supposed to be off (per M8 deferred entry), the baseline being stale is a constant source of false-fails. Either regenerate or re-skip until the migration off `golden_toolkit` happens.
+4. **`last_seen` audit** on the mobile + desktop surfaces to confirm nothing depends on the old "frozen" semantics. Now that it actually updates, anything that was treating it as "paired-at proxy" might surprise a user.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No silent exceptions. Heartbeat failure logged WARNING with full traceback; no bare `except: pass`.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps.
+- [x] No layer-boundary violations. Heartbeat write lives in `auth_service`; routers call through; the `validate_token` dep is the right seam (it already had service-layer access via `Depends(get_db)`).
+- [x] No git-history rewrites.
+- [x] No edits to past migrations. `023` is a new file.
+- [x] No raw SQL string concatenation. All parameters bound. The window-function query is a plain SELECT with no user-derived variables.
+- [x] No bearer tokens / PII logged. Heartbeat path logs `client["id"]` (the public UUID), never the token.
+
+### Next Agent Should
+
+- **F6 support-bundle** for the next §11.1 cosmetic-follow-ups slice.
+- **Stale-baseline audit** on `m3_dashboard_golden_test.dart` — either regenerate or re-skip until the `golden_toolkit` migration.
+- **Audit `last_seen` consumers** on mobile + desktop now that the field actually refreshes per-request.
+---

@@ -69,10 +69,28 @@
 | id | TEXT (UUID) | ✅ | Primary key |
 | name | TEXT | ✅ | Device display name |
 | platform | TEXT | ✅ | Enum: `android`, `ios`, `windows`, `macos`, `linux` |
-| last_seen | TIMESTAMP | ✅ | Last connection time |
+| last_seen | TIMESTAMP | ✅ | Last connection time. **Refreshed on every authenticated request** as of migration 023 (the `validate_token` dependency calls `auth_service.update_client_heartbeat`). Before 023 the column was effectively frozen at pair / approval. |
 | is_trusted | BOOLEAN | ✅ | Whether server has approved this client |
 | auth_token | TEXT | ✅ | HMAC-SHA256 hash of bearer token — raw token never stored |
 | status | TEXT | ✅ | Enum: `pending`, `approved`, `rejected` (added migration 003) |
+| email | TEXT | ❌ | Optional contact captured at pair time (added migration 016) |
+| paired_at | TEXT | ❌ | ISO timestamp of first approval (added migration 016) |
+| last_ip | TEXT | ❌ | Socket-level IP of the client at pair time + every authenticated request (added migration 023). `NULL` until first authenticated traffic. **Tunneled requests** (cloudflared) record the loopback IP because `CF-Connecting-IP` isn't consumed in the heartbeat path; primary use case is LAN device identification. |
+
+#### API surface for `Client` lists
+
+The desktop's `GET /api/v1/auth/clients` (localhost-only) returns each client as a `ClientListItem` carrying `id`, `name`, `platform`, `status`, `last_seen`, `is_trusted`, `last_ip`, and an optional nested `active_session: ActiveSessionInfo` for the client's single in-flight stream session. The active-session join lives in `auth_service.list_clients` as a `LEFT JOIN ... ROW_NUMBER() OVER (PARTITION BY client_id ORDER BY started_at DESC) = 1` against `stream_sessions WHERE ended_at IS NULL`.
+
+`ActiveSessionInfo` fields:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| session_id | TEXT (UUID) | ✅ | `stream_sessions.id` |
+| started_at | TIMESTAMP | ✅ | When the session began |
+| encoder_used | TEXT | ❌ | The encoder picked by `session_router` at session start; `null` for stream-copy sessions (`-c:v copy`) |
+| media_title | TEXT | ❌ | `COALESCE(media_files.title, media_files.name)` — TMDB-derived title with filename fallback |
+
+`ActiveSessionInfo` is exposed both server-side (`apps/server/models/client.py`) and frontend-side (`packages/fluxora_core/lib/entities/client_list_item.dart`).
 
 ---
 

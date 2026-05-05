@@ -38,6 +38,8 @@ Authorization: Bearer {auth_token}
 | Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /info/restart`, `POST /info/stop`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
 | No auth | — | `/info`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
 
+**Heartbeat side effect (migration 023, 2026-05-06):** every successful `validate_token` resolution writes `clients.last_seen = NOW()` and `clients.last_ip = request.client.host` for the resolving client. This is best-effort — wrapped in try/except + WARNING log so a transient SQLite write failure can't 401 a valid request — but it changes the semantics of `last_seen` from "frozen at pair / approval" to "live within one poll cycle." Tunneled requests (cloudflared) record the loopback IP because `CF-Connecting-IP` isn't consumed in this path; documented limitation. See [`docs/03_data/02_database_schema.md`](../03_data/02_database_schema.md) migration 023 row.
+
 ---
 
 ## Endpoints
@@ -215,7 +217,7 @@ Authorization: Bearer {auth_token}
 ---
 
 ### `GET /api/v1/auth/clients`
-**Description:** List all paired clients (all statuses). Used by the desktop control panel.  
+**Description:** List all paired clients (all statuses) with their last-known IP and one in-flight stream session (when present). Used by the desktop control panel's Clients screen — table rows + detail panel.  
 **Auth:** Localhost only — `require_local_caller` dependency rejects non-loopback callers with `403`.  
 **Status:** ✅ Implemented
 
@@ -228,13 +230,25 @@ Authorization: Bearer {auth_token}
       "name": "Pixel 8 Pro",
       "platform": "android",
       "status": "approved",
-      "last_seen": "2026-04-28T12:00:00",
-      "is_trusted": true
+      "last_seen": "2026-05-06T12:00:00",
+      "is_trusted": true,
+      "last_ip": "192.168.1.42",
+      "active_session": {
+        "session_id": "uuid",
+        "started_at": "2026-05-06T11:55:00",
+        "encoder_used": "h264_nvenc",
+        "media_title": "Inception"
+      }
     }
   ],
   "total": 1
 }
 ```
+
+- `last_ip` (migration 023): socket-level IP captured at pair time and refreshed on every authenticated request. `null` for rows that haven't sent an authenticated request since the upgrade. Tunneled requests (cloudflared) record the loopback IP — the `CF-Connecting-IP` header is NOT consumed in the heartbeat path; documented limitation, not a bug.
+- `last_seen` semantics: as of migration 023 this is now refreshed by `auth_service.update_client_heartbeat()` from the `validate_token` dependency. **Before migration 023** the column was effectively frozen at pair / approval — any consumer that read this field as "last poll time" was reading stale data. Audit any UI that surfaces this value to confirm it now means what it says.
+- `active_session`: `null` when the client has no `stream_sessions` row with `ended_at IS NULL`. When multiple in-flight sessions exist for a single client (defensive — v1 caps `concurrent_session_cap` at 1 per encoder), the most recently started one wins via `ROW_NUMBER() OVER (PARTITION BY client_id ORDER BY started_at DESC) = 1`. `media_title` falls back to `media_files.name` when the file has no TMDB-derived `title`.
+- `encoder_used` is the encoder picked by `session_router` at session start. `null` for stream-copy sessions (FFmpeg `-c:v copy`) since no encoder was selected.
 
 **Errors:** `403` not from localhost
 

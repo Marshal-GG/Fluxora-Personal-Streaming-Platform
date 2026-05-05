@@ -54,7 +54,15 @@ apps/server/
 │       ├── 012_profile_fields.sql  # display_name, email, avatar_path, profile_created_at, last_login_at on user_settings
 │       ├── 013_notifications.sql   # notifications table + idx_notifications_unread
 │       ├── 014_activity_events.sql # activity_events table + 2 indexes
-│       └── 015_extended_settings.sql # 18 new columns on user_settings (general/network/streaming/security/advanced)
+│       ├── 015_extended_settings.sql # 18 new columns on user_settings (general/network/streaming/security/advanced)
+│       ├── 016_media_quality_episodes_client_email.sql  # FFprobe quality + TV episode aggregation + clients.email/paired_at
+│       ├── 017_hwaccel_device.sql  # transcoding_hwaccel_device on user_settings
+│       ├── 018_sanitize_encoder.sql  # cleans legacy encoder values from user_settings.transcoding_encoder
+│       ├── 019_sanitize_license_key.sql  # nullifies license_key rows that hold the old 4-segment shape
+│       ├── 020_encoder_chain.sql   # transcoding_chain TEXT (JSON list) on user_settings
+│       ├── 021_session_encoder.sql # encoder_used TEXT on stream_sessions
+│       ├── 022_remove_corrupt_media_paths.sql  # one-shot deletion of `[\filename` rows + dependent stream_sessions
+│       └── 023_clients_last_ip.sql # clients.last_ip TEXT — written at pair + every authenticated request via validate_token heartbeat
 ├── routers/
 │   ├── auth.py
 │   ├── activity.py             # GET /api/v1/activity; validate_token_or_local

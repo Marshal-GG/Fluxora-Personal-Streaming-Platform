@@ -2,7 +2,7 @@
 
 > **Category:** Security  
 > **Status:** Active  
-> **Last Updated:** 2026-05-04 (Phase B QA round — added QR-code pairing flow doc + mDNS-fallback narrative; the QR carries only network location, not credentials, so the operator-approve security model is unchanged. Phase A backfill plan §8.5 bug 1 fix — same-`client_id` re-pair now resets the row to `pending` and invalidates the prior token; new bearer-protected `GET /auth/clients/me`). 2026-05-01 added Cloudflare Tunnel threat model + admin-route hardening
+> **Last Updated:** 2026-05-06 (migration 023 — added `clients.last_ip` field + per-request heartbeat narrative to "Stored fields & PII surface" section). 2026-05-04 (Phase B QA round — added QR-code pairing flow doc + mDNS-fallback narrative; the QR carries only network location, not credentials, so the operator-approve security model is unchanged. Phase A backfill plan §8.5 bug 1 fix — same-`client_id` re-pair now resets the row to `pending` and invalidates the prior token; new bearer-protected `GET /auth/clients/me`). 2026-05-01 added Cloudflare Tunnel threat model + admin-route hardening.
 
 ---
 
@@ -218,6 +218,8 @@ To prevent widespread key sharing while maintaining privacy, Phase 5 will introd
 | Auth tokens | Server: SHA-256 hash in DB only | Plain token never persisted on server |
 | Auth tokens | Client: `flutter_secure_storage` | OS-backed secure enclave |
 | Device names | SQLite `clients` table | Plain text — not sensitive |
+| Client email (optional) | SQLite `clients.email` | Captured during pairing's optional contact step (Phase A backfill plan §9.1); echoed via `GET /auth/clients/me` only; never used as identity key |
+| Client `last_ip` | SQLite `clients.last_ip` | Migration 023. Populated at pair time and refreshed on every authenticated request via `validate_token` → `auth_service.update_client_heartbeat`. Stored in plain text (operational data, not a credential). Only ever returned over the localhost-only `GET /api/v1/auth/clients` endpoint (`require_local_caller` rejects non-loopback callers with 403). **Tunneled requests record the loopback IP**: `request.client.host` is the cloudflared forwarder when traffic arrives via `fluxora-api.marshalx.dev`; `CF-Connecting-IP` is intentionally not consumed in the heartbeat path because (a) the field's primary use case is LAN device identification for pair-debug, and (b) persisting public IPs from tunneled traffic would require an explicit privacy-policy update. If a future feature needs the real public IP, gate it behind an opt-in setting and document the privacy implications here first. **Never logged**: `update_client_heartbeat` logs only the client UUID on failure paths, never the IP. |
 | Media file paths | SQLite `files` table | Paths within library roots only |
 | TURN credentials | `~/.fluxora/config.json` | Read-only file; not exposed via API |
 | Fluxora license keys | SQLite `user_settings` / `polar_orders` | Entitlement tokens; never logged or returned in webhook responses |

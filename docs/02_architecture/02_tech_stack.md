@@ -119,6 +119,8 @@ Inherits everything from `fluxora_core` via a path dependency. Adds:
 | `file_picker` | ^11.0.2 | Folder/file pickers for library creation + uploads |
 | `dio` | ^5.9.2 | (Own pin; matches core) |
 | `window_manager` | ^0.5.1 | Frameless-window chrome — backs the custom 36 px `FluxTitlebar` (drag region, minimize / maximize / close, min-size enforcement). OS title bar hidden via `TitleBarStyle.hidden` in `main.dart`. |
+| `qr_flutter` | ^4.1.0 | QR rendering for the desktop "Pair device" dialog (mobile scans the `fluxora://pair?host=&port=&name=` payload). |
+| `url_launcher` | ^6.3.2 | Opens external URLs from the Help screen's "Get Help" link rows via `launchUrl(uri, mode: LaunchMode.externalApplication)`. Added 2026-05-06 (F5 follow-up); single new dep, established Flutter-team package. Logger-wrapped failure paths in `_LinkRowState._open()`. |
 | `freezed_annotation` | ^3.0.0 | (Own pin) |
 | `json_annotation` | ^4.11.0 | (Own pin) |
 | `flutter_secure_storage` | ^9.2.4 | (Own pin) |

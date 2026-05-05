@@ -390,7 +390,7 @@ Two surface families:
 | `FluxAppBar` | [`packages/fluxora_core/lib/widgets/flux_app_bar.dart`](packages/fluxora_core/lib/widgets/flux_app_bar.dart) | 20 |
 | `FluxBottomTabs` | [`packages/fluxora_core/lib/widgets/flux_bottom_tabs.dart`](packages/fluxora_core/lib/widgets/flux_bottom_tabs.dart) | 20 |
 | `FluxSidebar` | [`apps/desktop/lib/shared/widgets/flux_sidebar.dart`](apps/desktop/lib/shared/widgets/flux_sidebar.dart) | 20 |
-| `FluxGlassDialog` | [`apps/desktop/lib/shared/widgets/flux_glass_dialog.dart`](apps/desktop/lib/shared/widgets/flux_glass_dialog.dart) | 20 |
+| `FluxGlassDialog` (**canonical `AlertDialog` replacement** — never use Material `AlertDialog` for new code) | [`apps/desktop/lib/shared/widgets/flux_glass_dialog.dart`](apps/desktop/lib/shared/widgets/flux_glass_dialog.dart) | 20 |
 | `FluxGlassMenu` (replaces `PopupMenuButton`) | [`apps/desktop/lib/shared/widgets/flux_glass_menu.dart`](apps/desktop/lib/shared/widgets/flux_glass_menu.dart) | 20 |
 | Command palette overlay | [`apps/desktop/lib/features/command_palette/presentation/widgets/command_palette_overlay.dart`](apps/desktop/lib/features/command_palette/presentation/widgets/command_palette_overlay.dart) | 8 |
 
