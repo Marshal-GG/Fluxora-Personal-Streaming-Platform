@@ -25,6 +25,7 @@ dependencies:
   dio: ^5.9.2
   window_manager: ^0.5.1
   qr_flutter: ^4.1.0
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

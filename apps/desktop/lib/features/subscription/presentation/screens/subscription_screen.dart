@@ -1047,6 +1047,7 @@ class _ManageTab extends StatelessWidget {
                           label: action.label,
                           sub: action.sub,
                           color: action.color,
+                          onTap: () => _openPortal(context),
                         ),
                       ),
                   ],
@@ -1087,6 +1088,21 @@ class _ManageTab extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  Future<void> _openPortal(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final url = await context.read<OrdersCubit>().openPortal();
+    if (!context.mounted) return;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          url != null
+              ? 'Portal URL copied to clipboard.'
+              : 'Portal URL not configured on server.',
+        ),
+      ),
     );
   }
 }
@@ -1146,12 +1162,14 @@ class _ActionRow extends StatefulWidget {
     required this.label,
     required this.sub,
     required this.color,
+    this.onTap,
   });
 
   final IconData icon;
   final String label;
   final String sub;
   final Color color;
+  final VoidCallback? onTap;
 
   @override
   State<_ActionRow> createState() => _ActionRowState();
@@ -1167,7 +1185,7 @@ class _ActionRowState extends State<_ActionRow> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
-        onTap: () {},  // TODO: open portal
+        onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),

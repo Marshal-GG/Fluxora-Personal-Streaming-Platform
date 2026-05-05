@@ -12,6 +12,7 @@ import 'package:fluxora_desktop/features/groups/presentation/cubit/groups_state.
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_glass_dialog.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
@@ -296,7 +297,6 @@ class _GroupsLoaded extends StatelessWidget {
   }
 
   void _showCreateDialog(BuildContext context) {
-    // TODO: Replace Material showDialog with FluxDialog at M6 cutover.
     showDialog<void>(
       context: context,
       builder: (dialogContext) => _CreateGroupDialog(
@@ -488,32 +488,26 @@ class _GroupRowState extends State<_GroupRow> {
   void _showDeleteConfirm(BuildContext context, Group g) {
     showDialog<void>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppColors.bgRaised,
-        title: Text(
-          'Delete "${g.name}"?',
-          style: AppTypography.h2
-              .copyWith(color: AppColors.textBright),
-        ),
-        content: Text(
-          'This will remove the group and all its member associations. This cannot be undone.',
-          style: AppTypography.bodySmall
-              .copyWith(color: AppColors.textMutedV2),
+      builder: (dialogCtx) => FluxGlassDialog(
+        title: Text('Delete "${g.name}"?'),
+        content: const Text(
+          'This will remove the group and all its member associations. '
+          'This cannot be undone.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.red,
+            ),
             onPressed: () {
               Navigator.pop(dialogCtx);
               context.read<GroupsCubit>().deleteGroup(g.id);
             },
-            child: const Text(
-              'Delete',
-              style: TextStyle(color: AppColors.red),
-            ),
+            child: const Text('Delete'),
           ),
         ],
       ),
@@ -771,7 +765,6 @@ class _GroupDetailPanel extends StatelessWidget {
   }
 
   void _showEditDialog(BuildContext context, Group g) {
-    // TODO: Replace with FluxDialog at M6 cutover.
     showDialog<void>(
       context: context,
       builder: (dialogCtx) => _EditGroupDialog(
@@ -788,29 +781,31 @@ class _GroupDetailPanel extends StatelessWidget {
   }
 
   void _showAddMemberDialog(BuildContext context, String groupId) {
-    // TODO: Replace with FluxDialog at M6 cutover.
     final controller = TextEditingController();
     showDialog<void>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppColors.bgRaised,
-        title: Text('Add Member',
-            style:
-                AppTypography.h2.copyWith(color: AppColors.textBright)),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'Client ID',
-            border: OutlineInputBorder(),
+      builder: (dialogCtx) => FluxGlassDialog(
+        title: const Text('Add Member'),
+        content: SizedBox(
+          width: 360,
+          child: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Client ID',
+              border: OutlineInputBorder(),
+            ),
           ),
-          style: AppTypography.body.copyWith(color: AppColors.textBody),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.violet,
+            ),
             onPressed: () {
               final clientId = controller.text.trim();
               if (clientId.isNotEmpty) {
@@ -830,30 +825,25 @@ class _GroupDetailPanel extends StatelessWidget {
   void _confirmDelete(BuildContext context, Group g) {
     showDialog<void>(
       context: context,
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppColors.bgRaised,
-        title: Text(
-          'Delete "${g.name}"?',
-          style:
-              AppTypography.h2.copyWith(color: AppColors.textBright),
-        ),
-        content: Text(
+      builder: (dialogCtx) => FluxGlassDialog(
+        title: Text('Delete "${g.name}"?'),
+        content: const Text(
           'This will remove the group and all its member associations.',
-          style: AppTypography.bodySmall
-              .copyWith(color: AppColors.textMutedV2),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogCtx),
             child: const Text('Cancel'),
           ),
-          TextButton(
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.red,
+            ),
             onPressed: () {
               Navigator.pop(dialogCtx);
               context.read<GroupsCubit>().deleteGroup(g.id);
             },
-            child: const Text('Delete',
-                style: TextStyle(color: AppColors.red)),
+            child: const Text('Delete'),
           ),
         ],
       ),
@@ -1015,41 +1005,40 @@ class _CreateGroupDialogState extends State<_CreateGroupDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: AppColors.bgRaised,
-      title: Text('Create Group',
-          style: AppTypography.h2.copyWith(color: AppColors.textBright)),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _nameCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Group Name *',
-              border: OutlineInputBorder(),
+    return FluxGlassDialog(
+      title: const Text('Create Group'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Group Name *',
+                border: OutlineInputBorder(),
+              ),
             ),
-            style:
-                AppTypography.body.copyWith(color: AppColors.textBody),
-          ),
-          const SizedBox(height: AppSpacing.s12),
-          TextField(
-            controller: _descCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Description (optional)',
-              border: OutlineInputBorder(),
+            const SizedBox(height: AppSpacing.s12),
+            TextField(
+              controller: _descCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Description (optional)',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
             ),
-            style:
-                AppTypography.body.copyWith(color: AppColors.textBody),
-            maxLines: 2,
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
-        TextButton(
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.violet),
           onPressed: () {
             final name = _nameCtrl.text.trim();
             if (name.isEmpty) return;
@@ -1095,41 +1084,40 @@ class _EditGroupDialogState extends State<_EditGroupDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      backgroundColor: AppColors.bgRaised,
-      title: Text('Edit Group',
-          style: AppTypography.h2.copyWith(color: AppColors.textBright)),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _nameCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Group Name',
-              border: OutlineInputBorder(),
+    return FluxGlassDialog(
+      title: const Text('Edit Group'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Group Name',
+                border: OutlineInputBorder(),
+              ),
             ),
-            style:
-                AppTypography.body.copyWith(color: AppColors.textBody),
-          ),
-          const SizedBox(height: AppSpacing.s12),
-          TextField(
-            controller: _descCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Description',
-              border: OutlineInputBorder(),
+            const SizedBox(height: AppSpacing.s12),
+            TextField(
+              controller: _descCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Description',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
             ),
-            style:
-                AppTypography.body.copyWith(color: AppColors.textBody),
-            maxLines: 2,
-          ),
-        ],
+          ],
+        ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
-        TextButton(
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.violet),
           onPressed: () {
             final name = _nameCtrl.text.trim();
             if (name.isEmpty) return;

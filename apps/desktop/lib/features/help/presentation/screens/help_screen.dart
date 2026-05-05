@@ -6,6 +6,8 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:logger/logger.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_radii.dart';
@@ -472,7 +474,26 @@ class _LinkRow extends StatefulWidget {
 }
 
 class _LinkRowState extends State<_LinkRow> {
+  static final _log = Logger();
   bool _hovered = false;
+
+  Future<void> _open() async {
+    final raw = widget.url;
+    if (raw == null || raw.isEmpty) return;
+    final uri = Uri.tryParse(raw);
+    if (uri == null) {
+      _log.w('Help link has invalid URL: $raw');
+      return;
+    }
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok) {
+        _log.w('launchUrl returned false for $uri');
+      }
+    } on Exception catch (e, st) {
+      _log.e('Failed to open help link $uri', error: e, stackTrace: st);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -485,9 +506,7 @@ class _LinkRowState extends State<_LinkRow> {
         link: true,
         label: '${widget.title}, opens external link',
         child: GestureDetector(
-          onTap: () {
-            // TODO(M8): open URL via url_launcher once added
-          },
+          onTap: _open,
           child: Container(
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
