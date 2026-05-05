@@ -31,4 +31,18 @@ class PlayerRepositoryImpl implements PlayerRepository {
         Endpoints.streamProgress(sessionId),
         body: {'progress_sec': progressSec},
       );
+
+  @override
+  Future<void> seekStream(
+    String sessionId,
+    double seekSec, {
+    bool tonemap = false,
+  }) =>
+      _apiClient.post<void>(
+        Endpoints.streamSeek(sessionId),
+        queryParameters: {
+          'seek_sec': seekSec.toStringAsFixed(3),
+          if (tonemap) 'tonemap': 'true',
+        },
+      );
 }

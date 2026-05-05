@@ -19,6 +19,24 @@ const _kProgressIntervalSec = 10;
 /// How long to wait for WebRTC ICE to connect before falling back to HLS.
 const _kWebRtcTimeoutSec = 8;
 
+/// Seek-restart threshold.  Forward seeks at or above this delta go
+/// through the server (POST /seek → FFmpeg restart from the new
+/// timestamp); smaller forward seeks AND any backward seek stay
+/// in-player.  Backward is always safe in-player because the segments
+/// already exist on disk; small forward seeks fit inside the player's
+/// buffer + the HLS router's 5 s segment-wait.  5 s is intentionally
+/// conservative — bumping after field reports is cheap, but a too-large
+/// threshold leaves the user staring at a 404 retry storm.
+const _kSeekRestartThresholdSec = 5;
+
+/// Debounce window for seek-bar drag events.  Multiple `seekTo` calls
+/// within this window collapse into one server restart at the final
+/// position — without this, the user dragging the scrubber from 0:30 →
+/// 5:00 would trigger 30+ FFmpeg restarts as the drag progresses.  300 ms
+/// matches Material's drag-end throttle and is short enough that the
+/// user perceives "I let go and it seeked" rather than a lag.
+const _kSeekDebounceMs = 300;
+
 class PlayerCubit extends Cubit<PlayerState> {
   PlayerCubit({
     required PlayerRepository repository,
@@ -63,6 +81,18 @@ class PlayerCubit extends Cubit<PlayerState> {
   String? _lastFileId;
   String? _lastFileName;
   String? _lastPosterUrl;
+
+  // Cached playlist URL — needed by the seek-restart path to re-open the
+  // same Media on libmpv (the server rewrites the playlist contents in
+  // place; clients that loaded the old VOD list need an explicit re-open
+  // to pick up the new media-sequence + discontinuity markers).
+  String? _lastPlaylistUrl;
+  Map<String, String>? _lastPlaylistHeaders;
+
+  // Seek-restart debounce.  Coalesces a drag-bar's many in-flight position
+  // updates into a single server restart at the final position.
+  Timer? _seekDebounceTimer;
+  Duration? _pendingSeekTarget;
 
   // ---------------------------------------------------------------------------
   // Public
@@ -117,6 +147,8 @@ class PlayerCubit extends Cubit<PlayerState> {
 
       _player = Player();
       _controller = VideoController(_player!);
+      _lastPlaylistUrl = response.playlistUrl;
+      _lastPlaylistHeaders = headers;
       await _player!.open(Media(response.playlistUrl, httpHeaders: headers));
 
       final seekSec = response.resumeSec > 0 ? response.resumeSec : resumeSec;
@@ -192,6 +224,132 @@ class PlayerCubit extends Cubit<PlayerState> {
       posterUrl: _lastPosterUrl,
       tonemap: enabled,
     );
+  }
+
+  /// Seek the active stream to [position].
+  ///
+  /// Two paths, picked by the size of the seek delta:
+  ///
+  /// - **Backward seek**, or **forward seek under [_kSeekRestartThresholdSec]**:
+  ///   handled in the player.  Backward is always safe — segments are
+  ///   already on disk and libmpv seeks within its loaded data.  Small
+  ///   forward seeks fit inside the player's prefetch buffer plus the
+  ///   server's 5 s segment-wait absorbing a brief miss.
+  /// - **Forward seek at or above the threshold**: server-side restart.
+  ///   The current FFmpeg only ever encodes from t=0 (or wherever the
+  ///   last restart left it), so a far-ahead seek lands in territory it
+  ///   has not produced yet.  The cubit pauses the player, POSTs to
+  ///   `/seek`, re-opens the same playlist URL (libmpv has cached the
+  ///   VOD list and won't re-fetch on its own), seeks within the new
+  ///   playlist to [position], and resumes.
+  ///
+  /// Server-restart calls debounce by [_kSeekDebounceMs] so a seek-bar
+  /// drag fires exactly one restart at the final position.  No-op when
+  /// no session is active.  Failures fall back to in-player seek so the
+  /// drag never feels totally dead.
+  Future<void> seekTo(Duration position) async {
+    final p = _player;
+    final currentState = state;
+    if (p == null || currentState is! PlayerReady) return;
+    if (position.isNegative) position = Duration.zero;
+
+    final currentMs = p.state.position.inMilliseconds;
+    final targetMs = position.inMilliseconds;
+    final deltaMs = targetMs - currentMs;
+
+    // Backward seek + small forward seek → in-player; cancel any
+    // in-flight server-restart debounce so we don't double-act.
+    if (deltaMs < _kSeekRestartThresholdSec * 1000) {
+      _seekDebounceTimer?.cancel();
+      _seekDebounceTimer = null;
+      _pendingSeekTarget = null;
+      try {
+        await p.seek(position);
+      } catch (e, st) {
+        _log.w('In-player seek failed', error: e, stackTrace: st);
+      }
+      return;
+    }
+
+    // Server-restart path: debounce drag-end events, store the latest
+    // target.  When the timer fires we read whatever the most-recent
+    // target was, so a slow drag from 0:30 → 5:00 ends up calling
+    // _commitServerSeek(5:00) once instead of N times.
+    _pendingSeekTarget = position;
+    _seekDebounceTimer?.cancel();
+    _seekDebounceTimer = Timer(
+      const Duration(milliseconds: _kSeekDebounceMs),
+      () {
+        final target = _pendingSeekTarget;
+        if (target != null) {
+          _pendingSeekTarget = null;
+          _commitServerSeek(target);
+        }
+      },
+    );
+  }
+
+  /// Backing implementation for the server-restart path of [seekTo].
+  ///
+  /// Pre-conditions verified at call time: a `Player` exists, a session
+  /// is active, and the playlist URL was cached at start_stream time.
+  /// All three are immutable for the duration of a session, so the
+  /// happy path never recovers from a missing prerequisite — instead
+  /// it logs and falls back to an in-player seek so playback isn't
+  /// completely dead.
+  Future<void> _commitServerSeek(Duration target) async {
+    final p = _player;
+    final sid = _sessionId;
+    final url = _lastPlaylistUrl;
+    final headers = _lastPlaylistHeaders;
+    final currentState = state;
+    if (p == null || sid == null || url == null || currentState is! PlayerReady) {
+      return;
+    }
+
+    emit(currentState.copyWith(isSeeking: true));
+    try {
+      await p.pause();
+      await _repository.seekStream(
+        sid,
+        target.inMilliseconds / 1000.0,
+        tonemap: currentState.tonemapped,
+      );
+
+      // Re-open the SAME playlist URL.  The server has rewritten
+      // playlist.m3u8 in place (new media-sequence + discontinuity
+      // marker); libmpv won't re-fetch on its own because the original
+      // load saw `#EXT-X-ENDLIST` and considers VOD playlists immutable.
+      // Re-opening the Media forces a fresh GET.
+      await p.open(
+        Media(url, httpHeaders: headers ?? const {}),
+        play: false,
+      );
+      // The new playlist starts at the seek-aligned segment boundary
+      // (server snaps to floor(seek/hls_time) * hls_time).  Within the
+      // new playlist, seek to the precise requested position.
+      await p.seek(target);
+      await p.play();
+      emit(currentState.copyWith(isSeeking: false));
+    } catch (e, st) {
+      _log.w(
+        'Server seek-restart failed; falling back to in-player seek',
+        error: e,
+        stackTrace: st,
+      );
+      try {
+        await p.seek(target);
+        await p.play();
+      } catch (e2, st2) {
+        _log.w('In-player fallback seek also failed',
+            error: e2, stackTrace: st2);
+      }
+      // Drop the seeking flag whether the fallback worked or not — the
+      // overlay should not stay up forever on a hard failure.
+      if (state is PlayerReady) {
+        emit((state as PlayerReady).copyWith(isSeeking: false));
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -307,6 +465,11 @@ class PlayerCubit extends Cubit<PlayerState> {
   Future<void> _disposeCurrentSession() async {
     _progressTimer?.cancel();
     _progressTimer = null;
+    _seekDebounceTimer?.cancel();
+    _seekDebounceTimer = null;
+    _pendingSeekTarget = null;
+    _lastPlaylistUrl = null;
+    _lastPlaylistHeaders = null;
     if (_sessionId != null) {
       // Best-effort final progress report; swallow per the original
       // close() behaviour.

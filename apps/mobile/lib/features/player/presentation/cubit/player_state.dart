@@ -32,6 +32,7 @@ class PlayerReady extends PlayerState {
     this.streamPath = StreamPath.hls,
     this.hdrFormat,
     this.tonemapped = false,
+    this.isSeeking = false,
   });
 
   final String sessionId;
@@ -54,10 +55,18 @@ class PlayerReady extends PlayerState {
   /// display determines the final look).
   final bool tonemapped;
 
+  /// True while a server-side seek-restart is in flight (POST /seek →
+  /// playlist re-open).  Drives a small "Seeking…" / spinner overlay so
+  /// the user understands why playback paused.  Distinct from media_kit's
+  /// own buffering signal because the server restart needs ≥1 segment
+  /// of wall-time to produce its first new segment, which is a longer
+  /// gap than the player's normal buffer-fill animation can explain.
+  final bool isSeeking;
+
   /// True when the source is HDR.  Convenience alias.
   bool get isHdrSource => hdrFormat != null && hdrFormat!.isNotEmpty;
 
-  PlayerReady copyWith({StreamPath? streamPath}) => PlayerReady(
+  PlayerReady copyWith({StreamPath? streamPath, bool? isSeeking}) => PlayerReady(
         sessionId: sessionId,
         fileName: fileName,
         player: player,
@@ -66,6 +75,7 @@ class PlayerReady extends PlayerState {
         streamPath: streamPath ?? this.streamPath,
         hdrFormat: hdrFormat,
         tonemapped: tonemapped,
+        isSeeking: isSeeking ?? this.isSeeking,
       );
 }
 

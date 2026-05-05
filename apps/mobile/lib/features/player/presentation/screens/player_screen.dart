@@ -242,6 +242,9 @@ class _PlayerViewState extends State<_PlayerView>
                         tonemapped: state.tonemapped,
                         onTonemapChanged: (v) =>
                             context.read<PlayerCubit>().setTonemap(v),
+                        onSeek: (d) =>
+                            context.read<PlayerCubit>().seekTo(d),
+                        isSeeking: state.isSeeking,
                       ),
                       _MinimizeHandle(
                         onUpdate: _onMinimizeUpdate,
@@ -331,6 +334,8 @@ class _VideoView extends StatelessWidget {
     this.hdrFormat,
     this.tonemapped = false,
     this.onTonemapChanged,
+    this.onSeek,
+    this.isSeeking = false,
   });
 
   final VideoController controller;
@@ -339,6 +344,14 @@ class _VideoView extends StatelessWidget {
   final String? hdrFormat;
   final bool tonemapped;
   final ValueChanged<bool>? onTonemapChanged;
+  final ValueChanged<Duration>? onSeek;
+
+  /// True while a server-side seek-restart is in flight.  Renders a
+  /// dimming scrim + spinner so the user understands why playback is
+  /// paused (the server may take ≥1 segment of wall-time to produce
+  /// the new first segment, especially under tonemap / software
+  /// transcode).
+  final bool isSeeking;
 
   @override
   Widget build(BuildContext context) {
@@ -358,8 +371,52 @@ class _VideoView extends StatelessWidget {
           hdrFormat: hdrFormat,
           tonemapped: tonemapped,
           onTonemapChanged: onTonemapChanged,
+          onSeek: onSeek,
         ),
+        if (isSeeking) const _SeekingOverlay(),
       ],
+    );
+  }
+}
+
+/// Translucent dimming scrim + centred spinner shown while a server
+/// seek-restart is in flight.  Distinct from media_kit's own buffering
+/// indicator because the server restart needs the ≥10 s of FFmpeg
+/// startup time before the new first segment lands — without this
+/// overlay the user sees a frozen frame and assumes the player crashed.
+class _SeekingOverlay extends StatelessWidget {
+  const _SeekingOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Positioned.fill(
+      child: ColoredBox(
+        color: Color(0x66000000),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 44,
+                height: 44,
+                child: CircularProgressIndicator(
+                  color: AppColors.violet,
+                  strokeWidth: 3,
+                ),
+              ),
+              SizedBox(height: 12),
+              Text(
+                'Seeking…',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

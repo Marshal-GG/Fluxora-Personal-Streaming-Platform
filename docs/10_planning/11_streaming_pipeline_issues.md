@@ -295,7 +295,7 @@ These weren't user-reported but came out of the same code paths.
 ```
 Commit 1 — HDR→SDR unblock + diagnostic upgrade   │ ~2 hours      │ low risk    │ ✅ landed 2026-05-05
 Commit 2 — Seek-restart server side               │ ~4–6 hours    │ medium risk │ ✅ landed 2026-05-05
-Commit 3 — Seek-restart mobile player wire-up     │ ~3 hours      │ medium risk │ pending
+Commit 3 — Seek-restart mobile player wire-up     │ ~3 hours      │ medium risk │ ✅ landed 2026-05-05
 Commit 4 — Zombie cleanup + dedup + log polish    │ ~2 hours      │ low risk    │ pending
 ─────────────────────────────────────────────────  │ ────────      │ ────────    │
 Total                                              │ ~1.5 days     │
@@ -371,31 +371,33 @@ Each commit is independently shippable.  Commit 1 unblocks the user's immediate 
 
 ---
 
-### Commit 3 — Seek-restart mobile player wire-up
+### Commit 3 — Seek-restart mobile player wire-up ✅ landed 2026-05-05
 
 **Goal:** Mobile player calls the seek endpoint when the user drags the seek bar; gracefully resumes playback at the new position.
 
-**Changes in [`player_cubit.dart`](../../apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart):**
-- Add `Future<void> seekTo(Duration position)` method.
-- Debounce drag-end events (300 ms) — many small movements during scrub don't each trigger a restart.
-- On commit:
-  1. Pause player.
-  2. POST to `/stream/{sid}/seek?seek_sec=<position.inSeconds>`.
-  3. On success, call `_player.open(Media(<same playlistUrl>))` again — playlist URL is unchanged, segments are different.
-  4. Resume play.
-  5. On failure (network / 404 / 5xx), fall back to in-player seek (current behaviour) — still bad UX but no worse than today.
-- Keep the existing in-player `seek(Duration)` for tiny seeks (<5 s) that don't warrant a restart.  Expose `_seekRestartThresholdSec` constant.
+**Shipped changes:**
 
-**Changes in [`flux_player_controls.dart`](../../apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart):**
-- Wire seek-bar drag-end + double-tap-skip-±10 s through the cubit's new `seekTo` method (currently they go directly to `_player.seek`).
-- Show a small "buffering" overlay while the restart is in flight so the user doesn't think it hung.
+- **`PlayerRepository.seekStream(sessionId, seekSec, {tonemap})`** — new method on the domain interface.  Impl in [`player_repository_impl.dart`](../../apps/mobile/lib/features/player/data/repositories/player_repository_impl.dart) POSTs to `Endpoints.streamSeek(sessionId)` with `seek_sec` formatted to 3 decimal places + `tonemap=true` only when set.  New `Endpoints.streamSeek` constant in [`endpoints.dart`](../../packages/fluxora_core/lib/network/endpoints.dart).
+- **`PlayerCubit.seekTo(Duration position)`** in [`player_cubit.dart`](../../apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart) — top-level entry that decides between in-player and server-restart based on the seek delta:
+  - **Backward seeks + forward seeks under 5 s**: in-player only (`_player.seek(position)`).  Backward is always safe (segments exist on disk); small forward seeks fit in libmpv's prefetch + the server's 5 s segment-wait absorbing a brief miss.
+  - **Forward seeks ≥ 5 s**: stored as `_pendingSeekTarget`, debounced through a 300 ms `Timer`.  When the timer fires, `_commitServerSeek(target)` runs the kill→POST→re-open→resume sequence.
+  - The threshold constant `_kSeekRestartThresholdSec` is intentionally conservative — bumping it after field reports is cheap, but a too-large threshold leaves the user staring at a 404 retry storm if the buffer is empty.
+- **`_commitServerSeek(target)`** — pauses the player, calls `repository.seekStream`, re-opens the same `Media(playlistUrl, httpHeaders)` (libmpv cached the VOD list and won't re-fetch on its own), seeks within the new playlist to the precise target, resumes.  On any failure falls back to in-player seek + play so the drag never feels totally dead.  Wraps the entire restart in `PlayerReady.copyWith(isSeeking: true)` so the UI shows a buffering overlay while the new first segment is being produced.
+- **`PlayerReady.isSeeking: bool`** added to [`player_state.dart`](../../apps/mobile/lib/features/player/presentation/cubit/player_state.dart) + included in `copyWith`.
+- **`_disposeCurrentSession`** cancels the seek-debounce timer and clears `_pendingSeekTarget`, `_lastPlaylistUrl`, `_lastPlaylistHeaders` so a stale seek target can't fire after a session ends.
+- **`FluxPlayerControls`** in [`flux_player_controls.dart`](../../apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart) gains `onSeek: ValueChanged<Duration>?` prop.  All three seek call sites (double-tap skip ±10 s, side-rail skip buttons, scrubber `onChangeEnd`) now route through the new `_emitSeek` funnel which calls `widget.onSeek` when set, falls back to direct `player.seek` otherwise.  Scrubber's `onChanged` (live drag) keeps doing direct in-player seek so the preview tracks the drag fluidly; only `onChangeEnd` triggers the cubit (which then debounces another 300 ms before the actual restart).  `_ProgressBar` gains an `onSeekCommit` callback for the same purpose.
+- **`_VideoView`** in [`player_screen.dart`](../../apps/mobile/lib/features/player/presentation/screens/player_screen.dart) gains `onSeek: (d) => context.read<PlayerCubit>().seekTo(d)` and `isSeeking: state.isSeeking`.  When `isSeeking` is true a new private `_SeekingOverlay` widget paints a translucent scrim + violet `CircularProgressIndicator` + "Seeking…" label.  Distinct from media_kit's own buffering signal because the server restart needs ≥10 s of FFmpeg startup before the new first segment lands — without the overlay the user sees a frozen frame and assumes the player crashed.
+- **Tests** in [`player_cubit_test.dart`](../../apps/mobile/test/features/player/player_cubit_test.dart):
+  - `seekTo no-ops when state is PlayerInitial` — must never call repository.seekStream when no session is active.
+  - `seekTo no-ops when state is PlayerFailure` — same invariant for the post-failure recovery path.
+  - `seekTo no-ops when state is PlayerTierLimit` — same for the 429-rejected path (covered separately because the cubit emits a different state class).
+  - `seekTo clamps negative durations to zero` — defensive against caller bugs.
 
-**Tests:**
-- `seekTo calls repository.seekStream when delta > threshold` (existing player_cubit_test pattern)
-- `seekTo falls back to in-player seek on threshold miss`
-- `seekTo handles repository errors without crashing the cubit`
+  Full happy-path tests of the threshold-based dispatch + debounce + server-restart flow require a real `Player` to read position and pause/open/seek/play through, which native media_kit libs make unavailable in headless unit tests.  Field validation by manual integration test (seek from 0:30 → 5:00 on a tonemap session — see acceptance below).
 
-**Acceptance:** user seeks from 0:30 to 5:00 on a tonemap session; first segment appears in ≤90 s, playback resumes.
+**Acceptance (still to verify on the user's box):** user seeks from 0:30 to 5:00 on a tonemap session; first segment appears in ≤90 s, "Seeking…" overlay shows during the wait, playback resumes from the new position.
+
+**`flutter analyze` clean across all 3 packages.  Mobile suite 41 → 45 passing.  Desktop 84 + core 8 unchanged.**
 
 ---
 

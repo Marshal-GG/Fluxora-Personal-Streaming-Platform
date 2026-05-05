@@ -33,6 +33,7 @@ class FluxPlayerControls extends StatefulWidget {
     this.hdrFormat,
     this.tonemapped = false,
     this.onTonemapChanged,
+    this.onSeek,
     super.key,
   });
 
@@ -54,6 +55,15 @@ class FluxPlayerControls extends StatefulWidget {
   /// this to `PlayerCubit.setTonemap(bool)`.  Null disables the toggle
   /// item in the overflow menu.
   final ValueChanged<bool>? onTonemapChanged;
+
+  /// Invoked when the user requests a seek (scrubber drag, double-tap
+  /// skip ±10 s).  The cubit decides whether to do an in-player seek
+  /// (small delta / backward) or a server-side restart (large forward
+  /// delta) — the controls just emit the desired target and don't try
+  /// to call ``player.seek`` themselves.  Wired from player_screen to
+  /// ``PlayerCubit.seekTo``.  Null falls back to the legacy direct
+  /// ``player.seek`` path.
+  final ValueChanged<Duration>? onSeek;
 
   @override
   State<FluxPlayerControls> createState() => _FluxPlayerControlsState();
@@ -205,8 +215,21 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
     var target = pos + delta;
     if (target < Duration.zero) target = Duration.zero;
     if (target > dur) target = dur;
-    widget.player.seek(target);
+    _emitSeek(target);
     widget.controller.show();
+  }
+
+  /// Single seek funnel — routes through the cubit when the parent has
+  /// supplied [FluxPlayerControls.onSeek], otherwise falls back to the
+  /// legacy direct call.  Used by the scrubber, the double-tap-skip
+  /// ripple, and the side-rail skip buttons.
+  void _emitSeek(Duration target) {
+    final cb = widget.onSeek;
+    if (cb != null) {
+      cb(target);
+    } else {
+      widget.player.seek(target);
+    }
   }
 
   void _togglePlay() {
@@ -515,7 +538,10 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      _ProgressBar(player: widget.player),
+                      _ProgressBar(
+                        player: widget.player,
+                        onSeekCommit: _emitSeek,
+                      ),
                       const SizedBox(height: 8),
                       _QuickActions(
                         onLock: c.lock,
@@ -767,9 +793,15 @@ class _CircleButton extends StatelessWidget {
 }
 
 class _ProgressBar extends StatelessWidget {
-  const _ProgressBar({required this.player});
+  const _ProgressBar({required this.player, this.onSeekCommit});
 
   final Player player;
+
+  /// Called once on `onChangeEnd` with the final scrub target so the
+  /// cubit can decide between in-player seek and server restart.
+  /// Live `onChanged` updates still go straight to the player so the
+  /// preview tracks the drag fluidly without a 300 ms-debounced hop.
+  final ValueChanged<Duration>? onSeekCommit;
 
   String _format(Duration d) {
     final h = d.inHours;
@@ -822,8 +854,23 @@ class _ProgressBar extends StatelessWidget {
                       child: Slider(
                         value: value,
                         onChanged: (v) {
+                          // While the user is actively dragging the
+                          // thumb we keep updating the in-player
+                          // position so the video preview tracks the
+                          // drag.  The expensive server-restart only
+                          // fires on `onChangeEnd` when the cubit
+                          // sees the final target (debounced 300 ms).
                           final ms = (dur.inMilliseconds * v).round();
                           player.seek(Duration(milliseconds: ms));
+                        },
+                        onChangeEnd: (v) {
+                          final ms = (dur.inMilliseconds * v).round();
+                          final target = Duration(milliseconds: ms);
+                          if (onSeekCommit != null) {
+                            onSeekCommit!(target);
+                          } else {
+                            player.seek(target);
+                          }
                         },
                       ),
                     ),

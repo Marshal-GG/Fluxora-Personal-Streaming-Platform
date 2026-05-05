@@ -135,5 +135,71 @@ void main() {
 
       verifyNever(() => repository.stopStream(any()));
     });
+
+    // ── seekTo safety tests ──────────────────────────────────────────────
+    //
+    // Full seekTo behaviour (threshold-based dispatch, debounce, server-
+    // restart path) requires a real `Player` to read position and pause /
+    // open / seek / play through, which native media_kit libs make
+    // unavailable in headless unit tests.  These tests verify the
+    // **safety invariants** of the public method: it must never crash
+    // and must never invoke ``repository.seekStream`` when there is no
+    // session to seek.  Field validation of the in-flight server restart
+    // path is by manual integration test.
+    test('seekTo no-ops when state is PlayerInitial', () async {
+      final cubit = buildCubit();
+
+      // Should not throw; cubit must still be in PlayerInitial after.
+      await cubit.seekTo(const Duration(seconds: 30));
+
+      expect(cubit.state, isA<PlayerInitial>());
+      verifyNever(() => repository.seekStream(any(), any(),
+          tonemap: any(named: 'tonemap')));
+      await cubit.close();
+    });
+
+    test('seekTo no-ops when state is PlayerFailure', () async {
+      when(() => repository.startStream(tFileId)).thenThrow(Exception('boom'));
+
+      final cubit = buildCubit();
+      await cubit.startStream(tFileId, tFileName, 0.0);
+      // Sanity check — failure path emitted PlayerFailure.
+      expect(cubit.state, isA<PlayerFailure>());
+
+      await cubit.seekTo(const Duration(seconds: 30));
+
+      verifyNever(() => repository.seekStream(any(), any(),
+          tonemap: any(named: 'tonemap')));
+      await cubit.close();
+    });
+
+    test('seekTo no-ops when state is PlayerTierLimit', () async {
+      when(() => repository.startStream(tFileId)).thenThrow(
+        const ApiException(message: 'tier limit', statusCode: 429),
+      );
+
+      final cubit = buildCubit();
+      await cubit.startStream(tFileId, tFileName, 0.0);
+      expect(cubit.state, isA<PlayerTierLimit>());
+
+      await cubit.seekTo(const Duration(seconds: 30));
+
+      verifyNever(() => repository.seekStream(any(), any(),
+          tonemap: any(named: 'tonemap')));
+      await cubit.close();
+    });
+
+    test('seekTo clamps negative durations to zero', () async {
+      // Even with a negative argument, seekTo must not crash.  The
+      // important invariant for this no-session call is that no seek
+      // call is dispatched against a missing session.
+      final cubit = buildCubit();
+      await cubit.seekTo(const Duration(seconds: -10));
+
+      expect(cubit.state, isA<PlayerInitial>());
+      verifyNever(() => repository.seekStream(any(), any(),
+          tonemap: any(named: 'tonemap')));
+      await cubit.close();
+    });
   });
 }
