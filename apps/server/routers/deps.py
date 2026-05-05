@@ -6,7 +6,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from config import settings
 from database.db import get_db
-from services.auth_service import get_trusted_client_by_token
+from services.auth_service import get_trusted_client_by_token, update_client_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ async def require_local_caller(request: Request) -> None:
 
 
 async def validate_token(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
     db: aiosqlite.Connection = Depends(get_db),
 ) -> aiosqlite.Row:
@@ -57,6 +58,16 @@ async def validate_token(
             detail="Invalid or revoked token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    last_ip = request.client.host if request.client else None
+    try:
+        await update_client_heartbeat(db, client["id"], last_ip=last_ip)
+    except Exception:
+        # Heartbeat is best-effort — never block an authenticated request
+        # on a transient write failure. The client is still valid.
+        logger.warning(
+            "Heartbeat update failed for client %s", client["id"], exc_info=True
+        )
     return client
 
 
@@ -73,8 +84,8 @@ async def validate_token_or_local(
     in that case so the loopback shortcut doesn't silently auth them.
     """
     if request.headers.get("CF-Connecting-IP"):
-        return await validate_token(credentials, db)
+        return await validate_token(request, credentials, db)
     host = request.client.host if request.client else "127.0.0.1"
     if host in LOOPBACK:
         return None
-    return await validate_token(credentials, db)
+    return await validate_token(request, credentials, db)

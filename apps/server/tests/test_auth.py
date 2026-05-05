@@ -153,6 +153,89 @@ async def test_list_clients_returns_after_pair_request(client: AsyncClient):
     assert item["platform"] == PAIR_BODY["platform"]
     assert item["status"] == "pending"
     assert item["is_trusted"] is False
+    # New fields from migration 023 + active-session join
+    assert "last_ip" in item
+    assert item["active_session"] is None
+
+
+# ── Migration 023 — last_ip + active_session join ─────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_request_pair_persists_client_ip(test_db):
+    """`request-pair` writes the request socket's host into clients.last_ip."""
+    async with AsyncClient(
+        transport=ASGITransport(app=app, client=("192.168.1.42", 50000)),
+        base_url="http://test",
+    ) as lan:
+        resp = await lan.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    assert resp.status_code == 200
+
+    async with test_db.execute(
+        "SELECT last_ip FROM clients WHERE id = ?", (PAIR_BODY["client_id"],)
+    ) as cur:
+        row = await cur.fetchone()
+    assert row is not None
+    assert row[0] == "192.168.1.42"
+
+
+@pytest.mark.asyncio
+async def test_list_clients_surfaces_last_ip_and_active_session(
+    client: AsyncClient, test_db
+):
+    """End-to-end: pair, approve, start a synthetic session, then list."""
+    # Pair via a non-loopback transport so request_pair captures an IP.
+    async with AsyncClient(
+        transport=ASGITransport(app=app, client=("10.0.0.7", 51000)),
+        base_url="http://test",
+    ) as lan:
+        await lan.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+
+    # Insert a media file + open stream session pointing at the client.
+    await test_db.execute(
+        "INSERT INTO media_files (id, path, name, extension, size_bytes, library_id) "
+        "VALUES ('m1', '/tmp/m1.mp4', 'Inception', 'mp4', 1, NULL)"
+    )
+    await test_db.execute(
+        "INSERT INTO stream_sessions (id, file_id, client_id, started_at, ended_at, "
+        "                             connection_type, encoder_used) "
+        "VALUES ('sess-1', 'm1', ?, '2026-05-06T01:00:00Z', NULL, 'lan', 'h264_nvenc')",
+        (PAIR_BODY["client_id"],),
+    )
+    await test_db.commit()
+
+    response = await client.get("/api/v1/auth/clients")
+    assert response.status_code == 200
+    item = response.json()["clients"][0]
+    assert item["last_ip"] == "10.0.0.7"
+    assert item["active_session"] is not None
+    assert item["active_session"]["session_id"] == "sess-1"
+    assert item["active_session"]["encoder_used"] == "h264_nvenc"
+    assert item["active_session"]["media_title"] == "Inception"
+
+
+@pytest.mark.asyncio
+async def test_list_clients_active_session_null_when_session_ended(
+    client: AsyncClient, test_db
+):
+    """A closed session must not appear as the client's active_session."""
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await test_db.execute(
+        "INSERT INTO media_files (id, path, name, extension, size_bytes, library_id) "
+        "VALUES ('m2', '/tmp/m2.mp4', 'Movie', 'mp4', 1, NULL)"
+    )
+    await test_db.execute(
+        "INSERT INTO stream_sessions (id, file_id, client_id, started_at, ended_at, "
+        "                             connection_type) "
+        "VALUES ('sess-2', 'm2', ?, '2026-05-06T00:00:00Z', "
+        "        '2026-05-06T00:30:00Z', 'lan')",
+        (PAIR_BODY["client_id"],),
+    )
+    await test_db.commit()
+
+    response = await client.get("/api/v1/auth/clients")
+    assert response.status_code == 200
+    assert response.json()["clients"][0]["active_session"] is None
 
 
 @pytest.mark.asyncio

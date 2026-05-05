@@ -26,6 +26,21 @@ class AuthStatusResponse(BaseModel):
     auth_token: str | None = None
 
 
+class ActiveSessionInfo(BaseModel):
+    """Single active stream session attached to a client row.
+
+    Populated by the `auth_service.list_clients` LEFT JOIN against
+    `stream_sessions WHERE ended_at IS NULL`. All fields are NULL when
+    the client has no in-flight session — the client row still appears
+    in the response, just with `active_session = None`.
+    """
+
+    session_id: str
+    started_at: str
+    encoder_used: str | None = None
+    media_title: str | None = None
+
+
 class ClientListItem(BaseModel):
     id: str
     name: str
@@ -33,6 +48,8 @@ class ClientListItem(BaseModel):
     status: str
     last_seen: str
     is_trusted: bool
+    last_ip: str | None = None
+    active_session: ActiveSessionInfo | None = None
 
 
 class ClientListResponse(BaseModel):

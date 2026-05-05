@@ -54,6 +54,7 @@ async def create_pair_request(
     platform: str,
     app_version: str,
     email: str | None = None,
+    client_ip: str | None = None,
 ) -> None:
     """Insert a fresh pending pair request, or reset an existing client.
 
@@ -63,24 +64,30 @@ async def create_pair_request(
     `auth_token` so the previously-issued bearer is dead the instant the
     request lands. Any in-memory pending raw token for this client_id is
     dropped too.
+
+    `client_ip` is captured from the request socket and persisted to
+    `clients.last_ip` (nullable). On re-pair from a new network the
+    column is overwritten so the desktop UI always reflects the current
+    network the device is reaching the server from.
     """
     now = datetime.now(UTC).isoformat()
     await db.execute(
         """
         INSERT INTO clients (
             id, name, platform, last_seen, is_trusted, auth_token, status,
-            email, paired_at
-        ) VALUES (?, ?, ?, ?, 0, '', 'pending', ?, ?)
+            email, paired_at, last_ip
+        ) VALUES (?, ?, ?, ?, 0, '', 'pending', ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name       = excluded.name,
             platform   = excluded.platform,
             last_seen  = excluded.last_seen,
             email      = COALESCE(excluded.email, clients.email),
+            last_ip    = COALESCE(excluded.last_ip, clients.last_ip),
             is_trusted = 0,
             auth_token = '',
             status     = 'pending'
         """,
-        (client_id, device_name, platform, now, email, now),
+        (client_id, device_name, platform, now, email, now, client_ip),
     )
     await db.commit()
     clear_pending_token(client_id)
@@ -196,14 +203,69 @@ async def revoke_client(db: aiosqlite.Connection, client_id: str) -> None:
 
 
 async def list_clients(db: aiosqlite.Connection) -> list[aiosqlite.Row]:
+    """Return all clients with `last_ip` and a single active stream session.
+
+    Active-session join: a client is allowed at most one session in flight
+    in v1 (`concurrent_session_cap` is 1 per encoder), but defensively we
+    pick the most recently started one if multiple ever appear (window
+    function `ROW_NUMBER() OVER (PARTITION BY client_id ORDER BY started_at DESC)`).
+    The desktop Clients screen uses `active_session_*` columns to render
+    the detail-panel "Currently Streaming" block; rows where the join
+    didn't match keep them all NULL.
+    """
     async with db.execute(
         """
-        SELECT id, name, platform, status, last_seen, is_trusted
-        FROM clients
-        ORDER BY last_seen DESC
+        SELECT c.id, c.name, c.platform, c.status, c.last_seen,
+               c.is_trusted, c.last_ip,
+               sess.session_id        AS active_session_id,
+               sess.started_at        AS active_session_started_at,
+               sess.encoder_used      AS active_session_encoder,
+               sess.media_title       AS active_session_media_title
+          FROM clients c
+     LEFT JOIN (
+                SELECT s.client_id, s.id AS session_id, s.started_at,
+                       s.encoder_used,
+                       COALESCE(m.title, m.name) AS media_title,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY s.client_id
+                           ORDER BY s.started_at DESC
+                       ) AS rn
+                  FROM stream_sessions s
+             LEFT JOIN media_files m ON m.id = s.file_id
+                 WHERE s.ended_at IS NULL
+                ) sess
+                ON sess.client_id = c.id AND sess.rn = 1
+         ORDER BY c.last_seen DESC
         """
     ) as cur:
         return await cur.fetchall()
+
+
+async def update_client_heartbeat(
+    db: aiosqlite.Connection,
+    client_id: str,
+    last_ip: str | None = None,
+) -> None:
+    """Touch `last_seen` (and optionally `last_ip`) for an authenticated client.
+
+    Called from the `validate_token` dependency on every authenticated
+    request so the desktop's poll picks up presence + IP changes within a
+    poll cycle. SQLite write throughput easily covers Fluxora's expected
+    request rate (a handful of mobile clients on a home server); revisit
+    only if write contention shows up in profiling.
+    """
+    now = datetime.now(UTC).isoformat()
+    if last_ip is None:
+        await db.execute(
+            "UPDATE clients SET last_seen = ? WHERE id = ?",
+            (now, client_id),
+        )
+    else:
+        await db.execute(
+            "UPDATE clients SET last_seen = ?, last_ip = ? WHERE id = ?",
+            (now, last_ip, client_id),
+        )
+    await db.commit()
 
 
 async def get_trusted_client_by_token(

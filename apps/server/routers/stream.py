@@ -422,7 +422,7 @@ async def stop_stream(
     host = request.client.host if request.client else "127.0.0.1"
     if host not in LOOPBACK:
         # Not a local admin, must be a valid client and own the session
-        client = await validate_token(credentials, db)
+        client = await validate_token(request, credentials, db)
         if row["client_id"] != client["id"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

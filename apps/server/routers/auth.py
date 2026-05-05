@@ -8,6 +8,7 @@ from slowapi.util import get_remote_address
 from config import settings
 from database.db import get_db
 from models.client import (
+    ActiveSessionInfo,
     AuthStatusResponse,
     ClientListItem,
     ClientListResponse,
@@ -33,8 +34,17 @@ async def list_clients(
     _local: None = Depends(require_local_caller),
 ) -> ClientListResponse:
     rows = await auth_service.list_clients(db)
-    return ClientListResponse(
-        clients=[
+    items: list[ClientListItem] = []
+    for row in rows:
+        active = None
+        if row["active_session_id"]:
+            active = ActiveSessionInfo(
+                session_id=row["active_session_id"],
+                started_at=row["active_session_started_at"],
+                encoder_used=row["active_session_encoder"],
+                media_title=row["active_session_media_title"],
+            )
+        items.append(
             ClientListItem(
                 id=row["id"],
                 name=row["name"],
@@ -42,11 +52,11 @@ async def list_clients(
                 status=row["status"],
                 last_seen=row["last_seen"],
                 is_trusted=bool(row["is_trusted"]),
+                last_ip=row["last_ip"],
+                active_session=active,
             )
-            for row in rows
-        ],
-        total=len(rows),
-    )
+        )
+    return ClientListResponse(clients=items, total=len(items))
 
 
 @router.post("/request-pair", response_model=PairResponse)
@@ -56,6 +66,7 @@ async def request_pair(
     body: PairRequestBody,
     db: aiosqlite.Connection = Depends(get_db),
 ) -> PairResponse:
+    client_ip = request.client.host if request.client else None
     await auth_service.create_pair_request(
         db,
         client_id=body.client_id,
@@ -63,6 +74,7 @@ async def request_pair(
         platform=body.platform,
         app_version=body.app_version,
         email=body.email,
+        client_ip=client_ip,
     )
     return PairResponse(client_id=body.client_id, status="pending_approval")
 
