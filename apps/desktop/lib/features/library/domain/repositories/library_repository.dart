@@ -8,5 +8,16 @@ abstract interface class LibraryRepository {
   Future<Library> updateLibrary({required String libraryId, String? name, List<String>? rootPaths});
   Future<void> deleteLibrary(String libraryId);
   Future<int> scanLibrary(String libraryId);
+
+  /// Re-run TMDB enrichment for files in [libraryId] that lack a
+  /// `tmdb_id`.  Returns `(matched, enriched, skippedDvr)` so the UI
+  /// can render an exact "X of N enriched" toast.  When [includeDvr]
+  /// is true the server skips the DVR-filename heuristic and searches
+  /// capture-style filenames anyway.
+  Future<({int matched, int enriched, int skippedDvr})> enrichLibraryTmdb(
+    String libraryId, {
+    bool includeDvr = false,
+  });
+
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath});
 }

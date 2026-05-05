@@ -340,3 +340,162 @@ async def test_scan_library_lock_does_not_block_different_libraries(test_db) -> 
     assert inflight["max_seen"] == 2
     library_service._scan_locks.pop(lib_a, None)
     library_service._scan_locks.pop(lib_b, None)
+
+
+# ── enrich_library_tmdb ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_enrich_library_tmdb_no_api_key_returns_zeros() -> None:
+    """No-op when the operator hasn't set FLUXORA_TMDB_KEY — must return
+    zeros rather than crashing or making a network call."""
+    from unittest.mock import MagicMock
+
+    fake_db = MagicMock()
+    result = await library_service.enrich_library_tmdb(
+        fake_db, "lib-1", api_key="",
+    )
+    assert result == {"matched": 0, "enriched": 0, "skipped_dvr": 0}
+
+
+@pytest.mark.asyncio
+async def test_enrich_library_tmdb_only_targets_unenriched_files(
+    test_db,
+) -> None:
+    """Files that already have a `tmdb_id` must be excluded from the
+    rescan — otherwise running the action twice would double-charge
+    against the TMDB rate limit and overwrite operator-curated
+    metadata for no reason."""
+    import uuid
+    from unittest.mock import MagicMock
+
+    library_id = str(uuid.uuid4())
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths)"
+        " VALUES (?, ?, ?, ?)",
+        (library_id, "test-lib", "movies", '["/x"]'),
+    )
+
+    # Three files: one unenriched, one already enriched, one in a
+    # different library (must be ignored).
+    other_lib = str(uuid.uuid4())
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths)"
+        " VALUES (?, ?, ?, ?)",
+        (other_lib, "other", "movies", '["/y"]'),
+    )
+
+    now = "2026-05-05T00:00:00+00:00"
+    await test_db.executemany(
+        "INSERT INTO media_files"
+        " (id, path, name, extension, size_bytes,"
+        "  library_id, tmdb_id, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("f-needs", "/x/inception.mkv", "Inception.mkv", ".mkv",
+             1, library_id, None, now, now),
+            ("f-done", "/x/matrix.mkv", "The Matrix.mkv", ".mkv",
+             1, library_id, 603, now, now),
+            ("f-other", "/y/ali.mkv", "Ali.mkv", ".mkv",
+             1, other_lib, None, now, now),
+        ],
+    )
+    await test_db.commit()
+
+    fake_svc = MagicMock()
+    fake_svc.search = AsyncMock(return_value=None)
+    with patch.object(library_service, "TmdbService", return_value=fake_svc):
+        result = await library_service.enrich_library_tmdb(
+            test_db, library_id, api_key="dummy",
+        )
+
+    # Only the unenriched file in the target library was queried.
+    assert fake_svc.search.await_count == 1
+    queried_stems = {call.args[0] for call in fake_svc.search.await_args_list}
+    assert queried_stems == {"Inception"}
+    # The dict shape mirrors what the endpoint surfaces.
+    assert result["matched"] == 1
+    assert result["enriched"] == 0  # search returned None
+    assert result["skipped_dvr"] == 0
+
+
+@pytest.mark.asyncio
+async def test_enrich_library_tmdb_skips_dvr_pattern_by_default(
+    test_db,
+) -> None:
+    import uuid
+    from unittest.mock import MagicMock
+
+    library_id = str(uuid.uuid4())
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths)"
+        " VALUES (?, ?, ?, ?)",
+        (library_id, "test-lib", "movies", '["/x"]'),
+    )
+    now = "2026-05-05T00:00:00+00:00"
+    await test_db.executemany(
+        "INSERT INTO media_files"
+        " (id, path, name, extension, size_bytes,"
+        "  library_id, tmdb_id, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("f-real", "/x/inception.mkv", "Inception.mkv", ".mkv",
+             1, library_id, None, now, now),
+            ("f-dvr", "/x/cap.ts",
+             "Genshin Impact 2026.04.09 - 21.16.23.02.ts", ".ts",
+             1, library_id, None, now, now),
+        ],
+    )
+    await test_db.commit()
+
+    fake_svc = MagicMock()
+    fake_svc.search = AsyncMock(return_value=None)
+    with patch.object(library_service, "TmdbService", return_value=fake_svc):
+        result = await library_service.enrich_library_tmdb(
+            test_db, library_id, api_key="dummy",
+        )
+
+    # The DVR-style stem must NOT have been queried.
+    queried_stems = {call.args[0] for call in fake_svc.search.await_args_list}
+    assert queried_stems == {"Inception"}
+    assert result["matched"] == 2
+    assert result["skipped_dvr"] == 1
+
+
+@pytest.mark.asyncio
+async def test_enrich_library_tmdb_include_dvr_overrides_skip(
+    test_db,
+) -> None:
+    """``include_dvr=True`` is the explicit opt-in for archives where
+    capture-style filenames *do* contain real titles.  Must search
+    every file, not just the non-DVR ones."""
+    import uuid
+    from unittest.mock import MagicMock
+
+    library_id = str(uuid.uuid4())
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths)"
+        " VALUES (?, ?, ?, ?)",
+        (library_id, "test-lib", "movies", '["/x"]'),
+    )
+    now = "2026-05-05T00:00:00+00:00"
+    await test_db.execute(
+        "INSERT INTO media_files"
+        " (id, path, name, extension, size_bytes,"
+        "  library_id, tmdb_id, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("f-dvr", "/x/cap.ts",
+         "Some Show 2025.05.01 - 18.30.00.ts", ".ts",
+         1, library_id, None, now, now),
+    )
+    await test_db.commit()
+
+    fake_svc = MagicMock()
+    fake_svc.search = AsyncMock(return_value=None)
+    with patch.object(library_service, "TmdbService", return_value=fake_svc):
+        result = await library_service.enrich_library_tmdb(
+            test_db, library_id, api_key="dummy", include_dvr=True,
+        )
+
+    assert fake_svc.search.await_count == 1
+    assert result["skipped_dvr"] == 0  # we opted in

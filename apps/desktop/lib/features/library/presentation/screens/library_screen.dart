@@ -246,6 +246,7 @@ class _LibraryViewState extends State<_LibraryView> {
               return _LibraryDetailPanel(
                 library: lib,
                 onScan: () => _scan(context, lib),
+                onEnrichTmdb: () => _enrichTmdb(context, lib),
                 onEdit: () => _showEditLibraryDialog(context, lib),
                 onRemove: () => _confirmRemove(context, lib),
                 onOpenFiles: () =>
@@ -270,6 +271,37 @@ class _LibraryViewState extends State<_LibraryView> {
     } catch (e) {
       messenger.showSnackBar(
         SnackBar(content: Text('Scan failed: $e')),
+      );
+    }
+  }
+
+  /// Re-runs TMDB enrichment for files in [lib] that lack a `tmdb_id`.
+  /// The "Rescan TMDB" action tile in the detail panel calls this; it
+  /// surfaces the matched / enriched / DVR-skipped counts in a toast
+  /// so the operator knows whether the rescan actually filled gaps or
+  /// found nothing new to enrich.
+  Future<void> _enrichTmdb(BuildContext context, Library lib) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final result = await context
+          .read<LibraryCubit>()
+          .enrichLibraryTmdb(lib.id);
+      String body;
+      if (result.matched == 0) {
+        body = 'No files needing enrichment in "${lib.name}".';
+      } else if (result.enriched == 0) {
+        body = 'TMDB rescan — checked ${result.matched} file(s) in '
+            '"${lib.name}", no matches found'
+            '${result.skippedDvr > 0 ? " (${result.skippedDvr} skipped as DVR captures)" : ""}.';
+      } else {
+        body = 'TMDB rescan — enriched ${result.enriched} of '
+            '${result.matched} file(s) in "${lib.name}"'
+            '${result.skippedDvr > 0 ? " (${result.skippedDvr} skipped as DVR captures)" : ""}.';
+      }
+      messenger.showSnackBar(SnackBar(content: Text(body)));
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('TMDB rescan failed: $e')),
       );
     }
   }
@@ -1439,6 +1471,7 @@ class _LibraryDetailPanel extends StatelessWidget {
   const _LibraryDetailPanel({
     required this.library,
     required this.onScan,
+    required this.onEnrichTmdb,
     required this.onEdit,
     required this.onRemove,
     required this.onOpenFiles,
@@ -1446,6 +1479,7 @@ class _LibraryDetailPanel extends StatelessWidget {
 
   final Library library;
   final VoidCallback onScan;
+  final VoidCallback onEnrichTmdb;
   final VoidCallback onEdit;
   final VoidCallback onRemove;
   final VoidCallback onOpenFiles;
@@ -1603,6 +1637,13 @@ class _LibraryDetailPanel extends StatelessWidget {
               title: 'Scan Library',
               sub: 'Scan for new files and updates',
               onTap: onScan,
+            ),
+            const SizedBox(height: AppSpacing.s6),
+            _ActionTile(
+              icon: Icons.cloud_download_outlined,
+              title: 'Rescan TMDB',
+              sub: 'Fill in missing posters, titles, and overviews',
+              onTap: onEnrichTmdb,
             ),
             const SizedBox(height: AppSpacing.s6),
             _ActionTile(

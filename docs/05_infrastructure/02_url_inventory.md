@@ -66,7 +66,8 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `GET` | `/api/v1/library/{library_id}` | Token or localhost | Get single library |
 | `PATCH` | `/api/v1/library/{library_id}` | Token or localhost | Update name and/or root_paths (type is immutable, ADR-016) |
 | `DELETE` | `/api/v1/library/{library_id}` | Token or localhost | Delete library entry + file index (files on disk are NEVER touched, ADR-017) |
-| `POST` | `/api/v1/library/{library_id}/scan` | Token or localhost | Walk root paths, index files, run TMDB enrichment |
+| `POST` | `/api/v1/library/{library_id}/scan` | Token or localhost | Walk root paths, index files, run TMDB enrichment (per-library lock — concurrent calls serialise) |
+| `POST` | `/api/v1/library/{library_id}/enrich-tmdb` | Token or localhost | Re-run TMDB enrichment on rows where `tmdb_id IS NULL`; `?include_dvr=true` overrides DVR-filename skip |
 
 ### `stream` router
 

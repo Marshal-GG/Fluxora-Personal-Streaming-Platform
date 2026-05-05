@@ -200,3 +200,54 @@ async def scan_library(
             detail="Scan failed",
         )
     return {"library_id": library_id, "files_added": added}
+
+
+@router.post("/{library_id}/enrich-tmdb", status_code=status.HTTP_200_OK)
+async def enrich_library_tmdb(
+    library_id: str,
+    include_dvr: bool = False,
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> dict:
+    """Re-run TMDB enrichment for files in [library_id] that lack a
+    ``tmdb_id``.  Distinct from ``/scan`` (which only enriches newly-
+    inserted files) so the operator can fill in metadata gaps after
+    pasting the TMDB API key, fixing a typo in a filename, or moving
+    files between libraries — all without deleting + re-creating rows
+    (which would wipe resume markers + watch history).
+
+    Query param ``include_dvr=true`` bypasses the DVR-filename skip
+    heuristic (defaults to false).  Most users leave it off; enable
+    only if you know your capture archive's filenames *do* contain
+    real titles you want TMDB-searched.
+
+    Returns ``{library_id, matched, enriched, skipped_dvr}``.  No-op
+    (returns zeros) when ``FLUXORA_TMDB_KEY`` is not configured.
+    """
+    row = await library_service.get_library(db, library_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Library not found"
+        )
+    api_key = settings.fluxora_tmdb_key or None
+    if not api_key:
+        return {
+            "library_id": library_id,
+            "matched": 0,
+            "enriched": 0,
+            "skipped_dvr": 0,
+            "detail": "TMDB API key not configured",
+        }
+    try:
+        result = await library_service.enrich_library_tmdb(
+            db, library_id, api_key, include_dvr=include_dvr,
+        )
+    except Exception:
+        logger.error(
+            "TMDB rescan failed for library %s", library_id, exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="TMDB rescan failed",
+        )
+    return {"library_id": library_id, **result}

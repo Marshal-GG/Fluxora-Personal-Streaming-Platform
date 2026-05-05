@@ -72,6 +72,31 @@ class LibraryRepositoryImpl implements LibraryRepository {
       );
 
   @override
+  Future<({int matched, int enriched, int skippedDvr})> enrichLibraryTmdb(
+    String libraryId, {
+    bool includeDvr = false,
+  }) =>
+      _apiClient.post<({int matched, int enriched, int skippedDvr})>(
+        Endpoints.libraryEnrichTmdb(libraryId),
+        queryParameters: includeDvr ? const {'include_dvr': 'true'} : null,
+        fromJson: (data) {
+          int readInt(String key) {
+            if (data is Map<String, dynamic>) {
+              final v = data[key];
+              if (v is int) return v;
+              if (v is num) return v.toInt();
+            }
+            return 0;
+          }
+          return (
+            matched: readInt('matched'),
+            enriched: readInt('enriched'),
+            skippedDvr: readInt('skipped_dvr'),
+          );
+        },
+      );
+
+  @override
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath}) async {
     final formData = FormData.fromMap({
       'library_id': libraryId,

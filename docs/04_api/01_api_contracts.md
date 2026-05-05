@@ -521,7 +521,7 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 ---
 
 ### `POST /api/v1/library/{library_id}/scan`
-**Description:** Walk the library's `root_paths`, index all discovered media files by extension, enrich metadata via TMDB, and update `last_scanned`.  
+**Description:** Walk the library's `root_paths`, index all discovered media files by extension, enrich metadata via TMDB, and update `last_scanned`. Runs under a per-library `asyncio.Lock` so two concurrent scan requests for the same library serialise (the second sees no new files and returns 0).  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
@@ -531,6 +531,38 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 ```
 
 **Errors:** `404` library not found · `500` scan failed (I/O error)
+
+---
+
+### `POST /api/v1/library/{library_id}/enrich-tmdb`
+**Description:** Re-run TMDB enrichment for files in the library that lack a `tmdb_id`. Distinct from `/scan` — `/scan` only enriches files added in *this* scan, so files that were skipped by TMDB on first import (no API key configured at the time, capture-style filename, transient TMDB outage) stay un-enriched until this endpoint is called. Only touches rows where `tmdb_id IS NULL`; never overwrites operator-curated metadata.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented
+
+**Query params:**
+- `include_dvr` (bool, default `false`) — bypass the DVR-filename skip heuristic so capture-style filenames (`<title> YYYY.MM.DD - HH.MM.SS`) get TMDB-searched anyway. Most users leave this off; enable only when you know your capture archive's filenames *do* contain real titles.
+
+**Response:**
+```json
+{
+  "library_id": "uuid",
+  "matched": 42,        // files in the library with tmdb_id IS NULL
+  "enriched": 17,       // files actually updated (got a TMDB hit + DB write)
+  "skipped_dvr": 5      // files skipped by the DVR-filename heuristic
+}
+```
+
+When `FLUXORA_TMDB_KEY` is not configured, returns zeros + a `detail` field instead of erroring:
+
+```json
+{
+  "library_id": "uuid",
+  "matched": 0, "enriched": 0, "skipped_dvr": 0,
+  "detail": "TMDB API key not configured"
+}
+```
+
+**Errors:** `404` library not found · `500` rescan failed (TMDB outage / DB error)
 
 ---
 

@@ -782,14 +782,22 @@ async def _enrich_with_tmdb(
     db: aiosqlite.Connection,
     file_stems: list[tuple[str, str]],
     api_key: str,
-) -> None:
+    *,
+    skip_dvr: bool = True,
+) -> int:
     """Query TMDB for each (file_id, stem) pair and persist metadata.
+
+    Returns the number of files actually enriched (got a TMDB hit AND
+    DB row was updated).
 
     Stems matching the DVR / capture-card naming convention (a
     YYYY.MM.DD or YYYY-MM-DD date component anywhere in the name) are
-    skipped without an HTTP call — TMDB never matches these and the
-    log was filling with `0/N files updated` lines during library
-    indexing of capture archives.
+    skipped by default — TMDB never matches these and the log was
+    filling with `0/N files updated` lines during library indexing of
+    capture archives.  Pass ``skip_dvr=False`` to opt into searching
+    capture-style filenames anyway (e.g. when the user manually
+    triggers a TMDB rescan from the desktop UI for a library that
+    happens to mix capture archives with real media).
     """
     svc = TmdbService(api_key)
     enriched = 0
@@ -799,7 +807,7 @@ async def _enrich_with_tmdb(
         # Yield to event loop regularly to avoid starving other coroutines
         await asyncio.sleep(0)
 
-        if _looks_like_dvr_capture(stem):
+        if skip_dvr and _looks_like_dvr_capture(stem):
             skipped_dvr += 1
             continue
 
@@ -833,6 +841,68 @@ async def _enrich_with_tmdb(
         len(file_stems),
         skipped_dvr,
     )
+    return enriched
+
+
+async def enrich_library_tmdb(
+    db: aiosqlite.Connection,
+    library_id: str,
+    api_key: str,
+    *,
+    include_dvr: bool = False,
+) -> dict:
+    """Re-run TMDB enrichment over every existing file in [library_id]
+    that currently has no ``tmdb_id``.
+
+    Used by the desktop's "Rescan TMDB" button.  Distinct from
+    ``scan_library`` (which only enriches files added in *this* scan)
+    so a user who corrects a typo in their library's root path, or
+    adds the TMDB API key after the initial scan, can fill in the
+    gaps without deleting + re-creating the rows (which would lose
+    resume markers, watch history, encoder pinning, etc).
+
+    Returns a dict ``{matched, enriched, skipped_dvr}``:
+
+    - ``matched`` — files in the library that had ``tmdb_id IS NULL``
+      and were considered for enrichment.
+    - ``enriched`` — files actually updated (got a TMDB hit + DB row
+      written).
+    - ``skipped_dvr`` — files skipped because of the DVR-pattern
+      heuristic.  Only > 0 when ``include_dvr=False``.
+
+    ``include_dvr=True`` bypasses the DVR-filename skip; useful when
+    the user knows their capture archive *does* have title-bearing
+    filenames and they want to force-search them.
+    """
+    if not api_key:
+        return {"matched": 0, "enriched": 0, "skipped_dvr": 0}
+    async with db.execute(
+        "SELECT id, name FROM media_files"
+        " WHERE library_id = ? AND tmdb_id IS NULL",
+        (library_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    file_stems = [(r["id"], Path(r["name"]).stem) for r in rows]
+    enriched = await _enrich_with_tmdb(
+        db, file_stems, api_key, skip_dvr=not include_dvr,
+    )
+    skipped_dvr = 0
+    if not include_dvr:
+        skipped_dvr = sum(
+            1 for _, stem in file_stems if _looks_like_dvr_capture(stem)
+        )
+    logger.info(
+        "TMDB rescan done: library=%s matched=%d enriched=%d skipped_dvr=%d",
+        library_id,
+        len(file_stems),
+        enriched,
+        skipped_dvr,
+    )
+    return {
+        "matched": len(file_stems),
+        "enriched": enriched,
+        "skipped_dvr": skipped_dvr,
+    }
 
 
 async def upload_file_to_library(

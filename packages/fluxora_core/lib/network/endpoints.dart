@@ -37,6 +37,8 @@ class Endpoints {
   // Library
   static const String library = '$_base/library';
   static const String libraryScan = '$_base/library/scan';
+  static String libraryEnrichTmdb(String libraryId) =>
+      '$_base/library/$libraryId/enrich-tmdb';
 
   // Stream
   static String streamStart(String fileId) => '$_base/stream/start/$fileId';

@@ -145,6 +145,32 @@ class LibraryCubit extends Cubit<LibraryState> {
     }
   }
 
+  /// Re-run TMDB enrichment for files in [libraryId] that lack a
+  /// `tmdb_id`.  Returns `(matched, enriched, skippedDvr)` so the UI
+  /// can render an exact toast.  Surfaces ApiException and other
+  /// transport errors to the caller — the action button shows a
+  /// SnackBar on failure rather than silently swallowing.
+  Future<({int matched, int enriched, int skippedDvr})> enrichLibraryTmdb(
+    String libraryId, {
+    bool includeDvr = false,
+  }) async {
+    try {
+      final result = await _repository.enrichLibraryTmdb(
+        libraryId, includeDvr: includeDvr,
+      );
+      // Reload library + file list so any newly-set poster_url / title
+      // shows up immediately in the list view.
+      await _refresh();
+      return result;
+    } on ApiException catch (e, st) {
+      _log.e('TMDB rescan failed', error: e, stackTrace: st);
+      rethrow;
+    } catch (e, st) {
+      _log.e('TMDB rescan failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
   Future<void> uploadFile(String libraryId, String filePath) async {
     try {
       await _repository.uploadFileToLibrary(
