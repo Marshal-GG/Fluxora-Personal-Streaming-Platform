@@ -76,6 +76,7 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `POST` | `/api/v1/stream/start/{file_id}` | Bearer token | Start FFmpeg transcode; returns HLS playlist URL |
 | `GET` | `/api/v1/stream/{session_id}` | Bearer token | Get session details |
 | `PATCH` | `/api/v1/stream/{session_id}/progress` | Bearer token | Record playback position |
+| `POST` | `/api/v1/stream/{session_id}/seek` | Bearer token | Re-spawn FFmpeg from `seek_sec`; rewrites the playlist with `#EXT-X-DISCONTINUITY` markers |
 | `DELETE` | `/api/v1/stream/{session_id}` | Bearer token | Stop session and kill FFmpeg process |
 | `GET` | `/api/v1/hls/{session_id}/playlist.m3u8` | Bearer token | Serve HLS playlist |
 | `GET` | `/api/v1/hls/{session_id}/{segment}.ts` | Bearer token | Serve HLS segment |

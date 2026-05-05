@@ -944,3 +944,538 @@ async def test_spawn_attempt_respects_supplied_timeout(tmp_path):
     assert 0.18 <= elapsed < 1.5
     ffmpeg_service._active.pop("budget-sid", None)
     ffmpeg_service._stderr_paths.pop("budget-sid", None)
+
+
+# ── Seek-restart: _build_ffmpeg_cmd seek_sec + start_segment_index ──────────
+
+
+def test_build_ffmpeg_cmd_inserts_ss_before_input_when_seek_requested(tmp_path):
+    """``-ss`` must come BEFORE ``-i`` so FFmpeg performs an input-side
+    seek (decoder-fast for transcode, keyframe-snap for stream-copy).
+    Output-side seek (after ``-i``) decodes from t=0 and discards
+    frames — defeats the entire point of the restart."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="vp9",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        seek_sec=72.0,
+    )
+    ss_idx = cmd.index("-ss")
+    i_idx = cmd.index("-i")
+    assert ss_idx < i_idx
+    assert cmd[ss_idx + 1] == "72.000"
+
+
+def test_build_ffmpeg_cmd_omits_ss_when_seek_is_zero(tmp_path):
+    """Default path (initial spawn) must not inject ``-ss 0`` — some
+    older FFmpeg builds error on a zero seek with hwaccel input
+    pipelines.  Cleaner to leave the flag off."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="h264",
+        direct_remux=True,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+    )
+    assert "-ss" not in cmd
+
+
+def test_build_ffmpeg_cmd_emits_start_number_when_index_nonzero(tmp_path):
+    """``-start_number K`` is what makes FFmpeg's HLS muxer write
+    ``seg<K>.ts`` instead of ``seg00000.ts`` — required so the
+    rewritten static playlist's segment URLs match what FFmpeg actually
+    produces on disk."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="h264",
+        direct_remux=True,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        start_segment_index=12,
+    )
+    sn_idx = cmd.index("-start_number")
+    assert cmd[sn_idx + 1] == "12"
+
+
+def test_build_ffmpeg_cmd_omits_start_number_when_index_zero(tmp_path):
+    """The default initial spawn must not emit ``-start_number 0`` —
+    that's already FFmpeg's default and adding the flag is just noise
+    in the command line."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="h264",
+        direct_remux=True,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+    )
+    assert "-start_number" not in cmd
+
+
+# ── Seek-restart: _write_static_vod_playlist with discontinuity ─────────────
+
+
+def test_static_vod_playlist_shifts_media_sequence_for_seek(tmp_path):
+    """A 60 s clip at hls_time=10 with start_segment_index=3 must
+    list segments 3..5 only — segments 0..2 are not in this re-emitted
+    view and the player's media-sequence counter aligns with FFmpeg's
+    ``-start_number 3`` output on disk."""
+    from services.ffmpeg_service import _write_static_vod_playlist
+
+    playlist = tmp_path / "playlist.m3u8"
+    n = _write_static_vod_playlist(
+        playlist=playlist,
+        duration_sec=60.0,
+        hls_time=10.0,
+        use_fmp4=False,
+        start_segment_index=3,
+        discontinuity_seq=1,
+    )
+    assert n == 3  # 3 segments: 3, 4, 5
+    text = playlist.read_text(encoding="utf-8")
+    assert "#EXT-X-MEDIA-SEQUENCE:3" in text
+    assert "seg00003.ts" in text
+    assert "seg00005.ts" in text
+    # The pre-seek segments must not appear.
+    assert "seg00000.ts" not in text
+    assert "seg00002.ts" not in text
+
+
+def test_static_vod_playlist_emits_discontinuity_marker_on_restart(tmp_path):
+    """``discontinuity_seq > 0`` must produce both
+    ``#EXT-X-DISCONTINUITY-SEQUENCE`` (header) and
+    ``#EXT-X-DISCONTINUITY`` (right before the first listed segment)
+    so the player flushes its decode buffer on reload."""
+    from services.ffmpeg_service import _write_static_vod_playlist
+
+    playlist = tmp_path / "playlist.m3u8"
+    _write_static_vod_playlist(
+        playlist=playlist,
+        duration_sec=30.0,
+        hls_time=10.0,
+        use_fmp4=False,
+        start_segment_index=1,
+        discontinuity_seq=2,
+    )
+    text = playlist.read_text(encoding="utf-8")
+    assert "#EXT-X-DISCONTINUITY-SEQUENCE:2" in text
+    # Discontinuity tag must precede the first segment URL.
+    disc_pos = text.find("#EXT-X-DISCONTINUITY\n")
+    seg_pos = text.find("seg00001.ts")
+    assert disc_pos > 0
+    assert seg_pos > disc_pos
+
+
+def test_static_vod_playlist_no_discontinuity_when_initial_spawn(tmp_path):
+    """Initial spawn (start_segment_index=0, discontinuity_seq=0) must
+    NOT emit any discontinuity tags — those would tell the player the
+    file has internal cuts that aren't there.  Verifies the new
+    parameters' defaults stay backward-compatible with prior behaviour."""
+    from services.ffmpeg_service import _write_static_vod_playlist
+
+    playlist = tmp_path / "playlist.m3u8"
+    _write_static_vod_playlist(
+        playlist=playlist,
+        duration_sec=30.0,
+        hls_time=10.0,
+        use_fmp4=False,
+    )
+    text = playlist.read_text(encoding="utf-8")
+    assert "#EXT-X-DISCONTINUITY" not in text  # neither -SEQUENCE nor bare
+
+
+def test_static_vod_playlist_handles_seek_past_end_of_file(tmp_path):
+    """If a misbehaving client seeks past the file's duration, the
+    rewritten playlist must still be a valid VOD playlist (just empty)
+    so the player resolves cleanly to end-of-stream rather than 404
+    on the playlist itself."""
+    from services.ffmpeg_service import _write_static_vod_playlist
+
+    playlist = tmp_path / "playlist.m3u8"
+    n = _write_static_vod_playlist(
+        playlist=playlist,
+        duration_sec=30.0,
+        hls_time=10.0,
+        use_fmp4=False,
+        start_segment_index=99,
+        discontinuity_seq=1,
+    )
+    assert n == 0
+    text = playlist.read_text(encoding="utf-8")
+    assert "#EXTM3U" in text
+    assert "#EXT-X-PLAYLIST-TYPE:VOD" in text
+    assert "#EXT-X-ENDLIST" in text
+    # No segment URLs.
+    assert "seg" not in text
+
+
+# ── Seek-restart: restart_stream behaviour ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_restart_stream_terminates_prior_ffmpeg(tmp_path):
+    """``restart_stream`` must kill the previous spawn before starting a
+    new one — the alternative is two FFmpegs writing to the same
+    session directory at once.  We verify by checking the previous
+    proc's ``terminate()`` was called."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from services import ffmpeg_service
+
+    session_id = "restart-sid-1"
+    fake_proc = MagicMock()
+    fake_proc.returncode = None  # alive
+    fake_proc.terminate = MagicMock()
+    fake_proc.kill = MagicMock()
+    fake_proc.wait = AsyncMock(return_value=0)
+    ffmpeg_service._active[session_id] = fake_proc
+
+    # Stub start_stream so restart_stream's tail call doesn't actually
+    # spawn ffmpeg.
+    async def _fake_start(*a, **kw):
+        return tmp_path / session_id / "playlist.m3u8"
+
+    with patch.object(ffmpeg_service, "start_stream", side_effect=_fake_start):
+        await ffmpeg_service.restart_stream(
+            "/tmp/source.mp4", session_id, tmp_path, seek_sec=42.0,
+        )
+
+    fake_proc.terminate.assert_called_once()
+    # Cleanup — remove the lock + counter so test isolation holds.
+    ffmpeg_service._seek_locks.pop(session_id, None)
+    ffmpeg_service._discontinuity_seq.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_restart_stream_wipes_segments_and_init(tmp_path):
+    """Pre-existing seg files + init.mp4 from the prior spawn must be
+    deleted before the new spawn writes its first segment.  Otherwise
+    the HLS router serves stale bytes for the new segment numbers
+    until they get overwritten."""
+    from unittest.mock import patch
+
+    from services import ffmpeg_service
+
+    session_id = "restart-sid-2"
+    session_dir = tmp_path / session_id
+    session_dir.mkdir()
+    # Write three stale segment files + init.mp4.
+    (session_dir / "seg00000.ts").write_bytes(b"stale-0")
+    (session_dir / "seg00001.ts").write_bytes(b"stale-1")
+    (session_dir / "init.mp4").write_bytes(b"stale-init")
+    # An unrelated file (e.g. _ff_playlist.m3u8) MUST survive.
+    (session_dir / "_ff_playlist.m3u8").write_text("#EXTM3U")
+
+    async def _fake_start(*a, **kw):
+        return session_dir / "playlist.m3u8"
+
+    with patch.object(ffmpeg_service, "start_stream", side_effect=_fake_start):
+        await ffmpeg_service.restart_stream(
+            "/tmp/source.mp4", session_id, tmp_path, seek_sec=10.0,
+        )
+
+    assert not (session_dir / "seg00000.ts").exists()
+    assert not (session_dir / "seg00001.ts").exists()
+    assert not (session_dir / "init.mp4").exists()
+    # Non-segment files must be left alone.
+    assert (session_dir / "_ff_playlist.m3u8").exists()
+    ffmpeg_service._seek_locks.pop(session_id, None)
+    ffmpeg_service._discontinuity_seq.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_restart_stream_bumps_discontinuity_sequence(tmp_path):
+    """Each restart bumps the per-session discontinuity counter so the
+    rewritten playlist's ``#EXT-X-DISCONTINUITY-SEQUENCE`` value
+    increases monotonically across multiple seeks (HLS spec requires
+    monotonic increase)."""
+    from unittest.mock import patch
+
+    from services import ffmpeg_service
+
+    session_id = "restart-sid-3"
+    captured_seqs: list[int] = []
+
+    async def _fake_start(file_path, sid, root, **kwargs):
+        captured_seqs.append(kwargs.get("discontinuity_seq", 0))
+        return tmp_path / sid / "playlist.m3u8"
+
+    with patch.object(ffmpeg_service, "start_stream", side_effect=_fake_start):
+        await ffmpeg_service.restart_stream(
+            "/tmp/source.mp4", session_id, tmp_path, seek_sec=10.0,
+        )
+        await ffmpeg_service.restart_stream(
+            "/tmp/source.mp4", session_id, tmp_path, seek_sec=20.0,
+        )
+        await ffmpeg_service.restart_stream(
+            "/tmp/source.mp4", session_id, tmp_path, seek_sec=30.0,
+        )
+
+    assert captured_seqs == [1, 2, 3]
+    ffmpeg_service._seek_locks.pop(session_id, None)
+    ffmpeg_service._discontinuity_seq.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_restart_stream_serializes_concurrent_calls(tmp_path):
+    """Two concurrent ``restart_stream`` calls for the same session
+    must not run their kill/wipe/spawn sequences interleaved — that
+    would produce a half-restarted state where the second call's kill
+    targets the first call's freshly-spawned process and the session
+    ends up dead.  The asyncio Lock is what guarantees serialisation;
+    this test verifies the lock is actually being held."""
+    import asyncio
+
+    from unittest.mock import patch
+
+    from services import ffmpeg_service
+
+    session_id = "restart-sid-4"
+    inflight_count = {"value": 0, "max_seen": 0}
+
+    async def _slow_fake_start(*a, **kw):
+        inflight_count["value"] += 1
+        inflight_count["max_seen"] = max(
+            inflight_count["max_seen"], inflight_count["value"]
+        )
+        await asyncio.sleep(0.05)
+        inflight_count["value"] -= 1
+        return tmp_path / session_id / "playlist.m3u8"
+
+    with patch.object(ffmpeg_service, "start_stream", side_effect=_slow_fake_start):
+        await asyncio.gather(
+            ffmpeg_service.restart_stream(
+                "/tmp/source.mp4", session_id, tmp_path, seek_sec=5.0,
+            ),
+            ffmpeg_service.restart_stream(
+                "/tmp/source.mp4", session_id, tmp_path, seek_sec=10.0,
+            ),
+        )
+
+    # If the lock works, max concurrent restart_stream invocations is 1.
+    # Without the lock both would run in parallel and max_seen would be 2.
+    assert inflight_count["max_seen"] == 1
+    ffmpeg_service._seek_locks.pop(session_id, None)
+    ffmpeg_service._discontinuity_seq.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_stop_stream_cleans_up_seek_lock_and_counter(tmp_path):
+    """``stop_stream`` must remove the per-session lock + discontinuity
+    counter so they don't accumulate forever in a long-running server
+    where many sessions come and go."""
+    from services import ffmpeg_service
+
+    session_id = "stop-cleanup-sid"
+    # Pre-populate as if a seek had occurred during this session.
+    ffmpeg_service._seek_locks[session_id] = __import__("asyncio").Lock()
+    ffmpeg_service._discontinuity_seq[session_id] = 4
+
+    await ffmpeg_service.stop_stream(session_id)
+
+    assert session_id not in ffmpeg_service._seek_locks
+    assert session_id not in ffmpeg_service._discontinuity_seq
+
+
+# ── POST /api/v1/stream/{session_id}/seek endpoint ──────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_seek_endpoint_calls_restart_stream(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """The happy path — owner POSTs /seek, restart_stream is invoked
+    with the right file path + seek_sec, response is 204."""
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        start = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    session_id = start.json()["session_id"]
+
+    captured = {}
+
+    async def _mock_restart(
+        file_path: str, sid: str, hls_root: Path, **kwargs
+    ) -> Path:
+        captured["file_path"] = file_path
+        captured["session_id"] = sid
+        captured["seek_sec"] = kwargs.get("seek_sec")
+        captured["tonemap_hdr"] = kwargs.get("tonemap_hdr")
+        return hls_root / sid / "playlist.m3u8"
+
+    with patch(
+        "routers.stream.ffmpeg_service.restart_stream", side_effect=_mock_restart
+    ):
+        response = await client.post(
+            f"/api/v1/stream/{session_id}/seek?seek_sec=120.5",
+            headers=headers,
+        )
+
+    assert response.status_code == 204
+    assert captured["session_id"] == session_id
+    assert captured["seek_sec"] == 120.5
+    assert captured["tonemap_hdr"] is False  # default
+
+
+@pytest.mark.asyncio
+async def test_seek_endpoint_rejects_non_owner(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """A second client cannot seek another client's session."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post(
+        "/api/v1/auth/request-pair",
+        json={
+            "client_id": "seek-other",
+            "device_name": "Other",
+            "platform": "ios",
+            "app_version": "0.1.0",
+        },
+    )
+    await client.post("/api/v1/auth/approve/seek-other")
+    other_status = await client.get("/api/v1/auth/status/seek-other")
+    other_token = other_status.json()["auth_token"]
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        start = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    session_id = start.json()["session_id"]
+
+    response = await client.post(
+        f"/api/v1/stream/{session_id}/seek?seek_sec=10",
+        headers={"Authorization": f"Bearer {other_token}"},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_seek_endpoint_rejects_negative_seek(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """Negative seek_sec is meaningless and must 400 — not silently
+    pass through to FFmpeg, which would error in a confusing way."""
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        start = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    session_id = start.json()["session_id"]
+
+    response = await client.post(
+        f"/api/v1/stream/{session_id}/seek?seek_sec=-5", headers=headers,
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_seek_endpoint_404s_on_unknown_session(
+    client: AsyncClient, monkeypatch
+):
+    token = await _get_token(client, monkeypatch)
+    response = await client.post(
+        "/api/v1/stream/no-such-session/seek?seek_sec=10",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_seek_endpoint_forwards_tonemap_flag(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """Mobile preserves tonemap state across seeks by passing the flag.
+    Endpoint must forward it through to ``restart_stream`` so the
+    re-spawned FFmpeg keeps the tonemap chain (or doesn't)."""
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        start = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    session_id = start.json()["session_id"]
+
+    captured_tonemap: dict = {}
+
+    async def _mock_restart(
+        file_path: str, sid: str, hls_root: Path, **kwargs
+    ) -> Path:
+        captured_tonemap["value"] = kwargs.get("tonemap_hdr")
+        return hls_root / sid / "playlist.m3u8"
+
+    with patch(
+        "routers.stream.ffmpeg_service.restart_stream", side_effect=_mock_restart
+    ):
+        response = await client.post(
+            f"/api/v1/stream/{session_id}/seek?seek_sec=10&tonemap=true",
+            headers=headers,
+        )
+
+    assert response.status_code == 204
+    assert captured_tonemap["value"] is True

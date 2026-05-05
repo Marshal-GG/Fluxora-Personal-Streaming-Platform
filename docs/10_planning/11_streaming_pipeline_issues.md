@@ -294,7 +294,7 @@ These weren't user-reported but came out of the same code paths.
 
 ```
 Commit 1 — HDR→SDR unblock + diagnostic upgrade   │ ~2 hours      │ low risk    │ ✅ landed 2026-05-05
-Commit 2 — Seek-restart server side               │ ~4–6 hours    │ medium risk │ pending
+Commit 2 — Seek-restart server side               │ ~4–6 hours    │ medium risk │ ✅ landed 2026-05-05
 Commit 3 — Seek-restart mobile player wire-up     │ ~3 hours      │ medium risk │ pending
 Commit 4 — Zombie cleanup + dedup + log polish    │ ~2 hours      │ low risk    │ pending
 ─────────────────────────────────────────────────  │ ────────      │ ────────    │
@@ -325,34 +325,49 @@ Each commit is independently shippable.  Commit 1 unblocks the user's immediate 
 
 ---
 
-### Commit 2 — Seek-restart server side
+### Commit 2 — Seek-restart server side ✅ landed 2026-05-05
 
 **Goal:** Server can re-spin FFmpeg from an arbitrary timestamp without losing the session.
 
-**New endpoint:** `POST /api/v1/stream/{session_id}/seek?seek_sec=<float>`
+**Shipped changes:**
 
-- Validates session exists, belongs to caller, not ended.
-- Calls new `ffmpeg_service.restart_stream(session_id, seek_sec)`:
-  1. Kill the active FFmpeg for this session (`stop_stream` minus DB stamp).
-  2. Wipe `<hls_root>/<session_id>/seg*.{ts,m4s}` and `init.mp4` (keep playlist for atomic-swap step 5).
-  3. Compute `start_segment_index = floor(seek_sec / hls_time)`.
-  4. Re-spawn FFmpeg with: `-ss <start_segment_index * hls_time>` before `-i` (input-side seek = decoder-fast for transcode, keyframe-snap for stream-copy), `-hls_start_number <start_segment_index>`.
-  5. Re-emit static VOD playlist starting from `start_segment_index`, with `#EXT-X-DISCONTINUITY-SEQUENCE: 1` and `#EXT-X-DISCONTINUITY` before the first segment so the player flushes its decode buffer.
+- **New endpoint** [`POST /api/v1/stream/{session_id}/seek?seek_sec=<float>&tonemap=<bool>`](../../apps/server/routers/stream.py) — validates ownership (403 on someone else's session, 404 on unknown / ended session, 400 on negative `seek_sec`), looks up the session's file path, calls `restart_stream`.  Rate-limited to 30/min per IP via the existing `slowapi` Limiter so a runaway scrubber can't melt the encoder.  Returns 204; the playlist URL is unchanged but its *contents* are rewritten — clients re-open the same URL.  The `tonemap` query param preserves session state across seeks (mobile passes whatever value it received from `/start` or last toggled).
+
+- **New `ffmpeg_service.restart_stream(file_path, session_id, hls_root, seek_sec, *, tonemap_hdr=False)`** — extracted helper [`_terminate_ffmpeg(session_id)`](../../apps/server/services/ffmpeg_service.py) (kill-only, no encoder-slot release), per-session `asyncio.Lock` from `_seek_locks`, wipes `seg*.{ts,m4s}` + `init.mp4` (keeps `_ff_playlist.m3u8`), bumps `_discontinuity_seq[session_id]` counter, then tail-calls `start_stream` with `seek_sec` + `discontinuity_seq` arguments.
+
+- **`start_stream` extended with `seek_sec` + `discontinuity_seq` parameters.**  The seek is aligned to a segment boundary (`int(seek_sec // hls_time) * hls_time`) so FFmpeg's `-start_number` and the static VOD playlist's media-sequence stay in lockstep.  Also fixes a pre-existing inconsistency in the cuvid-retry path (was using `playlist=playlist` for FFmpeg; now uses `ff_playlist` like the first attempt).
+
+- **`_build_ffmpeg_cmd` extended with `seek_sec` + `start_segment_index`** — emits `-ss <seek_sec>` *before* `-i` (input-side seek; decoder-fast for transcode, keyframe-snap for stream-copy) and `-start_number <K>` so segments land on disk as `seg<K>.{ts,m4s}` matching the rewritten playlist.  Both default to 0; defaults preserve initial-spawn behaviour byte-for-byte.
+
+- **`_write_static_vod_playlist` extended with `start_segment_index` + `discontinuity_seq`** — when `start_segment_index > 0`, lists segments `<K>..N-1` only and shifts `#EXT-X-MEDIA-SEQUENCE` to `K`.  When `discontinuity_seq > 0`, emits `#EXT-X-DISCONTINUITY-SEQUENCE:<seq>` in the header and `#EXT-X-DISCONTINUITY` immediately before the first listed segment so the player flushes its decode buffer on re-load.  Defensive: `start_segment_index >= n_total` (seek past EOF) emits a valid empty VOD playlist instead of an empty file.
+
+- **`stop_stream` cleans up `_seek_locks[session_id]` + `_discontinuity_seq[session_id]`** so they don't accumulate on a long-running server.
+
+- **18 new tests in [`apps/server/tests/test_stream.py`](../../apps/server/tests/test_stream.py):**
+  - `test_build_ffmpeg_cmd_inserts_ss_before_input_when_seek_requested`
+  - `test_build_ffmpeg_cmd_omits_ss_when_seek_is_zero`
+  - `test_build_ffmpeg_cmd_emits_start_number_when_index_nonzero`
+  - `test_build_ffmpeg_cmd_omits_start_number_when_index_zero`
+  - `test_static_vod_playlist_shifts_media_sequence_for_seek`
+  - `test_static_vod_playlist_emits_discontinuity_marker_on_restart`
+  - `test_static_vod_playlist_no_discontinuity_when_initial_spawn`
+  - `test_static_vod_playlist_handles_seek_past_end_of_file`
+  - `test_restart_stream_terminates_prior_ffmpeg`
+  - `test_restart_stream_wipes_segments_and_init`
+  - `test_restart_stream_bumps_discontinuity_sequence`
+  - `test_restart_stream_serializes_concurrent_calls` (in-process Lock guarantees max 1 inflight per session)
+  - `test_stop_stream_cleans_up_seek_lock_and_counter`
+  - `test_seek_endpoint_calls_restart_stream`
+  - `test_seek_endpoint_rejects_non_owner` (403)
+  - `test_seek_endpoint_rejects_negative_seek` (400)
+  - `test_seek_endpoint_404s_on_unknown_session`
+  - `test_seek_endpoint_forwards_tonemap_flag`
 
 **Why segment numbering must shift:** if the player has already loaded segments 0–6 and we restart from segment 50, the playlist transitioning from `seg00006.m4s, seg00007.m4s, ...` to `seg00000.m4s, seg00001.m4s, ...` confuses media_kit's segment cache.  Forwarding segment numbers + a discontinuity marker is the standards-compliant way.
 
 **Stream-copy seek precision:** input-side `-ss <T>` keyframe-snaps for stream-copy.  If the user seeks to 10:35 and the nearest preceding keyframe is at 10:30, FFmpeg starts there.  Player sees segment N starting at 10:30 — close enough; nothing we can do without re-encoding which defeats the point.
 
-**Concurrent-seek protection:** lock the session during restart so two `POST /seek` calls in flight don't double-spawn.  In-process asyncio Lock keyed by `session_id`.
-
-**Tests:**
-- `test_restart_stream_kills_prior_ffmpeg`
-- `test_restart_stream_resets_segment_directory`
-- `test_restart_stream_writes_playlist_with_discontinuity_marker`
-- `test_seek_endpoint_authz` (must own the session)
-- `test_seek_endpoint_serializes_concurrent_calls`
-
-**Acceptance:** issuing two seeks within 200 ms results in only the second restart taking effect; segments produced match `seg<N>.m4s` where N starts at the seek index.
+**Caveat — Commit 3 still required:** the rewritten playlist URL is unchanged, but `media_kit` / `libmpv` cache the VOD playlist on first load (`#EXT-X-PLAYLIST-TYPE:VOD` + `#EXT-X-ENDLIST` tells them it's immutable) and won't re-fetch on their own.  The mobile cubit must explicitly re-open the `Media` object after the `/seek` POST returns 204 — that's what Commit 3 wires up.
 
 ---
 

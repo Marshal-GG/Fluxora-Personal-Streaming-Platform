@@ -19,6 +19,32 @@ _active: dict[str, asyncio.subprocess.Process] = {}
 # transcode and a quickly-failed one don't fight over the same handle.
 _stderr_paths: dict[str, Path] = {}
 
+# Per-session restart locks. ``restart_stream`` acquires the session's
+# lock for the entire kill→wipe→respawn→playlist-rewrite sequence so
+# two concurrent seek calls (e.g. user double-tap on the seek bar) don't
+# race the kill against the new spawn — without this, the second call's
+# ``_terminate_ffmpeg`` could kill the first call's freshly-spawned
+# process and leave the session permanently dead.  Looked up lazily
+# because the set of session ids isn't known at module-import time.
+_seek_locks: dict[str, asyncio.Lock] = {}
+
+# Per-session restart counters. Bumped on every successful
+# ``restart_stream`` call and emitted as the ``#EXT-X-DISCONTINUITY-
+# SEQUENCE`` value in the rewritten static playlist.  Per HLS spec the
+# value must monotonically increase across discontinuities; this counter
+# is the cleanest way to keep the value monotonic across the lifetime of
+# a single session.
+_discontinuity_seq: dict[str, int] = {}
+
+
+def _get_seek_lock(session_id: str) -> asyncio.Lock:
+    """Return the per-session restart lock, creating it on first access."""
+    lock = _seek_locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _seek_locks[session_id] = lock
+    return lock
+
 
 def _drain_stderr(session_id: str, max_bytes: int = 4096) -> str:
     """Read up to the last [max_bytes] of FFmpeg stderr for this session.
@@ -359,6 +385,8 @@ def _build_ffmpeg_cmd(
     direct_remux_hevc: bool,
     use_gpu_input: bool,
     apply_hdr_tonemap: bool = False,
+    seek_sec: float = 0.0,
+    start_segment_index: int = 0,
 ) -> list[str]:
     """Compose the FFmpeg command line.
 
@@ -387,6 +415,17 @@ def _build_ffmpeg_cmd(
         # Force the input decoder when FFmpeg's auto-selection is known
         # to break (e.g. AV1 software decode on the bundled build).
         cmd.extend(_input_decoder_args(source_codec, meta))
+
+    # Input-side seek — placed *before* `-i` for the fast path.  For
+    # transcode this is decoder-fast (FFmpeg seeks the demuxer); for
+    # stream-copy it keyframe-snaps to the nearest preceding keyframe,
+    # which is the best we can do without re-encoding (the cost of
+    # which would defeat the whole point of stream-copy).  The caller is
+    # expected to align seek_sec to a multiple of `hls_time` so the
+    # produced segments line up cleanly with the playlist's segment
+    # numbering and there's no off-by-fraction-of-second drift.
+    if seek_sec > 0:
+        cmd.extend(["-ss", f"{seek_sec:.3f}"])
 
     cmd.extend(["-i", file_path])
 
@@ -427,6 +466,14 @@ def _build_ffmpeg_cmd(
         "-hls_time", hls_time,
         "-hls_list_size", "0",
     ]
+    # Continue the segment numbering from where the previous spawn left
+    # off (used by `restart_stream`).  For an initial spawn this is 0,
+    # which matches FFmpeg's default and is a no-op.  Without this the
+    # restart writes seg00000.* on disk while the static VOD playlist
+    # tells the player the file is at seg<K>.* — segment 404 + retry
+    # storm.
+    if start_segment_index > 0:
+        common_hls.extend(["-start_number", str(start_segment_index)])
     if not direct_remux:
         common_hls.extend(["-hls_flags", "independent_segments"])
 
@@ -471,6 +518,8 @@ def _write_static_vod_playlist(
     hls_time: float,
     use_fmp4: bool,
     init_filename: str = "init.mp4",
+    start_segment_index: int = 0,
+    discontinuity_seq: int = 0,
 ) -> int:
     """Pre-emit a complete VOD playlist listing every segment FFmpeg will
     eventually write.
@@ -484,6 +533,21 @@ def _write_static_vod_playlist(
 
     Returns the number of segments listed.
 
+    ``start_segment_index`` and ``discontinuity_seq`` together enable the
+    seek-restart path (`restart_stream`):
+
+    - ``start_segment_index`` shifts both the listed segment URLs (the
+      list begins at ``seg<K>.{ts,m4s}``) and the playlist's
+      ``#EXT-X-MEDIA-SEQUENCE`` to ``K``.  FFmpeg's ``-start_number K``
+      writes seg<K> + onwards; without the matching shift here the
+      player would 404 against the file the playlist promises.
+    - ``discontinuity_seq > 0`` adds ``#EXT-X-DISCONTINUITY-SEQUENCE``
+      and inserts a ``#EXT-X-DISCONTINUITY`` line before the first
+      segment, telling the player to flush its decode buffer.  Required
+      because a re-spawn from a non-zero ``-ss`` produces frames whose
+      decode timestamps do not continue from what the player previously
+      consumed.
+
     Limitation: stream-copy aligns segments to source keyframes, so actual
     segment durations may exceed ``hls_time`` by a few seconds.  The
     predicted segment count is therefore an upper bound; the playlist
@@ -494,8 +558,21 @@ def _write_static_vod_playlist(
     """
     if duration_sec <= 0 or hls_time <= 0:
         return 0
-    n = max(1, math.ceil(duration_sec / hls_time))
-    last_dur = duration_sec - (n - 1) * hls_time
+    n_total = max(1, math.ceil(duration_sec / hls_time))
+    if start_segment_index >= n_total:
+        # Seek past end of file — emit an empty (but still valid) VOD
+        # playlist so the player resolves cleanly to end-of-stream.
+        lines = [
+            "#EXTM3U",
+            f"#EXT-X-VERSION:{6 if use_fmp4 else 3}",
+            f"#EXT-X-TARGETDURATION:{max(1, math.ceil(hls_time))}",
+            "#EXT-X-PLAYLIST-TYPE:VOD",
+            f"#EXT-X-MEDIA-SEQUENCE:{start_segment_index}",
+            "#EXT-X-ENDLIST",
+        ]
+        playlist.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return 0
+    last_dur = duration_sec - (n_total - 1) * hls_time
     if last_dur <= 0:
         last_dur = hls_time
     target_dur = max(1, math.ceil(hls_time))
@@ -507,17 +584,25 @@ def _write_static_vod_playlist(
         f"#EXT-X-VERSION:{6 if use_fmp4 else 3}",
         f"#EXT-X-TARGETDURATION:{target_dur}",
         "#EXT-X-PLAYLIST-TYPE:VOD",
-        "#EXT-X-MEDIA-SEQUENCE:0",
+        f"#EXT-X-MEDIA-SEQUENCE:{start_segment_index}",
     ]
+    if discontinuity_seq > 0:
+        lines.append(f"#EXT-X-DISCONTINUITY-SEQUENCE:{discontinuity_seq}")
     if use_fmp4:
         lines.append(f'#EXT-X-MAP:URI="{init_filename}"')
-    for i in range(n):
-        dur = last_dur if i == n - 1 else hls_time
+    if discontinuity_seq > 0:
+        # Mark the seek point as a decode-buffer-flush boundary; placed
+        # immediately before the first listed segment so the player
+        # discards anything still in its pipeline from the previous
+        # spawn before consuming the new segment data.
+        lines.append("#EXT-X-DISCONTINUITY")
+    for i in range(start_segment_index, n_total):
+        dur = last_dur if i == n_total - 1 else hls_time
         lines.append(f"#EXTINF:{dur:.6f},")
         lines.append(f"seg{i:05d}.{extension}")
     lines.append("#EXT-X-ENDLIST")
     playlist.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return n
+    return n_total - start_segment_index
 
 
 async def _ensure_fmp4_init_segment(
@@ -697,6 +782,8 @@ async def start_stream(
     hls_root: Path,
     *,
     tonemap_hdr: bool = False,
+    seek_sec: float = 0.0,
+    discontinuity_seq: int = 0,
 ) -> Path:
     """Spawn FFmpeg for HLS output; return the .m3u8 playlist path.
 
@@ -824,6 +911,22 @@ async def start_stream(
     # round-trip.
     first_attempt_gpu_input = not apply_hdr_tonemap
 
+    # Align the requested seek to a segment boundary so FFmpeg's
+    # `-start_number` and the static playlist's media-sequence stay
+    # consistent.  ``segment_hls_time`` matches what FFmpeg uses below
+    # (10 s for stream-copy, 6 s for transcode).
+    segment_hls_time = 10.0 if direct_remux else 6.0
+    if seek_sec > 0:
+        start_segment_index = max(0, int(seek_sec // segment_hls_time))
+        # Snap the input-side seek to the same boundary so segment N's
+        # contents start at exactly N * hls_time of source time.  Stream-
+        # copy is keyframe-bound anyway; the snap is at most a fraction
+        # of a second of imprecision relative to what the user asked for.
+        aligned_seek_sec = start_segment_index * segment_hls_time
+    else:
+        start_segment_index = 0
+        aligned_seek_sec = 0.0
+
     # Pipeline-aware playlist-appearance timeout.  See the docstring on
     # ``_spawn_ffmpeg_attempt`` for the wall-time math behind these
     # choices: tonemap is CPU-only at ~0.6× realtime so the first
@@ -852,6 +955,8 @@ async def start_stream(
         direct_remux_hevc=direct_remux_hevc,
         use_gpu_input=first_attempt_gpu_input,
         apply_hdr_tonemap=apply_hdr_tonemap,
+        seek_sec=aligned_seek_sec,
+        start_segment_index=start_segment_index,
     )
     succeeded, tail, returncode, killed_after_timeout = await _spawn_ffmpeg_attempt(
         cmd, session_id, ff_playlist, playlist_timeout_sec=playlist_timeout_sec,
@@ -877,7 +982,7 @@ async def start_stream(
         cmd = _build_ffmpeg_cmd(
             file_path=file_path,
             session_dir=session_dir,
-            playlist=playlist,
+            playlist=ff_playlist,
             meta=meta,
             preset=preset,
             crf=crf,
@@ -887,13 +992,15 @@ async def start_stream(
             direct_remux_hevc=direct_remux_hevc,
             use_gpu_input=False,
             apply_hdr_tonemap=apply_hdr_tonemap,
+            seek_sec=aligned_seek_sec,
+            start_segment_index=start_segment_index,
         )
         # Software-decode retry is materially slower than the GPU-input
         # first attempt, so bump the timeout up one tier.  A 10 s budget
         # would just timeout-kill the retry on slow sources.
         retry_timeout_sec = max(playlist_timeout_sec, 30.0)
         succeeded, tail, returncode, killed_after_timeout = await _spawn_ffmpeg_attempt(
-            cmd, session_id, playlist, playlist_timeout_sec=retry_timeout_sec,
+            cmd, session_id, ff_playlist, playlist_timeout_sec=retry_timeout_sec,
         )
 
     if succeeded:
@@ -932,18 +1039,22 @@ async def start_stream(
             if drow and drow["duration_sec"]:
                 duration_sec = float(drow["duration_sec"])
             if duration_sec and duration_sec > 0:
-                segment_hls_time = 10.0 if direct_remux else 6.0
                 count = _write_static_vod_playlist(
                     playlist=playlist,
                     duration_sec=duration_sec,
                     hls_time=segment_hls_time,
                     use_fmp4=use_fmp4,
+                    start_segment_index=start_segment_index,
+                    discontinuity_seq=discontinuity_seq,
                 )
                 logger.info(
-                    "Static VOD playlist: session=%s segments=%d duration=%.1fs",
+                    "Static VOD playlist: session=%s segments=%d "
+                    "(start_index=%d) duration=%.1fs disc_seq=%d",
                     session_id,
                     count,
+                    start_segment_index,
                     duration_sec,
+                    discontinuity_seq,
                 )
             else:
                 # Duration unknown — fall back to FFmpeg's incremental
@@ -1025,22 +1136,35 @@ async def start_stream(
     raise RuntimeError(f"FFmpeg stream generation timed out: {first_line}")
 
 
+async def _terminate_ffmpeg(session_id: str) -> None:
+    """Kill the FFmpeg subprocess for a session, if any.
+
+    Pops the entry out of `_active` and waits for the process to fully
+    exit (with `kill()` fallback after 5 s).  Does NOT release the
+    encoder-cap slot — that's the caller's job.  ``stop_stream`` calls
+    this then releases; ``restart_stream`` calls this and keeps the
+    slot reserved because the same session is about to spawn again.
+    """
+    proc = _active.pop(session_id, None)
+    if proc is None or proc.returncode is not None:
+        return
+    try:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+    except ProcessLookupError:
+        pass
+    logger.info("FFmpeg stopped: session=%s", session_id)
+
+
 async def stop_stream(session_id: str) -> None:
     """Kill the FFmpeg process for a session."""
     from services import session_router
 
-    proc = _active.pop(session_id, None)
-    if proc and proc.returncode is None:
-        try:
-            proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            except TimeoutError:
-                proc.kill()
-                await proc.wait()
-        except ProcessLookupError:
-            pass
-        logger.info("FFmpeg stopped: session=%s", session_id)
+    await _terminate_ffmpeg(session_id)
     # Free the session's slot in the encoder cap accounting (no-op if the
     # session was stream-copy and never reserved a slot).
     session_router.release_session(session_id)
@@ -1048,6 +1172,105 @@ async def stop_stream(session_id: str) -> None:
     # already drained + dropped the stderr file, _drop_stderr is a no-op
     # when there's nothing to remove.
     _drop_stderr(session_id)
+    # Per-session housekeeping for the seek-restart machinery — removes
+    # the lock + counter on session end so they don't accumulate
+    # forever in a long-running server.  Safe even if no seek ever ran.
+    _seek_locks.pop(session_id, None)
+    _discontinuity_seq.pop(session_id, None)
+
+
+async def restart_stream(
+    file_path: str,
+    session_id: str,
+    hls_root: Path,
+    seek_sec: float,
+    *,
+    tonemap_hdr: bool = False,
+) -> Path:
+    """Re-spawn FFmpeg from ``seek_sec`` for an existing session.
+
+    Used by the ``POST /api/v1/stream/{session_id}/seek`` endpoint when
+    the user drags the seek bar past the encoded boundary.  The original
+    architecture encoded strictly from t=0 and relied on the static VOD
+    playlist + a 5-second segment-wait in the HLS router to absorb
+    forward seeks — that works for tens-of-seconds drift but collapses
+    the moment the seek lands far ahead of FFmpeg's current write
+    position.
+
+    Behaviour:
+
+    1. Acquires the per-session restart lock so two seek calls in flight
+       can't race each other.  The lock is released in a ``finally``.
+    2. Terminates the active FFmpeg subprocess (no-op if it had already
+       exited).  Does NOT release the encoder-cap slot — the same
+       session is about to spawn again on the same encoder.
+    3. Wipes ``seg*.{ts,m4s}`` and ``init.mp4`` from the session
+       directory so the player's next request hits the new FFmpeg's
+       output, not the previous spawn's stale data.  Keeps the playlist
+       briefly so the HLS router has something to serve during the
+       sub-second gap; ``start_stream`` overwrites it once spawn
+       succeeds.
+    4. Bumps the session's discontinuity-sequence counter.
+    5. Calls ``start_stream`` with ``seek_sec`` and the new
+       ``discontinuity_seq``.  ``start_stream`` aligns the seek to a
+       segment boundary, builds the FFmpeg command with ``-ss`` +
+       ``-start_number``, spawns, and writes a fresh static VOD
+       playlist with ``#EXT-X-DISCONTINUITY-SEQUENCE`` +
+       ``#EXT-X-DISCONTINUITY`` markers so the player flushes its
+       decode buffer when it next loads the playlist.
+
+    The caller (the seek endpoint) is responsible for cueing the player
+    to re-fetch the playlist on the same URL — for media_kit / libmpv
+    the way to do that is to re-open the ``Media`` object, which
+    Commit 3 of the streaming pipeline plan adds in the mobile cubit.
+    """
+    lock = _get_seek_lock(session_id)
+    async with lock:
+        await _terminate_ffmpeg(session_id)
+        _drop_stderr(session_id)
+
+        # Wipe stale segments + init segment.  Leave the playlist in
+        # place — start_stream overwrites it once spawn succeeds, and
+        # in the brief window the HLS router serves stale segment
+        # references (which then 404 + retry under its 5 s wait until
+        # the new spawn produces seg<K>).
+        session_dir = hls_root / session_id
+        if session_dir.exists():
+            for entry in session_dir.iterdir():
+                name = entry.name
+                if name.startswith("seg") or name == "init.mp4":
+                    try:
+                        entry.unlink()
+                    except OSError:
+                        logger.warning(
+                            "Could not unlink %s during restart of session=%s",
+                            entry,
+                            session_id,
+                            exc_info=True,
+                        )
+
+        # Bump the discontinuity sequence so the rewritten playlist tells
+        # the player "what comes next is decoder-discontinuous from what
+        # was there before".  Player libraries flush their decode buffer
+        # on a sequence bump.
+        next_seq = _discontinuity_seq.get(session_id, 0) + 1
+        _discontinuity_seq[session_id] = next_seq
+
+        logger.info(
+            "Restarting stream: session=%s seek_sec=%.3f disc_seq=%d",
+            session_id,
+            seek_sec,
+            next_seq,
+        )
+
+        return await start_stream(
+            file_path,
+            session_id,
+            hls_root,
+            tonemap_hdr=tonemap_hdr,
+            seek_sec=seek_sec,
+            discontinuity_seq=next_seq,
+        )
 
 
 async def test_encoder(

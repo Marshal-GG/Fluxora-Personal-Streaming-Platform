@@ -635,6 +635,32 @@ The decision is invisible to the client — the response shape is identical for 
 
 ---
 
+### `POST /api/v1/stream/{session_id}/seek`
+**Description:** Re-spawn the active FFmpeg from a non-zero timestamp.  Required because the original architecture only encodes from `t=0`; the static VOD playlist + 5 s segment-wait absorb forward seeks within seconds of the encoded boundary, but a far-ahead seek lands in territory FFmpeg has not produced and the player 404s.  This endpoint kills the active FFmpeg, wipes produced segments, and re-spawns with `-ss <seek_sec>` + `-start_number <K>` (where `K = floor(seek_sec / hls_time)`).  The server rewrites `playlist.m3u8` in place with `#EXT-X-MEDIA-SEQUENCE:<K>`, `#EXT-X-DISCONTINUITY-SEQUENCE` bumped per restart, and `#EXT-X-DISCONTINUITY` before the first listed segment.  
+**Auth:** Bearer token required (must own the session).  
+**Rate limit:** 30/min per IP (a runaway scrubber can't melt the encoder).  
+**Status:** ✅ Implemented
+
+**Query params:**
+- `seek_sec` (float, required, ≥ 0) — the wall-clock second within the source to seek to. Aligned to a segment boundary internally so the segment numbering stays consistent with the rewritten playlist.
+- `tonemap` (bool, default `false`) — preserves session tonemap state across seeks. The client must forward whatever `tonemapped` value it received from `/start` (or the most-recently toggled value via the mobile overflow menu) so a seek doesn't silently revert tonemap to off.
+
+**Response:** `204 No Content`  
+
+The playlist URL itself is unchanged — only the *contents* of `playlist.m3u8` change.  Clients that have already loaded the playlist must re-open it on the same URL (for `media_kit` / `libmpv`, that means calling `Player.open(Media(url))` again).  The server cannot push a playlist refresh; this is by HLS-spec design.
+
+**Errors:**
+- `400` `seek_sec must be non-negative`
+- `403` `Not your session`
+- `404` `Session not found` (unknown id, or session has ended_at set)
+- `404` `Source file no longer exists` (file deleted between start and this seek)
+- `429` rate-limit (above 30/min per IP)
+- `503` `Seek restart failed: <FFmpeg stderr first line>` (FFmpeg failed to spawn, e.g. tonemap timeout)
+
+**Concurrent calls:** an in-process `asyncio.Lock` per session serialises restart sequences.  Two POSTs in flight will execute one-at-a-time; the second observes the first's post-state and re-spawns from the second `seek_sec`.  The end state matches "only the second seek took effect", which is what the user expects from a debounced seek-bar drag.
+
+---
+
 ### `DELETE /api/v1/stream/{session_id}`
 **Description:** Stop a stream session, kill the FFmpeg process, and delete HLS segments.  
 **Auth:** Bearer token required (must own the session); localhost callers can stop any session.  

@@ -239,6 +239,100 @@ async def update_progress(
     await db.commit()
 
 
+# ── POST /api/v1/stream/{session_id}/seek ───────────────────────────────────
+
+
+@router.post("/{session_id}/seek", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("30/minute")
+async def seek_stream(
+    session_id: str,
+    request: Request,
+    seek_sec: float,
+    tonemap: bool = False,
+    db: aiosqlite.Connection = Depends(get_db),
+    client: aiosqlite.Row = Depends(validate_token),
+) -> None:
+    """Re-spawn FFmpeg from ``seek_sec`` for an active session.
+
+    The original architecture only encodes from ``t=0``; the static VOD
+    playlist + 5 s segment-wait absorb forward seeks within seconds of
+    the encoded boundary, but a far-ahead seek lands in territory FFmpeg
+    has not produced yet and the player 404s.  This endpoint kills the
+    active FFmpeg, wipes the produced segments, and re-spawns with
+    ``-ss <seek_sec>`` + ``-start_number <K>`` so the next segment the
+    player asks for actually exists.
+
+    The ``tonemap`` query param preserves the current tonemap state of
+    the session — the client is expected to forward whatever
+    ``tonemapped`` value it received from ``/start`` (or whatever it
+    most-recently toggled to via the mobile overflow menu).  Without
+    this, a seek would silently revert tonemap to off.
+
+    Returns 204 with no body.  The playlist URL is unchanged; the
+    *contents* of ``playlist.m3u8`` change to a new VOD list with
+    ``#EXT-X-DISCONTINUITY-SEQUENCE`` bumped and ``#EXT-X-DISCONTINUITY``
+    before the first listed segment.  Client must re-open the playlist
+    on the same URL to pick up the new contents — for media_kit /
+    libmpv, that means calling ``Player.open(Media(url))`` again.
+    """
+    if seek_sec < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="seek_sec must be non-negative",
+        )
+
+    async with db.execute(
+        "SELECT id, client_id, file_id FROM stream_sessions"
+        " WHERE id = ? AND ended_at IS NULL",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+    if row["client_id"] != client["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not your session"
+        )
+
+    file_row = await library_service.get_file(db, row["file_id"])
+    if file_row is None:
+        # Session refers to a file that's been deleted between start and
+        # this seek.  Treat as gone — there's no useful place to seek to.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source file no longer exists",
+        )
+
+    try:
+        await ffmpeg_service.restart_stream(
+            file_row["path"],
+            session_id,
+            settings.hls_tmp_path,
+            seek_sec=seek_sec,
+            tonemap_hdr=tonemap,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        ffmpeg_error = str(exc) or exc.__class__.__name__
+        logger.error(
+            "FFmpeg restart failed: session=%s seek=%.3f error=%s",
+            session_id,
+            seek_sec,
+            ffmpeg_error,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Seek restart failed: {ffmpeg_error}",
+        ) from exc
+
+
 # ── DELETE /api/v1/stream/{session_id} ──────────────────────────────────────
 
 
