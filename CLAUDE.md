@@ -76,6 +76,7 @@ Components:
 | Manual / external tasks tracker | `docs/10_planning/04_manual_tasks.md` |
 | Ship readiness — what blocks v1 launch | `docs/10_planning/05_ship_readiness.md` |
 | Installer & distribution plan (proposed, awaiting decision) | `docs/10_planning/06_installer_plan.md` |
+| Streaming pipeline issue audit + remediation plan (seek-restart, tonemap timeout, zombie cleanup) | `docs/10_planning/11_streaming_pipeline_issues.md` |
 | URL inventory (every endpoint, WS, hosted, third-party, future TBD) | `docs/05_infrastructure/02_url_inventory.md` |
 | Design system | `DESIGN.md` |
 
@@ -88,7 +89,7 @@ Components:
 | Changing DB schema | `docs/03_data/02_database_schema.md` |
 | Backend service changes | `docs/09_backend/01_backend_architecture.md` |
 | Flutter screen / widget | `docs/08_frontend/01_frontend_architecture.md` |
-| Networking / streaming | `docs/02_architecture/01_system_overview.md` |
+| Networking / streaming | `docs/02_architecture/01_system_overview.md` (architecture); `docs/10_planning/11_streaming_pipeline_issues.md` (current defects + remediation plan) |
 | Security-sensitive feature | `docs/06_security/01_security.md` |
 | CI / CD changes | `docs/05_infrastructure/01_infrastructure.md` |
 

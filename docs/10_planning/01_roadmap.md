@@ -117,6 +117,7 @@
 | Multi-user / family sharing | Nice-to-have | 🔲 Planned | Shared library access |
 | TV/casting support (Chromecast) | Nice-to-have | 🔲 Planned | Future platform |
 | iOS/Android background streaming | Should | 🔲 Planned | Foreground service |
+| Streaming pipeline polish (seek-restart, tonemap timeout, zombie cleanup) | Must | 🔲 Planned | Four-commit plan in [`11_streaming_pipeline_issues.md`](./11_streaming_pipeline_issues.md). Unblocks HDR→SDR toggle, fixes seek-ahead beyond encoded boundary, kills zombie FFmpeg accumulation. ~1.5 days work. |
 
 ---
 

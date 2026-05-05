@@ -264,6 +264,40 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 - **Trigger:** optional. Skip unless the threat model expands to assume potential server-side bypasses.
 - **Owner:** project owner.
 
+### 🔲 Cache management & data dir surfacing (server + desktop)
+
+- **What:** add user-visible controls for the on-disk caches the app already creates but does not surface today.
+  - **Server side:**
+    - `GET /api/v1/system/data-dir` → returns `{path, total_bytes, hls_bytes, db_bytes, log_bytes}`. Reuses the data-dir helper in [`apps/server/config.py`](../../apps/server/config.py) (`%APPDATA%\Fluxora\` on Windows; `~/Library/Application Support/Fluxora/` on macOS; `~/.fluxora/` on Linux).
+    - `POST /api/v1/system/clear-hls` → wipes orphaned HLS dirs on demand. Reuses [`_cleanup_orphaned_hls`](../../apps/server/main.py) logic that already runs at startup. Must skip dirs belonging to active sessions in `ffmpeg_service` registry.
+    - Both endpoints localhost-only (`require_local_caller` like the other admin endpoints).
+  - **Desktop side:** new "Storage" section in `SettingsScreen` showing server data-dir path with "Open folder" button (Process.run on `explorer`/`open`/`xdg-open`), per-bucket cache sizes from `/system/data-dir`, "Clear HLS cache" button hitting `/system/clear-hls`, and "Clear poster cache" button hooked to `DefaultCacheManager().emptyCache()` from `cached_network_image`. Optional: cap poster cache via a custom `CacheManager` (default is 200 MB / 7 days, no UI).
+- **Why:** today there's no way for a user to see how much disk the server is using or to flush a stuck HLS dir / bloated poster cache. Logs (`fluxora.log`) and SQLite DB also have no rotation — surfacing sizes prompts the owner to add caps when they actually grow.
+- **Steps:**
+  1. New router `apps/server/routers/system.py` with the two endpoints + tests in `apps/server/tests/test_system.py`.
+  2. New `SystemRepository` in `fluxora_core` for the desktop client (mirrors `SettingsRepository` shape).
+  3. Storage card in `SettingsScreen` — reuses existing `FluxCard` / `StatTile` primitives.
+  4. Wire `DefaultCacheManager().emptyCache()` button + confirmation dialog.
+  5. Optional follow-up: add log rotation (`logging.handlers.RotatingFileHandler`, ~10 MB × 5 rolls) and a size cap on poster cache (`Config('fluxoraPosterCache', maxNrOfCacheObjects: 500, stalePeriod: Duration(days: 30))`).
+- **Time:** ~3–4 hours for the core feature; +1 hour if log rotation is bundled.
+- **Trigger:** post-v1 polish — file in the first month after public launch when real-user data-dir sizes are known. Not blocking ship per [`05_ship_readiness.md`](./05_ship_readiness.md).
+- **Owner:** project owner (or next coding agent).
+
+### 🔲 Fill in `apps/server/fluxora_server.spec` (PyInstaller spec)
+
+- **What:** the spec file at [`apps/server/fluxora_server.spec`](../../apps/server/fluxora_server.spec) is a 35-byte placeholder containing only a corrupted comment header (`# PyInstaller build spec â€` — UTF-8 BOM + smart-quote artefact). It has been tracked in git since the initial scaffold (`0906852`) and never filled in. Despite this, [`runbooks/10_pyinstaller_distribution.md`](../05_infrastructure/runbooks/10_pyinstaller_distribution.md) and [`docs/05_infrastructure/01_infrastructure.md`](../05_infrastructure/01_infrastructure.md) reference the file as if it works. Running `pyinstaller apps/server/fluxora_server.spec` today would fail with "no Analysis block".
+- **Why:** the server is the half of v1's "Plex without the cloud" pitch that the user actually installs on their PC. Right now there is no way to ship it. This is the gating piece between "code on github" and "double-click installer" for the home-server side of the product.
+- **Steps:**
+  1. Write a real `Analysis(['main.py'], ...)` block: pathex, datas (`apps/server/database/migrations/*.sql`, optionally a bundled `ffmpeg.exe`), hiddenimports for the non-static deps (uvicorn workers, `pythonjsonlogger.json`, slowapi, polar/sentry conditionals, aiosqlite). Then `PYZ`, `EXE` blocks.
+  2. Run `pyinstaller apps/server/fluxora_server.spec` and chase the inevitable `ModuleNotFoundError`s — PyInstaller's static scanner misses anything dynamic, so add to `hiddenimports` until the resulting `dist/fluxora-server.exe` actually boots. Expect 4–6 rounds.
+  3. Verify migrations bundle correctly. PyInstaller's onefile mode unpacks to `sys._MEIPASS` at startup; the migrations directory resolver in [`database/db.py`](../../apps/server/database/db.py) needs to handle both dev mode (`Path(__file__).parent / "migrations"`) and PyInstaller mode.
+  4. Decide FFmpeg bundling strategy — bundled (~80 MB per platform binary, complicates AV1 / libdav1d swap tracked in this same file) or system-installed (smaller installer but breaks the "just double-click" promise). See the libdav1d task below for the reason this isn't trivially "bundle whatever".
+  5. Cross-platform builds via GitHub Actions if you want CI artefacts. Each platform needs its own runner (windows-latest, macos-latest, ubuntu-latest) since PyInstaller can't cross-compile.
+- **Time:** ~30 min for a baseline scaffold; ~2–4 hours of iterate-and-fix-imports until the .exe actually boots; ~1 day to add CI cross-platform build matrix and artefact upload.
+- **Trigger:** when the installer / distribution work in [`06_installer_plan.md`](./06_installer_plan.md) is picked up. Until then, the empty spec is harmless — it just makes the runbook commands fail if you run them blindly.
+- **Doc:** when this is picked up, also reword the references in [`runbooks/10_pyinstaller_distribution.md`](../05_infrastructure/runbooks/10_pyinstaller_distribution.md) and [`01_infrastructure.md`](../05_infrastructure/01_infrastructure.md) so they no longer imply the file is functional today.
+- **Owner:** project owner (or next coding agent assigned the installer work).
+
 ### 🔲 Distribution: Windows server `.exe` code signing
 
 - **What:** the PyInstaller-built `dist/fluxora-server.exe` is unsigned today. Buy an OV or EV code-signing certificate (Sectigo / DigiCert / SSL.com — ~$200–400/yr OV, ~$300–600/yr EV), add a `signtool.exe sign /tr <timestamp-url> /td sha256 /fd sha256 /a dist/fluxora-server.exe` step to the build pipeline. EV gets you instant SmartScreen reputation; OV builds reputation over downloads.

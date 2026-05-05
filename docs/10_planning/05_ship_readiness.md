@@ -38,6 +38,23 @@ All three are tracked individually in [`04_manual_tasks.md`](./04_manual_tasks.m
 
 ---
 
+## Streaming pipeline regressions (demo-visible)
+
+Surfaced 2026-05-05 during user-acceptance testing.  Not infra blockers but visible the moment anyone touches the seek bar or HDR toggle in a demo — should be fixed before any public-facing recording, screenshot, or first-paying-customer onboarding.
+
+| Defect | Why | Where tracked |
+|--------|-----|---------------|
+| **HDR→SDR toggle silently fails** ("code error 1") | 10 s playlist timeout kills FFmpeg right as it finishes the first tonemapped segment. Tonemap is CPU-only (~0.6× realtime) so first segment lands at ~10 wall-seconds. | [`11_streaming_pipeline_issues.md`](./11_streaming_pipeline_issues.md) §3.2 |
+| **Seek ahead 404s or hangs** | No `-ss` restart. FFmpeg only ever encodes from `t=0`; segments past the encoded boundary don't exist; router waits 5 s then 404. | [`11_streaming_pipeline_issues.md`](./11_streaming_pipeline_issues.md) §3.1 |
+| **GPU/CPU pegs after rapid stream re-spins** | Mobile cubit's `setTonemap` / `startStream` cycle can leave a previous FFmpeg orphaned if the dispose path's network call fails or the app is backgrounded mid-toggle. | [`11_streaming_pipeline_issues.md`](./11_streaming_pipeline_issues.md) §3.3 |
+| **HDR sources look washed out** on SDR mobile displays even with HDR badge showing | media_kit (libmpv on Android) does no display-side tonemap. Server-side tonemap is the only fix and depends on the row above shipping. | [`11_streaming_pipeline_issues.md`](./11_streaming_pipeline_issues.md) §3.4 |
+
+Plan covers six additional non-headline issues (zombie FFmpeg accumulation, missing session-dir cleanup on failure, log rotation, etc.) — see [`11_streaming_pipeline_issues.md`](./11_streaming_pipeline_issues.md) §4.
+
+**Sequencing:** four commits, ~1.5 days work end-to-end. Commit 1 (tonemap unblock + diagnostic upgrade) is independently shippable and unblocks the most visible demo issue immediately.
+
+---
+
 ## Strongly-recommended pre-launch hardening
 
 Not strictly blocking, but you'll want them on before announcing externally. All UI-clicks-only, no code:
