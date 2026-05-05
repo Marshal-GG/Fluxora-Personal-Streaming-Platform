@@ -10,6 +10,7 @@ class Endpoints {
   static const String infoStats = '$_base/info/stats';
   static const String infoRestart = '$_base/info/restart';
   static const String infoStop = '$_base/info/stop';
+  static const String infoSupportBundle = '$_base/info/support-bundle';
   static const String libraryStorageBreakdown = '$_base/library/storage-breakdown';
 
   // Auth

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -268,5 +269,42 @@ class ApiClient {
     } on DioException catch (e) {
       _rethrow(e);
     }
+  }
+
+  /// POST and read the body as raw bytes — for binary downloads
+  /// (support bundles, archive exports, etc.).
+  ///
+  /// Returns the response payload + the server-suggested filename
+  /// parsed out of `Content-Disposition: attachment; filename="..."`
+  /// (`null` when the header is absent or unparseable). Callers can
+  /// use the filename as a default in a save dialog.
+  Future<({Uint8List bytes, String? filename})> postBytes(
+    String path, {
+    dynamic data,
+    Map<String, dynamic>? queryParameters,
+  }) async {
+    try {
+      final response = await _dio.post<List<int>>(
+        path,
+        data: data,
+        queryParameters: queryParameters,
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final bytes = Uint8List.fromList(response.data ?? const <int>[]);
+      final filename = _extractFilename(
+        response.headers.value('content-disposition'),
+      );
+      return (bytes: bytes, filename: filename);
+    } on DioException catch (e) {
+      _rethrow(e);
+    }
+  }
+
+  static String? _extractFilename(String? contentDisposition) {
+    if (contentDisposition == null) return null;
+    // Matches `filename="<name>"` (RFC 6266 simple form).
+    final match =
+        RegExp(r'filename="([^"]+)"').firstMatch(contentDisposition);
+    return match?.group(1);
   }
 }
