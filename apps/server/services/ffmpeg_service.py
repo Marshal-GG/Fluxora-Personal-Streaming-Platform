@@ -1075,7 +1075,15 @@ async def test_encoder(
         # are <120) without overflowing a notification toast.
         if len(first_line) > 240:
             first_line = first_line[:237] + "..."
-        logger.warning(
+        # DEBUG, not WARNING — `run_encoder_self_tests` is the single
+        # source of truth for the user-facing log level.  When the failure
+        # signature matches a known-actionable pattern (old Intel driver,
+        # no iGPU on this machine, NVENC session cap) the outer caller
+        # logs at INFO with a plain-language suggestion.  Logging WARNING
+        # here too would double-spam the log with FFmpeg's raw stderr
+        # right next to the friendly suggestion line.  The diagnostic is
+        # still available on `--log-level=DEBUG` when needed.
+        logger.debug(
             "Encoder self-test FAILED: encoder=%s returncode=%s error=%s",
             encoder,
             proc.returncode,

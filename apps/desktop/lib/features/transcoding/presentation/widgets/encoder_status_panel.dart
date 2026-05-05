@@ -42,6 +42,7 @@ class EncoderStatusInfo {
     required this.status,
     this.errorMessage,
     this.testedAt,
+    this.suggestion,
   });
 
   final String id;
@@ -49,6 +50,12 @@ class EncoderStatusInfo {
   final EncoderStatus status;
   final String? errorMessage;
   final String? testedAt;
+
+  /// Plain-language fix the server worked out from the failure
+  /// signature — e.g. "Update Intel Graphics driver" rather than
+  /// "MFX session: -9".  Shown in the failed-encoder modal in place
+  /// of the raw error when present.
+  final String? suggestion;
 }
 
 /// Active-encoder strip — one-line summary at the top of the Streaming tab.
@@ -307,6 +314,7 @@ class _EncoderStatusPanelState extends State<EncoderStatusPanel> {
             status: status,
             errorMessage: load?.encoderTestError,
             testedAt: load?.encoderTestedAt,
+            suggestion: load?.encoderTestSuggestion,
           );
         }).toList();
 
@@ -450,8 +458,16 @@ class _EncoderRow extends StatelessWidget {
       ],
     );
 
-    final tooltip = info.status == EncoderStatus.failed && info.errorMessage != null
-        ? 'Self-test failed: ${info.errorMessage}'
+    // Prefer the server's plain-language suggestion when present — it
+    // turns FFmpeg's `MFX session: -9` into "Update Intel Graphics
+    // driver to enable Quick Sync".  Fall back to the raw stderr line
+    // for unrecognised failures so the operator at least sees the
+    // diagnostic.
+    final tooltip = info.status == EncoderStatus.failed
+        ? (info.suggestion ??
+            (info.errorMessage != null
+                ? 'Self-test failed: ${info.errorMessage}'
+                : null))
         : info.status == EncoderStatus.notDetected
             ? 'Not detected on this build of FFmpeg or OS'
             : null;

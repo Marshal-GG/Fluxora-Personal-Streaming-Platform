@@ -241,6 +241,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             _device = _sr.get("transcoding_hwaccel_device")
             _avail = await _ts._detect_available_encoders()
             await _ts.run_encoder_self_tests(_avail, _device)
+            # Surface classifier suggestions (old Intel driver, no iGPU,
+            # NVENC session cap, ...) to the desktop notification bell so
+            # users see the actionable line without having to open the
+            # logs screen.  Dedupes against existing non-dismissed
+            # notifications so a restart loop doesn't spam.
+            await _ts.emit_encoder_failure_notifications(_db2)
         except Exception:
             logger.warning("Encoder self-tests failed", exc_info=True)
 

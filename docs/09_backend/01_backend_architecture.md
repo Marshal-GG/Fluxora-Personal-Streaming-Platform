@@ -82,7 +82,7 @@ server/
 │   │   ├── activity_service.py # record() + list_events(limit, since, type_prefix); backs /api/v1/activity; producer errors swallowed by callers ✅
 │   │   ├── profile_service.py  # get_profile(db) + update_profile(db, ...); avatar_letter computation ✅
 │   │   ├── system_stats_service.py # CPU/RAM/network/uptime/IP/internet probe; backs /info/stats + /ws/stats ✅
-│   │   ├── transcoding_service.py  # encoder discovery via `ffmpeg -encoders` (cached); GPU probe via nvidia-smi/intel_gpu_top/radeontop/system_profiler; `EncoderTestResult` dataclass (passed/error/tested_at); `_list_active_sessions` propagates `encoder_used`; backs GET /api/v1/transcoding/status ✅
+│   │   ├── transcoding_service.py  # encoder discovery via `ffmpeg -encoders` (cached); GPU probe via nvidia-smi/intel_gpu_top/radeontop/system_profiler; `EncoderTestResult` dataclass (passed/error/tested_at/suggestion); `_list_active_sessions` propagates `encoder_used`; `classify_encoder_failure(encoder, error)` recognises QSV old-driver / no-iGPU / NVENC session-cap signatures; `emit_encoder_failure_notifications(db)` writes one notification per failed encoder with category+related_id+`dismissed_at IS NULL` dedup; backs GET /api/v1/transcoding/status ✅
 │   │   ├── encoder_advisor.py      # pure function recommend(active, available, test_results) → Recommendation; backs GET /api/v1/transcoding/advisor ✅
 │   │   ├── encoder_registry.py     # ENCODER_REGISTRY of 10 encoder metas; `concurrent_session_cap` (NVENC = 3); pre-input flags / preset maps / quality args / segment formats per vendor ✅
 │   │   ├── hardware_probe.py       # per-OS CPU + GPU enumeration (lspci / wmic / system_profiler + nvidia-smi); lifetime cache; backs GET /api/v1/transcoding/devices ✅ (Slice B)

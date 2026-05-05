@@ -1310,17 +1310,19 @@ All producer call-sites are wrapped in `try/except` with logging — an activity
       "gpu_engine": null,
       "encoder_test_passed": true,
       "encoder_test_error": null,
+      "encoder_test_suggestion": null,
       "encoder_tested_at": "2026-05-04T15:30:00+00:00"
     },
     {
-      "encoder": "h264_nvenc",
+      "encoder": "h264_qsv",
       "active_sessions": 0,
       "cpu_utilization_percent": null,
       "gpu_utilization_percent": null,
       "vram_used_mb": null,
-      "gpu_engine": "cuda",
+      "gpu_engine": "qsv",
       "encoder_test_passed": false,
-      "encoder_test_error": "Cannot load nvcuda.dll",
+      "encoder_test_error": "Error creating a MFX session: -9.",
+      "encoder_test_suggestion": "Update Intel Graphics driver to a oneVPL Runtime build (driver 31.x or newer).",
       "encoder_tested_at": "2026-05-04T15:30:00+00:00"
     }
   ],
@@ -1345,6 +1347,7 @@ All producer call-sites are wrapped in `try/except` with logging — an activity
 - `gpu_engine` is the underlying hardware backend (`cuda` / `qsv` / `vaapi` / `videotoolbox`); `null` for software encoders. Drives the desktop's CPU/GPU pill.
 - `encoder_test_passed` is the result of the most recent `test_encoder()` self-test (~1 s of synthetic encode against `lavfi testsrc`). Software encoders always pass. `null` if no test has run yet.
 - `encoder_test_error` carries the first non-empty stderr line (≤240 chars) from a failed self-test — drives the desktop's failed-encoder tooltip / modal so the operator knows *why* (missing driver vs. missing FFmpeg build feature vs. timeout).
+- `encoder_test_suggestion` is the plain-language remediation produced by `transcoding_service.classify_encoder_failure(encoder, error)` when the failure matches one of the field-reported patterns (Intel old driver predating oneVPL → MFX session: -9; no Intel iGPU on this machine; NVENC GeForce 3-session cap). `null` when the failure isn't recognised — caller falls through to displaying the raw `encoder_test_error`. The same suggestion is also surfaced via a notification (`category=transcode`, `related_kind=encoder`, `related_id=<encoder>`) on every server startup that re-detects the failure (deduped on `dismissed_at IS NULL` so a restart loop doesn't spam).
 - `encoder_tested_at` is the ISO-8601 UTC timestamp of the last self-test run; surfaces as "tested HH:MM" in the encoder availability panel.
 - `gpu_utilization_percent` / `vram_used_mb` are populated only for the *active* encoder (per-vendor probe: `nvidia-smi` / `intel_gpu_top` / `radeontop` / `system_profiler`). `null` on non-active rows and on probe failure (best-effort).
 - `fps` and `speed_x` on active sessions are v1 placeholders — `null` until real-time FFmpeg progress parsing lands.

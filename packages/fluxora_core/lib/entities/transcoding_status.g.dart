@@ -16,6 +16,7 @@ _EncoderLoad _$EncoderLoadFromJson(Map<String, dynamic> json) => _EncoderLoad(
   encoderTestPassed: json['encoder_test_passed'] as bool?,
   encoderTestError: json['encoder_test_error'] as String?,
   encoderTestedAt: json['encoder_tested_at'] as String?,
+  encoderTestSuggestion: json['encoder_test_suggestion'] as String?,
 );
 
 Map<String, dynamic> _$EncoderLoadToJson(_EncoderLoad instance) =>
@@ -29,6 +30,7 @@ Map<String, dynamic> _$EncoderLoadToJson(_EncoderLoad instance) =>
       'encoder_test_passed': instance.encoderTestPassed,
       'encoder_test_error': instance.encoderTestError,
       'encoder_tested_at': instance.encoderTestedAt,
+      'encoder_test_suggestion': instance.encoderTestSuggestion,
     };
 
 _ActiveTranscodeSession _$ActiveTranscodeSessionFromJson(

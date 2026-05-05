@@ -86,9 +86,10 @@ On startup (background task, non-blocking) and on every encoder change via setti
 the server runs `test_encoder()` which encodes 1 second of a lavfi test pattern.
 
 - `test_encoder` returns `tuple[bool, str | None]` — pass/fail + first non-empty stderr line (≤240 chars) on failure.
-- Results stored in `_TEST_RESULTS: dict[str, EncoderTestResult]` — a frozen dataclass with `passed: bool`, `error: str | None`, `tested_at: datetime`.
-- **Pass** → encoder marked `encoder_test_passed: true`, `encoder_test_error: null` in status response.
-- **Fail** → `encoder_test_error` carries the FFmpeg stderr line so the operator can see `Cannot load nvcuda.dll` rather than "test failed".
+- Results stored in `_TEST_RESULTS: dict[str, EncoderTestResult]` — a frozen dataclass with `passed: bool`, `error: str | None`, `tested_at: datetime`, `suggestion: str | None`.
+- **Pass** → encoder marked `encoder_test_passed: true`, `encoder_test_error: null`, `encoder_test_suggestion: null` in status response.
+- **Fail** → `encoder_test_error` carries the FFmpeg stderr line so the operator can see `Cannot load nvcuda.dll` rather than "test failed". When the failure matches one of the field-reported signatures recognised by `transcoding_service.classify_encoder_failure(encoder, error)` (Intel old driver pre-oneVPL → `MFX session: -9`; no Intel iGPU on this machine; NVENC GeForce 3-session cap), `encoder_test_suggestion` carries a plain-language remediation. The desktop `EncoderStatusPanel` tooltip prefers the suggestion over the raw stderr.
+- **Notification surfacing.** `emit_encoder_failure_notifications(db)` is called on every server startup after self-tests (and after on-settings-change retests). It writes one notification per failed encoder with `category=transcode`, `related_kind=encoder`, `related_id=<encoder>` — title is the human-friendly encoder label ("H.264 (Intel Quick Sync)" etc.), message is the suggestion. Dedup is on `category + related_id + dismissed_at IS NULL`, so a restart loop doesn't spam the bell, but a future server start *does* re-create the notification once the user has dismissed it (in case they forgot to act on it).
 
 This prevents silent failures where FFmpeg accepts the encoder name but fails on real files.
 

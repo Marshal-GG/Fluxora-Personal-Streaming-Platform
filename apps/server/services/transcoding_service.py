@@ -41,11 +41,78 @@ class EncoderTestResult:
     explain *why* an encoder isn't usable — a bare ``passed: bool`` would
     leave the operator guessing between "missing GPU driver" / "missing
     FFmpeg build feature" / "stale device path".
+
+    ``suggestion`` is populated when ``classify_encoder_failure`` recognises
+    the stderr signature as a known-actionable case (old Intel driver,
+    NVENC behind WDDM, etc.).  Surfaced in the desktop self-test card so
+    end users — who can't read FFmpeg's MFX error codes — get a direct
+    "do this" line instead of the cryptic upstream error.
     """
 
     passed: bool
     error: str | None  # First non-empty stderr line on failure; None on pass.
     tested_at: datetime  # UTC timestamp of when the test ran.
+    suggestion: str | None = None
+
+
+def classify_encoder_failure(encoder: str, error: str | None) -> str | None:
+    """Map a known-bad encoder error to an end-user-actionable suggestion.
+
+    The startup self-test surfaces FFmpeg's raw stderr.  That's diagnostic
+    gold for someone who knows what ``MFX_ERR_NOT_FOUND`` means but useless
+    to the average user.  This classifier fingerprints specific failure
+    signatures and returns a one-line "fix" that the desktop UI shows.
+
+    Returns ``None`` when no classifier matches — caller should fall back to
+    the raw error string.
+
+    Adding a new pattern: keep it specific (encoder + substring match), and
+    write the suggestion in plain language pointing at the action the user
+    can take without rebuilding anything.
+    """
+    if not error:
+        return None
+    err = error.lower()
+
+    # Intel QSV — MFX session: -9 (MFX_ERR_NOT_FOUND) when the FFmpeg build
+    # was compiled against oneVPL 2.x but the user's Intel graphics driver
+    # only ships the legacy MSDK (libmfx 1.x) runtime.  Common on systems
+    # with Intel drivers older than ~2022.  The hardware itself is fine;
+    # only the runtime layer is mismatched.
+    if encoder.endswith("_qsv") and "mfx session: -9" in err:
+        return (
+            "Your Intel Graphics driver predates the oneVPL runtime that "
+            "this FFmpeg build expects.  Update via the Intel Driver & "
+            "Support Assistant or install the Intel oneVPL GPU Runtime "
+            "from the Microsoft Store to enable Quick Sync hardware "
+            "transcoding.  Streaming will use the next encoder in the "
+            "fallback chain in the meantime."
+        )
+
+    # Intel QSV — generic "no Intel iGPU available" case (vs. above where
+    # the iGPU IS present but the runtime can't talk to it).  Matches the
+    # signature when running on a system with NVIDIA-only or AMD-only GPUs.
+    if encoder.endswith("_qsv") and (
+        "no device available" in err or "device creation failed" in err
+    ):
+        return (
+            "No Intel iGPU detected on this system.  Quick Sync requires "
+            "Intel integrated graphics — your machine appears to use a "
+            "different GPU vendor.  This encoder will be skipped; "
+            "streaming will use the next encoder in the fallback chain."
+        )
+
+    # NVIDIA NVENC — driver present but session creation refused, typically
+    # because the session cap is exceeded (GeForce cards limit concurrent
+    # NVENC sessions to 3 unless you patch the driver).
+    if encoder.endswith("_nvenc") and "openencodesessionex" in err:
+        return (
+            "NVIDIA NVENC refused a new session.  GeForce drivers cap "
+            "concurrent NVENC sessions at 3 by default.  Reduce the "
+            "max-streams setting or use a Quadro / RTX-A driver patch."
+        )
+
+    return None
 
 
 # Per-encoder self-test results.  Populated on first detection and on
@@ -319,6 +386,7 @@ async def get_status(db: aiosqlite.Connection) -> dict[str, Any]:
             "encoder_tested_at": (
                 result.tested_at.isoformat() if result else None
             ),
+            "encoder_test_suggestion": result.suggestion if result else None,
         }
 
         # Dispatch GPU stats to the correct probe based on vendor.  Resolve
@@ -362,10 +430,98 @@ async def run_encoder_self_tests(available: list[str], hwaccel_device: str | Non
             )
             continue
         passed, error = await test_encoder(enc, hwaccel_device=hwaccel_device)
+        suggestion = classify_encoder_failure(enc, error) if not passed else None
         _TEST_RESULTS[enc] = EncoderTestResult(
-            passed=passed, error=error, tested_at=now
+            passed=passed, error=error, tested_at=now, suggestion=suggestion,
         )
         if not passed:
-            logger.warning(
-                "Encoder self-test FAILED — %s: %s", enc, error or "(no error captured)"
+            # Known-actionable failures (old Intel driver, no iGPU on the
+            # box, NVENC session cap, ...) log at INFO with the suggestion
+            # — the priority chain transparently falls back, so this is
+            # informational rather than a problem the operator must solve.
+            # Anything we don't recognise stays at WARNING so unexpected
+            # failures still surface in the log.
+            if suggestion:
+                logger.info(
+                    "Encoder self-test skipped — %s: %s", enc, suggestion
+                )
+            else:
+                logger.warning(
+                    "Encoder self-test FAILED — %s: %s",
+                    enc,
+                    error or "(no error captured)",
+                )
+
+
+_ENCODER_LABELS = {
+    "h264_qsv": "H.264 (Intel Quick Sync)",
+    "hevc_qsv": "HEVC (Intel Quick Sync)",
+    "av1_qsv": "AV1 (Intel Quick Sync)",
+    "h264_nvenc": "H.264 (NVIDIA NVENC)",
+    "hevc_nvenc": "HEVC (NVIDIA NVENC)",
+    "av1_nvenc": "AV1 (NVIDIA NVENC)",
+    "h264_vaapi": "H.264 (AMD/Linux VA-API)",
+    "hevc_vaapi": "HEVC (AMD/Linux VA-API)",
+    "h264_videotoolbox": "H.264 (Apple VideoToolbox)",
+    "hevc_videotoolbox": "HEVC (Apple VideoToolbox)",
+}
+
+
+async def emit_encoder_failure_notifications(db: aiosqlite.Connection) -> int:
+    """Surface classifier suggestions to the desktop notification bell.
+
+    A log line at INFO is invisible unless the operator opens the Logs
+    screen.  Users who never look there will never know that Quick Sync
+    is sitting there waiting on a driver update, even though we worked
+    out exactly what they need to do.  This emits one notification per
+    encoder with a recognised failure suggestion so the desktop's
+    notifications panel surfaces the actionable bit.
+
+    Deduplication mirrors the storage-warning pattern in
+    `library_service.get_storage_breakdown`: skip if a non-dismissed
+    notification already exists for the same `(category, related_id)`
+    pair within the last day.  Without dedup, a server restart loop
+    would spam the bell.
+
+    Returns the count of notifications actually inserted.
+    """
+    from services import notification_service
+
+    inserted = 0
+    for encoder, result in _TEST_RESULTS.items():
+        if result.passed or not result.suggestion:
+            continue
+        async with db.execute(
+            """
+            SELECT id FROM notifications
+             WHERE category = 'transcode'
+               AND related_kind = 'encoder'
+               AND related_id = ?
+               AND created_at > datetime('now', '-1 day')
+               AND dismissed_at IS NULL
+             LIMIT 1
+            """,
+            (encoder,),
+        ) as cur:
+            existing = await cur.fetchone()
+        if existing is not None:
+            continue
+        label = _ENCODER_LABELS.get(encoder, encoder)
+        try:
+            await notification_service.create(
+                db,
+                type="warning",
+                category="transcode",
+                title=f"{label} unavailable",
+                message=result.suggestion,
+                related_kind="encoder",
+                related_id=encoder,
             )
+            inserted += 1
+        except Exception:
+            logger.warning(
+                "Failed to emit encoder-suggestion notification for %s",
+                encoder,
+                exc_info=True,
+            )
+    return inserted

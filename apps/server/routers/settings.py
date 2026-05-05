@@ -103,6 +103,14 @@ async def update_settings(
                 avail = await _ts._detect_available_encoders()
                 device = row.get("transcoding_hwaccel_device")
                 await _ts.run_encoder_self_tests(avail, device)
+                # Reuse the same DB connection — settings change happens
+                # within the request; our background task uses the shared
+                # singleton.  Re-emit so any new failure pattern (e.g.
+                # operator switched hwaccel device and the new path is
+                # broken) surfaces in the bell.
+                from database.db import get_db as _get_db
+                _db = await _get_db()
+                await _ts.emit_encoder_failure_notifications(_db)
             except Exception:
                 logger.warning("Encoder re-test after settings change failed", exc_info=True)
 

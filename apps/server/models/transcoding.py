@@ -28,6 +28,12 @@ class EncoderLoad(BaseModel):
     encoder_test_error: str | None = None
     # ISO-8601 UTC timestamp of the last self-test (None = not yet tested).
     encoder_tested_at: str | None = None
+    # Plain-language fix suggestion when the failure signature is one we
+    # recognise (e.g. old Intel driver predates oneVPL).  None when the
+    # encoder passed, or when the failure pattern isn't classified yet.
+    # Surfaced verbatim in the desktop UI so end users get an actionable
+    # next step instead of FFmpeg's raw stderr.
+    encoder_test_suggestion: str | None = None
 
 
 class ActiveTranscodeSession(BaseModel):

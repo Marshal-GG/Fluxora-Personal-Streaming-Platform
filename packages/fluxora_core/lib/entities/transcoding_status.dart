@@ -25,6 +25,12 @@ abstract class EncoderLoad with _$EncoderLoad {
     /// HH:MM" in the encoder status panel so operators know when self-test
     /// data was last refreshed.
     String? encoderTestedAt,
+    /// Plain-language fix suggestion when the failure signature is one
+    /// the server recognises (e.g. old Intel driver predates oneVPL).
+    /// Surfaced verbatim in the failed-encoder modal so end users get an
+    /// actionable next step instead of FFmpeg's raw stderr.  Null on
+    /// pass / not-yet-tested / unrecognised failure pattern.
+    String? encoderTestSuggestion,
   }) = _EncoderLoad;
 
   factory EncoderLoad.fromJson(Map<String, dynamic> json) =>
