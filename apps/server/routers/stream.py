@@ -29,6 +29,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
 
+# Last-persisted `media_files.last_progress_sec` value per session.
+# `update_progress` writes `stream_sessions.progress_sec` every tick
+# (transient state, fine to update at any rate) but only writes the
+# resume marker on `media_files` once per 30 s of source-time delta.
+# The raw 5-second-tick progress polling on N concurrent streams was
+# producing N × 12 WAL writes per minute against a single user_settings
+# DB row — useful for the initial validation, wasteful in steady state.
+# `stop_stream` flushes the final value from `stream_sessions` so
+# resume position is exact when the user closes cleanly; the worst-
+# case staleness (app killed mid-watch without a clean stop) is the
+# debounce interval below.
+_PROGRESS_DEBOUNCE_SEC = 30.0
+_last_persisted_progress: dict[str, float] = {}
+
 
 # ── GET /api/v1/stream/sessions ─────────────────────────────────────────────
 
@@ -91,6 +105,47 @@ async def start_stream(
     )
     if deny_reason:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=deny_reason)
+
+    # Dedup: if this client already has an active session for this same
+    # file (e.g. a buggy / restarting client posted /start twice), kill
+    # the prior FFmpeg + cleanup its session dir + stamp ended_at on
+    # the row before spawning a new one.  Otherwise the GPU/CPU usage
+    # doubles per re-spin until the prior session's natural lifecycle
+    # cleans it up — visible to the user as "every restart makes it
+    # slower", reproducible by toggling tonemap rapidly.  The dedup
+    # runs *before* the concurrency check below so a legitimate
+    # re-start doesn't get rejected for hitting the per-client cap.
+    async with db.execute(
+        "SELECT id FROM stream_sessions"
+        " WHERE client_id = ? AND file_id = ? AND ended_at IS NULL",
+        (client["id"], file_id),
+    ) as cur:
+        prior_rows = await cur.fetchall()
+    for prior in prior_rows:
+        prior_sid = prior["id"]
+        logger.info(
+            "Replacing prior active session for same (client, file): "
+            "client=%s file=%s prior_session=%s",
+            client["id"],
+            file_id,
+            prior_sid,
+        )
+        try:
+            await ffmpeg_service.stop_stream(prior_sid)
+            ffmpeg_service.cleanup_session_dir(prior_sid, settings.hls_tmp_path)
+        except Exception:
+            logger.warning(
+                "Failed to fully tear down prior session %s — continuing",
+                prior_sid,
+                exc_info=True,
+            )
+        await db.execute(
+            "UPDATE stream_sessions SET ended_at = ? WHERE id = ?",
+            (datetime.now(UTC).isoformat(), prior_sid),
+        )
+        _last_persisted_progress.pop(prior_sid, None)
+    if prior_rows:
+        await db.commit()
 
     # Enforce tier-aware stream concurrency limit (reads from user_settings DB row)
     max_streams = await settings_service.get_max_concurrent_streams(db)
@@ -227,15 +282,24 @@ async def update_progress(
         )
 
     now = datetime.now(UTC).isoformat()
-    # Persist to stream_sessions (live value) and media_files (resume marker)
+    # Always update stream_sessions.progress_sec (transient live value;
+    # drives the active-sessions UI on the desktop).  Debounce the
+    # resume-marker write on media_files to once per 30 s of source-
+    # time delta — see the comment on _PROGRESS_DEBOUNCE_SEC for the
+    # WAL-rate motivation.  stop_stream flushes the final value so a
+    # clean close ends with exact resume accuracy.
     await db.execute(
         "UPDATE stream_sessions SET progress_sec = ? WHERE id = ?",
         (progress_sec, session_id),
     )
-    await db.execute(
-        "UPDATE media_files SET last_progress_sec = ?, updated_at = ? WHERE id = ?",
-        (progress_sec, now, row["file_id"]),
-    )
+    last = _last_persisted_progress.get(session_id)
+    if last is None or abs(progress_sec - last) >= _PROGRESS_DEBOUNCE_SEC:
+        await db.execute(
+            "UPDATE media_files SET last_progress_sec = ?, updated_at = ?"
+            " WHERE id = ?",
+            (progress_sec, now, row["file_id"]),
+        )
+        _last_persisted_progress[session_id] = progress_sec
     await db.commit()
 
 
@@ -344,7 +408,8 @@ async def stop_stream(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
 ) -> None:
     async with db.execute(
-        "SELECT id, client_id FROM stream_sessions WHERE id = ? AND ended_at IS NULL",
+        "SELECT id, client_id, file_id, progress_sec FROM stream_sessions"
+        " WHERE id = ? AND ended_at IS NULL",
         (session_id,),
     ) as cur:
         row = await cur.fetchone()
@@ -368,11 +433,26 @@ async def stop_stream(
     ffmpeg_service.cleanup_session_dir(session_id, settings.hls_tmp_path)
 
     now = datetime.now(UTC).isoformat()
+    # Flush the final live progress to media_files so resume position
+    # is exact on a clean close.  The debounce in update_progress lets
+    # writes through every 30 s, so on average the in-memory
+    # _last_persisted_progress is up to ~30 s stale.  This statement
+    # closes that gap.
+    final_progress = row["progress_sec"]
+    if final_progress is not None and final_progress > 0:
+        await db.execute(
+            "UPDATE media_files SET last_progress_sec = ?, updated_at = ?"
+            " WHERE id = ?",
+            (final_progress, now, row["file_id"]),
+        )
     await db.execute(
         "UPDATE stream_sessions SET ended_at = ? WHERE id = ?",
         (now, session_id),
     )
     await db.commit()
+    # Drop the in-memory dedup entry — long-running servers shouldn't
+    # accumulate one float per ended session indefinitely.
+    _last_persisted_progress.pop(session_id, None)
 
     try:
         await activity_service.record(

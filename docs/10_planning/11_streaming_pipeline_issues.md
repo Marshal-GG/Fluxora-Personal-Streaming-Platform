@@ -1,7 +1,7 @@
 # Streaming Pipeline — Issue Audit & Remediation Plan
 
 > **Category:** Planning
-> **Status:** Active — Drafted 2026-05-05
+> **Status:** ✅ Plan complete — all four commits shipped 2026-05-05
 > **Scope:** Identifies and prioritises every defect found in the HLS streaming pipeline (mobile/desktop player ⇆ server ⇆ FFmpeg) during the 2026-05-05 user-reported regression triage.  Lays out a sequenced remediation plan with concrete code targets, commit boundaries, and test strategy.
 > **Triggered by:** four user-reported issues (seek delay, GPU/CPU pegging, "code error 1" on HDR→SDR toggle, HDR-not-working) — investigation surfaced six additional issues that share root causes with the reported ones.
 
@@ -296,9 +296,9 @@ These weren't user-reported but came out of the same code paths.
 Commit 1 — HDR→SDR unblock + diagnostic upgrade   │ ~2 hours      │ low risk    │ ✅ landed 2026-05-05
 Commit 2 — Seek-restart server side               │ ~4–6 hours    │ medium risk │ ✅ landed 2026-05-05
 Commit 3 — Seek-restart mobile player wire-up     │ ~3 hours      │ medium risk │ ✅ landed 2026-05-05
-Commit 4 — Zombie cleanup + dedup + log polish    │ ~2 hours      │ low risk    │ pending
+Commit 4 — Zombie cleanup + dedup + log polish    │ ~2 hours      │ low risk    │ ✅ landed 2026-05-05
 ─────────────────────────────────────────────────  │ ────────      │ ────────    │
-Total                                              │ ~1.5 days     │
+Total                                              │ ~1.5 days     │ all four shipped 2026-05-05
 ```
 
 Each commit is independently shippable.  Commit 1 unblocks the user's immediate HDR pain; commits 2–3 are paired (they're useless individually).  Commit 4 is hygiene and depends on no others.
@@ -401,22 +401,30 @@ Each commit is independently shippable.  Commit 1 unblocks the user's immediate 
 
 ---
 
-### Commit 4 — Zombie cleanup + dedup + log polish
+### Commit 4 — Zombie cleanup + dedup + log polish ✅ landed 2026-05-05
 
 **Goal:** Stop accumulating runaway FFmpeg processes; tighter resource lifecycle.
 
-**Changes:**
-- [`stream.py:start_stream`](../../apps/server/routers/stream.py) — before INSERT, query for any active session with same `(client_id, file_id)`; if found, call `stop_stream(prior_session_id)` first (kill FFmpeg + cleanup dir + stamp ended_at).
-- [`main.py:_close_orphaned_sessions`](../../apps/server/main.py#L110) — extend to also kill any leftover FFmpeg subprocess that managed to outlive the parent.  Best-effort `taskkill /F /IM ffmpeg.exe /T` on Windows is too aggressive (would kill operator-launched FFmpegs); instead, track subprocess PIDs in a sidecar file and reap on startup.
-- [`ffmpeg_service.py:start_stream`](../../apps/server/services/ffmpeg_service.py#L920) — failure path wraps in `try/finally cleanup_session_dir(...)` so partial dirs don't pile up.
-- [`stream.py:update_progress`](../../apps/server/routers/stream.py#L202) — debounce `last_progress_sec` writes to once per 30 s.
-- [`main.py`](../../apps/server/main.py) — switch the file handler to `RotatingFileHandler(maxBytes=10MB, backupCount=5)`.
+**Shipped changes:**
 
-**Tests:**
-- `test_start_stream_kills_prior_session_for_same_client_file`
-- `test_start_stream_failure_cleans_session_dir`
-- `test_progress_writes_debounced_to_30s`
-- `test_log_rotation_caps_at_10mb`
+- **`(client_id, file_id)` dedup in [`stream.py:start_stream`](../../apps/server/routers/stream.py)** — runs *before* the per-client concurrency check.  When the caller already has an active session on the same file (a buggy / restarting client double-posting `/start` is the common case), the prior FFmpeg is terminated, its session dir cleaned, and its row stamped `ended_at`.  Logs at INFO so the operator can see the dedup firing.  Cross-client sessions on the same file are NOT affected (two paired devices in the same household can both stream the same movie).  The dedup intentionally bypasses the concurrency cap for this case so a re-start doesn't get rejected for "exceeding" a slot the caller already owns.
+- **Failure-path session-dir cleanup in [`ffmpeg_service.py:start_stream`](../../apps/server/services/ffmpeg_service.py)** — the `if not succeeded` block now `cleanup_session_dir(session_id, hls_root)` before raising the diagnostic.  Wrapped in its own try/except so a cleanup failure can't mask the original error.  The orphan-on-startup hook still catches stragglers across restarts; this is the steady-state housekeeping for long-running servers.
+- **Progress-write debounce in [`stream.py:update_progress`](../../apps/server/routers/stream.py)** — new module-level `_last_persisted_progress: dict[str, float]` and `_PROGRESS_DEBOUNCE_SEC = 30.0`.  `stream_sessions.progress_sec` is updated every tick (transient live value; drives the active-sessions UI on desktop); `media_files.last_progress_sec` updates only when |delta| ≥ 30 s of source-time.  `stop_stream` flushes the live `stream_sessions.progress_sec` to `media_files.last_progress_sec` on a clean close so resume position stays exact when the user closes properly — and pops the in-memory dict entry so long-running servers don't accumulate one float per ended session.  Worst-case staleness on a non-clean close (app killed mid-watch without `stopStream`) is the debounce interval; before this change, three concurrent streams produced ~36 WAL writes/min just on progress polling.
+- **Log rotation already in place** — `_LOG_CONFIG_COMMON["handlers"]["file"]` was already configured as `RotatingFileHandler(maxBytes=10MB, backupCount=5)`.  The original triage's "no rotation in code" assertion was inaccurate; the user's `fluxora.log` at 9 MB + `fluxora.log.1` at 10 MB was rotation working, not absent.  Total disk cap is 60 MB (current + 5 backups × 10 MB) — fine for v1.  Pinned with a regression test so a future "let's just use FileHandler" refactor breaks immediately.
+- **Out of scope (deferred):** the "kill leftover FFmpeg subprocesses across server-process restarts" piece — would require a sidecar PID file written by the spawn path and reaped on startup, and `taskkill /F /IM ffmpeg.exe /T` on Windows is too aggressive (would kill operator-launched FFmpegs unrelated to Fluxora).  The OS reaps orphaned children on parent exit in practice; logging an issue if real cases ever surface is cheaper than the file-tracking layer.
+
+**Tests in [`apps/server/tests/test_stream.py`](../../apps/server/tests/test_stream.py) (+6 cases, 58 → 64 in this file):**
+
+- `test_start_stream_kills_prior_session_for_same_client_and_file`
+- `test_start_stream_does_not_kill_other_clients_sessions`
+- `test_ffmpeg_start_stream_cleans_session_dir_on_failure`
+- `test_update_progress_debounces_media_files_writes`
+- `test_stop_stream_flushes_final_progress_to_media_files`
+- `test_log_config_uses_rotating_file_handler_with_10mb_cap`
+
+Plus a fix to the pre-existing [`test_settings.py::test_free_tier_blocks_second_stream`](../../apps/server/tests/test_settings.py) — it was using the same `(client, file)` for the active session and the about-to-be-rejected start, which the new dedup correctly intercepts before the concurrency check.  Updated to use distinct file_ids so it actually exercises the cap.
+
+**Server suite 415 → 421 passing.**
 
 ---
 

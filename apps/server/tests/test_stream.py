@@ -1479,3 +1479,367 @@ async def test_seek_endpoint_forwards_tonemap_flag(
 
     assert response.status_code == 204
     assert captured_tonemap["value"] is True
+
+
+# ── start_stream dedup: kill prior active session for same (client, file) ───
+
+
+@pytest.mark.asyncio
+async def test_start_stream_kills_prior_session_for_same_client_and_file(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """A second `/start` for the same (client_id, file_id) while the
+    first is still active must terminate the prior FFmpeg + cleanup
+    its session dir + stamp ended_at on the prior row.  Without this
+    the GPU/CPU usage doubles per re-spin until the prior session's
+    natural lifecycle cleans it up — the symptom the user reported as
+    'each stream gpu and cpu going crazy'."""
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+
+    spawned: list[str] = []
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        spawned.append(session_id)
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    stop_calls: list[str] = []
+
+    async def _mock_stop(session_id: str) -> None:
+        stop_calls.append(session_id)
+
+    cleanup_calls: list[str] = []
+
+    def _mock_cleanup(session_id: str, hls_root: Path) -> None:
+        cleanup_calls.append(session_id)
+
+    with (
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+        patch("routers.stream.ffmpeg_service.stop_stream", side_effect=_mock_stop),
+        patch("routers.stream.ffmpeg_service.cleanup_session_dir",
+              side_effect=_mock_cleanup),
+    ):
+        first = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+        first_sid = first.json()["session_id"]
+        # Second /start while the first is still active — same (client, file).
+        second = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+        second_sid = second.json()["session_id"]
+
+    # Both starts succeeded; the second was given a fresh session id.
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first_sid != second_sid
+
+    # The prior FFmpeg was killed + its dir cleaned up exactly once.
+    assert stop_calls == [first_sid]
+    assert cleanup_calls == [first_sid]
+
+    # The first session row is now marked ended.
+    async with test_db.execute(
+        "SELECT id, ended_at FROM stream_sessions WHERE id = ?", (first_sid,),
+    ) as cur:
+        row = await cur.fetchone()
+    assert row is not None
+    assert row["ended_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_start_stream_does_not_kill_other_clients_sessions(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """The dedup is keyed on `(client_id, file_id)` — a different
+    client streaming the same file must NOT be terminated when the
+    first client starts.  Otherwise two paired devices in the same
+    household couldn't watch the same movie at once."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+
+    # Pair a second client — its sessions must survive the first's restart.
+    await client.post(
+        "/api/v1/auth/request-pair",
+        json={
+            "client_id": "second-tv",
+            "device_name": "Living Room TV",
+            "platform": "android",
+            "app_version": "0.1.0",
+        },
+    )
+    await client.post("/api/v1/auth/approve/second-tv")
+    other_status = await client.get("/api/v1/auth/status/second-tv")
+    other_token = other_status.json()["auth_token"]
+
+    token_main = await _get_token(client, monkeypatch)
+    headers_main = {"Authorization": f"Bearer {token_main}"}
+    file_id = await _insert_file(test_db)
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    stop_calls: list[str] = []
+
+    async def _mock_stop(session_id: str) -> None:
+        stop_calls.append(session_id)
+
+    with (
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+        patch("routers.stream.ffmpeg_service.stop_stream", side_effect=_mock_stop),
+        patch("routers.stream.ffmpeg_service.cleanup_session_dir"),
+    ):
+        # Second client starts streaming the file first.
+        await client.post(
+            f"/api/v1/stream/start/{file_id}",
+            headers={"Authorization": f"Bearer {other_token}"},
+        )
+        # First client now starts the same file — must NOT touch the
+        # second client's session.
+        await client.post(f"/api/v1/stream/start/{file_id}", headers=headers_main)
+
+    assert stop_calls == []  # nothing was torn down
+
+
+# ── start_stream failure path cleanup ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_ffmpeg_start_stream_cleans_session_dir_on_failure(tmp_path):
+    """When ffmpeg_service.start_stream raises, the partial session
+    directory must be removed — without this, on a long-running server
+    with a buggy source file (or a temporarily-broken encoder) the
+    HLS tmp tree fills with empty `seg00000.ts` artifacts of every
+    failed attempt."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from services import ffmpeg_service
+
+    session_id = "fail-cleanup-sid"
+    hls_root = tmp_path
+    session_dir = hls_root / session_id
+    # Pre-create the dir + a partial segment so we can verify removal.
+    session_dir.mkdir()
+    (session_dir / "seg00000.ts").write_bytes(b"partial")
+
+    # Force `_spawn_ffmpeg_attempt` to fail so start_stream raises.
+    async def _spawn_fail(*a, **kw):
+        return False, "boom: simulated", 99, False
+
+    fake_settings = MagicMock()
+    fake_settings.get = MagicMock(return_value=None)
+
+    async def _fake_get_settings(_db):
+        return {"transcoding_encoder": "libx264", "transcoding_preset": "veryfast"}
+
+    fake_db = MagicMock()
+    fake_db.execute = MagicMock(return_value=_AsyncCM(_FakeCur([])))
+
+    async def _fake_get_db():
+        return fake_db
+
+    with (
+        patch.object(ffmpeg_service, "_spawn_ffmpeg_attempt", side_effect=_spawn_fail),
+        patch.object(
+            ffmpeg_service,
+            "_resolve_source_metadata",
+            new=AsyncMock(return_value=("h264", None)),
+        ),
+        patch("services.settings_service.get_settings",
+              side_effect=_fake_get_settings),
+        patch("database.db.get_db", side_effect=_fake_get_db),
+    ):
+        with pytest.raises(RuntimeError):
+            await ffmpeg_service.start_stream(
+                "/tmp/source.mp4", session_id, hls_root,
+            )
+
+    # Failure path must have removed the partial session dir.
+    assert not session_dir.exists()
+
+
+class _AsyncCM:
+    """Minimal async context manager wrapping a DB cursor stub for the
+    `async with db.execute(...) as cur` pattern."""
+
+    def __init__(self, cur):
+        self._cur = cur
+
+    async def __aenter__(self):
+        return self._cur
+
+    async def __aexit__(self, *a):
+        return None
+
+
+class _FakeCur:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    async def fetchall(self):
+        return list(self._rows)
+
+
+# ── update_progress debounce ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_update_progress_debounces_media_files_writes(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """Three progress ticks at 5 s / 10 s / 15 s should produce only
+    ONE `media_files.last_progress_sec` write (the first), because the
+    deltas are below the 30 s debounce threshold.  Updates to
+    `stream_sessions.progress_sec` happen on every tick (transient
+    live value).  This is the WAL-rate fix for the user's report of
+    `fluxora.db-wal` accumulating 36+ writes/min on a single stream."""
+    from routers import stream as stream_router
+
+    # Reset the per-test in-memory dedup so prior test runs don't bleed.
+    stream_router._last_persisted_progress.clear()
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        start = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    sid = start.json()["session_id"]
+
+    async def _read_media_progress() -> float | None:
+        async with test_db.execute(
+            "SELECT last_progress_sec FROM media_files WHERE id = ?", (file_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return row["last_progress_sec"] if row else None
+
+    # First tick — must persist (no prior baseline).
+    await client.patch(
+        f"/api/v1/stream/{sid}/progress",
+        json={"progress_sec": 5.0},
+        headers=headers,
+    )
+    assert await _read_media_progress() == 5.0
+
+    # Second tick — delta = 5 s, below threshold; must NOT update media_files.
+    await client.patch(
+        f"/api/v1/stream/{sid}/progress",
+        json={"progress_sec": 10.0},
+        headers=headers,
+    )
+    assert await _read_media_progress() == 5.0  # unchanged
+
+    # Third tick — delta = 5 s from last persisted, still below threshold.
+    await client.patch(
+        f"/api/v1/stream/{sid}/progress",
+        json={"progress_sec": 15.0},
+        headers=headers,
+    )
+    assert await _read_media_progress() == 5.0  # still unchanged
+
+    # Tick at 35 s — delta = 30 s exactly, write goes through.
+    await client.patch(
+        f"/api/v1/stream/{sid}/progress",
+        json={"progress_sec": 35.0},
+        headers=headers,
+    )
+    assert await _read_media_progress() == 35.0
+
+    # Stream_sessions.progress_sec must reflect the latest tick regardless.
+    async with test_db.execute(
+        "SELECT progress_sec FROM stream_sessions WHERE id = ?", (sid,),
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["progress_sec"] == 35.0
+
+
+@pytest.mark.asyncio
+async def test_stop_stream_flushes_final_progress_to_media_files(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """Progress debounce trades resume-marker accuracy for WAL-rate;
+    `stop_stream` must close that gap by copying the live
+    `stream_sessions.progress_sec` to `media_files.last_progress_sec`
+    on a clean close.  Otherwise a user who watches to 14:55 of a
+    15:00 movie and closes cleanly resumes at the last persisted
+    debounced value (could be 14:30) instead of 14:55."""
+    from routers import stream as stream_router
+    stream_router._last_persisted_progress.clear()
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        start = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    sid = start.json()["session_id"]
+
+    # Persisted progress = 5 s; live = 12 s (debounce window means
+    # the 12 s never reached media_files).
+    await client.patch(
+        f"/api/v1/stream/{sid}/progress",
+        json={"progress_sec": 5.0},
+        headers=headers,
+    )
+    await client.patch(
+        f"/api/v1/stream/{sid}/progress",
+        json={"progress_sec": 12.0},
+        headers=headers,
+    )
+    async with test_db.execute(
+        "SELECT last_progress_sec FROM media_files WHERE id = ?", (file_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["last_progress_sec"] == 5.0
+
+    # Clean stop — must flush 12 s to media_files.
+    with (
+        patch("routers.stream.ffmpeg_service.stop_stream",
+              new_callable=AsyncMock),
+        patch("routers.stream.ffmpeg_service.cleanup_session_dir"),
+    ):
+        await client.delete(f"/api/v1/stream/{sid}", headers=headers)
+
+    async with test_db.execute(
+        "SELECT last_progress_sec FROM media_files WHERE id = ?", (file_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["last_progress_sec"] == 12.0
+
+    # The in-memory dict entry must be cleared so it doesn't accumulate
+    # forever on a long-running server.
+    assert sid not in stream_router._last_persisted_progress
+
+
+# ── Log rotation regression pin ─────────────────────────────────────────────
+
+
+def test_log_config_uses_rotating_file_handler_with_10mb_cap():
+    """Pin the rotating-file-handler config so a future "let's just
+    use a plain FileHandler" refactor regresses immediately.  The
+    user's data dir doesn't have unbounded room — 10 MB × 5 backups
+    is the sweet spot of "enough history to diagnose a yesterday
+    issue" without filling a small SSD."""
+    from main import _LOG_CONFIG_COMMON
+
+    fh = _LOG_CONFIG_COMMON["handlers"]["file"]
+    assert fh["class"] == "logging.handlers.RotatingFileHandler"
+    assert fh["maxBytes"] == 10 * 1024 * 1024
+    assert fh["backupCount"] == 5

@@ -1078,11 +1078,23 @@ async def start_stream(
 
     # Both attempts failed (or the only attempt did) — release the encoder
     # slot we reserved (if any) so a stuck failure doesn't leave the cap
-    # accounting permanently inflated, then surface the captured stderr
-    # tail to the operator-facing notification.
+    # accounting permanently inflated, AND wipe the partial session
+    # directory so failed attempts don't accumulate disk on a long-
+    # running server (the orphan cleanup on next startup catches these
+    # too, but that's a long way off if uptime is days).  Failure
+    # paths still raise the original diagnostic; the cleanup is a
+    # side-effect that doesn't change the surfaced error.
     from services import session_router
 
     session_router.release_session(session_id)
+    try:
+        cleanup_session_dir(session_id, hls_root)
+    except Exception:
+        logger.warning(
+            "cleanup_session_dir raised on failure path for session=%s",
+            session_id,
+            exc_info=True,
+        )
     if killed_after_timeout:
         # We terminated FFmpeg ourselves because the playlist never
         # appeared in time.  proc.returncode is set (TerminateProcess on

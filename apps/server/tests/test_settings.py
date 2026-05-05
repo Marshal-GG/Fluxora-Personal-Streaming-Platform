@@ -116,7 +116,18 @@ async def test_patch_settings_partial_update_preserves_other_fields(
 
 @pytest.mark.asyncio
 async def test_free_tier_blocks_second_stream(client: AsyncClient) -> None:
-    """Free tier limit is 1 concurrent stream; second start should 429."""
+    """Free tier limit is 1 concurrent stream; a start on a *different*
+    file while a stream is already active should 429.
+
+    The pre-existing session and the start request must reference
+    DIFFERENT file_ids — otherwise `/start`'s ``(client_id, file_id)``
+    dedup hook (Commit 4 of the streaming pipeline plan) recognises
+    the duplicate and replaces the prior session, defeating the
+    concurrency check.  The dedup is intentional: a buggy /
+    restarting client double-posting ``/start`` for the same file
+    must not get rejected for "exceeding" the cap they already own a
+    slot of.
+    """
     import uuid
 
     import aiosqlite
@@ -131,26 +142,33 @@ async def test_free_tier_blocks_second_stream(client: AsyncClient) -> None:
     # Ensure we're on the free tier (default)
     await client.patch("/api/v1/settings", json={"tier": "free"})
 
-    # Insert a fake file so /stream/start has something to reference
-    file_id = str(uuid.uuid4())
-    await db.execute(
-        "INSERT INTO media_files "
-        "(id, path, name, extension, size_bytes, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
-        (file_id, f"/fake/{file_id}.mp4", f"{file_id}.mp4", ".mp4", 1000),
-    )
+    # Insert two distinct files — one for the pre-existing session, one
+    # for the about-to-be-rejected new stream.
+    existing_file_id = str(uuid.uuid4())
+    new_file_id = str(uuid.uuid4())
+    for fid in (existing_file_id, new_file_id):
+        await db.execute(
+            "INSERT INTO media_files "
+            "(id, path, name, extension, size_bytes, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+            (fid, f"/fake/{fid}.mp4", f"{fid}.mp4", ".mp4", 1000),
+        )
     await db.commit()
 
-    # Insert an active session to simulate a stream already in progress
+    # Pre-existing active session on ``existing_file_id`` — uses the
+    # caller's own client_id so it counts against their per-client cap.
     session_id = str(uuid.uuid4())
     await db.execute(
         "INSERT INTO stream_sessions "
         "(id, file_id, client_id, started_at, connection_type) "
         "VALUES (?, ?, 'client-settings-test', datetime('now'), 'lan')",
-        (session_id, file_id),
+        (session_id, existing_file_id),
     )
     await db.commit()
 
-    # Second start attempt should be blocked
-    res = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    # Start a *different* file — concurrency check must reject because
+    # the caller already has 1 active session on the free tier.
+    res = await client.post(
+        f"/api/v1/stream/start/{new_file_id}", headers=headers,
+    )
     assert res.status_code == 429
