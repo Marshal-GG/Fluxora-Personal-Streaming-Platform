@@ -58,6 +58,80 @@ def _looks_like_dvr_capture(stem: str) -> bool:
     return bool(_DVR_CAPTURE_PATTERN.search(stem))
 
 
+# Whitespace collapse for the cleaned query — a single regex matches
+# any run of one-or-more whitespace characters.
+_WHITESPACE_RUN = re.compile(r"\s+")
+
+# Known torrent-scene quality / source / codec / encoder tokens.
+# Used to strip the trailing metadata block from filenames like
+# ``Inception.2010.1080p.BluRay.x264.AAC``.  Conservative — only
+# tokens we've seen in real Fluxora installs.  Over-listing risks
+# eating content that's part of a legitimate title.
+_SCENE_NOISE_TOKENS = (
+    # Resolution / quality
+    r"1080p|2160p|720p|480p|4k|"
+    # Source
+    r"bluray|blu-?ray|brrip|webrip|web-?dl|hdrip|dvdrip|hdtv|"
+    # Video codec
+    r"x264|x265|h\.?264|h\.?265|hevc|av1|xvid|"
+    # Release tag
+    r"repack|proper|extended|"
+    # HDR / dynamic range
+    r"hdr|hdr10|dv|"
+    # Audio codec
+    r"ac3|aac|dts|atmos|truehd"
+)
+
+# Trailing scene-noise stripper.  Matches a 4-digit year (1900-2099),
+# optionally wrapped in ``()`` / ``[]`` and/or preceded by a ``-``,
+# followed by zero or more known scene-noise tokens, all the way to
+# the end of the cleaned query.  Year alone with no following tokens
+# is also stripped (the simple ``Title YYYY`` case).  Field-confirmed
+# against ``Harry Potter and the Half Blood Prince 2009`` returning
+# zero TMDB matches with the year, one match without.
+#
+# The pattern intentionally does NOT match a mid-string year that's
+# followed by ordinary text (e.g. ``Blade Runner 2049 sequel notes``)
+# — the year-and-after must run cleanly to end-of-string before the
+# strip fires, so legitimate titles containing a year are preserved.
+_TRAILING_SCENE_NOISE = re.compile(
+    # Allow whitespace inside the bracket group so ``Inception - 2010``
+    # (dash + space + year) and ``Inception ( 2010 )`` both match.
+    r"\s*[-([\s]*\b(?:19|20)\d{2}\b[)\]\s]*"
+    rf"(?:\s+(?:{_SCENE_NOISE_TOKENS}))*"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+
+def _clean_tmdb_query(stem: str) -> str:
+    """Normalise a filename stem into a TMDB-friendly search query.
+
+    Field-observed problems with raw stems:
+
+    - **Underscores instead of spaces** —
+      ``Harry_Potter_and_the_Half_Blood_Prince_2009`` returned no TMDB
+      match because the search engine doesn't tokenise across ``_``.
+      ``Harry Potter and the Half Blood Prince`` matches first try.
+    - **Dot-separated words** — ``Inception.2010.1080p.BluRay`` is
+      common from torrent-scene naming.  Same fix: dots → spaces.
+    - **Trailing release year + scene metadata** — TMDB's fuzzy
+      ``?query=`` treats every word as a content keyword that must
+      appear in the title/overview.  Movies don't have their release
+      year, resolution, or codec in the title, so leaving those
+      tokens in the query poisons the match.  Stripped here via
+      ``_TRAILING_SCENE_NOISE``; legitimate titles containing a
+      year (Blade Runner 2049, 2001 A Space Odyssey) are preserved
+      because the strip only fires when year-and-after runs cleanly
+      to end-of-string.
+    - **Multiple spaces / leading-trailing whitespace** after the
+      substitutions; collapsed to single spaces with ``_WHITESPACE_RUN``.
+    """
+    cleaned = stem.replace("_", " ").replace(".", " ")
+    cleaned = _TRAILING_SCENE_NOISE.sub("", cleaned)
+    return _WHITESPACE_RUN.sub(" ", cleaned).strip()
+
+
 def _is_valid_absolute_media_path(path_str: str) -> bool:
     """Reject obviously-corrupt paths before they hit FFmpeg.
 
@@ -798,8 +872,20 @@ async def _enrich_with_tmdb(
     capture-style filenames anyway (e.g. when the user manually
     triggers a TMDB rescan from the desktop UI for a library that
     happens to mix capture archives with real media).
+
+    The TMDB base URLs are read from ``settings.fluxora_tmdb_base_url``
+    / ``settings.fluxora_tmdb_image_base_url`` so an operator on a
+    network that blocks ``api.themoviedb.org`` can route through their
+    own Cloudflare Worker (or similar reverse proxy).  Empty values
+    fall back to the canonical TMDB URLs.
     """
-    svc = TmdbService(api_key)
+    from config import settings
+
+    svc = TmdbService(
+        api_key,
+        base_url=settings.fluxora_tmdb_base_url or None,
+        poster_base_url=settings.fluxora_tmdb_image_base_url or None,
+    )
     enriched = 0
     skipped_dvr = 0
 
@@ -807,11 +893,18 @@ async def _enrich_with_tmdb(
         # Yield to event loop regularly to avoid starving other coroutines
         await asyncio.sleep(0)
 
+        # DVR pattern check runs against the *raw* stem — the date
+        # markers (e.g. "2025.02.17") are exactly what _clean_tmdb_query
+        # would dilute, so we must inspect them before the cleanup
+        # collapses the dots to spaces.
         if skip_dvr and _looks_like_dvr_capture(stem):
             skipped_dvr += 1
             continue
 
-        meta = await svc.search(stem)
+        query = _clean_tmdb_query(stem)
+        if not query:
+            continue
+        meta = await svc.search(query)
         if meta is None:
             continue
 

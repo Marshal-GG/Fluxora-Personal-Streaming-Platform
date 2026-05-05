@@ -186,7 +186,9 @@ All WebSocket paths are mounted at the same base as REST. Loopback connections (
 
 | URL | Purpose | Auth | Notes |
 |-----|---------|------|-------|
-| `https://api.themoviedb.org/3/...` | TMDB metadata (movie/TV titles, posters) | API key (`TMDB_API_KEY`) | User-supplied key; enrichment degrades gracefully if absent |
+| `https://api.themoviedb.org/3/...` | TMDB metadata (movie/TV titles, posters) | API key (`FLUXORA_TMDB_KEY`) | User-supplied key; enrichment degrades gracefully if absent. Override via `FLUXORA_TMDB_BASE_URL` for users behind ISPs that block TMDB (Reliance Jio etc); see [`runbooks/12_tmdb_proxy_worker.md`](runbooks/12_tmdb_proxy_worker.md) for the Cloudflare Worker reverse proxy that handles this. |
+| `https://image.tmdb.org/t/p/w342/...` | TMDB poster images (referenced by `poster_url` in MediaFile rows) | None (public) | Override via `FLUXORA_TMDB_IMAGE_BASE_URL` to route through the same proxy. |
+| `https://1.1.1.1/dns-query` | DoH fallback when TMDB host is DNS-hijacked but the IP isn't blocked. Triggered lazily on first `ConnectTimeout` against the TMDB host. | None | See [`apps/server/utils/dns_override.py`](../../apps/server/utils/dns_override.py); installs a process-wide override in `socket.getaddrinfo`. |
 | `https://fluxora-api.marshalx.dev/api/v1/webhook/polar` | **Inbound** — Polar sends paid-order events here | Polar Standard Webhooks HMAC (`POLAR_WEBHOOK_SECRET`) | Configured in the Polar dashboard under Webhooks |
 | `https://polar.sh/<org>/portal` (configurable) | **Outbound** — Customer-portal URL returned by `GET /orders/portal-url` | None from our side; Polar handles the magic-link auth | Set via `FLUXORA_POLAR_PORTAL_URL` env var; 404 when unset |
 | `1.1.1.1:80` (TCP) | Internet-connectivity probe in `system_stats_service.py` | None | Cached 30 s; used to populate `internet_connected` field in `/info/stats` |

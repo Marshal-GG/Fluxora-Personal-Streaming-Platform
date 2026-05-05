@@ -178,3 +178,131 @@ Mocking pattern lifted from `test_probe_video.py`: patch `asyncio.create_subproc
 - **Visual / acceptance test on the user's box for Commit 1.** Server log on a tonemap session should show `playlist_timeout=60s` in the FFmpeg-started line; first segment should land in <90 s; mobile player should start. If timeout still fires, the kill diagnostic now says "killed after 60s" instead of "exit code 1" so the user can report a meaningful error.
 - **Verify migration 022 ran cleanly** on next user-side server start. Log line `FOREIGN KEY constraint failed` on application startup means the migration didn't apply (FK enforcement was off when I tested) — would need to re-investigate. The migration file deletes stream_sessions first specifically to avoid this.
 ---
+
+---
+## [2026-05-06] — TMDB ISP-block workaround + Cloudflare Worker proxy
+**Phase:** Phase 5 polish — pre-v1-ship hardening
+**Status:** Complete (Worker deployed, proxy URL verified working on user's Jio network, end-to-end TMDB metadata flowing)
+
+### What Was Done
+
+Field user (in India, on Reliance Jio) reported every TMDB enrichment producing `0/N files updated`.  The original error log read `TMDB search failed for 'X': ` with nothing after the colon — empty `str(exc)` from `httpx.ConnectError` variants.  Three layers of fix shipped, plus a Cloudflare Worker that the user deployed to bypass the ISP block entirely.
+
+#### Layer 0 — better diagnostics
+
+`TmdbService.search` error log now uses `exc.__class__.__name__` + `repr(exc)`.  The "empty colon" log lines now read `ConnectTimeout: ConnectTimeout('')` — class name visible, operator can distinguish a network timeout from a JSON parse error from a 401.
+
+#### Layer 1 — filename-stem cleanup
+
+`library_service._clean_tmdb_query(stem)` normalises filename stems before TMDB search.
+
+- Replaces `_` and `.` with spaces — `Harry_Potter_and_the_Half_Blood_Prince` was returning zero matches because TMDB doesn't tokenise across underscores; same for torrent-scene `Inception.2010.1080p.BluRay.x264`.
+- Strips trailing scene-noise (4-digit year + optional quality / source / codec / audio markers) — TMDB's fuzzy `?query=` treats every word as a content keyword that must appear in title or overview.  Movies don't have their year / `1080p` / `x264` in the title, so leaving those tokens poisons the match.  `_TRAILING_SCENE_NOISE` regex is trailing-only — `Blade Runner 2049 sequel notes` keeps its year because the strip pattern only fires when year-and-after runs cleanly to end-of-string through known noise tokens.
+- Handles Plex naming (`Inception (2010)`, `The Matrix [1999]`, `Inception - 2010`) — bracket / dash wrappers around the year all collapse the same way.
+
+This alone made TMDB queries return matches for files that previously got nothing.
+
+#### Layer 2 — DoH override
+
+New `apps/server/utils/dns_override.py`:
+
+- Monkey-patches `socket.getaddrinfo` with a per-process override map (`_DNS_OVERRIDES`).  Hostnames in the map return a synthesised IPv4 A record pointing at the override IP; non-overridden hostnames pass through to the original resolver.
+- `resolve_via_doh(hostname)` queries Cloudflare's anycast `https://1.1.1.1/dns-query` (DoH JSON API).  The DoH endpoint is reached *by IP* — `1.1.1.1`'s certificate covers `cloudflare-dns.com` so SNI works without DNS — meaning the bypass doesn't itself depend on the broken DNS path.
+- `register_doh_override(hostname)` resolves + populates the map.
+
+`TmdbService.search` retry loop: on `ConnectError`/`ConnectTimeout`, registers the override and retries once.  Subsequent calls go to the override IP directly; the overhead is paid exactly once per process.  Works for users whose ISP only does DNS hijacking (returns sinkhole IP for the hostname but doesn't IP-block the real CDN).
+
+**Did not solve the user's case.**  Jio is doing DNS hijack *and* IP block — even when DoH gave us the correct CloudFront IP, packets to `3.165.239.x` still timed out.
+
+#### Layer 3 — Cloudflare Worker reverse proxy (the actual fix)
+
+New env vars on the server:
+
+- `FLUXORA_TMDB_BASE_URL` (default empty → falls back to `https://api.themoviedb.org/3`)
+- `FLUXORA_TMDB_IMAGE_BASE_URL` (default empty → falls back to `https://image.tmdb.org/t/p/w342`)
+
+`TmdbService.__init__` accepts optional `base_url` + `poster_base_url`; `library_service._enrich_with_tmdb` reads the settings and threads them through.  When the base URL is overridden, every TMDB search + every poster URL stored in `media_files.poster_url` flows through the operator's domain.
+
+The user (Marshal) deployed a Cloudflare Worker named `fluxora-tmdb-proxy`:
+
+- Routes `/tmdb/*` to `api.themoviedb.org/*`
+- Routes `/tmdb-img/*` to `image.tmdb.org/*`
+- Caches at the edge with `cf.cacheEverything = true` + 24h TTL on API, 30d TTL on images
+- Strips client-supplied headers (only `Accept` + `User-Agent` forwarded) to prevent accidental leaks
+
+Worker code + dashboard click-by-click in [`docs/05_infrastructure/runbooks/12_tmdb_proxy_worker.md`](docs/05_infrastructure/runbooks/12_tmdb_proxy_worker.md).
+
+The user's `.env` was set to:
+```
+FLUXORA_TMDB_BASE_URL=https://fluxora-tmdb-proxy.marshalgcom.workers.dev/tmdb/3
+FLUXORA_TMDB_IMAGE_BASE_URL=https://fluxora-tmdb-proxy.marshalgcom.workers.dev/tmdb-img/t/p/w342
+```
+
+(Workers.dev URL rather than the custom `fluxora-api.marshalx.dev` because the latter hit a Windows DNS Client negative-cache stickiness on the user's machine — `nslookup` resolved correctly but `curl` / Python `getaddrinfo` couldn't.  Workers.dev URL is functionally identical and doesn't trigger that quirk.)
+
+**Field-confirmed working:** server log post-restart shows `HTTP Request: GET https://fluxora-tmdb-proxy.marshalgcom.workers.dev/tmdb/3/search/multi?... 200 OK` for every previously-failing query.  Posters + titles now resolve.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `apps/server/utils/dns_override.py` (monkey-patched getaddrinfo + DoH resolver) |
+| Created | `apps/server/tests/test_dns_override.py` (+11 tests) |
+| Created | `docs/05_infrastructure/runbooks/12_tmdb_proxy_worker.md` (Worker code + deployment guide + diagnostic checklist) |
+| Modified | `apps/server/services/tmdb_service.py` (better error log; retry-with-DoH; optional base_url + poster_base_url; trailing-slash normalisation; `_extract_host`) |
+| Modified | `apps/server/services/library_service.py` (`_clean_tmdb_query` — underscores/dots → spaces, strip trailing year + scene noise; `_TRAILING_SCENE_NOISE` regex; `_enrich_with_tmdb` reads settings + cleans queries; `enrich_library_tmdb` for the Rescan TMDB action) |
+| Modified | `apps/server/config.py` (`fluxora_tmdb_base_url`, `fluxora_tmdb_image_base_url` settings fields) |
+| Modified | `apps/server/main.py` (TMDB DoH pre-warm task on startup; non-blocking) |
+| Modified | `apps/server/tests/test_tmdb_service.py` (+10 tests: retry-after-DoH, no-retry-when-override-set, no-retry-on-non-connection-errors, default base URL, custom base URL, custom poster base, host extraction, trailing-slash normalisation) |
+| Modified | `apps/server/tests/test_library_service.py` (+8 cleaning tests, +1 enrich uses cleaned query, +1 skip when cleanup yields empty) |
+| Modified | `C:\Users\marsh\AppData\Roaming\Fluxora\.env` (operator-side: added the two FLUXORA_TMDB_*_URL entries pointing at the deployed Worker) |
+| Modified | `docs/12_guidelines/03_gotchas.md` (3 new gotchas: TMDB year/quality suffix poisoning, ISP DNS hijack + IP block patterns, Windows DNS Client NXDOMAIN cache stickiness) |
+| Modified | `docs/10_planning/04_manual_tasks.md` (2 new entries: poster-URL migration to proxy prefix, fluxora-api.marshalx.dev DNS investigation) |
+| Modified | `docs/00_overview/current_status.md` (this round's work; test count 438 → 474) |
+| Modified | `docs/05_infrastructure/02_url_inventory.md` (TMDB row updated with proxy guidance + new image.tmdb.org row + DoH endpoint row) |
+| Modified | `docs/04_api/01_api_contracts.md` (encoder_test_suggestion field examples updated; not directly TMDB-related but landed alongside) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Decisions Made
+
+- **Three layers stack rather than choose one.**  Each layer handles a strictly larger class of network breakage:
+  1. Cleanup helps every user (filenames are usually messy regardless of network).
+  2. DoH override helps users whose ISP only does DNS hijacking — zero ops cost.
+  3. Worker proxy is the operator's deliberate setup that handles ISPs with full IP blocks.
+
+  Shipping all three keeps the cheap fixes for the easy cases and reserves the expensive setup for the operator who knows they have users on hostile networks.
+- **Workers.dev URL > custom domain for shipping.**  After the user's Windows DNS Client negative-cache issue with `fluxora-api.marshalx.dev`, defaulted documentation to recommend the workers.dev subdomain.  Functionally identical — same Worker, same anycast, same TMDB results.  Avoids an entire class of local-resolver issue on user machines.
+- **Trailing-only year strip.**  The naive regex (strip any 4-digit year token) would have silently broken titles like `Blade Runner 2049` and `2001 A Space Odyssey`.  Trailing-only + scene-noise-anchor pattern preserves those while still handling `Inception.2010.1080p.BluRay.x264` and `Harry_Potter_..._2009`.
+- **Conservative scene-noise token list.**  Listed only tokens we've observed in field installs (1080p, BluRay, x264, HEVC, etc.).  Over-listing risks eating content from legitimate titles ("BluRay" could be a documentary name; some band albums are titled "10bit").  Easy to extend later when more patterns surface.
+- **Per-user TMDB API keys, not Worker-level.**  Each Fluxora install carries its own TMDB key, forwarded as `?api_key=` through the Worker.  Worker injection would couple every user's traffic to the operator's key (rate-limit + revocation risk).  Field experience first, refine if signup friction becomes an issue.
+
+### Blockers / Open Issues
+
+- **Existing `media_files.poster_url` rows are still pointed at `image.tmdb.org`.**  The proxy fix only writes new poster URLs; rows enriched before the env var was set keep the original CDN URL, which the client still can't reach.  Tracked in `docs/10_planning/04_manual_tasks.md` as a one-shot SQL migration.  Until that lands, the user can run **Rescan TMDB** *only* on libraries where rows have `tmdb_id IS NULL`; rows with metadata won't be touched.  An alternative: ship a setting / migration that rewrites existing rows on next startup if the env var is set.
+- **Custom domain DNS quirk on user's Windows machine** — `fluxora-api.marshalx.dev` resolves correctly via `nslookup` from any DNS server but `curl.exe` and `httpx.AsyncClient` can't resolve.  Diagnosed as Windows DNS Client negative cache holding NXDOMAIN past `ipconfig /flushdns`.  Workers.dev URL is the workaround in use.
+
+### Issues / Sharp Edges Discovered
+
+- **`getaddrinfo` and `nslookup` use different code paths on Windows.**  `nslookup` queries DNS directly; `getaddrinfo` consults Windows' DNS Client cache (which can hold NXDOMAIN past explicit flush).  Easy to confuse during diagnosis — `nslookup` returning a result doesn't mean code that uses `getaddrinfo` will resolve.  Documented in [`docs/12_guidelines/03_gotchas.md`](docs/12_guidelines/03_gotchas.md).
+- **Cloudflare DoH JSON endpoint is reached BY IP** to bypass the DNS hijack, but TLS still validates against `1.1.1.1`'s real cert (which covers both `1.1.1.1` and `cloudflare-dns.com`).  The pattern is "connect to known-good IP, let SNI carry the original hostname for cert validation" — same pattern any Worker proxy uses.  This is what makes the DoH layer self-bootstrapping (it doesn't need DNS to find DNS).
+- **TMDB `?query=` is content-keyword fuzzy, not metadata-filter.**  `query=Harry Potter 2009` requires "2009" to appear in title or overview; "Harry Potter and the Half-Blood Prince" doesn't have "2009" anywhere, so total_results = 0.  TMDB has a separate `&year=` param for year filters; we don't use it currently because the cleaned title-only query matches reliably enough.  Could be a refinement — strip the year from the search keyword AND pass it as `&year=` for stricter matching.  Defer.
+- **Empty `str(exc)` is a real Python footgun.**  `httpx.ConnectError("")` has empty str() and produces "X: " log lines.  Always use `repr(exc)` or `f"{type(exc).__name__}: {exc}"` in error logs.  This pattern was duplicated across several other services — review and unify in a future pass.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` / `git add` performed.  Owner reviews staged changes before commit.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced.  All logging via `logger`.
+- [x] No silent exceptions.  DoH resolution failure logs WARNING; TMDB retry only fires on connection errors, other exceptions surface with full repr().
+- [x] No hardcoded secrets, ports, paths.  TMDB URLs configurable via env; defaults are documented constants.
+- [x] No new pip / pub deps.  DoH uses existing httpx; monkey-patch is stdlib socket.
+- [x] No layer-boundary violations.  Worker proxy lives at the network layer; service layer just sees a different base URL.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.  Future migration `023_rewrite_poster_urls_to_proxy.sql` is queued in manual_tasks.
+
+### Next Agent Should
+
+- **Ship the poster-URL migration** referenced in `docs/10_planning/04_manual_tasks.md` so existing `media_files.poster_url` rows get rewritten to the proxy prefix.  Without it, posters stay broken on every pre-existing media file even after the proxy is fully wired.
+- **Investigate `fluxora-api.marshalx.dev` DNS quirk** if the user reports it again after a 24-48 hour cache cycle.  Workers.dev URL is the documented workaround for now.
+- **Consider unifying error-logging patterns** across services to always use `repr(exc)`.  The empty-string-coloon issue masked the entire field investigation for hours; same footgun exists in other services that catch generic Exception.
+- **Optional refinement**: extend `_clean_tmdb_query` to extract the year and pass it as TMDB's `&year=` filter for stricter matching.  Currently we strip the year entirely; passing it back as a filter could improve precision on common-title disambiguation (`The Matrix` vs `The Matrix Reloaded`).
+---

@@ -274,6 +274,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     _asyncio.create_task(_duration_backfill_task())
 
+    # 8d. Pre-warm a DoH override for the TMDB API host so end users
+    # behind ISPs that DNS-hijack `api.themoviedb.org` (Reliance Jio
+    # is one confirmed case) don't have to hit a 10 s `ConnectTimeout`
+    # on their first metadata enrichment to discover it.  Best-effort
+    # — when the user's network is fine the override gets registered
+    # to the same IP system DNS would have returned, costing one DoH
+    # round-trip on startup.  When the network is fine AND DoH is
+    # blocked too, this no-ops and the lazy retry inside TmdbService
+    # picks up the slack.  Non-blocking so a slow / unavailable DoH
+    # endpoint can't delay server startup.
+    async def _tmdb_doh_prewarm_task() -> None:
+        try:
+            from utils import dns_override
+
+            ok = await dns_override.register_doh_override("api.themoviedb.org")
+            if not ok:
+                logger.info(
+                    "TMDB DoH pre-warm did not resolve — TmdbService will "
+                    "retry lazily on first failure",
+                )
+        except Exception:
+            logger.warning("TMDB DoH pre-warm failed", exc_info=True)
+
+    _asyncio.create_task(_tmdb_doh_prewarm_task())
+
     # 9. Start mDNS broadcast
     await start_discovery(settings.fluxora_server_name, settings.fluxora_port)
 

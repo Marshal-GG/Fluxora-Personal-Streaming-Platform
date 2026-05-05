@@ -22,6 +22,34 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 
 ## Pending
 
+### 🔲 Migrate existing `media_files.poster_url` rows to use the TMDB proxy
+
+- **What:** `FLUXORA_TMDB_IMAGE_BASE_URL` makes *new* TMDB lookups produce proxy-prefixed poster URLs (`https://<worker-host>/tmdb-img/t/p/w342/...`).  Rows enriched **before** the env var was set still hold the original `https://image.tmdb.org/t/p/w342/...` URL — and the mobile / desktop client fetches them directly, hitting whatever ISP block the original deployment was working around.  A one-shot SQL migration rewrites the existing rows.
+- **Why:** without it, posters stay broken on every pre-existing media file even after the proxy is fully wired up.  Re-running "Rescan TMDB" doesn't help because the rescan only touches `tmdb_id IS NULL` rows.
+- **Steps:**
+  1. Add migration `023_rewrite_poster_urls_to_proxy.sql` (or similar).
+  2. SQL body should accept the proxy host as a parameter — different operators may use different proxy URLs.  Easiest path: read `FLUXORA_TMDB_IMAGE_BASE_URL` at startup, run the migration once if any rows still match the old prefix.  Skip silently if env var is empty.
+  3. ```sql
+     UPDATE media_files
+        SET poster_url = REPLACE(poster_url, 'https://image.tmdb.org/t/p/w342', :new_prefix)
+      WHERE poster_url LIKE 'https://image.tmdb.org/%';
+     ```
+  4. Test before shipping: backup `fluxora.db`, dry-run with a SELECT to count rows that would change.
+- **Trigger:** confirmed working Worker proxy on the operator's domain + at least one user reports broken posters on existing media.
+- **Owner:** project owner / next agent session.
+
+### 🔲 Investigate `fluxora-api.marshalx.dev` DNS resolution from Indian Jio networks
+
+- **What:** the user added a DNS record for `fluxora-api.marshalx.dev` (proxied/orange-cloud on Cloudflare).  `nslookup` from PowerShell returns the right Cloudflare anycast IPs from `1.1.1.1`, `8.8.8.8`, *and* the user's ISP resolver — but `curl.exe` (and Python `httpx`) can't resolve the hostname.  Local Windows DNS Client cache has stuck NXDOMAIN past `ipconfig /flushdns`.  `Restart-Service Dnscache` would clear it but isn't user-friendly.
+- **Why:** as a workaround the user is on the workers.dev URL which works fine, but the custom domain would be nicer for branded shipping.
+- **Steps:**
+  1. Wait 24-48 hours and re-test (negative cache TTL may eventually expire).
+  2. If still broken: capture more diagnostics (`Resolve-DnsName fluxora-api.marshalx.dev` from admin PowerShell; check whether the issue is specific to one IPv4 vs IPv6 resolution path).
+  3. Possibly switch the DNS record from a wildcard or explicit A/AAAA — proxied records auto-generate both, but a manual override might behave differently in the local resolver.
+  4. If unfixable: document the workers.dev URL as the canonical proxy URL in shipping docs; treat custom-domain as optional.
+- **Trigger:** owner has time to investigate further OR another user reports the same on a fresh Jio install.
+- **Owner:** project owner.
+
 ### 🔲 iOS Picture-in-Picture support
 
 - **What:** Android PIP shipped 2026-05-04 via a `dev.marshalx.fluxora/pip` Kotlin method channel + manifest `android:supportsPictureInPicture="true"`. iOS PIP is harder: `media_kit` uses MPV (libmpv) under the hood, which doesn't bridge to `AVPictureInPictureController` (the iOS PIP API works against `AVPlayer`, not arbitrary GL surfaces). The PIP button is hidden on iOS via a `Platform.isAndroid` guard in `flux_player_controls.dart`.

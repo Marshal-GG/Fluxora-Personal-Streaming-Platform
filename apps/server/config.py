@@ -57,6 +57,22 @@ class Settings(BaseSettings):
 
     # Optional integrations
     fluxora_tmdb_key: str = ""
+
+    # Optional TMDB API + image proxy URLs.  Used to route TMDB traffic
+    # through a Cloudflare Worker (or similar reverse proxy) when the
+    # user's ISP blocks `api.themoviedb.org` / `image.tmdb.org` at the
+    # DNS or IP level (Reliance Jio in India is one confirmed case).
+    # The empty string falls back to the canonical TMDB URLs.
+    #
+    # Example values:
+    #   FLUXORA_TMDB_BASE_URL=https://fluxora-api.marshalx.dev/tmdb/3
+    #   FLUXORA_TMDB_IMAGE_BASE_URL=https://fluxora-api.marshalx.dev/tmdb-img/t/p/w342
+    #
+    # Worker reference implementation lives in
+    # docs/05_infrastructure/runbooks/11_tmdb_proxy_worker.md.
+    fluxora_tmdb_base_url: str = ""
+    fluxora_tmdb_image_base_url: str = ""
+
     fluxora_turn_url: str = ""
     fluxora_turn_user: str = ""
     fluxora_turn_pass: str = ""

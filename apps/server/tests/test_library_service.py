@@ -209,6 +209,113 @@ def test_looks_like_dvr_capture(stem: str, expected: bool) -> None:
     assert library_service._looks_like_dvr_capture(stem) is expected
 
 
+# ── _clean_tmdb_query ────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "raw,cleaned",
+    [
+        # Field-observed cases — underscores between every token
+        # broke TMDB's tokeniser; trailing year poisoned the match
+        # even after underscore-cleanup.  Both fixes apply together,
+        # so the cleaned query is title-only.
+        (
+            "Harry_Potter_and_the_Half_Blood_Prince_2009",
+            "Harry Potter and the Half Blood Prince",
+        ),
+        (
+            "Harry_Potter_and_the_Order_of_the_Phoenix_2007",
+            "Harry Potter and the Order of the Phoenix",
+        ),
+        # Torrent-scene dot-separated names — year + quality/codec
+        # tokens get stripped together so the TMDB query is just the
+        # title.  Without this, "Inception 2010 1080p BluRay x264"
+        # returns total_results=0 from TMDB.
+        ("Inception.2010.1080p.BluRay.x264", "Inception"),
+        ("Inception.2010.1080p.WEB-DL.AAC.HEVC", "Inception"),
+        ("The Matrix.1999.4K.HDR.Atmos", "The Matrix"),
+        # Year wrapped in parens — common in Plex naming convention.
+        ("Inception (2010)", "Inception"),
+        ("The Matrix [1999]", "The Matrix"),
+        # Year with leading dash — also common.
+        ("Inception - 2010", "Inception"),
+        # Year mid-string with NORMAL text after — must be left alone.
+        # The strip only fires when year-and-after runs cleanly to
+        # end-of-string through known scene-noise tokens; "sequel"
+        # and "notes" are normal words, so the pattern doesn't match.
+        ("Blade Runner 2049 sequel notes", "Blade Runner 2049 sequel notes"),
+        # Mixed separators + multi-space collapse + trim.
+        ("  The   Matrix  ", "The Matrix"),
+        ("Already Clean", "Already Clean"),
+        ("", ""),
+        # Underscore-only / dot-only stem — collapses to empty.  The
+        # caller treats empty as "skip the search" so we don't emit
+        # `?query=` (which would 422 the TMDB endpoint anyway).
+        ("___", ""),
+        ("...", ""),
+    ],
+)
+def test_clean_tmdb_query(raw: str, cleaned: str) -> None:
+    assert library_service._clean_tmdb_query(raw) == cleaned
+
+
+@pytest.mark.asyncio
+async def test_enrich_with_tmdb_uses_cleaned_query() -> None:
+    """The TMDB call must receive the cleaned (underscore-stripped)
+    string, not the raw filename stem.  Without the cleanup, common
+    naming conventions (`Title_With_Underscores_2009`) silently
+    return zero TMDB matches and leave the file un-enriched."""
+    from unittest.mock import MagicMock
+
+    fake_svc = MagicMock()
+    fake_svc.search = AsyncMock(return_value=None)
+
+    fake_db = MagicMock()
+    fake_db.execute = AsyncMock()
+    fake_db.commit = AsyncMock()
+
+    file_stems = [
+        ("file-1", "Harry_Potter_and_the_Half_Blood_Prince_2009"),
+        ("file-2", "Inception.2010.1080p.BluRay"),
+    ]
+
+    with patch.object(library_service, "TmdbService", return_value=fake_svc):
+        await library_service._enrich_with_tmdb(
+            fake_db, file_stems, "fake-api-key",
+        )
+
+    queried = {call.args[0] for call in fake_svc.search.await_args_list}
+    assert queried == {
+        # Trailing year + scene-noise tokens both stripped — see
+        # _TRAILING_SCENE_NOISE in library_service for the rationale;
+        # field tests confirmed TMDB returns total_results=0 with the
+        # year-and-quality-tokens, 1+ with just the title.
+        "Harry Potter and the Half Blood Prince",
+        "Inception",
+    }
+
+
+@pytest.mark.asyncio
+async def test_enrich_with_tmdb_skips_when_cleanup_yields_empty() -> None:
+    """Stems made entirely of separators clean to empty; the search
+    must be skipped rather than firing `?query=` (which TMDB rejects
+    with a 422 and produces a noisy log line)."""
+    from unittest.mock import MagicMock
+
+    fake_svc = MagicMock()
+    fake_svc.search = AsyncMock(return_value=None)
+    fake_db = MagicMock()
+    fake_db.execute = AsyncMock()
+    fake_db.commit = AsyncMock()
+
+    with patch.object(library_service, "TmdbService", return_value=fake_svc):
+        await library_service._enrich_with_tmdb(
+            fake_db, [("file-empty", "___")], "fake-api-key",
+        )
+
+    fake_svc.search.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_enrich_with_tmdb_skips_dvr_pattern_filenames() -> None:
     """Files whose stems match the DVR pattern must NOT trigger a TMDB
@@ -241,10 +348,12 @@ async def test_enrich_with_tmdb_skips_dvr_pattern_filenames() -> None:
         )
 
     # Only the 2 non-DVR stems were queried.  The 2 DVR-style ones
-    # were skipped before any HTTP call.
+    # were skipped before any HTTP call.  Notice ``Inception (2010)``
+    # has its parenthesised year stripped by _clean_tmdb_query before
+    # reaching TmdbService.search.
     assert fake_svc.search.await_count == 2
     queried_stems = {call.args[0] for call in fake_svc.search.await_args_list}
-    assert queried_stems == {"Inception (2010)", "The Matrix"}
+    assert queried_stems == {"Inception", "The Matrix"}
 
 
 # ── Per-library scan lock ────────────────────────────────────────────────────

@@ -173,3 +173,58 @@ Per-call import cost is ~µs after the first call (Python caches modules); the s
 **Root cause:** `services/session_router.py` reserves a slot keyed on `session_id` at `pick_encoder` time and frees it via `release_session(session_id)`. The contract is that the *caller* (`apps/server/routers/stream.py`) generates the UUID, hands it to `start_stream`, and the same UUID later flows into `stop_stream`. If the route handler stops generating it and `ffmpeg_service` starts manufacturing IDs internally, the released ID won't match the reserved ID — and the cap accounting silently leaks.
 
 **Fix:** keep `session_id` generation in `routers/stream.py`'s `start_stream` route handler. Treat `start_stream(file_path, session_id, hls_root)` and `stop_stream(session_id)` as ID-consuming, not ID-generating. The router persists the same `session_id` to `stream_sessions.id`, so the chain `route handler → start_stream → session_router → stop_stream → release_session` all uses one ID. Document in the `session_router` module docstring that the cap accounting is keyed on caller-supplied `session_id` and any change to the ownership of that ID must be traced through every call site.
+
+---
+
+## TMDB queries with year/quality suffixes return zero results
+
+**Symptom:** files like `Harry_Potter_and_the_Half_Blood_Prince_2009` or `Inception.2010.1080p.BluRay.x264` produce `TMDB enrichment done: 0/N files updated` even though the titles are real and the API key is valid.
+
+**Root cause:** TMDB's `?query=` endpoint treats every word as a content keyword that must appear somewhere in the title or overview.  Movie titles almost never contain the release year, resolution, codec, or release-source tokens — so leaving "2009" / "1080p" / "BluRay" / "x264" in the search keyword filters out the very title we're trying to find.  Field-confirmed against the user's library: zero results with the year, one match without.
+
+**Fix:** `library_service._clean_tmdb_query(stem)` strips trailing scene-noise (year + quality / codec / source / audio markers) before the TMDB call.  The strip is *trailing-only* — `"Blade Runner 2049 sequel notes"` keeps its year because the strip pattern only fires when year-and-after runs cleanly to end-of-string through known scene tokens.  See `_TRAILING_SCENE_NOISE` regex in [`apps/server/services/library_service.py`](../../apps/server/services/library_service.py) for the full noise-token list.
+
+The cleanup also handles two adjacent issues that surface together: underscore-separated stems (`Harry_Potter_..._2009`) get spaced out before the strip runs, and Plex-style year wrapping (`Inception (2010)` / `Inception [1999]` / `Inception - 2010`) is normalised into the same end-of-string pattern.
+
+---
+
+## ISP-level DNS hijack and IP-block on TMDB hosts
+
+**Symptom:** `services.tmdb_service` raises `ConnectTimeout` on every TMDB call.  No specific TMDB query works.  The server log shows `ConnectTimeout: ConnectTimeout('')` for every enrichment attempt.
+
+**Root cause:** Some ISPs block media-metadata sites at the network level.  Two patterns we've seen:
+
+1. **DNS hijack** — the ISP's resolver returns a sinkhole IP (typically inside their own AS) for `api.themoviedb.org`.  TCP to that IP times out because nothing is listening for HTTPS there.  Confirmed with `nslookup api.themoviedb.org 1.1.1.1` (returns the real Amazon CloudFront `3.165.239.x`) vs `nslookup api.themoviedb.org` against the ISP resolver (returns e.g. `49.44.79.236`, in Reliance Jio AS).
+2. **IP block** — even with the correct DNS answer (via DoH lookup against `1.1.1.1/dns-query`), packets to TMDB's CDN ranges still get dropped.  The hijack is enforced at the routing layer too.
+
+**Fix:** two complementary mitigations:
+
+- **DoH override** ([`apps/server/utils/dns_override.py`](../../apps/server/utils/dns_override.py)) — monkey-patches `socket.getaddrinfo` with a per-process map.  On the first `ConnectTimeout`, `TmdbService` resolves the TMDB host via Cloudflare DoH (URL `https://1.1.1.1/dns-query` reached by IP, no recursive DNS needed) and retries.  Handles the DNS-hijack-only case.
+- **Cloudflare Worker reverse proxy** — operator deploys a Worker on a domain they control that proxies `/tmdb/*` and `/tmdb-img/*` to TMDB.  Server uses `FLUXORA_TMDB_BASE_URL` / `FLUXORA_TMDB_IMAGE_BASE_URL` env vars to point at the proxy.  ISP can't IP-block your domain without breaking everything else on Cloudflare's anycast edge.  Handles the harder IP-block case.  See [`docs/05_infrastructure/runbooks/12_tmdb_proxy_worker.md`](../05_infrastructure/runbooks/12_tmdb_proxy_worker.md) for the Worker code + deployment steps.
+
+The two mitigations stack: DoH override is the always-on fallback that handles simple hijack networks at zero ops cost; the Worker proxy is the operator's deliberate setup that handles the harder networks for every Fluxora user under their domain.
+
+**Diagnostic checklist when a user reports "TMDB doesn't work":**
+
+1. **Confirm the exception class** — log line should now read `ConnectTimeout: ConnectTimeout('...')` (the `repr()` makes the class name explicit; without it the line read `'X': ` with nothing after the colon, masking the cause).
+2. **`nslookup api.themoviedb.org 1.1.1.1`** — if the IP is in Cloudflare/Amazon CloudFront ranges (`104.x`, `172.x`, `3.x`), DNS is fine.  If it's anywhere else (private space, ISP AS), DNS is hijacked.
+3. **`Test-NetConnection api.themoviedb.org -Port 443`** — if `TcpTestSucceeded: False` even when DNS returned a real IP, IP-level block is in play.  Worker proxy is required.
+4. **Workers.dev URL test** — `curl https://<worker-name>.<account>.workers.dev/tmdb/3/configuration?api_key=KEY` → if this works, Cloudflare anycast reaches you and the Worker is the right fix.
+
+---
+
+## Windows DNS Client caches NXDOMAIN past `ipconfig /flushdns`
+
+**Symptom:** A subdomain that resolves correctly via `nslookup <host> 1.1.1.1` and `nslookup <host> 8.8.8.8` still produces `curl: (6) Could not resolve host` from `curl.exe` even after `ipconfig /flushdns`.  `httpx` / `requests` / Python `socket.getaddrinfo` calls produce the same failure.
+
+**Root cause:** Windows' DNS Client service maintains its own NXDOMAIN cache that `ipconfig /flushdns` doesn't always clear.  When a hostname previously didn't exist (e.g. you just added the DNS record), the negative cache can hold onto that for the original TTL despite the flush.  `nslookup` queries DNS directly and bypasses this cache, so it sees the fresh record while `curl` sees the cached miss.
+
+**Fix:** restart the Windows DNS Client service (admin PowerShell):
+
+```powershell
+Restart-Service Dnscache
+```
+
+Or wait for the negative cache to expire (typically 15 minutes to several hours depending on TTL).  This is a Windows quirk; not reproducible on Linux / macOS.
+
+**For Fluxora specifically:** if a user reports a custom proxy URL (`fluxora-api.<your-domain>`) doesn't resolve, instruct them to use the workers.dev URL fallback or run the service-restart.  The workers.dev subdomain is functionally identical and avoids this whole class of issue.
