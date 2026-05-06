@@ -85,7 +85,7 @@ export default function ManagePage() {
         <p className="manage-activate-desc">
           Open the <strong>Fluxora Desktop Control Panel</strong> → <strong>Settings</strong> → <strong>License</strong> and paste your key to activate your tier.
           The key was emailed to you after purchase. Check your spam folder if you did not receive it, or contact{' '}
-          <a href="mailto:support@fluxora.dev" className="manage-inline-link">support@fluxora.dev</a>.
+          <a href="mailto:support@fluxora.marshalx.dev" className="manage-inline-link">support@fluxora.marshalx.dev</a>.
         </p>
         <Link href="/success" className="btn btn-secondary manage-activate-link">
           View activation guide

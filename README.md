@@ -215,13 +215,23 @@ Phases 1–4 shipped. **Phase 5 — advanced features + brand redesign** is in p
 - 🎨 **[Design System](DESIGN.md)**
 - 📍 **[Roadmap](docs/10_planning/01_roadmap.md)**
 - 🔌 **[API Contracts](docs/04_api/01_api_contracts.md)**
-- 🔒 **[Privacy](https://fluxora.marshalx.dev/privacy/)** · **[Terms](https://fluxora.marshalx.dev/terms/)**
+- 🔒 **[Privacy Policy](PRIVACY.md)** · **[Terms of Service](TERMS.md)** (rendered: [/privacy](https://fluxora.marshalx.dev/privacy/), [/terms](https://fluxora.marshalx.dev/terms/))
 
 <br/>
 
-## License
+## License & legal
 
-[MIT](LICENSE) — use it, fork it, build a service on top of it. Paid tiers fund continued development; they don't lock the basics.
+| Doc | What it covers |
+|-----|---------------|
+| **[LICENSE](LICENSE)** | MIT — fork it, run it, build a service on top of it. |
+| **[PRIVACY.md](PRIVACY.md)** | What data we collect (almost nothing), what we don't, your rights. Mirrored at <a href="https://fluxora.marshalx.dev/privacy/">/privacy</a>. |
+| **[TERMS.md](TERMS.md)** | Free tier vs. paid tiers, billing & refunds (14-day no-questions), acceptable use, governing law (India). Mirrored at <a href="https://fluxora.marshalx.dev/terms/">/terms</a>. |
+| **[SECURITY.md](SECURITY.md)** | Vulnerability disclosure — private channels, response SLAs, scope. |
+| **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** | How we work together in issues / PRs / Discussions. |
+| **[NOTICE](NOTICE)** | Third-party libraries used + credits to projects that inspired Fluxora (Plex, Jellyfin, Syncthing, FFmpeg, mpv, TMDB, …). |
+| **[CONTRIBUTING.md](CONTRIBUTING.md)** | First-30-minute setup for new contributors. |
+
+The **server software is MIT-licensed** — use it, fork it, build a service on top of it. The **paid tiers fund continued development** without locking the basics; the Free tier remains fully functional forever.
 
 <br/>
 

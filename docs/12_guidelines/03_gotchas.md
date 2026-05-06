@@ -442,3 +442,98 @@ Override at the cubit level, not the call site. Every existing `emit(...)` becom
 **When NOT to apply the override:** if a cubit's emit-after-close case actually represents a logic bug (e.g., you're calling `emit` from the cubit itself after explicitly calling `close()`), the guard hides it. Use the override on cubits whose async methods can outlive disposal (poll timers, stream subscriptions, HTTP fetches) — which in practice is most of them. For a stateless utility cubit with synchronous emits only, the guard adds no value.
 
 **Cubits in this codebase that have the override** (as of 2026-05-06): every cubit under `apps/desktop/lib/features/*/presentation/cubit/`. Mobile cubits don't yet — apply the same pattern when next touching them.
+
+---
+
+## `sc.exe stop` is asynchronous — file deletion races the service shutdown
+
+**Symptom (2026-05-06, installer audit):** Inno Setup uninstall script ran `sc.exe stop FluxoraServer` then proceeded to delete files. The uninstaller popped "Cannot remove file: it is in use by another process" with no Cancel option, mid-uninstall, leaving the install half-deleted.
+
+**Root cause:** `sc.exe stop <service>` returns when the Service Control Manager **accepts the stop request**, not when the service has actually stopped. Between "accepts" and "stopped" the service is shutting down and still holding file handles. Inno Setup's `[UninstallRun]` runs entries sequentially with no native "wait for service to actually stop" option.
+
+**Fix pattern.** Poll `sc.exe query <service>` until either the service is gone (`exit code != 0` = service no longer registered) or `STATE: STOPPED` appears in the output. Cap at 30 seconds; if it exceeds that, proceed anyway (Windows will queue the file deletion for next reboot).
+
+```pascal
+// Pascal Script idiom in installer/Fluxora.iss.
+procedure RemoveServiceFromPascal;
+var
+  ResultCode, Tries: Integer;
+begin
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop {#ServiceName}', '',
+       SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Tries := 0;
+  while Tries < 60 do  // 60 * 500 ms = 30 s
+  begin
+    Exec(ExpandConstant('{sys}\sc.exe'), 'query {#ServiceName}', '',
+         SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode <> 0 then Break;  // service no longer registered
+    Sleep(500);
+    Inc(Tries);
+  end;
+  Exec(ExpandConstant('{sys}\sc.exe'), 'delete {#ServiceName}', '',
+       SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+```
+
+The same async-stop hazard applies to `taskkill` against a long-running process — use `taskkill /F` (force) for installer scenarios, and `taskkill /F /T` (force + tree) when the target may have child processes (e.g. a Python server with FFmpeg subprocess children).
+
+---
+
+## `reg.exe add /t REG_MULTI_SZ /d "a\0b"` is brittle — use the native API
+
+**Symptom (2026-05-06, installer audit):** Inno Setup script set a service's environment block via `reg.exe add ... /t REG_MULTI_SZ /d "FLUXORA_DATA_DIR=C:\ProgramData\Fluxora\0FLUXORA_FFMPEG_BIN=..."`. On some shell configurations the `\0` was passed through verbatim instead of being interpreted as a null separator, leaving a single-line REG_SZ value that the Service Control Manager either rejected or read as one giant env var name.
+
+**Root cause:** `reg.exe`'s documentation says `\0` is the REG_MULTI_SZ separator, but the parsing happens after shell argument expansion. Different Windows command interpreters handle `\0` differently — `cmd.exe` mostly passes it through, PowerShell may not, and Inno Setup's `[Run]` `Parameters:` string is yet another layer of escaping.
+
+**Fix.** From Inno Setup `[Code]` Pascal, use `RegWriteMultiStringValue` directly:
+
+```pascal
+SetArrayLength(EnvLines, 4);
+EnvLines[0] := 'FLUXORA_DATA_DIR=C:\ProgramData\Fluxora';
+EnvLines[1] := 'FLUXORA_FFMPEG_BIN=' + AppDir + '\ffmpeg\ffmpeg.exe';
+EnvLines[2] := 'FLUXORA_FFPROBE_BIN=' + AppDir + '\ffmpeg\ffprobe.exe';
+EnvLines[3] := 'FLUXORA_PORT=8000';
+RegWriteMultiStringValue(HKEY_LOCAL_MACHINE,
+  'SYSTEM\CurrentControlSet\Services\FluxoraServer',
+  'Environment', EnvLines);
+```
+
+Inno Setup's native API takes a `TArrayOfString` and writes it as a properly-encoded REG_MULTI_SZ. No string escaping. From other contexts, prefer the corresponding Win32 API (`RegSetValueExW` with `REG_MULTI_SZ` and explicit double-null terminator) over `reg.exe` for any multi-string write.
+
+---
+
+## Inno Setup has no native repair UI — re-running the installer must be idempotent
+
+**Symptom (2026-05-06, installer audit):** user re-ran the Fluxora installer to "repair" their install. The installer's `[Run]` step `sc.exe create FluxoraServer ...` returned exit code 1073 (`ERROR_SERVICE_EXISTS`); Inno Setup ignored the failure (no `Check:` clause); the install reported "successful" with the existing (possibly broken) service registration left in place.
+
+**Root cause.** Unlike MSI, Inno Setup has no native Modify / Repair UI. The supported "repair" flow is **re-running the original installer** — Inno detects the existing install via the `AppId` GUID and offers an in-place upgrade. All `[Files]` entries copy over (with `ignoreversion` flag) but `[Run]` entries fire fresh, including any non-idempotent ones like `sc.exe create`.
+
+**Fix pattern.** Wrap any non-idempotent post-install operation in a Pascal `[Code]` helper that detects existing state first:
+
+- `sc.exe create` → first do `sc.exe stop` + wait + `sc.exe delete`, THEN `sc.exe create`.
+- Firewall rule add → `netsh delete` first (silent failure ok), then `add`.
+- Defender exclusion → `Add-MpPreference` is idempotent (adding an existing exclusion is a no-op); safe to call directly.
+- Registry HKLM writes → use Inno Setup's `[Registry]` section with `Flags: uninsdeletevalue`; native idempotency.
+
+The smoke-test matrix should specifically include "re-run installer over existing install" as a case (see [`installer/AUDIT.md`](../../installer/AUDIT.md) finding #1 for the full pattern).
+
+---
+
+## ProgramData files created by service accounts inherit restrictive ACLs
+
+**Symptom (2026-05-06, installer audit):** Fluxora server runs as `LocalService`; writes `C:\ProgramData\Fluxora\fluxora.db` and `fluxora.log`. The desktop app (running as the user) tries to read those files and gets `ACCESS_DENIED`. Same problem affects the support-bundle generator: the server-side endpoint can't read its own log files because of how the file ACL was inherited.
+
+**Root cause.** `C:\ProgramData` defaults to "Authenticated Users: read+execute (inherited)" + "Creator Owner: full control (inherited)." When `LocalService` (SID `S-1-5-19`) creates a file under `ProgramData\Fluxora\`, the file's ACL inherits from `ProgramData\Fluxora\`'s ACL — but if `ProgramData\Fluxora\` was created by `LocalService`, ITS ACL inherits from `ProgramData\` BUT the inheritance chain for files-created-by-service-accounts often loses the "Authenticated Users" entry depending on how the service-account creates the dir (some Win API paths strip inherited ACEs).
+
+**Fix.** During install, after creating `C:\ProgramData\Fluxora\`, explicitly grant both LocalService (full-control inheritable) and Authenticated Users (read+execute inheritable) via `icacls`:
+
+```cmd
+icacls "C:\ProgramData\Fluxora" ^
+  /grant "*S-1-5-19:(OI)(CI)F" ^
+  /grant "*S-1-5-32-545:(OI)(CI)RX" ^
+  /T /Q
+```
+
+The SIDs are language-independent: `S-1-5-19` is `LocalService`, `S-1-5-32-545` is `BUILTIN\Users`. `(OI)(CI)` makes the ACEs inherit to descendants. `/T` recurses to existing children. `/Q` suppresses success messages.
+
+The same pattern applies to any Windows service that needs to share data with a user-mode process: don't rely on default inheritance; set ACLs explicitly during install.

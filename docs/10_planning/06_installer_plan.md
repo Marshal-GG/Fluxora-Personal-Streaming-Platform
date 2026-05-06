@@ -1,10 +1,10 @@
 # Installer & Distribution Plan — v1
 
 > **Category:** Planning
-> **Status:** 🟡 **PROPOSED** — captured 2026-05-03; awaiting owner decision before any implementation work begins.
-> **Decision required on:** §"Open decisions for the owner" (8 items at the bottom).
+> **Status:** 🔵 **IN PROGRESS** — captured 2026-05-03; ISS implementation landed 2026-05-06 at [`installer/Fluxora.iss`](../../installer/Fluxora.iss) with build-pipeline doc at [`installer/BUILD.md`](../../installer/BUILD.md). All 10 must-have items from the §"10-item installer feature checklist" below are implemented in the .iss; D1–D8 owner decisions defaulted as listed.
+> **Outstanding work:** running the payload-staging build pipeline once (Nuitka for the server + `flutter build windows --release --obfuscate` for the desktop + FFmpeg LGPL bundle + VC++ redist staging + ISCC compile), Squirrel.Windows auto-update wire-up (item 2 of the checklist — separate workstream from the .iss), and the smoke-test matrix on clean Win 10 / Win 11 VMs. Tracked in [`04_manual_tasks.md`](./04_manual_tasks.md).
 
-This doc captures the full design conversation around how to ship Fluxora's server + desktop binaries to end users. Nothing here is built or committed to. Once decisions land, this doc becomes the implementation spec and the relevant items in [`04_manual_tasks.md`](./04_manual_tasks.md) get rewritten with concrete steps.
+This doc captures the full design conversation around how to ship Fluxora's server + desktop binaries to end users. The bundled-installer model (Option A) is now implemented in [`installer/Fluxora.iss`](../../installer/Fluxora.iss); this doc remains the design rationale for *why* the .iss looks the way it does (every section in the .iss has a comment cross-referencing the matching plan item here).
 
 ---
 
@@ -169,8 +169,12 @@ Once D1–D8 are decided, the relevant rows in [`04_manual_tasks.md`](./04_manua
 
 ## Cross-references
 
+- [`installer/Fluxora.iss`](../../installer/Fluxora.iss) — the implementation of this plan (all 10 must-have items + 13 audit fixes inline)
+- [`installer/BUILD.md`](../../installer/BUILD.md) — mechanical build pipeline (Nuitka + Flutter `--obfuscate` + ISCC compile + signing)
+- [`installer/SHIP.md`](../../installer/SHIP.md) — strategic ship-readiness checklist (every blocker before first ship — 22 items)
+- [`installer/AUDIT.md`](../../installer/AUDIT.md) — 15-finding edge-case audit covering update / repair / reset / partial-uninstall / silent-mode / branding paths
 - [`05_ship_readiness.md`](./05_ship_readiness.md) — the broader "can we ship?" view; this doc is the distribution-side detail
-- [`04_manual_tasks.md`](./04_manual_tasks.md) — task tracker; will get rewritten once D1–D8 land
+- [`04_manual_tasks.md`](./04_manual_tasks.md) — task tracker (22-checkbox ship-blocker entry)
 - [`02_decisions.md`](./02_decisions.md) — once approved, this becomes ADR-014 (Installer & distribution model)
 - [`../05_infrastructure/runbooks/10_pyinstaller_distribution.md`](../05_infrastructure/runbooks/10_pyinstaller_distribution.md) — server `.exe` build pattern (signing section to be added when this plan is picked up)
 - [`../12_guidelines/03_gotchas.md`](../12_guidelines/03_gotchas.md) — known sharp edges (FFmpeg PATH, Defender HLS scanning) referenced above

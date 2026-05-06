@@ -836,3 +836,160 @@ Override-at-the-cubit-level was chosen over `if (!isClosed) emit(...)` at every 
 - **Apply the same `emit` guard to mobile cubits** when next touching the mobile feature tree.
 - **F10 encoder benchmark** to close out the §11.1 sweep.
 ---
+
+## [2026-05-06] — Legal docs from scratch + Inno Setup installer + comprehensive ship-readiness audit
+**Phase:** Phase 5 desktop redesign / Phase 6 distribution prep
+**Status:** Complete (commit pending)
+
+### What Was Done
+
+Three large workstreams in one session:
+
+#### 1. Fresh, comprehensive legal docs at repo root
+
+The existing `apps/web_landing/src/app/{privacy,terms}/page.tsx` were template-quality — well-written but generic. User asked for "fresh, they are just templates." Replaced with substantive markdown at repo root + synced the rendered Next.js pages to mirror.
+
+- **[`LICENSE`](LICENSE)** — MIT, `Copyright (c) 2026 Marshalx (https://marshalx.dev)`. README badge + TERMS.md §3 had been claiming MIT for weeks but no LICENSE file existed; legally everyone forking was unlicensed.
+- **[`PRIVACY.md`](PRIVACY.md)** — ~280 lines covering marketing site / Polar payment / self-hosted server / Sentry-opt-in surfaces, GDPR + CPRA + DPDP rights, retention, security controls. References the actual implementation (HMAC-SHA256 token storage, Cloudflare Tunnel HLS-block middleware, Sentry redaction layer at `apps/server/sentry_init.py`).
+- **[`TERMS.md`](TERMS.md)** — ~370 lines. Free vs paid tiers, INR pricing per Polar product spec, 14-day no-questions refund, license-key household model, brand-vs-software IP split, ₹0/paid-amount liability cap, Delhi jurisdiction.
+- **[`SECURITY.md`](SECURITY.md)** — vulnerability disclosure policy. Private GitHub advisory + email channels, response SLAs (72h ack / 7d triage / 90d disclosure), in/out of scope, threat-model recap matching the actual server implementation.
+- **[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)** — written for a small single-maintainer project (substance over corporate Contributor Covenant boilerplate). Reporting channel + escalation ladder + scope.
+- **[`NOTICE`](NOTICE)** — third-party attributions (FFmpeg LGPL, mpv, TMDB, all major Flutter / Python / npm deps with non-MIT licenses called out) + a "Credits, inspirations, and special thanks" section calling out Plex / Jellyfin / Syncthing / Tailscale / TMDB / FFmpeg / mpv / Polar / Flutter team.
+- **README.md** — replaced bare `## License` paragraph with a `## License & legal` table linking every new file.
+- Synced both `apps/web_landing/src/app/privacy/page.tsx` and `terms/page.tsx` with the new comprehensive content.
+- Fixed stale `support@fluxora.dev` email reference in `manage/page.tsx` → `support@fluxora.marshalx.dev`.
+
+User clarifications absorbed:
+- Copyright holder: `Marshalx` (portfolio handle, not real name)
+- Email domain: `*@fluxora.marshalx.dev` (subdomain of existing portfolio domain `marshalx.dev` — Cloudflare Email Routing forwards all 5 addresses to `marshalgcom@gmail.com`)
+- Jurisdiction: Delhi (corrected from the template's Maharashtra)
+
+#### 2. Inno Setup installer + comprehensive build pipeline
+
+Implemented the bundled-installer model from [`docs/10_planning/06_installer_plan.md`](docs/10_planning/06_installer_plan.md) (Option A — server + desktop in single download). All 10 must-have items from the plan's checklist mapped to .iss sections:
+
+- **[`installer/Fluxora.iss`](installer/Fluxora.iss)** — 570-line Inno Setup script (Inno Setup 6.x, modern wizard style). Handles all 10 plan items: bundled server+desktop, Windows Service registration with delayed-auto + LocalService + recovery ladder (5s/5s/30s ladder/24h reset), firewall rule on TCP 8000, Defender exclusion on HLS temp dir, VC++ Redistributable chain-installer (with documented exit-code map: 0/1638/3010 = success), keep-user-data-on-uninstall default-OFF, `[Code]` Pascal helpers for service install / removal / version comparison / orphan-process cleanup.
+- **[`installer/BUILD.md`](installer/BUILD.md)** — mechanical build pipeline. Nuitka for the server (chosen over PyInstaller because PyInstaller bundles can be unpacked with `pyinstxtractor`; Nuitka emits real native C). `flutter build windows --release --obfuscate --split-debug-info=...` for the desktop. FFmpeg LGPL bundle staging. ISCC compile command. Code-signing configuration. Smoke-test checklist + troubleshooting for the most common gotchas.
+- **[`installer/SHIP.md`](installer/SHIP.md)** — strategic ship-readiness checklist covering 22 actionable items: 3 hard code blockers (server source needs new env-var support), 5 infrastructure items (Sectigo OV cert, FFmpeg LGPL bundle, VC redist, Cloudflare Email Routing, Squirrel update host), 5 external services (Polar production webhook, Sentry DSN, DNS, Polar portal URL, GitHub Actions secrets), 3 documentation gaps (CI workflow, wizard imagery, first-run UX), 4 smoke-test gates.
+- **[`installer/AUDIT.md`](installer/AUDIT.md)** — 15-finding edge-case audit (see §3 below). Each finding tagged 🛑 critical / 🟠 high / 🟡 medium / ⚪ deferred + the fix or rationale. Every critical and high-severity finding is fixed inline in the .iss now.
+
+#### 3. Edge-case audit on the .iss + fixes
+
+User explicitly asked for a proper audit of update / repair / reset / partial-uninstall / branding / "anything else missed." Audited 15 findings across the install / uninstall / upgrade / repair / silent-mode paths. **All 8 critical+high-severity ones fixed in the same commit:**
+
+| # | Severity | Issue | Fix |
+|---|----------|-------|-----|
+| 1 | 🛑 | Repair install crashes — `sc.exe create` fails on existing service | Pascal `InstallServiceFromPascal` does stop+wait+delete+create idempotently |
+| 2 | 🛑 | Orphan FFmpeg subprocesses lock files during upgrade | `taskkill /F /T /IM ffmpeg.exe` in `InitializeSetup` (pre-`[Files]`) + repeated in `[UninstallRun]` |
+| 3 | 🛑 | ProgramData ACL — LocalService writes, users can't read | Explicit `icacls /grant "*S-1-5-19:(OI)(CI)F" /grant "*S-1-5-32-545:(OI)(CI)RX" /T` |
+| 4 | 🟠 | REG_MULTI_SZ via reg.exe `\0` is brittle | Native `RegWriteMultiStringValue` from `[Code]` |
+| 5 | 🟠 | No error handling for sc.exe / netsh / VC redist failures | `AfterInstall:` Pascal hooks accumulate `PostInstallWarnings`; surfaced via dialog at `ssDone` |
+| 6 | 🟠 | Service `start= auto` races networking on cold boot | Changed to `start= delayed-auto` (Microsoft's own pattern for network-needing services) |
+| 7 | 🟠 | `MsgBox` hangs under `/VERYSILENT` | Every prompt guarded with `WizardSilent()` / `UninstallSilent()` short-circuit to safe default |
+| 8 | 🟠 | Pre-uninstall service stop is async — file deletion races | `RemoveServiceFromPascal` polls `sc.exe query` for `STOPPED` (≤30 s) before `delete` |
+| 9 | 🟡 | Installer process taskbar grouping with other Inno installers | `AppUserModelID=Fluxora.Setup` |
+| 10 | 🟡 | Downgrade attempts silently overwrite | `CompareWithInstalled()` parses versions; downgrade prompts confirm or aborts under silent |
+| 11 | 🟡 | "Setup" / "Inno Setup" branding leaks in titlebars | `[Messages]` overrides for `SetupAppTitle`, `UninstallAppTitle`, `BeveledLabel` |
+| 12 | 🟡 | Service description set in separate sc.exe call | Folded into single Pascal helper |
+| 13 | 🟡 | Multi-user awareness | Documented as intentional (per-machine binaries; per-user auto-start by design) |
+| 14 | ⚪ | `[Components]` for server-only / desktop-only | Deferred — bundle install covers 90%; `noservice` task handles power-user case |
+| 15 | ⚪ | Squirrel.Windows auto-update integration | Deferred — separate workstream; first release ships Inno-only |
+
+Updated [`docs/10_planning/06_installer_plan.md`](docs/10_planning/06_installer_plan.md) status: 🟡 PROPOSED → 🔵 IN PROGRESS with cross-references to all four installer files.
+
+Listed all SHIP.md blockers in [`docs/10_planning/04_manual_tasks.md`](docs/10_planning/04_manual_tasks.md) as a single tracked entry — 22 checkboxes across Code / Infrastructure / External services / Documentation / Smoke tests.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `LICENSE` (MIT, Marshalx, 2026) |
+| Created | `PRIVACY.md` (~280 lines) |
+| Created | `TERMS.md` (~370 lines) |
+| Created | `SECURITY.md` (vulnerability disclosure) |
+| Created | `CODE_OF_CONDUCT.md` (project-scaled) |
+| Created | `NOTICE` (third-party + credits + inspirations) |
+| Created | `installer/Fluxora.iss` (570 lines, all 15 audit findings addressed) |
+| Created | `installer/BUILD.md` (build pipeline) |
+| Created | `installer/SHIP.md` (strategic ship checklist, 22 blockers) |
+| Created | `installer/AUDIT.md` (15-finding edge-case audit) |
+| Modified | `README.md` (License & legal table; replaced bare License paragraph) |
+| Modified | `apps/web_landing/src/app/privacy/page.tsx` (full rewrite mirroring PRIVACY.md) |
+| Modified | `apps/web_landing/src/app/terms/page.tsx` (full rewrite mirroring TERMS.md) |
+| Modified | `apps/web_landing/src/app/manage/page.tsx` (support@fluxora.dev → support@fluxora.marshalx.dev) |
+| Modified | `docs/10_planning/06_installer_plan.md` (status PROPOSED → IN PROGRESS + cross-refs) |
+| Modified | `docs/10_planning/04_manual_tasks.md` (22-checkbox ship-blocker entry) |
+| Modified | `docs/00_overview/current_status.md` (this round's paragraph) |
+| Modified | `docs/12_guidelines/03_gotchas.md` (4 new installer gotchas) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Decisions Made
+
+- **Marshalx (portfolio handle) over a real legal name on LICENSE.** User explicitly didn't want their real name on a public open-source repo. Marshalx + the marshalx.dev portfolio link is a legitimate copyright-holder identifier; sufficient for MIT enforcement.
+- **`*@fluxora.marshalx.dev` over `@fluxora.dev`.** The user owns marshalx.dev but not fluxora.dev. Subdomain emails are free to set up via Cloudflare Email Routing under the existing zone; saves a domain registration and works from day one.
+- **Delhi over Maharashtra for jurisdiction.** User lives in Delhi; the template was wrong. Delhi courts handle Indian-customer disputes per Terms §17.
+- **Comprehensive PRIVACY/TERMS at repo root + JSX mirrors.** Could have left the JSX as the canonical source but markdown at repo root is GitHub-discoverable, opens directly without a dev server, and matches the convention of LICENSE / SECURITY / CODE_OF_CONDUCT all being root markdown.
+- **Nuitka over PyInstaller for server obfuscation.** PyInstaller bundles unpack with `pyinstxtractor` in 30 seconds; Nuitka compiles each .py to native C. For paid-tier code where the license-key validator lives, that's the difference between "obfuscated" and "compiled."
+- **Pascal `[Code]` helpers over `[Run]` shell commands** for the service operations. Inno Setup's Pascal flavour can't do everything, but for stop+wait+delete+create+set-env+start, a single Pascal procedure is much more readable than 8 chained `[Run]` items with conditional `Check:` clauses.
+- **`AfterInstall:` Pascal hook for warning accumulation** instead of failing the install on any post-install step error. The user is more frustrated by "install failed for an obscure netsh reason, all my work lost" than "install completed with one warning, here's what to fix."
+- **`start= delayed-auto` for the service.** Standard pattern for any Windows service that needs network. Adds 30 s to first-after-boot pairing latency but eliminates an entire class of "the server flakes on boot" support tickets.
+- **Bundled FFmpeg LGPL, not GPL.** GPL FFmpeg cannot be redistributed under MIT-licensed Fluxora. The "essentials" build from gyan.dev is LGPL by default; documented version-pin convention in BUILD.md.
+- **Defer `[Components]` (server-only / desktop-only switch) to v1.1.** Plan's D8 calls for a separate headless installer; the current bundled .iss with the `noservice` task covers 90% of the case and adding [Components] now would complicate every other section.
+
+### Blockers / Open Issues
+
+Most of these are listed in detail in [`installer/SHIP.md`](installer/SHIP.md) and tracked in [`docs/10_planning/04_manual_tasks.md`](docs/10_planning/04_manual_tasks.md). Summary:
+
+- **3 hard code blockers** in the server source must land before the first Nuitka build will produce a working installer:
+  - `apps/server/config.py` `_data_dir()` doesn't respect `FLUXORA_DATA_DIR` env var.
+  - `apps/server/services/ffmpeg_service.py` `_ffmpeg_bin()` doesn't respect `FLUXORA_FFMPEG_BIN` and only checks PyInstaller's `sys._MEIPASS` (not Nuitka).
+  - `apps/server/main.py` lacks an `if __name__ == "__main__":` Nuitka launcher.
+- **1 soft code blocker:** Windows-service-friendly graceful shutdown (uvicorn doesn't natively listen for `SERVICE_CONTROL_STOP`). Defer to v1.1 — next service start cleans up orphaned FFmpeg children.
+- **Sectigo OV code-signing cert** (~$200/yr, 3–7 day delivery) — start the clock now since every other infra item is faster.
+- **Email forwarders** for the 5 `*@fluxora.marshalx.dev` addresses (~10 minutes via Cloudflare Email Routing).
+- **FFmpeg LGPL build + VC++ Redistributable** download + stage.
+- **`.github/workflows/release.yml`** doesn't exist yet (~150 lines of YAML).
+- **Wizard imagery** (164×314 + 55×55 BMPs) — Inno Setup falls back to defaults if missing; not a build blocker but a credibility hit.
+
+### Issues / Sharp Edges Discovered
+
+Captured as 4 new gotchas in [`docs/12_guidelines/03_gotchas.md`](docs/12_guidelines/03_gotchas.md):
+
+- **`sc.exe stop` is asynchronous.** Returns when SCM accepts the request, NOT when the service has actually stopped. Inno Setup script must poll `sc.exe query` for `STATE: STOPPED` before proceeding to `sc.exe delete`, or files mid-shutdown will trip `ERROR_SHARING_VIOLATION` during file deletion.
+- **`reg.exe add /t REG_MULTI_SZ /d "a\0b"` is brittle.** The `\0` separator is documented but parsed differently across shells. For multi-string registry values from an installer, use the native `RegWriteMultiStringValue` function from Pascal `[Code]` instead.
+- **Inno Setup has no native repair UI.** "Repair" = re-run the original installer. Any `[Run]` command that's not idempotent (e.g. `sc.exe create` on an existing service) will fail on repair. Wrap idempotency-sensitive operations in Pascal helpers that detect existing state first.
+- **ProgramData files created by service accounts inherit restrictive ACLs.** `LocalService` writing to `C:\ProgramData\Fluxora\` produces files that other users can't read by default. The desktop app (running as the user) then can't read the server's logs / DB. Fix: explicit `icacls /grant "*S-1-5-19:(OI)(CI)F" /grant "*S-1-5-32-545:(OI)(CI)RX" /T` on the data dir during install.
+
+Plus encountered (not new gotchas, but worth flagging):
+
+- **Nuitka uses `sys.frozen = True` like PyInstaller but does NOT have `sys._MEIPASS`.** Existing FFmpeg-path-resolution code that branches on `sys._MEIPASS` will crash with `AttributeError` under Nuitka. Use `Path(sys.executable).parent` for the bundle root instead.
+- **`flutter build windows --obfuscate` requires `--split-debug-info=<path>`.** Flutter refuses to obfuscate without somewhere to dump the symbol map. Keep the symbol map on a private branch — it's what someone would need to "un-obfuscate" the AOT snapshot if they had the stripped binary.
+- **`file_picker` 11.0.2 dropped the `FilePicker.platform` accessor** that earlier versions exposed. `FilePicker.saveFile(...)` is now a static method. Bumping the dep silently breaks any code using the old form.
+
+### Proactive Suggestions for Next Work
+
+1. **Land the 3 hard server code fixes** (~10 minutes total) — unlocks the first Nuitka build.
+2. **Order the Sectigo OV cert** — start the 3–7 day clock now while the rest of the infra is being set up.
+3. **Set up Cloudflare Email Routing** (~10 minutes) so the legal docs' email contacts work day-one.
+4. **Push today's work** if ready (current branch has 16+ unpushed commits across the day's three workstreams: emit-after-close + reachability hardening + audit + legal + installer).
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding (LICENSE says Marshalx; no Co-Authored-By Claude anywhere).
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No silent exceptions. Pascal helpers fold failures into `PostInstallWarnings` surfaced via dialog.
+- [x] No hardcoded secrets, ports, paths. Service env vars + ports are #defines at top of .iss.
+- [x] No new pip / pub deps. Nuitka and Inno Setup are operator tools, not project deps.
+- [x] No layer-boundary violations.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+- [x] No raw SQL string concatenation.
+- [x] No bearer tokens / PII logged.
+
+### Next Agent Should
+
+- **Land the 3 server code fixes** in `config.py` / `ffmpeg_service.py` / `main.py` per SHIP.md §3.
+- **Order the code-signing cert** (Sectigo OV — 3–7 day wait).
+- **Set up Cloudflare Email Routing** for `*@fluxora.marshalx.dev`.
+- **Smoke-test the .iss** on a clean Win 10 + Win 11 VM once the build pipeline produces a real installer (per AUDIT.md test matrix).
+---

@@ -22,6 +22,56 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 
 ## Pending
 
+### 🔲 Installer ship blockers — first signed installer release
+
+**Comprehensive list:** [`installer/SHIP.md`](../../installer/SHIP.md) — every step + every blocker, code + infra + docs + external services. Mirrored here as the manual-task index.
+
+**Status:** all blockers itemised 2026-05-06. None started yet. Trigger: when ready to cut the first installer release. Owner: project owner.
+
+#### Code (🛑 hard blockers — first Nuitka build won't produce a working installer without these)
+
+> The convention in this doc is "operational items only — code TODOs live with the code." These three are listed here as exceptions because they're discovered during the installer audit and gate the whole shipping pipeline. The fix details + exact code patches are in SHIP.md §3.
+
+- [ ] 🔲 **Server `_data_dir()` should respect `FLUXORA_DATA_DIR` env var** ([`apps/server/config.py`](../../apps/server/config.py)) — needed because the .iss runs the service as `LocalService`, which can't access user `%APPDATA%`. The .iss sets `FLUXORA_DATA_DIR=C:\ProgramData\Fluxora` but the server currently ignores it. SHIP.md §3.1.
+- [ ] 🔲 **Server `_ffmpeg_bin()` / `_ffprobe_bin()` should respect env vars + Nuitka frozen detection** ([`apps/server/services/ffmpeg_service.py`](../../apps/server/services/ffmpeg_service.py)) — the .iss sets `FLUXORA_FFMPEG_BIN` pointing at the bundled binary; existing code only checks PyInstaller's `sys._MEIPASS` (Nuitka uses a different mechanism). SHIP.md §3.2.
+- [ ] 🔲 **Server `main.py` needs `if __name__ == "__main__"` Nuitka launcher** ([`apps/server/main.py`](../../apps/server/main.py)) — Nuitka standalone exe runs the module top-level; without a launcher it loads `app`, defines it, exits in <1 second. Service "starts" then dies. SHIP.md §3.3.
+- [ ] 🔲 *(soft, defer to v1.1)* Server graceful Windows-service stop — uvicorn doesn't natively listen for `SERVICE_CONTROL_STOP`. Stop-during-active-stream leaks FFmpeg processes; next start cleans them up so acceptable for v1. SHIP.md §3.4.
+
+#### Infrastructure to acquire (~1–2 weeks lead time)
+
+- [ ] 🔲 **Sectigo OV code-signing cert** (~$200/yr, 3–7 day delivery after identity verification). SHIP.md §4.1. **Start the clock now** — every other infra item is faster.
+- [ ] 🔲 **FFmpeg LGPL build downloaded + version-pinned + staged** to `installer\payload\ffmpeg\`. Use the "essentials" build from gyan.dev (LGPL); not the "full" build (GPL). SHIP.md §4.2.
+- [ ] 🔲 **Visual C++ Redistributable (x64) downloaded + staged** to `installer\payload\redist\vc_redist.x64.exe`. SHIP.md §4.3.
+- [ ] 🔲 **Cloudflare Email Routing for 5 forwarders** under `*@fluxora.marshalx.dev` (`security@`, `privacy@`, `legal@`, `support@`, `conduct@`) → all forwarding to `marshalgcom@gmail.com`. SHIP.md §4.4.
+- [ ] 🔲 **Squirrel.Windows update host** at `fluxora.marshalx.dev/updates/windows/` (Firebase / Cloudflare Pages / R2). SHIP.md §4.5. Acceptable to defer past first ship — early users can manually download the new installer.
+
+#### External services to configure
+
+- [ ] 🔲 **Polar production webhook secret** in production `.env` (`FLUXORA_POLAR_WEBHOOK_SECRET`). Plus confirm the 3 products have `tier` metadata key set per [`docs/01_product/06_polar_product_setup.md`](01_product/06_polar_product_setup.md). SHIP.md §5.1.
+- [ ] 🔲 **Sentry DSN** *(optional)* — server already has Sentry wiring with PII scrubbing; just needs DSN. SHIP.md §5.2.
+- [ ] 🔲 **DNS for `fluxora.marshalx.dev` + `fluxora-api.marshalx.dev`** (Cloudflare DNS records pointing at Pages / Tunnel). SHIP.md §5.3. Likely already done — verify if not.
+- [ ] 🔲 **Polar customer-portal URL** in production `.env` (`FLUXORA_POLAR_PORTAL_URL`). Used by the desktop Subscription → Manage tab. SHIP.md §5.4.
+- [ ] 🔲 **GitHub Actions secrets** (`CODESIGN_PFX_BASE64`, `CODESIGN_PFX_PASSWORD`, `SIGNTOOL_TIMESTAMP_URL`) for automated CI builds. SHIP.md §5.5.
+
+#### Documentation gaps
+
+- [ ] 🔲 **Write `.github/workflows/release.yml`** — automated CI build pipeline. Triggers on `vN.M.P` tag, runs Nuitka + Flutter `--obfuscate` + ISCC, signs everything, uploads to GitHub Releases + Squirrel update host. ~150 lines of YAML. SHIP.md §6.1.
+- [ ] 🔲 **Wizard imagery BMPs** — `installer/assets/wizard-large.bmp` (164×314) + `wizard-small.bmp` (55×55) for Inno Setup. Use existing brand assets (`assets/brand/logo-icon.png` + `logo-wordmark-h.png`) as input. SHIP.md §6.2.
+- [ ] 🔲 **First-run UX** — three options, increasing effort: (a) write `docs/01_product/07_first_run_guide.md` ~1h; (b) add a "First-time setup" panel to the Help screen ~2h; (c) real first-run wizard modal in the desktop app ~4–8h. Plex / Jellyfin both do (c). Acceptable to ship with (a). SHIP.md §6.3.
+
+#### Smoke-test matrix (🛑 hard gate before publish)
+
+- [ ] 🔲 **Win 10 22H2 clean VM smoke test** — all 11 verification points from SHIP.md §7.2.
+- [ ] 🔲 **Win 11 23H2 clean VM smoke test** — same checklist.
+- [ ] 🔲 **Win 11 + Defender real-time + UAC max** — catches the firewall + Defender + service-account paper cuts.
+- [ ] 🔲 **Failure-mode tests** — no VC redist; port 8000 already taken; Defender enabled; Windows Home; repair install; upgrade in place. SHIP.md §7.3.
+
+#### Pre-flight (each release)
+
+Per-release checklist in SHIP.md §8 — copy-pasteable for every cut. Includes version bumps in `apps/server/pyproject.toml` + `apps/desktop/pubspec.yaml` + `apps/web_landing/package.json` + `installer/Fluxora.iss`, AGENT_LOG entry, current_status.md update, GitHub Release publish, Squirrel `RELEASES` entry, Flutter symbol-map archive.
+
+---
+
 ### ✅ Settings audit follow-ups: 13 wireless controls + 3 cosmetic / nav bugs (DONE 2026-05-06)
 
 Surfaced during the 2026-05-06 settings audit. **All A8–A13 items shipped same-day** — moved to "Recently completed" semantically; preserved here as a record of the audit.
