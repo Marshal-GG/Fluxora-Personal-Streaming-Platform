@@ -285,3 +285,93 @@ Or wait for the negative cache to expire (typically 15 minutes to several hours 
 **Symptom (2026-05-06, F7 work):** Replacing 5 Material `AlertDialog` instances on the Groups screen, the original audit framing said "build a `FluxDialog` primitive." `FluxGlassDialog` had been shipped at `lib/shared/widgets/flux_glass_dialog.dart` since the M3 era and was already in production use on Library / Pair Device / Subscription Upgrade — but no doc named it as the canonical replacement, so a fresh agent reading the audit had no signal.
 
 **Fix:** Doc-only. [`DESIGN.md`](../../DESIGN.md#real-glass-vs-opaque-raised-the-policy-after-2026-05-04) and [`docs/08_frontend/01_frontend_architecture.md`](../08_frontend/01_frontend_architecture.md) now both flag `FluxGlassDialog` as the canonical replacement explicitly. **Rule:** never use Material `AlertDialog` for new code; always use `FluxGlassDialog`. `Dialog`-with-custom-child patterns are also fine for special cases (Library Add/Edit uses `StatefulBuilder` inside) but they should still wrap the inner content in the `FluxGlassDialog` shell rather than rolling their own `Dialog(transparent) → BackdropFilter` boilerplate. The widget already accepts arbitrary `Widget` children for `title` / `content` / `actions`.
+
+---
+
+## Dart 3 records don't allow forward declarations
+
+**Symptom (2026-05-06, A10 work):** Tried to forward-declare three typed locals before an `if/else` branch that would assign them:
+
+```dart
+final stats = ...;
+final (String label, Color color, DotStatus dot);  // ← parse error
+if (...) { label = '...'; color = ...; dot = ...; }
+```
+
+The Dart 3 parser interprets `(String label, Color color, DotStatus dot)` at expression position as a record *literal* (with positional fields named `label` / `color` / `dot`), so `final (...);` becomes `final <record-literal>;` — invalid because record literals can't be uninitialised. Diagnostics surface as a cascade of "Expected an identifier" / "Expected to find ';'" with `Color`-the-class flagged as a "variable name."
+
+**Root cause:** Dart 3 records support **destructuring on assignment** (`final (a, b) = (1, 2);`) and **pattern-matching** (`switch (record) { (a, b) => ... }`), but there is no syntax for "declare uninitialised vars in record shape." The pattern `final (T x, T y);` looks like it should work by analogy with C# tuple deconstruction; it doesn't.
+
+**Fix:** Use three separate `late final` declarations:
+
+```dart
+late final String label;
+late final Color color;
+late final DotStatus dot;
+if (...) { label = '...'; color = ...; dot = ...; }
+```
+
+`late final` is the right escape hatch — it preserves the "assigned exactly once" guarantee and works inside any control-flow branch.
+
+---
+
+## Stateful → Stateless conversion misses references inside conditional branches
+
+**Symptom (2026-05-06, A9 work):** Converted `_NetworkTab` from `StatefulWidget` to `StatelessWidget` to lift its state up to the parent. After the conversion, four references survived the first edit pass and broke `flutter analyze`:
+
+- `widget.cubit.checkRemoteAccess()` (no longer has `widget`).
+- `widget.state` access inside an `if (configured && state != null)` block where Dart's flow analysis no longer narrows `state` (was a local; now a class field).
+- `_relayCtrl` (was an instance field; now a constructor param named `relayCtrl`).
+
+The references were inside conditional branches the IDE pattern-match didn't reach during the rename, so they weren't auto-fixed.
+
+**Root cause:** "Convert to Stateless" is mechanical at the class declaration but leaves the body's references to instance state untouched. Anything inside an `if`, `switch`, or nested closure can hide an old `widget.X` or instance-field access.
+
+**Fix recipe** when converting `StatefulWidget` → `StatelessWidget`:
+1. Rename the class; drop the `State<...>` half.
+2. Search-replace `widget\.` → `` (bare access) inside the class.
+3. Convert each instance field to a constructor parameter (`final ... this.x;`).
+4. **Re-run `flutter analyze`** before declaring the conversion done — every surviving reference will surface as either "Undefined name 'widget'" or "Undefined name '_field'." Step 4 is non-negotiable; without it conditional branches silently retain dead references.
+5. For class fields that read as `state.X` where `state` is nullable, Dart's flow analysis no longer narrows them inside `if (state != null)` blocks the way it does for locals — use `state!.X` or extract a local copy first.
+
+---
+
+## Cubit state shapes — sealed unions vs flat classes
+
+**Symptom (2026-05-06, A10 work):** Pattern-matched on `SystemStatsCubit`'s state assuming it was a sealed union with `SystemStatsLoaded` / `SystemStatsError` subclasses:
+
+```dart
+final (label, color, dot) = switch (stats) {
+  SystemStatsLoaded() when stats.latest != null => ('Running', emerald, online),
+  SystemStatsError() => ('Unreachable', red, offline),
+  _ => ('Checking…', muted, idle),
+};
+```
+
+Compiled to "Undefined class `SystemStatsLoaded`" — those subclasses don't exist.
+
+**Root cause:** Different Cubits in this codebase use different state-class patterns:
+
+- **Sealed-union pattern**: `SettingsState` (`SettingsInitial` / `SettingsLoading` / `SettingsLoaded` / `SettingsSaved` / `SettingsError`), `ClientsState`, `LibraryState`. Designed for `switch`-on-subclass.
+- **Flat-with-nullables pattern**: `SystemStatsState` is a *single* `Equatable` class with nullable `latest` and `errorMessage`. The "loading" / "loaded" / "error" axes are encoded as combinations of those nullables.
+
+**Rule of thumb:** before pattern-matching on a Cubit's state, open the `_state.dart` file and confirm the shape. If you see one class with `final ... ?` fields, it's flat — match on tuples or guards (`(latest: != null, errorMessage: != null)`). If you see `sealed class X` or a hierarchy of `final class A extends X / B extends X / ...`, it's a union — switch on the subclass.
+
+**Pattern for `SystemStatsState` specifically** (kept here so the next consumer doesn't re-derive it):
+
+```dart
+final stats = context.select<SystemStatsCubit, SystemStatsState>((c) => c.state);
+late final String label;
+late final Color color;
+late final DotStatus dot;
+if (stats.latest != null && stats.errorMessage == null) {
+  label = 'Running'; color = AppColors.emerald; dot = DotStatus.online;
+} else if (stats.errorMessage != null) {
+  label = stats.latest != null ? 'Degraded' : 'Unreachable';
+  color = AppColors.red; dot = DotStatus.offline;
+} else {
+  label = 'Checking…'; color = AppColors.textMutedV2; dot = DotStatus.idle;
+}
+```
+
+The `latest != null && errorMessage != null` case ("had a sample, latest poll failed") is what distinguishes "Degraded" from "Unreachable" — drop that branch only if you don't care about the difference.

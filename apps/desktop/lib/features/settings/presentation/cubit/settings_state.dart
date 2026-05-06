@@ -24,6 +24,20 @@ final class SettingsLoaded extends SettingsState {
     required this.transcodingPreset,
     required this.transcodingCrf,
     this.transcodingChain,
+    // §7.10 extended-settings fields (migration 015 + 023).
+    this.defaultLibraryView = 'grid',
+    this.scanLibrariesOnStartup = true,
+    this.generateThumbnails = true,
+    this.preferredMode = 'auto',
+    this.enableMdns = true,
+    this.enableWebrtc = true,
+    this.relayServerUrl,
+    this.defaultQuality = 'auto',
+    this.aiSegmentDurationSeconds = 4,
+    this.enablePairingRequired = true,
+    this.sessionTimeoutMinutes = 60,
+    this.enableLogExport = true,
+    this.customServerUrl,
     this.remoteUrl,
     this.remoteAccessStatus,
   });
@@ -42,9 +56,31 @@ final class SettingsLoaded extends SettingsState {
   /// EncoderPriorityList widget.
   final List<String>? transcodingChain;
 
+  // ── §7.10 extended-settings fields (migration 015) ──────────────────────
+  // General
+  final String defaultLibraryView; // 'grid' | 'list'
+  final bool scanLibrariesOnStartup;
+  final bool generateThumbnails;
+  // Network
+  final String preferredMode; // 'auto' | 'lan' | 'webrtc'
+  final bool enableMdns;
+  final bool enableWebrtc;
+  final String? relayServerUrl;
+  // Streaming
+  final String defaultQuality; // 'auto' | '4k' | '1080p' | '720p' | '480p'
+  final int aiSegmentDurationSeconds; // server clamps 1..30
+  // Security
+  final bool enablePairingRequired;
+  final int sessionTimeoutMinutes; // server clamps 1..1440
+  // Advanced
+  final bool enableLogExport;
+  final String? customServerUrl;
+
   /// The server's configured public URL (Cloudflare Tunnel), read from
   /// `GET /api/v1/info`. `null` when the server has no `FLUXORA_PUBLIC_URL`
-  /// set. Distinct from [serverUrl] which is the local LAN URL.
+  /// set AND no `user_settings.custom_server_url` override. Distinct from
+  /// [serverUrl] which is the local LAN URL the desktop reaches the server
+  /// at.
   final String? remoteUrl;
 
   /// Status of the most recent reachability probe against [remoteUrl] +
@@ -65,6 +101,19 @@ final class SettingsLoaded extends SettingsState {
       transcodingPreset: transcodingPreset,
       transcodingCrf: transcodingCrf,
       transcodingChain: transcodingChain,
+      defaultLibraryView: defaultLibraryView,
+      scanLibrariesOnStartup: scanLibrariesOnStartup,
+      generateThumbnails: generateThumbnails,
+      preferredMode: preferredMode,
+      enableMdns: enableMdns,
+      enableWebrtc: enableWebrtc,
+      relayServerUrl: relayServerUrl,
+      defaultQuality: defaultQuality,
+      aiSegmentDurationSeconds: aiSegmentDurationSeconds,
+      enablePairingRequired: enablePairingRequired,
+      sessionTimeoutMinutes: sessionTimeoutMinutes,
+      enableLogExport: enableLogExport,
+      customServerUrl: customServerUrl,
       remoteUrl: remoteUrl != null ? remoteUrl() : this.remoteUrl,
       remoteAccessStatus: remoteAccessStatus != null
           ? remoteAccessStatus()

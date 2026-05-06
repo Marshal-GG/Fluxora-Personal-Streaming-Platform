@@ -37,6 +37,23 @@ class SettingsCubit extends Cubit<SettingsState> {
       int transcodingCrf = 23;
       List<String>? transcodingChain;
 
+      // §7.10 extended-settings — defaults match `models/settings.py`
+      // `UserSettingsResponse` so an offline load + a successful load show
+      // the same values when nothing is configured server-side.
+      String defaultLibraryView = 'grid';
+      bool scanLibrariesOnStartup = true;
+      bool generateThumbnails = true;
+      String preferredMode = 'auto';
+      bool enableMdns = true;
+      bool enableWebrtc = true;
+      String? relayServerUrl;
+      String defaultQuality = 'auto';
+      int aiSegmentDurationSeconds = 4;
+      bool enablePairingRequired = true;
+      int sessionTimeoutMinutes = 60;
+      bool enableLogExport = true;
+      String? customServerUrl;
+
       try {
         final data = await _apiClient.get<Map<String, dynamic>>(
           Endpoints.serverSettings,
@@ -55,6 +72,27 @@ class SettingsCubit extends Cubit<SettingsState> {
         if (rawChain is List) {
           transcodingChain = rawChain.whereType<String>().toList();
         }
+        defaultLibraryView =
+            data['default_library_view'] as String? ?? defaultLibraryView;
+        scanLibrariesOnStartup =
+            data['scan_libraries_on_startup'] as bool? ?? scanLibrariesOnStartup;
+        generateThumbnails =
+            data['generate_thumbnails'] as bool? ?? generateThumbnails;
+        preferredMode = data['preferred_mode'] as String? ?? preferredMode;
+        enableMdns = data['enable_mdns'] as bool? ?? enableMdns;
+        enableWebrtc = data['enable_webrtc'] as bool? ?? enableWebrtc;
+        relayServerUrl = data['relay_server_url'] as String?;
+        defaultQuality = data['default_quality'] as String? ?? defaultQuality;
+        aiSegmentDurationSeconds =
+            data['ai_segment_duration_seconds'] as int? ??
+                aiSegmentDurationSeconds;
+        enablePairingRequired =
+            data['enable_pairing_required'] as bool? ?? enablePairingRequired;
+        sessionTimeoutMinutes =
+            data['session_timeout_minutes'] as int? ?? sessionTimeoutMinutes;
+        enableLogExport =
+            data['enable_log_export'] as bool? ?? enableLogExport;
+        customServerUrl = data['custom_server_url'] as String?;
       } catch (e) {
         _log.w('Could not fetch server settings (server may be offline): $e');
       }
@@ -83,6 +121,19 @@ class SettingsCubit extends Cubit<SettingsState> {
         transcodingPreset: transcodingPreset,
         transcodingCrf: transcodingCrf,
         transcodingChain: transcodingChain,
+        defaultLibraryView: defaultLibraryView,
+        scanLibrariesOnStartup: scanLibrariesOnStartup,
+        generateThumbnails: generateThumbnails,
+        preferredMode: preferredMode,
+        enableMdns: enableMdns,
+        enableWebrtc: enableWebrtc,
+        relayServerUrl: relayServerUrl,
+        defaultQuality: defaultQuality,
+        aiSegmentDurationSeconds: aiSegmentDurationSeconds,
+        enablePairingRequired: enablePairingRequired,
+        sessionTimeoutMinutes: sessionTimeoutMinutes,
+        enableLogExport: enableLogExport,
+        customServerUrl: customServerUrl,
         remoteUrl: remoteUrl,
       ));
     } catch (e, st) {
@@ -148,6 +199,21 @@ class SettingsCubit extends Cubit<SettingsState> {
     /// chain so the server falls back to the default; a non-empty list
     /// replaces it.
     List<String>? transcodingChain,
+    // §7.10 extended-settings — every field is optional; omit to leave
+    // the server-side value unchanged.
+    String? defaultLibraryView,
+    bool? scanLibrariesOnStartup,
+    bool? generateThumbnails,
+    String? preferredMode,
+    bool? enableMdns,
+    bool? enableWebrtc,
+    String? relayServerUrl,
+    String? defaultQuality,
+    int? aiSegmentDurationSeconds,
+    bool? enablePairingRequired,
+    int? sessionTimeoutMinutes,
+    bool? enableLogExport,
+    String? customServerUrl,
   }) async {
     final trimmedUrl = serverUrl.trim();
     final trimmedName = serverName.trim();
@@ -203,6 +269,20 @@ class SettingsCubit extends Cubit<SettingsState> {
           'transcoding_preset': ?transcodingPreset,
           'transcoding_crf': ?transcodingCrf,
           'transcoding_chain': ?transcodingChain,
+          // §7.10 extended-settings
+          'default_library_view': ?defaultLibraryView,
+          'scan_libraries_on_startup': ?scanLibrariesOnStartup,
+          'generate_thumbnails': ?generateThumbnails,
+          'preferred_mode': ?preferredMode,
+          'enable_mdns': ?enableMdns,
+          'enable_webrtc': ?enableWebrtc,
+          'relay_server_url': ?relayServerUrl,
+          'default_quality': ?defaultQuality,
+          'ai_segment_duration_seconds': ?aiSegmentDurationSeconds,
+          'enable_pairing_required': ?enablePairingRequired,
+          'session_timeout_minutes': ?sessionTimeoutMinutes,
+          'enable_log_export': ?enableLogExport,
+          'custom_server_url': ?customServerUrl,
         },
       );
       emit(SettingsSaved(

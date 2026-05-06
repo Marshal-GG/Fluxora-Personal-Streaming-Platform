@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:logger/logger.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import 'package:fluxora_desktop/core/router/app_router.dart';
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_radii.dart';
 import 'package:fluxora_core/constants/app_spacing.dart';
@@ -9,6 +13,7 @@ import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_desktop/core/di/injector.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_cubit.dart';
 import 'package:fluxora_desktop/features/settings/presentation/cubit/settings_state.dart';
+import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/domain/repositories/transcoding_repository.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/hardware_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/cubit/transcoding_cubit.dart';
@@ -117,7 +122,12 @@ class _SettingsViewState extends State<_SettingsView> {
   // treated as the operator's choice and PATCHed on save.
   List<String>? _transcodingChain;
   bool _enablePairingRequired = true;
-  bool _enableLogExport = false;
+  bool _enableLogExport = true;
+  // Network tab — lifted from `_NetworkTabState` so they participate in
+  // load + save (A8/A9 fix).
+  String _preferredMode = 'auto';
+  bool _enableMdns = true;
+  bool _enableWebrtc = true;
   String _selectedTier = 'free';
   bool _initialized = false;
 
@@ -158,8 +168,11 @@ class _SettingsViewState extends State<_SettingsView> {
     _licenseCtrl = TextEditingController();
     _relayCtrl = TextEditingController();
     _customUrlCtrl = TextEditingController();
+    // Initial values are placeholders; first SettingsLoaded reseats them
+    // via _syncFromState. Without these defaults the controllers would
+    // momentarily render empty inputs while the load round-trips.
     _sessionTimeoutCtrl = TextEditingController(text: '60');
-    _aiSegmentCtrl = TextEditingController(text: '6');
+    _aiSegmentCtrl = TextEditingController(text: '4');
 
     // Rebuild on text changes so the Save button reacts.
     for (final c in [_urlCtrl, _nameCtrl, _licenseCtrl]) {
@@ -201,6 +214,20 @@ class _SettingsViewState extends State<_SettingsView> {
     if (_nameCtrl.text != s.serverName) _nameCtrl.text = s.serverName;
     final key = s.licenseKey ?? '';
     if (_licenseCtrl.text != key) _licenseCtrl.text = key;
+    // Always reseat free-form text controllers for the §7.10 fields so
+    // a server-side change picked up by a fresh load is reflected even
+    // after `_initialized` flipped true.
+    final relay = s.relayServerUrl ?? '';
+    if (_relayCtrl.text != relay) _relayCtrl.text = relay;
+    final customUrl = s.customServerUrl ?? '';
+    if (_customUrlCtrl.text != customUrl) _customUrlCtrl.text = customUrl;
+    final sessionTimeout = '${s.sessionTimeoutMinutes}';
+    if (_sessionTimeoutCtrl.text != sessionTimeout) {
+      _sessionTimeoutCtrl.text = sessionTimeout;
+    }
+    final aiSegment = '${s.aiSegmentDurationSeconds}';
+    if (_aiSegmentCtrl.text != aiSegment) _aiSegmentCtrl.text = aiSegment;
+
     if (!_initialized) {
       _selectedTier = s.tier;
       // Guard against stale encoder IDs stored in the DB (e.g. 'h264_amf')
@@ -217,6 +244,16 @@ class _SettingsViewState extends State<_SettingsView> {
       // but we want a clean UI even when the DB has a stale entry).
       _transcodingChain =
           s.transcodingChain?.where(validIds.contains).toList();
+      // §7.10 extended-settings — non-text values seeded once.
+      _defaultLibraryView = s.defaultLibraryView;
+      _scanOnStartup = s.scanLibrariesOnStartup;
+      _generateThumbnails = s.generateThumbnails;
+      _preferredMode = s.preferredMode;
+      _enableMdns = s.enableMdns;
+      _enableWebrtc = s.enableWebrtc;
+      _defaultQuality = s.defaultQuality;
+      _enablePairingRequired = s.enablePairingRequired;
+      _enableLogExport = s.enableLogExport;
       _initialized = true;
     }
     _loadedSnapshot = s;
@@ -236,6 +273,26 @@ class _SettingsViewState extends State<_SettingsView> {
     // value.  null in this list means "leave unchanged on the server".
     final loadedChain = _loadedSnapshot?.transcodingChain;
     final chainChanged = !_listEquals(_transcodingChain, loadedChain);
+
+    final s = _loadedSnapshot;
+    // §7.10 — change detection per field.  Sending the same value back
+    // is harmless server-side, but sending only changed fields keeps
+    // the PATCH small and makes the audit log easier to read.
+    final relayTrimmed = _relayCtrl.text.trim();
+    final loadedRelay = s?.relayServerUrl ?? '';
+    final customUrlTrimmed = _customUrlCtrl.text.trim();
+    final loadedCustomUrl = s?.customServerUrl ?? '';
+
+    int? aiSegment = int.tryParse(_aiSegmentCtrl.text.trim());
+    if (aiSegment != null && aiSegment == s?.aiSegmentDurationSeconds) {
+      aiSegment = null;
+    }
+    int? sessionTimeout = int.tryParse(_sessionTimeoutCtrl.text.trim());
+    if (sessionTimeout != null &&
+        sessionTimeout == s?.sessionTimeoutMinutes) {
+      sessionTimeout = null;
+    }
+
     context.read<SettingsCubit>().saveSettings(
           serverUrl: _urlCtrl.text,
           serverName: _nameCtrl.text,
@@ -246,7 +303,40 @@ class _SettingsViewState extends State<_SettingsView> {
           transcodingEncoder: _transcodingEncoder,
           transcodingPreset: _transcodingPreset,
           transcodingCrf: _transcodingCrf.round(),
-          transcodingChain: chainChanged ? (_transcodingChain ?? const []) : null,
+          transcodingChain:
+              chainChanged ? (_transcodingChain ?? const []) : null,
+          // §7.10 extended-settings (A8 fix). Each field nulls out when
+          // unchanged so the PATCH stays minimal.
+          defaultLibraryView: _defaultLibraryView == s?.defaultLibraryView
+              ? null
+              : _defaultLibraryView,
+          scanLibrariesOnStartup:
+              _scanOnStartup == s?.scanLibrariesOnStartup
+                  ? null
+                  : _scanOnStartup,
+          generateThumbnails: _generateThumbnails == s?.generateThumbnails
+              ? null
+              : _generateThumbnails,
+          preferredMode:
+              _preferredMode == s?.preferredMode ? null : _preferredMode,
+          enableMdns: _enableMdns == s?.enableMdns ? null : _enableMdns,
+          enableWebrtc:
+              _enableWebrtc == s?.enableWebrtc ? null : _enableWebrtc,
+          relayServerUrl:
+              relayTrimmed == loadedRelay ? null : relayTrimmed,
+          defaultQuality:
+              _defaultQuality == s?.defaultQuality ? null : _defaultQuality,
+          aiSegmentDurationSeconds: aiSegment,
+          enablePairingRequired:
+              _enablePairingRequired == s?.enablePairingRequired
+                  ? null
+                  : _enablePairingRequired,
+          sessionTimeoutMinutes: sessionTimeout,
+          enableLogExport:
+              _enableLogExport == s?.enableLogExport ? null : _enableLogExport,
+          customServerUrl: customUrlTrimmed == loadedCustomUrl
+              ? null
+              : customUrlTrimmed,
         );
   }
 
@@ -329,7 +419,20 @@ class _SettingsViewState extends State<_SettingsView> {
               Expanded(
                 child: SingleChildScrollView(
                   child: switch (_activeTab) {
-                    'network'   => _NetworkTab(state: loaded, cubit: context.read()),
+                    'network'   => _NetworkTab(
+                        state: loaded,
+                        cubit: context.read(),
+                        preferredMode: _preferredMode,
+                        enableMdns: _enableMdns,
+                        enableWebrtc: _enableWebrtc,
+                        relayCtrl: _relayCtrl,
+                        onPreferredModeChanged: (v) =>
+                            setState(() => _preferredMode = v),
+                        onEnableMdnsChanged: (v) =>
+                            setState(() => _enableMdns = v),
+                        onEnableWebrtcChanged: (v) =>
+                            setState(() => _enableWebrtc = v),
+                      ),
                     'streaming' => _StreamingTab(
                         enabled: _transcodingEnabled,
                         encoder: _transcodingEncoder,
@@ -703,9 +806,9 @@ class _GeneralTab extends StatelessWidget {
                 title: 'General Settings',
                 children: [
                   _SField(
-                    label: 'Server URL',
-                    sub: 'Where this control panel reaches the server '
-                        '(default `http://localhost:8000`)',
+                    label: 'Control Panel Connection URL',
+                    sub: 'Where this desktop app reaches the local server '
+                        '(saved on this machine; default `http://localhost:8000`)',
                     // SizedBox bounds the inner Row's width so the
                     // `Expanded(FluxTextField)` has finite constraints to
                     // flex against — without it, Row+Expanded inside the
@@ -844,6 +947,31 @@ class _SystemInfoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Server status reads from the shell-scoped SystemStatsCubit so the
+    // dot reflects actual reachability rather than a hardcoded "Running".
+    // `latest != null` = at least one poll has succeeded;
+    // `latest != null && errorMessage != null` = degraded (recent poll
+    // failed, but we still have the last good sample);
+    // `latest == null && errorMessage != null` = never reached.
+    final stats = context
+        .select<SystemStatsCubit, SystemStatsState>((c) => c.state);
+    late final String label;
+    late final Color color;
+    late final DotStatus dot;
+    if (stats.latest != null && stats.errorMessage == null) {
+      label = 'Running';
+      color = AppColors.emerald;
+      dot = DotStatus.online;
+    } else if (stats.errorMessage != null) {
+      label = stats.latest != null ? 'Degraded' : 'Unreachable';
+      color = AppColors.red;
+      dot = DotStatus.offline;
+    } else {
+      label = 'Checking…';
+      color = AppColors.textMutedV2;
+      dot = DotStatus.idle;
+    }
+
     return FluxCard(
       padding: AppSpacing.s18,
       child: Column(
@@ -858,23 +986,26 @@ class _SystemInfoCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          const _InfoRow(
+          _InfoRow(
             label: 'Server Status',
             valueWidget: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                StatusDot(status: DotStatus.online, size: 6),
-                SizedBox(width: 6),
-                Text('Running',
-                    style: TextStyle(
-                        fontFamily: 'Inter',
-                        fontSize: 12,
-                        color: AppColors.emerald)),
+                StatusDot(status: dot, size: 6),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 12,
+                    color: color,
+                  ),
+                ),
               ],
             ),
           ),
           _InfoRow(
-              label: 'Server URL',
+              label: 'Connection URL',
               value: state?.serverUrl ?? '—'),
           if (state?.remoteUrl != null)
             _InfoRow(label: 'Public URL', value: state!.remoteUrl!),
@@ -927,30 +1058,31 @@ class _InfoRow extends StatelessWidget {
 
 // ── NETWORK TAB ───────────────────────────────────────────────────────────────
 
-class _NetworkTab extends StatefulWidget {
-  const _NetworkTab({required this.state, required this.cubit});
+class _NetworkTab extends StatelessWidget {
+  const _NetworkTab({
+    required this.state,
+    required this.cubit,
+    required this.preferredMode,
+    required this.enableMdns,
+    required this.enableWebrtc,
+    required this.relayCtrl,
+    required this.onPreferredModeChanged,
+    required this.onEnableMdnsChanged,
+    required this.onEnableWebrtcChanged,
+  });
+
   final SettingsLoaded? state;
   final SettingsCubit cubit;
-
-  @override
-  State<_NetworkTab> createState() => _NetworkTabState();
-}
-
-class _NetworkTabState extends State<_NetworkTab> {
-  bool _enableMdns = true;
-  bool _enableWebrtc = true;
-  String _preferredMode = 'auto';
-  final _relayCtrl = TextEditingController();
-
-  @override
-  void dispose() {
-    _relayCtrl.dispose();
-    super.dispose();
-  }
+  final String preferredMode;
+  final bool enableMdns;
+  final bool enableWebrtc;
+  final TextEditingController relayCtrl;
+  final ValueChanged<String> onPreferredModeChanged;
+  final ValueChanged<bool> onEnableMdnsChanged;
+  final ValueChanged<bool> onEnableWebrtcChanged;
 
   @override
   Widget build(BuildContext context) {
-    final state = widget.state;
     final remoteUrl = state?.remoteUrl;
     final configured = remoteUrl != null && remoteUrl.isNotEmpty;
 
@@ -965,28 +1097,26 @@ class _NetworkTabState extends State<_NetworkTab> {
               label: 'Preferred Mode',
               sub: 'How the server picks a transport for streaming',
               control: FluxSelect<String>(
-                value: _preferredMode,
+                value: preferredMode,
                 items: const [
                   FluxSelectItem(value: 'auto', label: 'Auto'),
                   FluxSelectItem(value: 'lan', label: 'LAN only'),
                   FluxSelectItem(value: 'webrtc', label: 'WebRTC only'),
                 ],
-                onChanged: (v) => setState(() => _preferredMode = v),
+                onChanged: onPreferredModeChanged,
               ),
             ),
             _SField(
               label: 'Enable mDNS Discovery',
               sub: 'Broadcast server on local network for auto-discovery',
               control: FluxSwitch(
-                  value: _enableMdns,
-                  onChanged: (v) => setState(() => _enableMdns = v)),
+                  value: enableMdns, onChanged: onEnableMdnsChanged),
             ),
             _SField(
               label: 'Enable WebRTC',
               sub: 'Allow WebRTC-based streaming for off-LAN clients',
               control: FluxSwitch(
-                  value: _enableWebrtc,
-                  onChanged: (v) => setState(() => _enableWebrtc = v)),
+                  value: enableWebrtc, onChanged: onEnableWebrtcChanged),
             ),
           ],
         ),
@@ -1026,29 +1156,29 @@ class _NetworkTabState extends State<_NetworkTab> {
                 ),
               ),
             ),
-            if (configured && state != null)
+            if (configured && state != null) ...[
               Padding(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 20, vertical: 8),
                 child: Row(
                   children: [
                     _ReachabilityBadge(
-                        status: state.remoteAccessStatus),
+                        status: state!.remoteAccessStatus),
                     const SizedBox(width: 12),
                     FluxButton(
                       variant: FluxButtonVariant.ghost,
                       size: FluxButtonSize.sm,
                       icon: Icons.refresh,
-                      onPressed:
-                          state.remoteAccessStatus ==
-                                  RemoteAccessStatus.checking
-                              ? null
-                              : () => widget.cubit.checkRemoteAccess(),
+                      onPressed: state!.remoteAccessStatus ==
+                              RemoteAccessStatus.checking
+                          ? null
+                          : () => cubit.checkRemoteAccess(),
                       child: const Text('Check now'),
                     ),
                   ],
                 ),
               ),
+            ],
           ],
         ),
 
@@ -1063,7 +1193,7 @@ class _NetworkTabState extends State<_NetworkTab> {
               label: 'Relay Server URL',
               sub: 'Optional TURN/STUN relay server for WebRTC',
               control: FluxTextField(
-                  controller: _relayCtrl, hint: 'turn:relay.example.com:3478'),
+                  controller: relayCtrl, hint: 'turn:relay.example.com:3478'),
             ),
           ],
         ),
@@ -1205,11 +1335,20 @@ class _StreamingTab extends StatelessWidget {
             _SField(
               label: 'Max Concurrent Streams',
               sub: maxStreamsLabel,
-              control: FluxTextField(
-                controller: TextEditingController(text: '$maxStreams'),
-                keyboardType: TextInputType.number,
-                enabled: false,
-                width: 80,
+              control: Tooltip(
+                message: maxStreams >= 9999
+                    ? 'Ultimate plan removes the concurrent-stream cap.'
+                    : 'This limit is set automatically by your subscription '
+                        'tier. Upgrade your plan in the Subscription screen '
+                        'to raise it.',
+                child: FluxChip(
+                  maxStreams >= 9999
+                      ? 'Unlimited'
+                      : '$maxStreams · tier-locked',
+                  color: maxStreams >= 9999
+                      ? FluxChipColor.purple
+                      : FluxChipColor.neutral,
+                ),
               ),
             ),
           ],
@@ -1415,7 +1554,7 @@ class _SecurityTab extends StatelessWidget {
                 variant: FluxButtonVariant.ghost,
                 size: FluxButtonSize.sm,
                 icon: Icons.receipt_long_outlined,
-                onPressed: () => context.go('/licenses'),
+                onPressed: () => context.go(Routes.subscription),
                 child: const Text('View Issued Licenses'),
               ),
             ),
@@ -1460,17 +1599,19 @@ class _AdvancedTab extends StatelessWidget {
 
         const SizedBox(height: 14),
 
-        // Server URL override card
+        // Public URL advertisement card
         _SettingBlock(
-          icon: Icons.link_outlined,
-          title: 'Server URL Override',
+          icon: Icons.public_outlined,
+          title: 'Public URL Advertisement',
           children: [
             _SField(
-              label: 'Custom Server URL',
-              sub: 'Only override if you know what you\'re doing',
+              label: 'Custom Public URL',
+              sub: 'What URL the server tells off-LAN clients to use '
+                  '(overrides the FLUXORA_PUBLIC_URL env var). Leave blank '
+                  'to use the env var or no public URL.',
               control: FluxTextField(
                 controller: customUrlCtrl,
-                hint: 'https://custom.example.com',
+                hint: 'https://fluxora.example.com',
               ),
             ),
           ],
@@ -1579,8 +1720,8 @@ class _AboutTab extends StatelessWidget {
 
         const SizedBox(height: 14),
 
-        // Credits card
-        const _CreditsCard(),
+        // About-product card
+        const _AboutProductCard(),
       ],
     );
   }
@@ -1605,53 +1746,181 @@ class _LinksCard extends StatelessWidget {
       title: 'Links',
       children: [
         for (final link in _links)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-            child: Row(
-              children: [
-                Icon(link.$1, size: 14, color: AppColors.textMutedV2),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    link.$2,
-                    style: const TextStyle(
-                      fontFamily: 'Inter',
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: AppColors.textBody,
-                    ),
-                  ),
-                ),
-                const Icon(Icons.open_in_new, size: 13, color: AppColors.violet),
-              ],
-            ),
-          ),
+          _ExternalLinkRow(icon: link.$1, label: link.$2, url: link.$3),
       ],
     );
   }
 }
 
-class _CreditsCard extends StatelessWidget {
-  const _CreditsCard();
+class _ExternalLinkRow extends StatefulWidget {
+  const _ExternalLinkRow({
+    required this.icon,
+    required this.label,
+    required this.url,
+  });
+
+  final IconData icon;
+  final String label;
+  final String url;
+
+  @override
+  State<_ExternalLinkRow> createState() => _ExternalLinkRowState();
+}
+
+class _ExternalLinkRowState extends State<_ExternalLinkRow> {
+  static final _log = Logger();
+  bool _hovered = false;
+
+  Future<void> _open() async {
+    final uri = Uri.tryParse(widget.url);
+    if (uri == null) {
+      _toast('Invalid link URL');
+      return;
+    }
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok) {
+        _log.w('launchUrl returned false for $uri');
+        _toast('Could not open link — no handler available.');
+      }
+    } on Exception catch (e, st) {
+      _log.e('Failed to open link $uri', error: e, stackTrace: st);
+      _toast('Could not open link. Restart the app if you just installed it.');
+    }
+  }
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
   Widget build(BuildContext context) {
-    return const _SettingBlock(
-      icon: Icons.favorite_border_outlined,
-      title: 'Credits',
-      children: [
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          child: Text(
-            'Built with Flutter, FastAPI, FFmpeg, and ❤',
-            style: TextStyle(
-              fontFamily: 'Inter',
-              fontSize: 13,
-              color: AppColors.textBody,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Semantics(
+        button: true,
+        link: true,
+        label: '${widget.label}, opens external link',
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _open,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            decoration: BoxDecoration(
+              color: _hovered
+                  ? const Color(0x14A855F7)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppRadii.sm),
+            ),
+            child: Row(
+              children: [
+                Icon(widget.icon,
+                    size: 14,
+                    color: _hovered
+                        ? AppColors.violet
+                        : AppColors.textMutedV2),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    widget.label,
+                    style: TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      color: _hovered
+                          ? AppColors.textBright
+                          : AppColors.textBody,
+                    ),
+                  ),
+                ),
+                const Icon(Icons.open_in_new,
+                    size: 13, color: AppColors.violet),
+              ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AboutProductCard extends StatelessWidget {
+  const _AboutProductCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return _SettingBlock(
+      icon: Icons.auto_awesome_outlined,
+      title: 'About Fluxora',
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+          child: Text(
+            'A self-hosted hybrid media streaming system. Stream your '
+            'personal movies, TV, music, and documents to any device, '
+            'automatically switching between LAN (fast, direct) and '
+            'Internet (WebRTC + tunnel) — no manual setup required.',
+            style: AppTypography.bodySmall.copyWith(
+              color: AppColors.textBody,
+              height: 1.55,
+            ),
+          ),
+        ),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 6, 20, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _AboutBullet('Local-first — core streaming needs no cloud.'),
+              _AboutBullet('Hardware-accelerated transcoding (NVENC, '
+                  'QuickSync, VAAPI, VideoToolbox).'),
+              _AboutBullet('Cross-platform server (Windows / macOS / Linux) '
+                  'and clients (iOS / Android / Windows / macOS / Linux).'),
+              _AboutBullet('No telemetry, no required accounts. Phase 1–2 '
+                  'features need no third-party service.'),
+            ],
+          ),
+        ),
       ],
+    );
+  }
+}
+
+class _AboutBullet extends StatelessWidget {
+  const _AboutBullet(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 5),
+            child: Icon(Icons.fiber_manual_record,
+                size: 6, color: AppColors.violet),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              text,
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textBody,
+                height: 1.55,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

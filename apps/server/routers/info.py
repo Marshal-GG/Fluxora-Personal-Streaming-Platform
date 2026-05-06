@@ -50,12 +50,24 @@ async def healthz() -> dict[str, bool]:
 
 @router.get("/info", response_model=ServerInfoResponse)
 async def get_info(db: aiosqlite.Connection = Depends(get_db)) -> ServerInfoResponse:
-    remote_url = settings.fluxora_public_url or None
+    """Return server identity + the public URL clients should use.
 
+    Public-URL precedence (highest first):
+      1. `user_settings.custom_server_url` — operator override editable
+         from the desktop Settings → Advanced tab.  Lets the operator
+         change the advertised URL without restarting the server.
+      2. `FLUXORA_PUBLIC_URL` env var — set at process start.
+      3. `null` — no public URL configured; off-LAN clients are blocked
+         until one is set.
+    """
     async with db.execute(
-        "SELECT server_name, subscription_tier FROM user_settings WHERE id = 1"
+        "SELECT server_name, subscription_tier, custom_server_url "
+        "  FROM user_settings WHERE id = 1"
     ) as cur:
         row = await cur.fetchone()
+
+    custom = (row["custom_server_url"] or "").strip() if row else ""
+    remote_url = custom or (settings.fluxora_public_url or None)
 
     if row is None:
         return ServerInfoResponse(

@@ -59,7 +59,13 @@ Authorization: Bearer {auth_token}
 }
 ```
 
-`remote_url` is `null` when `FLUXORA_PUBLIC_URL` is unset on the server (no public routing configured). Clients persist it after the first successful pair and use it from off-LAN networks (decision D1 in [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md#decisions-locked)).
+`remote_url` precedence (highest first, as of 2026-05-06):
+
+1. `user_settings.custom_server_url` — operator-editable from the desktop **Settings → Advanced → Public URL Advertisement** card. Lets the operator change the advertised URL without restarting the server. Whitespace-only values are ignored (treated as unset).
+2. `FLUXORA_PUBLIC_URL` env var — set at process start, read once into `config.settings`.
+3. `null` — no public URL configured; off-LAN clients can't reach the server until one is set.
+
+Clients persist `remote_url` after the first successful pair and use it from off-LAN networks (decision D1 in [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md#decisions-locked)). The DB-first precedence means an operator can flip the published URL at runtime — useful when migrating between tunnels or testing a custom domain — without bouncing the server.
 
 ---
 

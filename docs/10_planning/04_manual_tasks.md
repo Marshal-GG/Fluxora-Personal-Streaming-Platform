@@ -22,6 +22,67 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 
 ## Pending
 
+### ✅ Settings audit follow-ups: 13 wireless controls + 3 cosmetic / nav bugs (DONE 2026-05-06)
+
+Surfaced during the 2026-05-06 settings audit. **All A8–A13 items shipped same-day** — moved to "Recently completed" semantically; preserved here as a record of the audit.
+
+#### ✅ A8 — `SettingsCubit.saveSettings()` now sends all 18 §7.10 extended-settings columns
+
+**Was:** `SettingsCubit.saveSettings()` accepted only `serverUrl / serverName / tier / licenseKey / transcodingEncoder / transcodingPreset / transcodingCrf / transcodingChain`. The migration-015 columns were persisted server-side but never reached the PATCH payload. The Settings UI happily accepted toggles and clicked Save — the changes were lost. M6's "wires all 18 §7.10 extended fields" claim was not actually true.
+
+**Fix shipped 2026-05-06:** `SettingsLoaded` extended with all 13 fields; `loadSettings` reads them from `GET /settings`; `saveSettings()` accepts all 13 + emits them in the PATCH body via the `?value` operator (sends only fields that diverged from the loaded snapshot). `_syncFromState` seeds every controller from the loaded state on first load — A12 and A13 (`_aiSegmentCtrl` / `_sessionTimeoutCtrl` hardcoded defaults) bundled into this fix.
+
+**Wireless controls** (now wired):
+
+| Tab | Setting | Server column |
+|-----|---------|----------------|
+| General | Default Library View | `default_library_view` |
+| General | Scan Library on Startup | `scan_libraries_on_startup` |
+| General | Generate Thumbnails | `generate_thumbnails` |
+| Network | Preferred Mode | `preferred_mode` |
+| Network | Enable mDNS Discovery | `enable_mdns` |
+| Network | Enable WebRTC | `enable_webrtc` |
+| Network | Relay Server URL | `relay_server_url` |
+| Streaming | Default Quality | `default_quality` |
+| Streaming | AI Segment Duration | `ai_segment_duration_seconds` |
+| Security | Require Pairing | `enable_pairing_required` |
+| Security | Session Timeout | `session_timeout_minutes` |
+| Advanced | Enable Log Export | `enable_log_export` |
+| Advanced | Custom Public URL | `custom_server_url` |
+
+#### ✅ A9 — `_NetworkTab` lifted to stateless (DONE 2026-05-06)
+
+Was: `_NetworkTabState` kept local `_enableMdns / _enableWebrtc / _preferredMode / _relayCtrl` that were never seeded from the loaded state. Fix shipped: `_NetworkTab` converted to `StatelessWidget`; the values now live on the parent `_SettingsViewState` and participate in load + save like every other field.
+
+#### ✅ A10 — `_SystemInfoCard` reads SystemStatsCubit (DONE 2026-05-06)
+
+Was: hardcoded green dot + "Running" regardless of actual server state. Fix shipped: `_SystemInfoCard` calls `context.select<SystemStatsCubit, SystemStatsState>` and derives the status row from `(latest, errorMessage)` — emerald "Running" when the latest poll succeeded, red "Degraded" when there's a stale-but-good sample plus an error, red "Unreachable" when no poll has ever succeeded, neutral "Checking…" before the first poll lands.
+
+#### ✅ A11 — Max Concurrent Streams as a read-only chip (DONE 2026-05-06)
+
+Was: greyed-out `FluxTextField(enabled: false)` reads as broken. Fix shipped: replaced with a `FluxChip` ("`<n>` · tier-locked" or "Unlimited") wrapped in a `Tooltip` explaining the value is set automatically by subscription tier and pointing at the Subscription screen for upgrades.
+
+#### ✅ A12 — `_aiSegmentCtrl` reads from state (DONE 2026-05-06)
+
+Was: hardcoded to `'6'`. Fix shipped via the A8 `_syncFromState` extension — controller text is reseated from `state.aiSegmentDurationSeconds` on every load. Default fallback corrected from `'6'` to `'4'` to match the server's `models/settings.py` `UserSettingsResponse` default.
+
+#### ✅ A13 — `_sessionTimeoutCtrl` reads from state (DONE 2026-05-06)
+
+Same fix shipped via the A8 `_syncFromState` extension — controller text is reseated from `state.sessionTimeoutMinutes` on every load.
+
+#### Suggestions worth considering when A8 is done
+
+| Setting | Tab | Why |
+|---------|-----|-----|
+| Theme (System / Dark) | General | Currently locked dark in v1; surface the lock. |
+| Language | General | `language` column already exists; no UI consumer. |
+| TMDB API Key | Advanced | Currently zero UI surface — operator edits `.env` manually. Expose with masked input + "Test connection" button. |
+| Backup Settings (export/import JSON) | Advanced | Operator-friendly; single click to backup/restore the whole config. |
+| Server data directory (read-only) | About | Show `~/.fluxora` so operator can find logs / DB. |
+| Database size + record counts | About | "media_files: 4231 rows · 3.2 MB" — useful for triage. |
+| Open Logs (link to `/logs`) | Advanced | Quick-shortcut. |
+| Reset to defaults — confirm modal | Advanced (existing `_ResetCard`) | Currently no `FluxGlassDialog` confirmation on a destructive reset. |
+
 ### 🔲 Regenerate (or re-skip) `m3_dashboard_golden_test.dart` baseline
 
 - **What:** The Dashboard golden test fails with **62.77 % pixel diff** against the stored baseline as of 2026-05-06. The Dashboard screen was untouched in the failing session; the diff is leftover drift from the V2 theme cutover whose baseline was never regenerated. Failing goldens in the suite output mask real regressions and erode trust in the test signal.

@@ -41,6 +41,46 @@ async def test_get_info_reflects_settings_row(client: AsyncClient, test_db):
     assert data["tier"] == "plus"
 
 
+@pytest.mark.asyncio
+async def test_get_info_custom_server_url_overrides_env(
+    client: AsyncClient, test_db, monkeypatch
+):
+    """user_settings.custom_server_url takes precedence over the env var."""
+    monkeypatch.setattr(
+        "routers.info.settings.fluxora_public_url",
+        "https://from-env.example.com",
+    )
+    await test_db.execute(
+        "UPDATE user_settings SET custom_server_url = ? WHERE id = 1",
+        ("https://from-db.example.com",),
+    )
+    await test_db.commit()
+
+    response = await client.get("/api/v1/info")
+    assert response.status_code == 200
+    assert response.json()["remote_url"] == "https://from-db.example.com"
+
+
+@pytest.mark.asyncio
+async def test_get_info_falls_back_to_env_when_custom_url_blank(
+    client: AsyncClient, test_db, monkeypatch
+):
+    """Empty/whitespace custom_server_url falls through to the env var."""
+    monkeypatch.setattr(
+        "routers.info.settings.fluxora_public_url",
+        "https://from-env.example.com",
+    )
+    await test_db.execute(
+        "UPDATE user_settings SET custom_server_url = ? WHERE id = 1",
+        ("   ",),
+    )
+    await test_db.commit()
+
+    response = await client.get("/api/v1/info")
+    assert response.status_code == 200
+    assert response.json()["remote_url"] == "https://from-env.example.com"
+
+
 # ── Pairing flow ─────────────────────────────────────────────────────────────
 
 

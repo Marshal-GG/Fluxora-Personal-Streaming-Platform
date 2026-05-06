@@ -229,10 +229,10 @@
 
 ### PC Control Panel (Flutter Desktop)
 - **Responsibility:** Server-side dashboard — live system health, client pairing management, library + file upload, transcoding settings, license retrieval (Polar orders), live log viewer, active session monitor.
-- **Screens implemented:** Dashboard (system stats + storage donut + client counts) · Clients (approve/reject/revoke + filter chips) · Library (create/scan/upload/filter) · Licenses (Polar orders + copyable license keys) · Activity (active stream sessions) · Logs (live server log viewer) · Settings (URL, tier, license key, transcoding encoder/preset/CRF). Transcoding screen scaffold pending dedicated cubit.
-- **Interfaces:** Localhost HTTP to FastAPI server (no pairing — `validate_token_or_local` accepts loopback callers); WS `/ws/stats` for live dashboard updates.
+- **Screens implemented:** Dashboard · Clients · Library · Groups · Activity · Transcoding (+ Encoder Settings) · Logs · Settings (6 tabs — General/Network/Streaming/Security/Advanced/About) · Subscription (Plans/Billing/Manage — replaces the retired Licenses screen) · Profile · Help. M3-M10 of the desktop redesign covers all of these; see [`docs/11_design/desktop_redesign_plan.md`](../11_design/desktop_redesign_plan.md).
+- **Interfaces:** Localhost HTTP to FastAPI server (no pairing — `validate_token_or_local` accepts loopback callers); WS `/ws/stats` and `/ws/notifications` for live dashboard / notifications updates.
 - **State management:** BLoC (Cubit) with GetIt DI; `freezed` v3 for state types.
-- **Routes:** `/` · `/clients` · `/library` · `/licenses` · `/activity` · `/settings` (Logs and Transcoding routes are implemented features but routing wiring depends on the redesign in progress).
+- **Routes:** `/` · `/clients` · `/library` · `/groups` · `/activity` · `/transcoding` (+ `/transcoding/encoder`) · `/logs` · `/settings` · `/subscription` · `/profile` · `/help` (the legacy `/licenses` route was deleted at M9 cleanup; license display lives on the Subscription → Billing tab now).
 
 ---
 

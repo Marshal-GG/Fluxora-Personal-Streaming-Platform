@@ -438,25 +438,25 @@ const List<(IconData, String, String, String?)> _kLinks = [
     Icons.menu_book_outlined,
     'Documentation',
     'User guides + API reference',
-    'https://github.com/marshalx/fluxora',
+    'https://github.com/Marshal-GG/Fluxora-Personal-Streaming-Platform/wiki',
   ),
   (
     Icons.group_outlined,
     'Community',
     'Self-hosters forum',
-    'https://github.com/marshalx/fluxora/discussions',
+    'https://github.com/Marshal-GG/Fluxora-Personal-Streaming-Platform/discussions',
   ),
   (
     Icons.bug_report_outlined,
     'Report an Issue',
     'GitHub issue tracker',
-    'https://github.com/marshalx/fluxora/issues',
+    'https://github.com/Marshal-GG/Fluxora-Personal-Streaming-Platform/issues',
   ),
   (
     Icons.new_releases_outlined,
     "What's New",
     'Latest releases',
-    'https://github.com/marshalx/fluxora/releases',
+    'https://github.com/Marshal-GG/Fluxora-Personal-Streaming-Platform/releases',
   ),
 ];
 
@@ -489,16 +489,24 @@ class _LinkRowState extends State<_LinkRow> {
     final uri = Uri.tryParse(raw);
     if (uri == null) {
       _log.w('Help link has invalid URL: $raw');
+      _toast('Invalid link URL');
       return;
     }
     try {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!ok) {
         _log.w('launchUrl returned false for $uri');
+        _toast('Could not open link — no handler available.');
       }
     } on Exception catch (e, st) {
       _log.e('Failed to open help link $uri', error: e, stackTrace: st);
+      _toast('Could not open link. Restart the app if you just installed it.');
     }
+  }
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -512,10 +520,17 @@ class _LinkRowState extends State<_LinkRow> {
         link: true,
         label: '${widget.title}, opens external link',
         child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: _open,
-          child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding:
+              const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
           decoration: BoxDecoration(
+            color: _hovered
+                ? const Color(0x14A855F7) // violet 8 % tint
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadii.sm),
             border: widget.hasDivider
                 ? const Border(
                     top: BorderSide(color: Color(0x0AFFFFFF)),

@@ -385,12 +385,11 @@ apps/desktop/lib/
     │       ├── cubit/library_state.dart
     │       └── screens/library_screen.dart  # Create/scan/upload/filter libraries
     │
-    ├── orders/                  # ✅ Implemented (Phase 5)
+    ├── orders/                  # ✅ Implemented (Phase 5) — screen retired at M9 cleanup; OrdersCubit consumed by SubscriptionScreen.Billing tab
     │   ├── domain/repositories/orders_repository.dart
     │   ├── data/repositories/orders_repository_impl.dart
     │   └── presentation/
-    │       ├── cubit/orders_cubit.dart
-    │       └── screens/licenses_screen.dart  # Polar orders with copyable license keys + tier color chips
+    │       └── cubit/orders_cubit.dart  # consumed by SubscriptionScreen.Billing — order list + portal-url + license-key copy
     │
     ├── activity/                # ✅ Implemented (Phase 5 — active sessions, legacy name, DO NOT rename)
     │   ├── domain/repositories/activity_repository.dart
@@ -442,9 +441,9 @@ apps/desktop/lib/
         ├── domain/repositories/settings_repository.dart
         ├── data/repositories/settings_repository_impl.dart
         └── presentation/
-            ├── cubit/settings_cubit.dart   # loadSettings(), saveSettings(); transcoding fields; Dart 3.8 null-aware map syntax
-            ├── cubit/settings_state.dart   # SettingsLoaded includes transcodingEncoder/Preset/Crf
-            └── screens/settings_screen.dart  # URL + server name + tier + license key + transcoding encoder/preset/CRF + "View Licenses" button
+            ├── cubit/settings_cubit.dart   # loadSettings()/saveSettings(); transcoding fields + 13 §7.10 extended-settings fields (defaultLibraryView, scanLibrariesOnStartup, generateThumbnails, preferredMode, enableMdns, enableWebrtc, relayServerUrl, defaultQuality, aiSegmentDurationSeconds, enablePairingRequired, sessionTimeoutMinutes, enableLogExport, customServerUrl); Dart 3.8 null-aware map syntax for diff-only PATCH
+            ├── cubit/settings_state.dart   # SettingsLoaded carries every column the UI seeds from
+            └── screens/settings_screen.dart  # 6 tabs (General/Network/Streaming/Security/Advanced/About). Network tab is StatelessWidget — preferredMode/mDNS/WebRTC/relay live on parent _SettingsViewState so they participate in load + save. _SystemInfoCard reads SystemStatsCubit for live "Server Status" row (Running/Degraded/Unreachable/Checking). Max Concurrent Streams renders as FluxChip + Tooltip — tier-locked, points to Subscription screen for upgrade. About tab has _AboutProductCard (replaces legacy "Credits") + _LinksCard via _ExternalLinkRow (url_launcher). View Issued Licenses navigates to /subscription (was the deleted /licenses route).
 ```
 
 ### Desktop routes
@@ -454,7 +453,7 @@ apps/desktop/lib/
 | `/` | DashboardScreen | `DashboardCubit` + `StorageCubit` + `RecentActivityCubit` + `SystemStatsCubit` | ✅ Done (M3 redesign) |
 | `/clients` | ClientsScreen | `ClientsCubit` | ✅ Done (M4 redesign) |
 | `/library` | LibraryScreen | `LibraryCubit` | ✅ Done |
-| `/licenses` | LicensesScreen | `OrdersCubit` | ✅ Done |
+| `/subscription` | SubscriptionScreen (Plans / Billing / Manage tabs) | `OrdersCubit` + `SettingsCubit` | ✅ Done (M7 redesign — replaces deleted `/licenses`) |
 | `/groups` | GroupsScreen | `GroupsCubit` | ✅ Done (M5 redesign) |
 | `/activity` | ActivityScreen | `RecentActivityCubit` (limit=200, live-poll) | ✅ Done (M5 redesign — replaced legacy) |
 | `/transcoding` | TranscodingScreen | `TranscodingCubit` + `ActivityCubit` | ✅ Done (M5 redesign) |

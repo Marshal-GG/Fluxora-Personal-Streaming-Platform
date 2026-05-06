@@ -616,3 +616,105 @@ Server suite **477 → 486** passing.
 - **Push the 4 unpushed commits** if the operator wants today's work on the remote.
 - **Verify the support bundle end-to-end on the operator's machine** — restart the server, click Generate Bundle on Help screen, confirm the saved `.tar.gz` extracts cleanly with the expected member tree.
 ---
+
+## [2026-05-06] — Help/Settings audit pass 2: A8–A13 wired + correct repo URLs
+**Phase:** Phase 5 desktop redesign — post-audit cleanup
+**Status:** Complete
+
+### What Was Done
+
+User-flagged second batch after the first audit pass: links pointing at the wrong repo, plus the deeper A8–A13 follow-ups that were deferred to the manual-tasks doc.
+
+#### Help screen link URLs corrected
+
+`help_screen.dart` `_kLinks` constants were pointing at `github.com/marshalx/fluxora` — that account / repo doesn't exist. Swapped all four entries to the canonical `Marshal-GG/Fluxora-Personal-Streaming-Platform` (matching what the Settings → About → Links card already used). Documentation now points at `/wiki`, Community at `/discussions`, Report Issue at `/issues`, What's New at `/releases`.
+
+#### A8 — `SettingsCubit` now wires all 13 §7.10 extended-settings fields
+
+- `SettingsState.SettingsLoaded` extended with 13 new fields: `defaultLibraryView`, `scanLibrariesOnStartup`, `generateThumbnails`, `preferredMode`, `enableMdns`, `enableWebrtc`, `relayServerUrl`, `defaultQuality`, `aiSegmentDurationSeconds`, `enablePairingRequired`, `sessionTimeoutMinutes`, `enableLogExport`, `customServerUrl`. Defaults match `models/settings.py` `UserSettingsResponse` so an offline load and a successful load produce the same baseline values.
+- `SettingsCubit.loadSettings()` reads each one from `GET /settings`. Best-effort: missing fields fall back to defaults; types preserved (`int? as int?`, `bool? as bool?`, `String? as String?`).
+- `SettingsCubit.saveSettings()` accepts all 13 as optional kwargs and emits them in the PATCH body via the `?value` operator (already used for transcoding fields). Each field nulls out at the call site when unchanged so the PATCH stays minimal — server logs are clean, not flooded with no-ops.
+
+#### A9 — `_NetworkTab` flattened to stateless
+
+`_NetworkTabState` was holding `_enableMdns / _enableWebrtc / _preferredMode / _relayCtrl` locally. Even if A8 had wired them, after a screen rebuild the values would revert. Converted `_NetworkTab` to `StatelessWidget`; the four values now live on the parent `_SettingsViewState`. The `Tab` switch passes them down + receives `ValueChanged<T>` callbacks for each.
+
+#### A8/A12/A13 — `_syncFromState` reseats every controller from state
+
+`_relayCtrl`, `_customUrlCtrl`, `_sessionTimeoutCtrl`, `_aiSegmentCtrl` are now reseated on every `SettingsLoaded` (not gated by `_initialized`) so a fresh server-side change picks up automatically. Non-text values (`_defaultLibraryView`, `_scanOnStartup`, `_generateThumbnails`, `_preferredMode`, `_enableMdns`, `_enableWebrtc`, `_defaultQuality`, `_enablePairingRequired`, `_enableLogExport`) are seeded once on first load to avoid clobbering in-progress edits.
+
+`_aiSegmentCtrl` default fallback also corrected from `'6'` (no source — looked like a typo) to `'4'` matching the server's `UserSettingsResponse` default of `4`.
+
+#### A10 — System Status row reads SystemStatsCubit
+
+`_SystemInfoCard` calls `context.select<SystemStatsCubit, SystemStatsState>` and derives the row from `(latest, errorMessage)`:
+- `latest != null && errorMessage == null` → emerald "Running" + online dot.
+- `errorMessage != null && latest != null` → red "Degraded" + offline dot (last known sample is stale but we have one).
+- `errorMessage != null && latest == null` → red "Unreachable" + offline dot (never reached).
+- Otherwise (initial state before first poll lands) → muted "Checking…" + idle dot.
+
+The shell-scoped `SystemStatsCubit` polls at 1.1 s already; this card is just a new consumer.
+
+#### A11 — Max Concurrent Streams as a read-only chip
+
+The greyed-out `FluxTextField(enabled: false)` was confusing — looked like a typo'd disabled input. Replaced with a `FluxChip` (`'<n> · tier-locked'` neutral or `'Unlimited'` purple) wrapped in a `Tooltip` explaining that the value is set automatically by subscription tier and pointing at the Subscription screen for upgrades. Removes any "did the field break?" ambiguity.
+
+#### Save-flow change detection
+
+`_save()` rewritten to compare every field against `_loadedSnapshot` and pass `null` for unchanged fields. The `?value` PATCH-body operator drops nulls — server only sees the diff. Mirrors the existing transcoding-fields pattern.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `apps/desktop/lib/features/help/presentation/screens/help_screen.dart` (link URLs `marshalx/fluxora` → `Marshal-GG/Fluxora-Personal-Streaming-Platform`) |
+| Modified | `apps/desktop/lib/features/settings/presentation/cubit/settings_state.dart` (13 new fields + extended copyWith) |
+| Modified | `apps/desktop/lib/features/settings/presentation/cubit/settings_cubit.dart` (loadSettings reads 13 fields; saveSettings accepts 13 fields + emits in PATCH body) |
+| Modified | `apps/desktop/lib/features/settings/presentation/screens/settings_screen.dart` (A8/A9/A10/A11/A12/A13 — ~250 LOC: lift Network state, _syncFromState extension, _save change-detection, _SystemInfoCard SystemStatsCubit wire, Max Concurrent Streams chip+tooltip, removed `_NetworkTabState`) |
+| Modified | `docs/10_planning/04_manual_tasks.md` (A8–A13 sections flipped to ✅ Done with implementation summary) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Decisions Made
+
+- **`?value` PATCH operator + null-on-unchanged at the call site, not in the cubit.** The cubit's `saveSettings` could in theory diff against an internal snapshot, but the screen already owns `_loadedSnapshot` and the per-field comparison is a one-line ternary at each call site. Keeping diff logic where the controllers live makes future per-field validation easier (e.g. "only send custom_server_url if it parses as a URL"). The cubit just translates kwargs into the PATCH body.
+- **Reseat free-form text controllers on every load, but seed switch/select state once.** Text controllers reading divergent server values is fine — the user can re-edit if mid-keystroke. Seeding non-text state every time would clobber in-progress toggle changes the user hasn't saved yet, which is silently destructive. The `_initialized` guard preserves the existing pattern; the new fields follow it.
+- **Stateless `_NetworkTab` over keeping it Stateful and seeding in `didUpdateWidget`.** Stateful would have meant duplicating the seeding logic across the Network tab and `_SettingsViewState._syncFromState`. Stateless pushes everything to the parent — single source of truth, no possibility of drift. Tradeoff: the network controls now rebuild whenever any other state on the page rebuilds, but the rebuild is cheap and the screen is not perf-critical.
+- **A11 chip + tooltip over inline help icon.** A help icon next to a disabled input still leaves the question "is this broken or intentionally locked?" The chip says "this is a value, not an input" at a glance; the tooltip explains why. Same UX is now consistent with how Subscription Tier renders (also a `FluxChip`).
+- **A10 "Degraded" vs "Unreachable" distinction.** Could have collapsed both to a single offline state, but the operator's troubleshooting path differs: "Degraded" means the server was up at some point this session and may be transiently flaky (check uptime, FFmpeg subprocess); "Unreachable" means the URL or auth might be wrong (check Settings → Connection URL). Two labels = two different first guesses.
+
+### Blockers / Open Issues
+
+- **No frontend test for the wireless-fields fix.** Server-side `test_settings_extended.py` already covers PATCH round-trips for every column (20 passing), and `flutter analyze` is clean. A widget test that drives the UI through a save would be valuable but bundles with the broader desktop-test infra work tracked under "golden_toolkit migration." Not blocking — the integration is mechanical and the server side is well-tested.
+- **`_aiSegmentCtrl` and `_sessionTimeoutCtrl` text validation** — currently free-form numeric input via `FilteringTextInputFormatter.digitsOnly`. The server clamps to `[1, 30]` and `[1, 1440]` respectively and returns 422 for out-of-range; the frontend just relies on the server-error snackbar. Could pre-validate on save, but the current pattern matches every other settings field — out of scope.
+
+### Issues / Sharp Edges Discovered
+
+- **Dart record-style triple destructure declarations don't exist.** Tried `final (String label, Color color, DotStatus dot);` as a forward-declaration before an if/else — that's a parse error (`type` `;` is treated as a record literal at expression position). Worked around with three `late final` declarations. Worth a gotcha entry if the pattern shows up again — Dart 3 records support destructuring assignment + pattern matching, but not "declare uninitialised vars in record shape."
+- **Stateful → Stateless conversion forgets `widget.X` references** in unchanged blocks. `widget.cubit.checkRemoteAccess()` and `_relayCtrl` survived the conversion's first pass because they're inside conditional branches the editor pattern-match didn't touch. `flutter analyze` caught both. Worth scripting "convert to stateless" as a recipe: rename the class, drop `State<...>`, replace every `widget.` with bare access, replace every instance field with constructor param. The compiler errors are mechanical to follow.
+- **`SystemStatsState` is a single class, not a sealed-with-subclasses union.** The pattern-match `switch (stats) { SystemStatsLoaded() ... SystemStatsError() ... }` compiled into "undefined class" errors. Re-checked the cubit: it's a single state class with nullable `latest` + nullable `errorMessage`. The audit summary was assuming a different shape than the code. Pattern-matching on `(latest, errorMessage)` tuples works; pattern-matching on subclass types doesn't because there are no subclasses.
+
+### Proactive Suggestions for Next Work
+
+1. **F10 — Encoder benchmark endpoint** is the last shippable §11.1 follow-up. Same shape as F6: one server endpoint + one frontend wire-up. Fits a single small PR.
+2. **Widget test for the settings save flow** — drive a `SettingsCubit` through a `BlocConsumer`, toggle each field, click Save, assert the PATCH body. Catches regressions like A8 silently. Bundles with the `golden_toolkit` → `alchemist` migration if that's the broader test-infra pass.
+3. **Per-field validation on numeric settings** (`session_timeout_minutes`, `ai_segment_duration_seconds`) — currently relies on server 422 + snackbar. Pre-validate on Save with `int.tryParse` + range check; show inline error before the network round-trip.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced. Cubit logging via `Logger`.
+- [x] No silent exceptions. `_save` reuses the existing two-phase persist + PATCH error mapping (4xx vs 5xx vs CONNECTION_ERROR), surfacing each via `SettingsError`.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps.
+- [x] No layer-boundary violations.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+- [x] No raw SQL string concatenation. PATCH body is JSON, server-side parameter binding unchanged.
+- [x] No bearer tokens / PII logged.
+
+### Next Agent Should
+
+- **F10 encoder benchmark** to close out the §11.1 sweep.
+- **Widget test** for the settings save flow when the test-infra refresh lands.
+- **Push the unpushed commits** when ready.
+---
