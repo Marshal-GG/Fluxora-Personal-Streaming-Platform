@@ -320,4 +320,10 @@ class SettingsCubit extends Cubit<SettingsState> {
       ));
     }
   }
+
+  @override
+  void emit(SettingsState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

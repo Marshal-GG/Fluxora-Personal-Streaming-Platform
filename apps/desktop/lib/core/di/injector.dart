@@ -56,8 +56,18 @@ Future<void> setupInjector() async {
 
   // ── Network ─────────────────────────────────────────────────────────────────
   // Read the persisted server URL so the first request goes to the right host.
+  // Desktop hits localhost (or a single-hop LAN address) so timeouts are
+  // tuned aggressively — a dead server should fail in seconds, not freeze
+  // the UI for half a minute. The mobile client keeps the longer defaults
+  // because cellular round-trips on weak signal can legitimately exceed 10 s.
   final savedUrl = await secureStorage.getServerUrl() ?? _defaultServerUrl;
-  getIt.registerSingleton<ApiClient>(ApiClient(localBaseUrl: savedUrl));
+  getIt.registerSingleton<ApiClient>(
+    ApiClient(
+      localBaseUrl: savedUrl,
+      connectTimeout: const Duration(seconds: 3),
+      receiveTimeout: const Duration(seconds: 10),
+    ),
+  );
 
   // ── Repositories ─────────────────────────────────────────────────────────────
   getIt.registerLazySingleton<DashboardRepository>(

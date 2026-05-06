@@ -48,6 +48,12 @@ class SystemStatsCubit extends Cubit<SystemStatsState> {
   }
 
   @override
+  void emit(SystemStatsState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
+
+  @override
   Future<void> close() {
     stop();
     return super.close();

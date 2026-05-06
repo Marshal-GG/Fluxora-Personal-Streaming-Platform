@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -206,6 +207,85 @@ class _SettingsViewState extends State<_SettingsView> {
     _urlCtrl.text = _kFallbackServerUrl;
     _urlCtrl.selection = TextSelection.fromPosition(
       TextPosition(offset: _urlCtrl.text.length),
+    );
+  }
+
+  /// Lightweight reachability probe — pings `/api/v1/healthz` against the
+  /// URL currently in the input field with short timeouts.  Surfaces the
+  /// result via SnackBar so the operator can verify a typed URL before
+  /// hitting Save (or self-diagnose when polling cubits are timing out).
+  ///
+  /// Bypasses the shared [ApiClient] singleton on purpose — the singleton
+  /// holds the *saved* base URL, but we want to probe whatever the user
+  /// just typed. Builds a throwaway Dio with 3 s timeouts so a dead
+  /// server fails fast even if the singleton's tighter desktop timeouts
+  /// (3 s connect / 10 s receive) are also in play.
+  Future<void> _probeServer(BuildContext context) async {
+    final url = _urlCtrl.text.trim();
+    final messenger = ScaffoldMessenger.of(context);
+    if (url.isEmpty) {
+      _toastSettings(messenger, 'Enter a URL first.', AppColors.red);
+      return;
+    }
+    final uri = Uri.tryParse(url);
+    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+      _toastSettings(messenger, 'Invalid URL — example: http://localhost:8000',
+          AppColors.red);
+      return;
+    }
+    final probe = Dio(BaseOptions(
+      baseUrl: url,
+      connectTimeout: const Duration(seconds: 3),
+      receiveTimeout: const Duration(seconds: 3),
+    ));
+    final timer = Stopwatch()..start();
+    try {
+      final r = await probe.get<dynamic>('/api/v1/healthz');
+      timer.stop();
+      if (r.statusCode == 200) {
+        _toastSettings(
+            messenger,
+            'Reachable in ${timer.elapsedMilliseconds} ms',
+            AppColors.emerald);
+      } else {
+        _toastSettings(
+            messenger,
+            'Server returned ${r.statusCode} (expected 200)',
+            AppColors.red);
+      }
+    } on DioException catch (e) {
+      timer.stop();
+      final msg = switch (e.type) {
+        DioExceptionType.connectionTimeout =>
+          'Connect timed out after ${timer.elapsedMilliseconds} ms — '
+              'is the server running?',
+        DioExceptionType.receiveTimeout =>
+          'Server accepted the connection but never responded — '
+              'check if the debugger is paused on a breakpoint.',
+        DioExceptionType.connectionError =>
+          'Could not reach $url — check the URL, port, and that '
+              'the server is running.',
+        _ => 'Probe failed: ${e.message ?? e.type.name}',
+      };
+      _toastSettings(messenger, msg, AppColors.red);
+    } catch (e) {
+      timer.stop();
+      _toastSettings(messenger, 'Probe failed: $e', AppColors.red);
+    } finally {
+      probe.close(force: true);
+    }
+  }
+
+  void _toastSettings(
+      ScaffoldMessengerState messenger, String message, Color colour) {
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: colour,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadii.sm)),
+      ),
     );
   }
 
@@ -486,6 +566,7 @@ class _SettingsViewState extends State<_SettingsView> {
                         onResetUrl: _resetServerUrl,
                         onTestConnection: () =>
                             context.read<SettingsCubit>().loadSettings(),
+                        onProbeServer: () => _probeServer(context),
                       ),
                   },
                 ),
@@ -749,6 +830,7 @@ class _GeneralTab extends StatelessWidget {
     required this.onLibraryViewChanged,
     required this.onResetUrl,
     required this.onTestConnection,
+    required this.onProbeServer,
   });
 
   /// Editable Server URL.  Drives `secureStorage.serverUrl` +
@@ -792,6 +874,14 @@ class _GeneralTab extends StatelessWidget {
   /// to recover into `SettingsLoaded` once the server is reachable.
   final VoidCallback onTestConnection;
 
+  /// Always-visible "Test" button next to the URL field — pings
+  /// `/healthz` against the URL currently typed in the input (not the
+  /// saved one) and surfaces the result via SnackBar. Lets the operator
+  /// verify a typed URL before hitting Save and self-diagnose when
+  /// polling cubits are timing out (server down, debugger paused, stale
+  /// URL, firewall block).
+  final VoidCallback onProbeServer;
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -821,7 +911,7 @@ class _GeneralTab extends StatelessWidget {
                     // a third "Retry" chip fits beside the input + Reset
                     // without truncating any of them.
                     control: SizedBox(
-                      width: connectionFailed ? 400 : 320,
+                      width: connectionFailed ? 480 : 420,
                       child: Row(
                         children: [
                           Expanded(
@@ -830,7 +920,19 @@ class _GeneralTab extends StatelessWidget {
                               hint: 'http://localhost:8000',
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
+                          Tooltip(
+                            message:
+                                'Ping /healthz against this URL (3 s timeout)',
+                            child: FluxButton(
+                              variant: FluxButtonVariant.ghost,
+                              size: FluxButtonSize.sm,
+                              icon: Icons.network_check_rounded,
+                              onPressed: onProbeServer,
+                              child: const Text('Test'),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
                           FluxButton(
                             variant: FluxButtonVariant.secondary,
                             icon: Icons.restore_rounded,
@@ -841,7 +943,7 @@ class _GeneralTab extends StatelessWidget {
                             const SizedBox(width: 6),
                             FluxButton(
                               variant: FluxButtonVariant.primary,
-                              icon: Icons.wifi_find_rounded,
+                              icon: Icons.refresh_rounded,
                               onPressed: onTestConnection,
                               child: const Text('Retry'),
                             ),

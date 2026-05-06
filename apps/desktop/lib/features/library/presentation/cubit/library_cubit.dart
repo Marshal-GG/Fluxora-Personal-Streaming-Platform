@@ -184,4 +184,13 @@ class LibraryCubit extends Cubit<LibraryState> {
       rethrow;
     }
   }
+
+  @override
+  void emit(LibraryState state) {
+    // Guard against late callbacks (in-flight HTTP requests) completing
+    // after close() — common during hot-restart. See gotchas.md
+    // "Cubit emit-after-close".
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

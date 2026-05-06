@@ -39,4 +39,10 @@ class DashboardCubit extends Cubit<DashboardState> {
       emit(const DashboardFailure('Unable to reach server. Is it running?'));
     }
   }
+
+  @override
+  void emit(DashboardState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

@@ -43,4 +43,10 @@ class OrdersCubit extends Cubit<OrdersState> {
       return null;
     }
   }
+
+  @override
+  void emit(OrdersState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

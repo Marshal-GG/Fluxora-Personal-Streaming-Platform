@@ -49,4 +49,10 @@ class ProfileCubit extends Cubit<ProfileState> {
       emit(ProfileLoaded(profile: current.profile, dirty: true));
     }
   }
+
+  @override
+  void emit(ProfileState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

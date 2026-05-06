@@ -25,4 +25,10 @@ class StorageCubit extends Cubit<StorageState> {
       emit(const StorageFailure('Unable to load storage data.'));
     }
   }
+
+  @override
+  void emit(StorageState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

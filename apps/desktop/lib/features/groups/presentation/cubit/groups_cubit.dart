@@ -133,4 +133,10 @@ class GroupsCubit extends Cubit<GroupsState> {
       _log.e('Remove member failed', error: e, stackTrace: st);
     }
   }
+
+  @override
+  void emit(GroupsState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

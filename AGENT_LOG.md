@@ -718,3 +718,121 @@ The greyed-out `FluxTextField(enabled: false)` was confusing — looked like a t
 - **Widget test** for the settings save flow when the test-infra refresh lands.
 - **Push the unpushed commits** when ready.
 ---
+
+## [2026-05-06] — Reachability hardening: short Dio timeouts, Test button, cubit emit-after-close guard
+**Phase:** Phase 5 desktop redesign — defensive sweep
+**Status:** Complete
+
+### What Was Done
+
+User reported every desktop endpoint timing out at 30 s while the server appeared to be running. Field triage (separate `curl` against the same endpoints returned in 50 ms – 4 s) showed the server was fine — the desktop was the failure point. Two diagnostic-quality issues + one real lifecycle bug shipped together.
+
+#### 1. Desktop-tuned Dio timeouts
+
+`packages/fluxora_core/lib/network/api_client.dart` — `ApiClient` constructor now accepts `connectTimeout` and `receiveTimeout` Duration params with the original 10 s / 30 s defaults preserved (mobile callers stay unchanged — cellular round-trips on weak signal can legitimately exceed 10 s). `apps/desktop/lib/core/di/injector.dart` overrides at registration time with **3 s connect / 10 s receive** so a dead localhost server fails fast instead of freezing the UI for half a minute.
+
+#### 2. "Test" button on Settings → General URL row
+
+New `_SettingsViewState._probeServer(context)` method spawns a throwaway Dio (3 s timeouts) and pings `/api/v1/healthz` against the URL **currently typed in the input** (not the saved one). Reports the result via SnackBar:
+
+- "Reachable in N ms" — green
+- "Connect timed out after N ms — is the server running?" — red
+- "Server accepted the connection but never responded — check if the debugger is paused on a breakpoint." — red
+- "Could not reach `<url>` — check the URL, port, and that the server is running." — red
+- "Server returned `<code>` (expected 200)" — red
+
+`_GeneralTab` gains a `VoidCallback onProbeServer` param; the URL row's button cluster gains an always-visible "Test" button (`Icons.network_check_rounded`, ghost variant, sm size) wrapped in a `Tooltip("Ping /healthz against this URL (3 s timeout)")` between the URL field and the Reset button. Width budget bumped to 420 (480 in connection-failed state) to fit the extra button without truncation.
+
+The existing "Retry" button (re-runs `cubit.loadSettings()`) is unchanged and still only renders in `connectionFailed` state.
+
+#### 3. Cubit `emit`-after-`close()` guard
+
+User hit `Bad state: Cannot emit new states after calling close` from `RecentActivityCubit._fetchAll` and `LibraryCubit.load` after a hot restart. Root cause: `bloc` 9.x throws (was previously a silent no-op) when an in-flight async method calls `emit` on a closed cubit.
+
+Applied a uniform override across all 16 desktop cubits:
+
+```dart
+@override
+void emit(XState state) {
+  if (isClosed) return;
+  super.emit(state);
+}
+```
+
+7 cubits already had `isClosed` guards in some form (transcoding/hardware/fallback_history/transcoding_cubit, activity, logs, library [from this session], recent_activity [from this session]). The other 9 needed the override added: settings, clients, notifications, profile, orders, groups, dashboard, storage, system_stats. Override goes at the bottom of the class body, just before the closing brace (or just before `close()` when the cubit has its own override).
+
+Override-at-the-cubit-level was chosen over `if (!isClosed) emit(...)` at every call site:
+- 16 cubits × ~8 emit calls each = ~130 call sites would need editing, easy to miss one
+- The override pattern is idiomatic for `bloc` 9.x and matches what `flutter_bloc` recommends for cubits that survive past their consumers
+- Every existing emit becomes safe automatically; no API churn
+
+#### 4. Two new gotcha entries
+
+`docs/12_guidelines/03_gotchas.md` gains:
+
+- **"Every desktop request times out at 30 s but the server is up"** — symptom triage table (debugger paused → stale URL → connection-pool wedge), description of the new Test button + 3 s/10 s desktop timeouts, diagnostic decision tree.
+- **"Cubit `emit` after `close()` — `Bad state: Cannot emit new states after calling close`"** — root cause (bloc 9.x semantics change), the override-at-cubit-level fix pattern, when not to apply.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `packages/fluxora_core/lib/network/api_client.dart` (`connectTimeout` + `receiveTimeout` constructor params) |
+| Modified | `apps/desktop/lib/core/di/injector.dart` (`ApiClient` registered with 3 s / 10 s) |
+| Modified | `apps/desktop/lib/features/settings/presentation/screens/settings_screen.dart` (`_probeServer` + Test button + `onProbeServer` plumbing) |
+| Modified | `apps/desktop/lib/features/recent_activity/presentation/cubit/recent_activity_cubit.dart` (emit guard) |
+| Modified | `apps/desktop/lib/features/library/presentation/cubit/library_cubit.dart` (emit guard) |
+| Modified | `apps/desktop/lib/features/system_stats/presentation/cubit/system_stats_cubit.dart` (emit guard) |
+| Modified | `apps/desktop/lib/features/dashboard/presentation/cubit/dashboard_cubit.dart` (emit guard) |
+| Modified | `apps/desktop/lib/features/storage/presentation/cubit/storage_cubit.dart` (emit guard) |
+| Modified | `apps/desktop/lib/features/notifications/presentation/cubit/notifications_cubit.dart` (emit guard) |
+| Modified | `apps/desktop/lib/features/clients/presentation/cubit/clients_cubit.dart` (emit guard) |
+| Modified | `apps/desktop/lib/features/groups/presentation/cubit/groups_cubit.dart` (emit guard) |
+| Modified | `apps/desktop/lib/features/orders/presentation/cubit/orders_cubit.dart` (emit guard) |
+| Modified | `apps/desktop/lib/features/profile/presentation/cubit/profile_cubit.dart` (emit guard) |
+| Modified | `apps/desktop/lib/features/settings/presentation/cubit/settings_cubit.dart` (emit guard) |
+| Modified | `docs/12_guidelines/03_gotchas.md` (2 new gotcha entries) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Decisions Made
+
+- **Constructor params on shared `ApiClient`, override per-app at DI registration.** Could have hard-coded shorter desktop timeouts in the core, but mobile would have regressed (cellular round-trips on weak signal can legitimately exceed 10 s for resume-after-poor-signal scenarios). Per-app override at DI registration keeps the core flexible and the timeout policy visible at the seam where it matters.
+- **Throwaway Dio for Test button instead of reusing the shared `ApiClient`.** The shared client holds the *saved* base URL; the user wants to probe whatever's typed in the input *before* saving. A 50 LOC throwaway Dio in `_probeServer` keeps the shared client's behaviour untouched.
+- **`flutter_secure_storage` URL not exposed in the SnackBar.** The probe shows pass/fail + timing; it doesn't echo the URL because that's already in the input field next to the button. Less visual noise.
+- **Override `emit` at cubit level, not call sites.** See Fix #3 above. The other option — wrapping every async method in a `if (!isClosed)` check — would have left ~130 call sites to keep in sync forever. The override is one place per cubit, automatically catches every emit.
+- **Don't apply emit guard to mobile cubits in this pass.** The error happened on desktop; mobile's emit-after-close hazard is the same in principle but no mobile cubit has been observed throwing it (different lifecycle: mobile screens generally outlive their cubits). Touching mobile cubits invites unrelated regressions in this commit. Documented in the gotcha entry as a follow-up.
+
+### Blockers / Open Issues
+
+- **No widget test verifies the emit-after-close guard.** A test would need to: spawn a cubit, kick off an async operation, call `close()` before the async resolves, and assert the throwing went away. Bundles with the broader desktop-test refresh tracked under `golden_toolkit` migration in manual_tasks.md.
+
+### Issues / Sharp Edges Discovered
+
+- **`bloc` 9.x changed the emit-after-close semantics from "silent no-op" to "throw `StateError`".** Worth being aware of if/when bumping bloc again — the next major may revert this or change to throwing a typed exception. The override pattern handles both.
+- **The user's server runs under `python -m debugpy --connect 127.0.0.1:4137 -m uvicorn main:app`.** When the VSCode debugger is paused (breakpoint OR "Break on raised exceptions" trip), the entire async event loop freezes and every endpoint receive-times-out. The `asyncio.CancelledError` from `ffmpeg_service.test_encoder` cleanup fires routinely during encoder probes — if "Raised Exceptions" is checked under Run & Debug → Breakpoints, that alone halts the loop on every server start. Documented in the new gotcha; the immediate triage is to uncheck that breakpoint type.
+- **Hot restart leaves zombie timers pointing at dead cubits.** Especially for `Timer.periodic` on poll cubits — the timer keeps ticking even after the cubit is closed, and each tick tries to emit. The override-emit guard handles the no-op case; the timer cleanup in `close()` should still cancel them, which all the affected cubits already do.
+
+### Proactive Suggestions for Next Work
+
+1. **Apply the emit-after-close guard to mobile cubits** in the next mobile session — same pattern, same payoff. Low risk because the override is purely defensive.
+2. **Bump `golden_toolkit` migration up the priority list** so widget tests for cubit lifecycle become possible (current setup makes them awkward).
+3. **Consider a `SafeCubit` mixin** in `fluxora_core` that provides the override automatically — would remove the boilerplate from every cubit. Decision deferred because the boilerplate is 4 lines and explicit-is-better-than-implicit for state-management patterns.
+
+### Hard Rules Checklist
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced. Logger used in probe.
+- [x] No silent exceptions. `_probeServer` catches `DioException` + `Exception` and surfaces typed messages.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps. `dio` was already imported by `ApiClient`; the throwaway Dio uses the existing one.
+- [x] No layer-boundary violations.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+- [x] No bearer tokens / PII logged.
+
+### Next Agent Should
+
+- **Push the unpushed commits** when ready.
+- **Apply the same `emit` guard to mobile cubits** when next touching the mobile feature tree.
+- **F10 encoder benchmark** to close out the §11.1 sweep.
+---

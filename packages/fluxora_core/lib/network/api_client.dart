@@ -19,11 +19,22 @@ import 'package:fluxora_core/network/network_path_detector.dart';
 /// See `docs/05_infrastructure/03_public_routing.md` Phase 3.
 class ApiClient {
   /// Dual-base constructor.
+  ///
+  /// Timeout defaults are tuned for the mobile client over flaky cellular —
+  /// 10 s to establish a connection and 30 s to receive a response give
+  /// resume-after-poor-signal a chance. Desktop callers should pass
+  /// [connectTimeout]: 3 s and [receiveTimeout]: 10 s when registering the
+  /// singleton so a dead localhost server fails fast instead of freezing
+  /// the UI for half a minute. See [`docs/12_guidelines/03_gotchas.md`]
+  /// "every desktop request times out at 30 s" for the symptom this
+  /// guards against.
   ApiClient({
     String? localBaseUrl,
     String? remoteBaseUrl,
     String? bearerToken,
     LanCheck lanCheck = NetworkPathDetector.isLan,
+    Duration connectTimeout = const Duration(seconds: 10),
+    Duration receiveTimeout = const Duration(seconds: 30),
   })  : _localBaseUrl = localBaseUrl,
         _remoteBaseUrl = remoteBaseUrl,
         _lanCheck = lanCheck {
@@ -32,8 +43,8 @@ class ApiClient {
         // Seed with whichever base is available so Dio has a non-empty
         // baseUrl until the first request (interceptor will rewrite).
         baseUrl: localBaseUrl ?? remoteBaseUrl ?? '',
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 30),
+        connectTimeout: connectTimeout,
+        receiveTimeout: receiveTimeout,
         headers: const {'Content-Type': 'application/json'},
       ),
     );

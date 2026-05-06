@@ -84,6 +84,15 @@ class RecentActivityCubit extends Cubit<RecentActivityState> {
   }
 
   @override
+  void emit(RecentActivityState state) {
+    // Guard against late callbacks (timer ticks, in-flight HTTP)
+    // completing after close() — common during hot-restart and screen
+    // teardown. See gotchas.md "Cubit emit-after-close".
+    if (isClosed) return;
+    super.emit(state);
+  }
+
+  @override
   Future<void> close() {
     _pollTimer?.cancel();
     return super.close();

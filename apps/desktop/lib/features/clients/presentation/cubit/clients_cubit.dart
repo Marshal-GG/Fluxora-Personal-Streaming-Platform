@@ -128,4 +128,10 @@ class ClientsCubit extends Cubit<ClientsState> {
       }
     }
   }
+
+  @override
+  void emit(ClientsState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

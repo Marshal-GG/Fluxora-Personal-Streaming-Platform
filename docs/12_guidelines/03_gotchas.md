@@ -375,3 +375,70 @@ if (stats.latest != null && stats.errorMessage == null) {
 ```
 
 The `latest != null && errorMessage != null` case ("had a sample, latest poll failed") is what distinguishes "Degraded" from "Unreachable" — drop that branch only if you don't care about the difference.
+
+---
+
+## "Every desktop request times out at 30 s but the server is up"
+
+**Symptom (2026-05-06):** the desktop app's poll cubits (`SystemStatsCubit`, `DashboardCubit`, `LibraryCubit`, `RecentActivityCubit`, `LogsCubit`, `NotificationsCubit`, `StorageCubit`) all log `DioException [receive timeout]: The request took longer than 0:00:30.000000 to receive data` with `HTTP null` against every endpoint they hit. From the desktop, the UI freezes on loading skeletons; from a separate `curl` / PowerShell `Invoke-WebRequest` the same endpoints respond in tens of milliseconds.
+
+**Root causes** (in observed order of frequency):
+
+1. **VSCode `debugpy` paused.** When the server runs under `python -m debugpy --connect ... -m uvicorn main:app`, any breakpoint hit OR any "Break on raised exceptions" trip freezes the entire async event loop. The TCP listener still accepts connections (so the desktop sees `connection succeeded`) but the request handler never runs, so Dio waits the full `receiveTimeout` for a response. Common trip: `asyncio.CancelledError` in `ffmpeg_service.test_encoder` cleanup — fires routinely during encoder probes, but VSCode's "Raised Exceptions" breakpoint will halt on it. Fix: hit Continue in the debugger, and uncheck "Raised Exceptions" / "User Uncaught Exceptions" under Run & Debug → Breakpoints.
+2. **Stale `serverUrl` in `flutter_secure_storage`.** The desktop saves the last-used URL. If it's a LAN IP that's no longer the server's address (laptop moved networks, DHCP renewal), Windows accepts the SYN to "some address that has a route" and waits for a response that never comes. Fix: Settings → General → "Control Panel Connection URL" → click **Test** to probe (uses `/healthz` with 3 s timeout and reports inline), then **Reset** → Save.
+3. **Dio connection-pool wedge after a previous slow request.** Less common; usually clears with a hot-restart.
+
+**Why the symptom looks like the server is hung:** receive-timeout, not connect-timeout. The connection establishes (TCP three-way handshake completes against the kernel listener), but no application-level response arrives. From the desktop's perspective there's no way to tell "server hung" from "wrong host that happens to accept connections."
+
+**Mitigations shipped 2026-05-06:**
+
+- **Desktop `ApiClient` registers with 3 s connect / 10 s receive timeouts** ([`apps/desktop/lib/core/di/injector.dart`](../../apps/desktop/lib/core/di/injector.dart)) instead of the shared core's 10 s / 30 s defaults. Mobile keeps the longer values because cellular round-trips can legitimately exceed 10 s on weak signal. Constructor params on `ApiClient` (`connectTimeout` / `receiveTimeout`) are the seam — pass them at registration; do not edit the core defaults.
+- **Always-visible "Test" button** on Settings → General → URL row. Pings `/healthz` against the URL currently typed in the field (not the saved one) using a throwaway Dio with 3 s timeouts. Reports "Reachable in N ms" / "Connect timed out" / "No response within timeout — check if the debugger is paused" / "Could not reach …" via SnackBar. Self-serve for both the debugger-pause case and the wrong-URL case. Lives in `_SettingsViewState._probeServer`.
+
+**Diagnostic order** (when this symptom shows up again):
+1. Click **Test** in Settings → General. SnackBar text tells you what's wrong:
+   - "Reachable in N ms" → not a network problem; check the cubit's specific endpoint with curl.
+   - "No response within timeout" → server accepted connection but never responded. **Debugger paused** is the leading cause.
+   - "Could not reach …" → wrong URL or server down.
+2. If debugger is paused, hit Continue and uncheck "Raised Exceptions" in VSCode Run & Debug.
+3. If URL is wrong, click **Reset** → Save.
+4. If server is genuinely down, restart it.
+
+If the desktop UI is wedged before you can click Test (poll cubits saturating the Dio queue), close the app, reopen — the new 3 s/10 s timeouts mean any wedge clears in seconds rather than minutes.
+
+---
+
+## Cubit `emit` after `close()` — `Bad state: Cannot emit new states after calling close`
+
+**Symptom (2026-05-06):** post hot-restart, the desktop app logs `Bad state: Cannot emit new states after calling close` from cubits' async methods. Stack traces point at `BlocBase.emit` in places like `RecentActivityCubit._fetchAll`, `LibraryCubit.load` — methods with `await _repository.fetch(); emit(...)` patterns. The exception is non-fatal (it propagates as an unhandled async exception, not a crash), but it pollutes the log and indicates a real lifecycle hazard: data fetched after the cubit closed is silently discarded with no clean signal to the caller.
+
+**Root cause:** `bloc` 9.x throws on `emit` after `close()` instead of silently no-oping. Any cubit method that awaits something (HTTP request, timer tick, stream event) and then calls `emit(...)` is at risk if the cubit can be closed mid-await — which happens during:
+
+- **Hot restart.** Old cubit instances are torn down while in-flight requests / timers complete.
+- **Screen disposal.** `BlocProvider`-scoped cubits close when the screen pops; an in-flight request finishing afterward calls `emit` on a dead cubit.
+- **DI singleton churn.** `getIt.reset()` during testing.
+
+**Fix pattern** (applied across the desktop cubit fleet, 2026-05-06):
+
+```dart
+class XCubit extends Cubit<XState> {
+  // ... existing constructor + fields + methods that emit ...
+
+  @override
+  void emit(XState state) {
+    // Guard against late callbacks (timer ticks, in-flight HTTP)
+    // completing after close() — common during hot-restart and screen
+    // teardown.
+    if (isClosed) return;
+    super.emit(state);
+  }
+}
+```
+
+Override at the cubit level, not the call site. Every existing `emit(...)` becomes safe automatically; no need to sprinkle `if (!isClosed)` at every call site (which would also be churn-prone — easy to miss one in a long file).
+
+**Why not `try/catch StateError` instead?** Catching the error after the fact still prints the stack trace via the global Zone error handler unless you swallow it. Overriding `emit` is cleaner — the late callback becomes a silent no-op, which is exactly what "the cubit is dead, stop talking to it" should look like.
+
+**When NOT to apply the override:** if a cubit's emit-after-close case actually represents a logic bug (e.g., you're calling `emit` from the cubit itself after explicitly calling `close()`), the guard hides it. Use the override on cubits whose async methods can outlive disposal (poll timers, stream subscriptions, HTTP fetches) — which in practice is most of them. For a stateless utility cubit with synchronous emits only, the guard adds no value.
+
+**Cubits in this codebase that have the override** (as of 2026-05-06): every cubit under `apps/desktop/lib/features/*/presentation/cubit/`. Mobile cubits don't yet — apply the same pattern when next touching them.
