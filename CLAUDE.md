@@ -77,6 +77,7 @@ Components:
 | Ship readiness — what blocks v1 launch | `docs/10_planning/05_ship_readiness.md` |
 | Installer & distribution plan (proposed, awaiting decision) | `docs/10_planning/06_installer_plan.md` |
 | Streaming pipeline issue audit + remediation plan (seek-restart, tonemap timeout, zombie cleanup) | `docs/10_planning/11_streaming_pipeline_issues.md` |
+| Client Groups UI gap audit + 5-milestone remediation plan (decorative create/edit dialogs, raw-UUID add member, mobile 403 UX) | `docs/10_planning/12_groups_remediation_plan.md` |
 | URL inventory (every endpoint, WS, hosted, third-party, future TBD) | `docs/05_infrastructure/02_url_inventory.md` |
 | Design system | `DESIGN.md` |
 

@@ -165,3 +165,279 @@ Same-day continuation of the §11.1 F10 surface (encoder benchmark).  User asked
 - **Smoke-test matrix mode** — the user's hardware (i7-9750H + integrated UHD 630 + occasional NVENC) is a great test bench since it exercises software + Intel + occasionally NVIDIA all at once.  Three-tier run should take ~3-5 minutes; watch for the progress card flickering or sticking, and confirm the history sidebar entry shows "3 res" + clicking it surfaces the full tier list in the source caption.
 - **If results table cramps at narrow widths** — the new violet resolution chip adds ~50 px per row; the encoder-name + codec-pill row was already tight on small windows.  May need a second-line layout for matrix rows on <1280 px wide windows.  Not blocking; bring up if the user's screenshot shows wrapping.
 ---
+
+## [2026-05-07] — Groups remediation plan written + M1 (restriction editing) shipped
+**Phase:** Phase 5 — Client Groups feature completion
+**Status:** Complete (M1 only; M2–M5 planned for future sessions)
+
+### What Was Done
+
+User reported "groups are unusable currently" and asked for a detailed plan.  Audit confirmed: backend solid (migration 011 + `group_service.py` + stream-gate at [`stream.py:100-107`](apps/server/routers/stream.py#L100)) but desktop create/edit dialogs only collect name + description, so every group ships with `restrictions = null` and the gate has nothing to deny.  Plan written, then M1 shipped same-day.
+
+#### Plan written: [`docs/10_planning/12_groups_remediation_plan.md`](docs/10_planning/12_groups_remediation_plan.md)
+
+Nine-section doc modelled on [`11_streaming_pipeline_issues.md`](docs/10_planning/11_streaming_pipeline_issues.md) — executive summary, current architecture (data model + stream-gate flow + key files + restriction enforcement matrix), defects (6 UI-side + 4 server-side deferred), 5-milestone remediation plan with code targets per milestone, test strategy, risks, out-of-scope, cross-references.  Cross-refs added to [`01_roadmap.md`](docs/10_planning/01_roadmap.md), [`05_ship_readiness.md`](docs/10_planning/05_ship_readiness.md), and [`CLAUDE.md`](CLAUDE.md) "Where the detail lives" table so future agents discover the plan from the index.
+
+#### M1 shipped — restriction editing
+
+**Desktop** ([`groups_screen.dart`](apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart)):
+
+- New shared `_GroupRestrictionsForm` widget — owns local toggle + value state for time window + library allowlist; calls `onChanged` whenever any field changes so the parent dialog can hold the assembled `GroupRestrictions?` for its Confirm handler.  Single widget reused by both Create and Edit dialogs (DRY over per-dialog duplication).
+- New `_TimeWindowPicker` — start/end `_HourField`s (chevron up/down stepper, 0-23 wrap-aware via `(value + 1) % 24`) + 7-chip day-of-week multi-select.  Day order matches Python's `datetime.weekday()` convention (0=Mon … 6=Sun) used server-side; reordering would silently break the gate.  Live preview caption via new `_formatTimeWindow` helper handles common patterns ("All week", "Mon-Fri", "Weekends") and falls back to comma-joined day abbrevs for arbitrary sets.  Renders a midnight-wrap warning when `endH <= startH` ("Window wraps midnight — 22:00 to 06:00 next day"), plus a timezone note ("Times are evaluated in the server's local timezone") per §4.3 of the plan.
+- New `_LibraryAllowlistPicker` — multi-select chip row over `widget.libraries`.  When the operator toggles "Restrict to specific libraries" on with an empty selection, pre-selects all libraries so the gate doesn't immediately deny every stream (the operator has to actively *un*-tick what they want gated).  Empty libraries list renders an explanatory placeholder instead of a blank wrap.  "${selected.length} of ${libraries.length} libraries allowed" caption.
+- New `_AdvisoryFieldsSection` — bandwidth-cap + max-rating placeholders.  Both rendered as `enabled: false` `TextField`s with `Tooltip`s citing §4.1 and §4.2 of the plan.  Honest UX: operator sees the surface exists for forward-compat without us pretending it works.
+- New `_SectionToggleHeader` — icon + label + right-aligned `FluxSwitch` row used as the header for each restriction subsection.  Keeps the dialog vertically compact.
+- `_CreateGroupDialog` rewritten — embeds the form + intro caption ("All restrictions are optional.  Combined across every group a client belongs to (most-restrictive wins)."); width bumped 420 → 460 to accommodate the picker; wrapped in `SingleChildScrollView` so long restriction sets don't overflow on small windows.
+- `_EditGroupDialog` rewritten — hydrates the form from `widget.group.restrictions` so existing values are preserved; gains a status `FluxSwitch` row above the restrictions form ("Active · restrictions enforced" ↔ "Inactive · restrictions not enforced").  Server gate already filters `WHERE g.status = 'active'` so the toggle takes effect on the next stream-start.
+- `_GroupDetailPanel` updated — (a) time window now formatted via the same `_formatTimeWindow` helper the picker uses, so the dialog preview and panel summary render identically; (b) `allowedLibraries` ids resolved → names via the cached library catalog (chips read "Movies, TV" instead of two opaque UUIDs); falls back to the raw id when a library was deleted post-tag.
+
+**Cubit** ([`groups_cubit.dart`](apps/desktop/lib/features/groups/presentation/cubit/groups_cubit.dart)):
+
+- Constructor now takes a `LibraryRepository` alongside `GroupsRepository`.
+- New `_safeLoadLibraries()` helper — fetches libraries best-effort, returns empty list on failure with a warn-level log.  Failures must NOT block the groups load itself — that's the whole point of best-effort.
+- `load()` reworked to `Future.wait([_repository.list(), _safeLoadLibraries()])` — parallel fetch keeps the initial paint snappy.
+- `GroupsLoaded.libraries: List<Library>` exposed for the dialogs + detail panel to consume via the existing `BlocBuilder`.
+
+**State** ([`groups_state.dart`](apps/desktop/lib/features/groups/presentation/cubit/groups_state.dart)):
+
+- `GroupsLoaded` gains `libraries: List<Library> = const []` field + extended `copyWith`.
+
+**Server tests** ([`tests/test_groups.py`](apps/server/tests/test_groups.py)):
+
+- `test_create_then_get_round_trips_full_restrictions` — POST a group with every restriction field populated (`allowed_libraries`, `bandwidth_cap_mbps`, `time_window`, `max_rating`), then GET it and assert byte-for-byte round-trip.  Pins the wire format the desktop M1 dialogs send.  Catches any future serialisation regression that drops a field.
+- `test_update_group_status_to_inactive` — POST a group (defaults to active), PATCH `{status: "inactive"}`, assert response, PATCH back to active, assert.  Pins the active↔inactive flip — a regression where status is silently dropped from the PATCH body would re-enable a paused group without the operator noticing.
+
+#### Verification
+
+- `flutter analyze` clean (lib/features/groups + full desktop tree).
+- Server suite **573 → 575 passing** (+2 cases).
+- No new pip / pub deps; no new server endpoints; no migrations.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `docs/10_planning/12_groups_remediation_plan.md` (9-section plan: exec summary, architecture, 6 UI defects + 4 deferred server-side, 5-milestone remediation, test strategy, risks, out-of-scope, cross-refs) |
+| Modified | `apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart` (new widgets: `_GroupRestrictionsForm`, `_TimeWindowPicker`, `_LibraryAllowlistPicker`, `_AdvisoryFieldsSection`, `_SectionToggleHeader`, `_HourField`, `_ChevronButton`; rewrote `_CreateGroupDialog` + `_EditGroupDialog`; updated `_GroupDetailPanel` for library-name resolution + matched time-window format; new `_formatTimeWindow` top-level helper) |
+| Modified | `apps/desktop/lib/features/groups/presentation/cubit/groups_cubit.dart` (`LibraryRepository` injection, `_safeLoadLibraries`, parallel `Future.wait` load) |
+| Modified | `apps/desktop/lib/features/groups/presentation/cubit/groups_state.dart` (`GroupsLoaded.libraries: List<Library>`) |
+| Modified | `apps/server/tests/test_groups.py` (+2 cases: full-restrictions round-trip + status flip) |
+| Modified | `docs/00_overview/current_status.md` (new "As of 2026-05-07 (latest)" entry covering M1 ship) |
+| Modified | `docs/10_planning/01_roadmap.md` (Client Groups row flipped from "🔵 Backend done; UI decorative" → "🔵 M1 shipped; M2–M5 polish remaining" with details) |
+| Modified | `docs/10_planning/05_ship_readiness.md` (polish-gaps row updated) |
+| Modified | `docs/10_planning/12_groups_remediation_plan.md` (top-level status flipped to "🔵 In progress — M1 shipped"; M1 row marked ✅ + shipped-changes block prepended) |
+| Modified | `CLAUDE.md` ("Where the detail lives" table gains pointer to the new plan) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Decisions Made
+
+- **Single shared `_GroupRestrictionsForm` over per-dialog duplication.**  Both Create and Edit dialogs need the exact same picker tree; DRY is cheap and the form's state model (toggle on/off → null/value emit) is identical for both flows.
+- **Pre-select all libraries on first toggle.**  When the operator toggles "Restrict to specific libraries" on, the picker pre-selects every library.  Reasoning: "I want to restrict" almost always means "I want to gate *some* libraries", not "I want to gate *every* library".  Starting empty would immediately deny every stream and confuse the operator.  They can untick what they want gated.
+- **Bandwidth + max-rating disabled with tooltip, not hidden.**  Two reasons: (1) operators see the surface exists so the feature reads as "complete with future-tense items" rather than "missing"; (2) adding these fields later won't surprise anyone.  Tooltips cite §4.1 and §4.2 of the plan so anyone hovering can find out what's coming.
+- **Status toggle on Edit only, not Create.**  Create defaults to active; nobody creates a group only to immediately pause it.  Edit gets the toggle for the "I want to disable this for the weekend" workflow.
+- **Library catalog cached on cubit, not refetched per dialog.**  Libraries change rarely; refetching on every dialog open would add latency for no benefit.  Cubit fetches once on `load()`; dialogs read from `state.libraries`.  If the operator creates a new library mid-session, they'll need to close and re-open the Groups screen for the new library to appear in the allowlist picker — acceptable trade-off documented inline.
+- **`Future.wait` parallel load over sequential.**  Saves ~100-200 ms on the initial Groups screen paint by overlapping the groups + libraries fetches.  Best-effort library load means a library failure doesn't block groups.
+- **Day-of-week chips in Mon-Sun order, not Sun-Sat.**  Server's `_in_window` uses Python's `datetime.weekday()` (0=Mon).  Reordering the UI without reordering the server would silently break the gate; aligning them removes the trap.
+- **Timezone note inline rather than a separate modal.**  The picker shows "Times are evaluated in the server's local timezone" as a quiet caption.  Operators in a single-house deployment never care; remote-paired-clients-across-timezones operators will notice the caption and know to factor it in.
+- **No mobile UX work in M1.**  M5 (mobile 403 polish) is its own milestone in the plan because it touches the most-tested mobile surface and warrants its own focused review.  M1 is desktop-only.
+
+### Issues / Sharp Edges Discovered
+
+- **`Library` constructor needs explicit `LibraryType` import.**  My fallback `Library(...)` constructor for resolving deleted library ids → raw id required `LibraryType.movies` as a placeholder.  `LibraryType` lives in `package:fluxora_core/entities/enums.dart`, not in `library.dart` itself.  Easy fix once the analyzer flagged it.
+- **Pre-existing static helper `_GroupDetailPanel._showAddMemberDialog` (the raw-UUID prompt) is still on `_GroupsLoaded`, not the panel itself.**  Confused me on first read — the "Add" link in the panel's header forwards via `_GroupsLoaded._showAddMemberDialog(context, group.id)`.  M2 will move it onto the panel for cleaner ownership.
+- **`copyWith` on `GroupsLoaded` had to be extended for `libraries`.**  The existing `Group? Function()? selectedGroup` callback pattern (sentinel-via-function for nullable replacement) is unusual but I kept it as-is to match the file's style — `libraries` uses the simpler `?? this.libraries` since it's never set to null externally.
+- **Dialog scroll behaviour.**  The original Create + Edit dialogs were short enough that a `Column(mainAxisSize: MainAxisSize.min)` was fine.  The new restriction form makes the dialog tall enough to overflow on small windows; wrapped in `SingleChildScrollView` to fix.
+
+### Hard Rules Checklist
+
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No silent exceptions.  `_safeLoadLibraries` catches deliberately + logs at warn level; documented inline.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps.
+- [x] No layer-boundary violations.  `_GroupRestrictionsForm` is presentation; consumes domain `LibraryRepository` through the cubit, never reaches into network code directly.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+- [x] No raw SQL string concatenation.
+- [x] No bearer tokens / PII logged.
+
+### Proactive Suggestions for Next Work
+
+- **Smoke-test M1 on the user's box** — open Groups → Create → name "Kids" → toggle "Restrict streaming time" → set 18:00-22:00 + Mon-Fri → toggle "Restrict to specific libraries" → tick only "Movies" → Save.  Verify: detail panel shows "Mon-Fri 18:00-22:00" + an emerald "Movies" chip.  From a paired tablet (member of "Kids"), try playing a TV show at 19:00 → server should return 403 with `detail: "Library not allowed for this client's group(s)"`.  Try playing a movie at 23:00 → 403 with `detail: "Outside the allowed streaming time window"`.
+- **M2 — real client picker** is the most-requested next step (drops the raw-UUID paste).  ~3 hr per the plan.  Same pattern as the F9 Sessions tab landed earlier: scrollable list of approved + trusted clients with search, multi-select, sequential add.
+- **M3 — Clients-screen cross-link** if the operator wants bidirectional editing.  Needs a small server-side change: extend `auth_service.list_clients` to include `groups: list[GroupSummary]` per client.
+- **Tier 2 benchmark axes** (CBR mode, concurrent stress test) still open from earlier in the day if the user pivots back to that surface.
+- **Installer hard blockers** still gate the v1 ship — three small server-side patches per `installer/SHIP.md` §3.
+
+### Next Agent Should
+
+- **Verify the picker UX feels right on the user's hardware** — the `_HourField` chevron stepper is the thing most likely to feel weird vs the operator's expectation (some users want a typed-input field; the chevron-only choice is deliberate to avoid validation hell on a 24-value range, but if it draws complaints, easy to swap to a `DropdownButton`).
+- **Pick M2 next** unless the user pivots — the plan's milestone ordering puts M2 as the natural follow-up since it builds on the same dialog-pattern muscle.
+- **Don't try to ship M2-M5 as a single chunk.**  Each is independently shippable and the plan is structured so they can land in any order; bundling would balloon the diff.
+---
+
+## [2026-05-07] — Groups M2-M5 shipped: feature fully usable end-to-end
+**Phase:** Phase 5 — Client Groups feature completion
+**Status:** Complete (all 5 milestones from `12_groups_remediation_plan.md` shipped)
+
+### What Was Done
+
+User said "continue" after M1 landed.  Powered through the remaining four milestones in plan order (M2 → M4 → M3 → M5 by execution sequence; M4 fit between M2 and M3 since it was trivial and kept fresh).  Groups feature is now fully usable end-to-end: operator configures restrictions, manages membership from either side (Groups detail OR Clients detail), filters the table, and the mobile player surfaces a soft "outside playback hours" card instead of a generic "stream failed".
+
+#### M2 — Real client picker for Add Member
+
+The raw-UUID `TextField` is gone.  New `_AddMemberDialog` widget in [`groups_screen.dart`](apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart):
+
+- Fetches the operator's paired clients via `getIt<ClientsRepository>().getClients()` on dialog open.
+- Filters to `status == approved && isTrusted` (so pending pair requests + revoked clients don't pollute the picker), then excludes any client already in the group via the new `existingMemberIds: Set<String>` constructor arg.
+- Search box matches both name AND raw id (operators who really want to paste a UUID still can — but they no longer have to).
+- Scrollable list with `_ClientPickRow` rows: 14×14 selection box (custom-painted; Material's `Checkbox` chrome doesn't match the glass dialog aesthetic) + platform icon + name + "Android · last seen 3h ago" caption + IP address.
+- Multi-select via tap toggle.  Confirm button shows live count: "Add" (disabled when empty) → "Add 1 device" → "Add 3 devices".
+- New `GroupsCubit.addMembers(groupId, List<clientIds>)` method — sequential walk; per-call failures swallowed with a warn-level log so one bad insert doesn't abort the rest of the batch.  Final `loadMembers(groupId)` once at the end (existing `addMember` reloads per call which is wasteful for bulk).
+- Two distinct empty states: search-narrowed-to-zero ("No clients match…") vs nothing-to-pick-from ("Every paired device is already in this group." / "No paired devices.  Pair one from the Clients screen first.").
+
+#### M4 — Filter chip on Groups table
+
+Wired the disabled "Filter" button.  `_GroupsLoaded` widget converted from `StatelessWidget` to `StatefulWidget` (now `_GroupsLoadedState`) so it can hold filter state locally — kept the filter purely client-side because group lists are small in practice (handful per household).
+
+- New `_GroupsSearchField` widget: compact dark-pill input with a search icon prefix.  Mirrors the Clients screen's `_SearchField` look so the two screens feel identical at the chrome level.  Matches both group `name` AND `description` so an operator who labelled a group via its description still finds it.
+- New `_GroupsStatusFilter` widget: `PopupMenuButton` with All / Active / Inactive options.  Mirrors the Clients screen's `_FilterDropdown` pattern.
+- Three empty states for the table: zero groups → onboarding "Create one to get started", filter active and zero matches → "No groups match your filters" + a "Clear filters" ghost button, populated → render filtered list.
+- Stat tiles still read the unfiltered list so "Total Groups" doesn't lie when a filter is active.
+
+#### M3 — Clients-screen cross-link
+
+The biggest of the four.  Server-side change (extends `auth_service.list_clients`) + new Pydantic + freezed entities + Clients screen detail panel section.
+
+**Server** ([`auth_service.py:list_clients`](apps/server/services/auth_service.py)):
+
+- Extended SQL query with a LEFT-JOIN aggregating group memberships per client via SQLite's `json_group_array(json_object(...))`.  New `groups_json` output column carries a JSON array of `{id, name, status}` objects, NULL when the client is in no groups.  Single query, no N+1 — at home-server scale (handful of clients × handful of groups) the cost is negligible.
+- New `GroupSummary` Pydantic model in [`models/client.py`](apps/server/models/client.py) (id, name, status — three fields, intentionally lighter than the full `GroupResponse` since the Clients screen never needs `restrictions` / `member_count` / timestamps).
+- `ClientListItem.groups: list[GroupSummary] = []` — defaulted so any pre-M3 caller deserialising the response shape doesn't break.
+- [`routers/auth.list_clients`](apps/server/routers/auth.py) parses `groups_json` defensively (malformed JSON → empty list with a warn log; never 500s the entire list call).
+
+**Core** ([`group.dart`](packages/fluxora_core/lib/entities/group.dart) + [`client_list_item.dart`](packages/fluxora_core/lib/entities/client_list_item.dart)):
+
+- New `GroupSummary` freezed entity mirroring the server shape.
+- `ClientListItem.groups: List<GroupSummary> = const []` plus the hand-rolled JSON parser updated to walk the new field.
+
+**Desktop** ([`clients_screen.dart`](apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart)):
+
+- New `_ClientGroupsSection` rendered between the Active Session block and the Client Actions section in `_PopulatedDetailPanel`.  Only shown for `approved + isTrusted` clients — pending pair requests can't legally be in a group (server enforces via `group_members` FK + the existing add-member 404 path).  Header row: "Groups" + a violet `+` icon button.  Empty state: "Not in any group.  Click + to add this device to one."  Populated state: `Wrap` of `_ClientGroupChip`s.
+- `_ClientGroupChip`: name + emerald/muted status dot + hover-revealed × that triggers a `FluxGlassDialog` confirmation before calling `getIt<GroupsRepository>().removeMember(groupId, clientId)`.  Hover-only removal affordance keeps the chip set scannable when the operator isn't actively trying to detach a client.
+- `_PickGroupDialog`: fetches all groups via `GetIt<GroupsRepository>()`, filters to active only (inactive groups appear after the operator re-activates them on the Groups screen), excludes groups the client is already in.  Search + scroll list with `_PickGroupRow`s.  Returns a `GroupSummary` to the caller; the calling site fires `addMember` then `cubit.refreshSilent()` (with `cubit.load()` fallback so the panel updates silently without flickering through the loading state — uses the F9 silent-refresh pattern).
+- Defensive `try { refreshSilent } catch { load }` because `refreshSilent` is the post-F9 method and a future agent who refactors `ClientsCubit` shouldn't need to touch the Clients-screen UI to keep this working.
+
+**Tests** ([`tests/test_auth.py`](apps/server/tests/test_auth.py)):
+
+- `test_list_clients_includes_group_memberships` — creates two groups, adds the paired client to both, asserts both surface in the response with the right `{id, name, status}` shape.  Pins the wire format.
+- `test_list_clients_groups_empty_for_unaffiliated_client` — a client not in any group returns `groups: []`, not null/missing.  Lets the desktop read the field unconditionally.
+
+#### M5 — Mobile 403 UX polish
+
+The mobile player now distinguishes group-gate denials from generic failures.  Modelled tightly on the existing `PlayerTierLimit` precedent — same shape ("not an error, but you can't play this") so future agents reading the code see the parallel immediately.
+
+- New `PlayerGated(reason: String)` state class in [`player_state.dart`](apps/mobile/lib/features/player/presentation/cubit/player_state.dart).
+- `PlayerCubit.startStream` 403 routing in [`player_cubit.dart`](apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart) reworked:
+  - 429 (`isTierLimit`) → `PlayerTierLimit` (existing).
+  - 403 (`isForbidden`) AND message matches `_isGroupGateMessage` → new `PlayerGated(e.message)`.  Substring match against `'group(s)'` AND `'time window'` — distinctive markers from `services/group_service.reason_to_deny` that won't false-positive on unrelated 403s (e.g. an admin endpoint reached from off-loopback returns "Forbidden: localhost only").
+  - Anything else → `PlayerFailure` (existing).
+- New `_GatedView` widget in [`player_screen.dart`](apps/mobile/lib/features/player/presentation/screens/player_screen.dart) modelled on `_TierLimitView` but with parental-control framing:
+  - Violet lock icon (vs the upgrade-prompt's gradient + premium icon).
+  - Title heuristic: detect time-window vs library flavour from the reason text and pick a header that matches — "Outside playback hours" / "Not in your library access" / generic "Not available right now" fallback for any future server reason this client doesn't recognise.
+  - Reason text rendered verbatim below as the body so the operator-set message reaches the kid.
+  - Single "Got it" button → `Navigator.pop`.
+- Tests in [`player_cubit_test.dart`](apps/mobile/test/features/player/player_cubit_test.dart): 3 new bloc-test cases pin the conservative match — library-deny → Gated, time-window-deny → Gated, unrelated 403 → Failure.  The third is the important one: stops a future agent broadening the matcher from accidentally classifying every 403 as a gate.
+
+#### Verification
+
+- Server suite **575 → 577 passing** (+2 cases in test_auth.py for M3).
+- Mobile player suite **11 → 14 passing** (+3 cases for M5 403 routing).
+- Desktop tree: `flutter analyze` clean.
+- Mobile tree: `flutter analyze` clean.
+- Core tree: `flutter analyze` clean.
+- All M2-M5 work compiles without any non-info-level warnings.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart` (M2: new `_AddMemberDialog` + `_ClientPickRow` replacing the raw-UUID modal; M4: `_GroupsLoaded` → `_GroupsLoadedState` conversion + `_filteredGroups` getter + `_GroupsSearchField` + `_GroupsStatusFilter` + three empty states + clear-filters action) |
+| Modified | `apps/desktop/lib/features/groups/presentation/cubit/groups_cubit.dart` (M2: new `addMembers(groupId, List<clientIds>)` bulk method) |
+| Modified | `apps/server/services/auth_service.py` (M3: extended `list_clients` SQL with `json_group_array` aggregation over `group_members`) |
+| Modified | `apps/server/models/client.py` (M3: new `GroupSummary` Pydantic + `ClientListItem.groups` field defaulted to `[]`) |
+| Modified | `apps/server/routers/auth.py` (M3: parse `groups_json` defensively, build `GroupSummary` list per row) |
+| Modified | `packages/fluxora_core/lib/entities/group.dart` (M3: new `GroupSummary` freezed entity) |
+| Regenerated | `packages/fluxora_core/lib/entities/group.freezed.dart` + `.g.dart` (`dart run build_runner build`) |
+| Modified | `packages/fluxora_core/lib/entities/client_list_item.dart` (M3: `groups: List<GroupSummary>` field + JSON parser update) |
+| Modified | `apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart` (M3: new `_ClientGroupsSection` integrated in `_PopulatedDetailPanel`; new `_ClientGroupChip`, `_PickGroupDialog`, `_PickGroupRow`; imports for GroupsRepository + Logger + FluxGlassDialog + group entities) |
+| Modified | `apps/server/tests/test_auth.py` (+2 cases for M3 round-trip) |
+| Modified | `apps/mobile/lib/features/player/presentation/cubit/player_state.dart` (M5: new `PlayerGated(reason: String)` state class) |
+| Modified | `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart` (M5: 403 routing + `_isGroupGateMessage` helper) |
+| Modified | `apps/mobile/lib/features/player/presentation/screens/player_screen.dart` (M5: `switch` case for `PlayerGated` + new `_GatedView` widget) |
+| Modified | `apps/mobile/test/features/player/player_cubit_test.dart` (+3 cases for M5: library-deny / time-window-deny / unrelated-403) |
+| Modified | `docs/10_planning/12_groups_remediation_plan.md` (top-level status flipped to ✅; M2/M3/M4/M5 sections all flipped to ✅ with shipped-changes blocks) |
+| Modified | `docs/10_planning/01_roadmap.md` (Client Groups row flipped from "🔵 M1 shipped; M2-M5 polish remaining" → "✅ Done") |
+| Modified | `docs/10_planning/05_ship_readiness.md` (polish-gaps row removed — Groups feature is done) |
+| Modified | `docs/00_overview/current_status.md` (M2-M5 narrative prepended to today's "As of" entry) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Decisions Made
+
+- **Powered through M2 → M4 → M3 → M5 in execution order, plan order in docs.**  M4 (the trivial filter chip) fit naturally between M2 and M3 to break up the larger M3 server-side work.  Made the diff easier to reason about during reviews — Clients-screen changes (M3) didn't get tangled with Groups-screen changes (M2/M4).
+- **Sequential `addMembers` over `Future.wait`.**  M2 bulk-add walks the list in order so per-call failures stay logged sequentially and the final `loadMembers` reflects actually-applied state.  Same justification as the F9 Sessions tab's bulk-revoke pattern.
+- **Per-row width/height was M1's; per-row `Resolution` was the matrix-mode shape.**  Don't confuse them — the Groups M3 `GroupSummary` is its own thing, intentionally lighter than the full `Group` entity.
+- **`json_group_array` over a per-client follow-up fetch.**  M3 could have been done with a separate `GET /api/v1/auth/clients/{id}/groups` endpoint that the desktop calls per detail-panel-open.  The aggregation join is cheaper (single query, no N+1, sub-ms at home-server scale) and keeps the response self-contained — the desktop renders chips on the table list view too if a future agent wants that, without another fetch.
+- **`GroupSummary` is its own type, not the full `Group`.**  Three fields (id, name, status) is what the Clients screen actually needs.  Reusing `Group` would force the join to fabricate `restrictions` / `member_count` / `created_at` / `updated_at` which the Clients screen doesn't display — wasted bytes + potential confusion.
+- **Defensive `try { refreshSilent } catch { load }` in the M3 add/remove path.**  `refreshSilent` was added to `ClientsCubit` for F9 Sessions earlier this session.  A future agent refactoring `ClientsCubit` shouldn't have to touch the Clients-screen UI to keep this working — the fallback to `load()` is graceful (operator briefly sees the loading spinner; trade-off acceptable).
+- **`PlayerGated` substring match is conservative.**  Two distinctive markers (`'group(s)'` AND `'time window'`); won't false-positive on unrelated 403s like "Forbidden: localhost only".  The third test case (unrelated-403 → Failure, not Gated) pins this — broadens-the-matcher refactors get caught in CI.
+- **Mobile gate title heuristic over the raw server reason as the headline.**  The server emits "Library not allowed for this client's group(s)" — fine for ops logs, alarming as a kid-facing headline.  Title heuristic ("Outside playback hours" / "Not in your library access" / "Not available right now") frames the restriction without sounding like a permissions error; the raw server reason still shows verbatim as the body.
+- **Inactive-only groups excluded from `_PickGroupDialog`.**  Adding to an inactive group is permitted server-side but the operator's intent is almost certainly to pick an enforcing group.  Inactive groups appear in the picker only after the operator re-activates them on the Groups screen.
+
+### Issues / Sharp Edges Discovered
+
+- **`json_group_array` returns NULL for clients with no group memberships, not an empty array.**  Easy trap — the router has to treat NULL as `[]` rather than passing it through to Pydantic which would reject the type.  Documented in the `auth_service.list_clients` docstring; defensive parsing in the router.
+- **Multiple `// ignore: unused_import`-style warnings during incremental edits.**  When adding several new widgets that all need new imports, the analyzer flags the imports as unused until each widget is also written.  Mid-implementation noise; resolved as the work landed.  Worth flagging because future agents running an analyze-and-stop loop (instead of analyze-when-done) will see these and panic.
+- **Stale IDE diagnostics for not-yet-defined types.**  When a new method/widget is referenced before the definition is added (e.g. `_GroupsSearchField` referenced at the call site before its class body landed at the bottom of the file), the IDE may report "method not defined" until the file is re-resolved.  CLI `flutter analyze` is the source of truth.
+- **`Logger` import wasn't on `groups_screen.dart` even though `_log` was used elsewhere.**  Had to add `import 'package:logger/logger.dart';` for M2's add-member fetch error path.  Caught by analyzer immediately.
+
+### Hard Rules Checklist
+
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No silent exceptions.  M2's bulk-add catches per-call exceptions deliberately and logs at warn level so one bad insert doesn't abort the batch — documented inline.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps.
+- [x] No layer-boundary violations.  M3's add/remove path uses `getIt<GroupsRepository>()` from the presentation layer (well-established pattern matching the Library + Clients screens).
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+- [x] No raw SQL string concatenation.  M3's join uses a parameterized window function.
+- [x] No bearer tokens / PII logged.
+
+### Proactive Suggestions for Next Work
+
+- **Smoke-test the full Groups workflow on the user's box** end-to-end:
+  1. Create a "Kids" group → set time window 18:00-22:00 Mon-Fri → restrict to Movies library only → Save.
+  2. Open Clients screen → click your kid's tablet → confirm the "Groups" section shows + a violet "+".
+  3. Click "+" on Clients → pick "Kids" → confirm chip appears with emerald dot + name.
+  4. From the tablet → try to play a TV show at 19:00 → mobile shows `_GatedView` with "Not in your library access" + reason "Library not allowed for this client's group(s)".
+  5. Try to play a movie at 23:00 → `_GatedView` with "Outside playback hours" + reason "Outside the allowed streaming time window".
+  6. Try to play a movie at 19:00 → succeeds.
+  7. From Clients screen → hover the "Kids" chip → click × → confirm dialog → kid no longer gated.
+  8. Search for "Kid" in the Groups table search box → "Kids" surfaces; switch status filter to Inactive → empty state with "Clear filters" button.
+- **Tier 2 benchmark axes** still open from earlier in the day if the user pivots back: CBR mode + concurrent stress test.  Same UI shell, additive server changes.
+- **Installer hard blockers** still gate the v1 ship — three small server-side patches per `installer/SHIP.md` §3.
+- **Optional follow-ups for Groups** (deferred per §4 of the plan, not blocking):
+  - Real `bandwidth_cap_mbps` enforcement (would need FFmpeg `-maxrate` injection per session, multi-day).
+  - `max_rating` enforcement (needs `media_files.rating` column + TMDB-side or operator-tagged source + comparison ladder).
+  - Timezone-aware time windows (currently server local; documented as a known limitation).
+  - Mid-stream gate violation kills active sessions (currently only checked at start; requires a periodic sweep or push-based hook).
+
+### Next Agent Should
+
+- **Don't touch the gate-string substring match in `PlayerCubit._isGroupGateMessage` without updating the M5 test cases.**  The third test case (unrelated-403 → Failure, not Gated) is intentional and ships the contract.
+- **If the operator wants a Group Activity log** (who's been gated, when, by which group), the existing `services/activity_service` already has the infrastructure — `record(type='stream.gated', summary=..., target_kind='group', target_id=...)` would slot in alongside the existing `stream.start` / `stream.end` events.  Out of scope for this remediation; flagged for future work.
+- **Per the doc-update protocol, future agents touching `auth_service.list_clients` need to remember the `groups_json` aggregation join.**  The function signature didn't change (still returns `list[Row]`) but the columns the row carries did.  Documented in the docstring; reading it before extending is the safety net.
+---

@@ -712,3 +712,74 @@ Future<void> refreshSilent() async {
 `ActivityCubit` does the same thing implicitly via "only emit Loading on first load"; `ClientsCubit` (post-2026-05-07) does it explicitly via `refreshSilent`.  Either pattern is fine — pick the one that reads better for your call sites.
 
 **Pin it in tests.** A regression test that asserts `expect: () => []` on a poll-tick during a transient API failure is the only way to catch a future refactor that re-introduces the flicker.
+
+---
+
+## SQLite `json_group_array` returns NULL for clients with no matches, not `[]`
+
+**Symptom.**  A `LEFT JOIN` aggregating a 1:N relationship via SQLite's `json_group_array` produces `NULL` (not `'[]'`) for parent rows that have no matching child rows.  Naively passing the column straight to a JSON parser explodes; passing it through to Pydantic without a coercion blows up with a type error.
+
+**Concrete instance (M3 of `docs/10_planning/12_groups_remediation_plan.md`, 2026-05-07).**  `auth_service.list_clients` aggregates each client's group memberships via:
+
+```sql
+LEFT JOIN (
+    SELECT gm.client_id,
+           json_group_array(json_object(
+               'id', g.id,
+               'name', g.name,
+               'status', g.status
+           )) AS groups_json
+      FROM group_members gm
+      JOIN groups g ON g.id = gm.group_id
+     GROUP BY gm.client_id
+) grp ON grp.client_id = c.id
+```
+
+A client in zero groups has no row in the inner subquery, so `grp.groups_json` is `NULL`.  The router has to treat NULL as `[]` before handing to Pydantic.
+
+**Fix.**  Defensive parsing at the router boundary:
+
+```python
+groups: list[GroupSummary] = []
+if row["groups_json"]:                         # truthy check first
+    try:
+        parsed = json.loads(row["groups_json"])
+        if isinstance(parsed, list):
+            for item in parsed:
+                if isinstance(item, dict):
+                    groups.append(GroupSummary(**item))
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("malformed groups_json for client %s", row["id"])
+```
+
+**Why not `COALESCE(groups_json, '[]')` in the SQL?** You can — `COALESCE(json_group_array(...), '[]')` works.  But the Python-side parse still has to be defensive against malformed JSON (schema drift, manual `UPDATE` from sqlite3 CLI, etc.) so the helper exists either way.  Using both belt-and-braces costs nothing.
+
+**Document this on the service function.**  The docstring for any `list_*` query that uses `json_group_array` should flag the NULL behaviour so the next person reading the SQL knows to expect it.
+
+---
+
+## Mobile substring-matches the server's error `detail` string — keep both sides anchored
+
+**Symptom.**  Server returns a 4xx with a human-readable `detail` field; mobile parses it via `String.contains` to classify the failure mode (e.g. group-gate denial vs generic forbidden).  An innocent server-side reword breaks the classification silently — the mobile UI surfaces the raw string anyway, but the *category* (gate vs error) is wrong, so users see a generic "stream failed" error when the server actually denied them on a parental control restriction.
+
+**Concrete instance (M5 of `docs/10_planning/12_groups_remediation_plan.md`, 2026-05-07).**  `services/group_service.reason_to_deny` emits two strings:
+- `"Library not allowed for this client's group(s)"`
+- `"Outside the allowed streaming time window"`
+
+Mobile `PlayerCubit._isGroupGateMessage` matches them by substring:
+
+```dart
+return lower.contains('group(s)') || lower.contains('time window');
+```
+
+Distinctive markers (`'group(s)'` parens; `'time window'` two-word phrase) chosen so the matcher won't false-positive on unrelated 403s like `"Forbidden: localhost only"`.
+
+**Fix.**  Three rules for cross-service substring contracts:
+
+1. **Pin the contract in tests on the consumer side.**  A test case for each known message + a test case for an unrelated 4xx response that must NOT classify as the special category.  The "must NOT" case is the important one — it stops a future agent from broadening the matcher to catch every 4xx.
+2. **Use distinctive markers, not common words.**  `'group(s)'` is unlikely to appear in unrelated server messages; `'group'` alone might.  `'time window'` is a two-word phrase that's also very specific; `'time'` alone is too generic.
+3. **Document the contract on both sides.**  The producer's docstring lists the strings it emits + a note that mobile parses them.  The consumer's parser comment links back to the producer.  When someone reaches for a reword, they see the contract first.
+
+**Anti-pattern.**  A single `lower.contains('not allowed')` matcher would catch `"Library not allowed for this client's group(s)"` but also any future 403 like `"Operation not allowed"` — broadening the matcher silently.
+
+**Better alternative when feasible.**  Add a structured `error_code: "group_gate_library"` field to the response body and match on that.  We didn't do that here because the server's existing 403 path emits a plain string and the desktop already consumes it directly; adding a structured field would be a wider refactor.  Substring match + pinned tests is acceptable for the size of this surface.

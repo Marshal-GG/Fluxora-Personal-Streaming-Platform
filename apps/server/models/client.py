@@ -41,6 +41,22 @@ class ActiveSessionInfo(BaseModel):
     media_title: str | None = None
 
 
+class GroupSummary(BaseModel):
+    """Tiny summary of a group a client belongs to.
+
+    Returned per-client by `GET /api/v1/auth/clients` so the desktop
+    Clients screen can render group-membership chips on the detail panel
+    without a second fetch.  Heavier fields (`restrictions`, `member_count`,
+    `created_at`, `updated_at`) live on the dedicated `/groups/{id}` route
+    — operators see them when they click into the group, not when they
+    look at a client.
+    """
+
+    id: str
+    name: str
+    status: str  # 'active' | 'inactive'
+
+
 class ClientListItem(BaseModel):
     id: str
     name: str
@@ -50,6 +66,10 @@ class ClientListItem(BaseModel):
     is_trusted: bool
     last_ip: str | None = None
     active_session: ActiveSessionInfo | None = None
+    # Groups this client belongs to.  Defaulted to [] so any pre-2026-05-07
+    # caller deserialising the response shape doesn't break — the field is
+    # always populated server-side post-M3.
+    groups: list[GroupSummary] = []
 
 
 class ClientListResponse(BaseModel):

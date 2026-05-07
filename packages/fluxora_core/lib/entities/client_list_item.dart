@@ -1,4 +1,5 @@
 import 'package:fluxora_core/entities/enums.dart';
+import 'package:fluxora_core/entities/group.dart';
 
 class ActiveSessionInfo {
   const ActiveSessionInfo({
@@ -33,6 +34,7 @@ class ClientListItem {
     required this.isTrusted,
     this.lastIp,
     this.activeSession,
+    this.groups = const <GroupSummary>[],
   });
 
   final String id;
@@ -44,8 +46,16 @@ class ClientListItem {
   final String? lastIp;
   final ActiveSessionInfo? activeSession;
 
+  /// Groups this client belongs to.  Populated server-side by the
+  /// `auth_service.list_clients` `json_group_array` aggregation (M3,
+  /// 2026-05-07).  Defaulted to `const []` so deserialising an older
+  /// response shape (pre-M3) doesn't throw — older servers simply
+  /// render an empty groups list in the Clients-screen detail panel.
+  final List<GroupSummary> groups;
+
   factory ClientListItem.fromJson(Map<String, dynamic> json) {
     final activeJson = json['active_session'] as Map<String, dynamic>?;
+    final groupsJson = json['groups'] as List<dynamic>?;
     return ClientListItem(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -59,6 +69,11 @@ class ClientListItem {
       lastIp: json['last_ip'] as String?,
       activeSession:
           activeJson == null ? null : ActiveSessionInfo.fromJson(activeJson),
+      groups: groupsJson == null
+          ? const <GroupSummary>[]
+          : groupsJson
+              .map((g) => GroupSummary.fromJson(g as Map<String, dynamic>))
+              .toList(),
     );
   }
 }

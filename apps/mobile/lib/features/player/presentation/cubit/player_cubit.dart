@@ -186,6 +186,16 @@ class PlayerCubit extends Cubit<PlayerState> {
       if (e.isTierLimit) {
         _log.w('[Player] Stream concurrency limit reached (429)');
         emit(const PlayerTierLimit());
+      } else if (e.isForbidden && _isGroupGateMessage(e.message)) {
+        // 403 + one of the known group-gate strings emitted by
+        // `services/group_service.reason_to_deny` server-side.  Bubble
+        // up the reason verbatim so the UI can render the operator's
+        // own copy ("Outside the allowed streaming time window") rather
+        // than a generic "Stream failed".  Other 403s (auth issues,
+        // tunneled-from-LAN admin endpoints) still fall through to
+        // PlayerFailure — group-gate matching is conservative.
+        _log.i('[Player] Group gate denied stream: ${e.message}');
+        emit(PlayerGated(e.message));
       } else {
         _log.e('Failed to start stream', error: e, stackTrace: st);
         emit(PlayerFailure(e.message));
@@ -194,6 +204,18 @@ class PlayerCubit extends Cubit<PlayerState> {
       _log.e('Failed to start stream', error: e, stackTrace: st);
       emit(const PlayerFailure('Failed to start stream. Please try again.'));
     }
+  }
+
+  /// Match the server's group-gate detail strings (see
+  /// `apps/server/services/group_service.reason_to_deny`).  Substring
+  /// match keeps us tolerant of a future agent rewording the messages
+  /// without changing intent — both phrases use distinctive markers
+  /// ("group(s)" / "time window") that are unlikely to appear in
+  /// unrelated 403 responses.
+  static bool _isGroupGateMessage(String message) {
+    final lower = message.toLowerCase();
+    return lower.contains('group(s)') ||
+        lower.contains('time window');
   }
 
   /// Toggle server-side HDR → SDR tonemapping for the current session.

@@ -50,3 +50,20 @@ abstract class Group with _$Group {
 
   factory Group.fromJson(Map<String, dynamic> json) => _$GroupFromJson(json);
 }
+
+/// Tiny summary of a group a client belongs to.  Returned per-client by
+/// `GET /api/v1/auth/clients` (M3, 2026-05-07) so the desktop Clients
+/// screen detail panel can render group-membership chips without a
+/// second fetch.  Heavier fields (restrictions, memberCount, timestamps)
+/// live on the dedicated [Group] entity returned by `/groups/{id}`.
+@freezed
+abstract class GroupSummary with _$GroupSummary {
+  const factory GroupSummary({
+    required String id,
+    required String name,
+    required GroupStatus status,
+  }) = _GroupSummary;
+
+  factory GroupSummary.fromJson(Map<String, dynamic> json) =>
+      _$GroupSummaryFromJson(json);
+}

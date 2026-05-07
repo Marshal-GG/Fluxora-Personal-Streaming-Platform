@@ -203,7 +203,7 @@ async def revoke_client(db: aiosqlite.Connection, client_id: str) -> None:
 
 
 async def list_clients(db: aiosqlite.Connection) -> list[aiosqlite.Row]:
-    """Return all clients with `last_ip` and a single active stream session.
+    """Return all clients with `last_ip`, active session, and group memberships.
 
     Active-session join: a client is allowed at most one session in flight
     in v1 (`concurrent_session_cap` is 1 per encoder), but defensively we
@@ -212,6 +212,14 @@ async def list_clients(db: aiosqlite.Connection) -> list[aiosqlite.Row]:
     The desktop Clients screen uses `active_session_*` columns to render
     the detail-panel "Currently Streaming" block; rows where the join
     didn't match keep them all NULL.
+
+    Groups join (M3, 2026-05-07): a client can belong to 0..N groups via
+    `group_members`.  We aggregate via SQLite's `json_group_array` so the
+    response carries the groups inline — saves the desktop a per-client
+    follow-up fetch when rendering the detail panel's group chips.  Output
+    column `groups_json` is a JSON array of
+    `{"id": ..., "name": ..., "status": ...}` objects, or NULL when the
+    client is in no groups (router treats NULL as `[]`).
     """
     async with db.execute(
         """
@@ -220,7 +228,8 @@ async def list_clients(db: aiosqlite.Connection) -> list[aiosqlite.Row]:
                sess.session_id        AS active_session_id,
                sess.started_at        AS active_session_started_at,
                sess.encoder_used      AS active_session_encoder,
-               sess.media_title       AS active_session_media_title
+               sess.media_title       AS active_session_media_title,
+               grp.groups_json        AS groups_json
           FROM clients c
      LEFT JOIN (
                 SELECT s.client_id, s.id AS session_id, s.started_at,
@@ -235,6 +244,19 @@ async def list_clients(db: aiosqlite.Connection) -> list[aiosqlite.Row]:
                  WHERE s.ended_at IS NULL
                 ) sess
                 ON sess.client_id = c.id AND sess.rn = 1
+     LEFT JOIN (
+                SELECT gm.client_id,
+                       json_group_array(
+                           json_object(
+                               'id',     g.id,
+                               'name',   g.name,
+                               'status', g.status
+                           )
+                       ) AS groups_json
+                  FROM group_members gm
+                  JOIN groups g ON g.id = gm.group_id
+                 GROUP BY gm.client_id
+                ) grp ON grp.client_id = c.id
          ORDER BY c.last_seen DESC
         """
     ) as cur:

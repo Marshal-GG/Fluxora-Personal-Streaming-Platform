@@ -115,6 +115,83 @@ void main() {
       ],
     );
 
+    // ── Group-gate 403 routing (M5, 2026-05-07) ───────────────────────────
+    //
+    // The mobile player must distinguish between three "no can do"
+    // outcomes from /stream/start:
+    //   • 429 → PlayerTierLimit (upgrade prompt)
+    //   • 403 with a group-gate detail string → PlayerGated (soft block)
+    //   • everything else → PlayerFailure
+    // Tests pin the parser so a future agent rewording the message in
+    // group_service.reason_to_deny that breaks the substring match here
+    // catches it in CI rather than in the field.
+
+    blocTest<PlayerCubit, PlayerState>(
+      'startStream emits PlayerGated on 403 with library-deny message',
+      setUp: () {
+        when(() => repository.startStream(tFileId)).thenThrow(
+          const ApiException(
+            message: "Library not allowed for this client's group(s)",
+            statusCode: 403,
+          ),
+        );
+      },
+      build: buildCubit,
+      act: (cubit) => cubit.startStream(tFileId, tFileName, 0.0),
+      expect: () => [
+        isA<PlayerLoading>(),
+        isA<PlayerGated>().having(
+          (s) => s.reason,
+          'reason',
+          "Library not allowed for this client's group(s)",
+        ),
+      ],
+    );
+
+    blocTest<PlayerCubit, PlayerState>(
+      'startStream emits PlayerGated on 403 with time-window-deny message',
+      setUp: () {
+        when(() => repository.startStream(tFileId)).thenThrow(
+          const ApiException(
+            message: 'Outside the allowed streaming time window',
+            statusCode: 403,
+          ),
+        );
+      },
+      build: buildCubit,
+      act: (cubit) => cubit.startStream(tFileId, tFileName, 0.0),
+      expect: () => [
+        isA<PlayerLoading>(),
+        isA<PlayerGated>().having(
+          (s) => s.reason,
+          'reason',
+          'Outside the allowed streaming time window',
+        ),
+      ],
+    );
+
+    blocTest<PlayerCubit, PlayerState>(
+      'startStream falls through to PlayerFailure on unrelated 403',
+      setUp: () {
+        // 403 with a detail string that is not a group-gate marker
+        // (e.g. an admin endpoint reached from off-loopback).  Must NOT
+        // be classified as gated — that would mislead the operator
+        // into thinking they set up a restriction.
+        when(() => repository.startStream(tFileId)).thenThrow(
+          const ApiException(
+            message: 'Forbidden: localhost only',
+            statusCode: 403,
+          ),
+        );
+      },
+      build: buildCubit,
+      act: (cubit) => cubit.startStream(tFileId, tFileName, 0.0),
+      expect: () => [
+        isA<PlayerLoading>(),
+        isA<PlayerFailure>(),
+      ],
+    );
+
     test('close calls stopStream when session was set by startStream',
         () async {
       when(() => repository.startStream(tFileId))

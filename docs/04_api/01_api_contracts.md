@@ -272,7 +272,11 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
         "started_at": "2026-05-06T11:55:00",
         "encoder_used": "h264_nvenc",
         "media_title": "Inception"
-      }
+      },
+      "groups": [
+        {"id": "uuid", "name": "Family", "status": "active"},
+        {"id": "uuid", "name": "Kids",   "status": "active"}
+      ]
     }
   ],
   "total": 1
@@ -283,6 +287,7 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
 - `last_seen` semantics: as of migration 023 this is now refreshed by `auth_service.update_client_heartbeat()` from the `validate_token` dependency. **Before migration 023** the column was effectively frozen at pair / approval — any consumer that read this field as "last poll time" was reading stale data. Audit any UI that surfaces this value to confirm it now means what it says.
 - `active_session`: `null` when the client has no `stream_sessions` row with `ended_at IS NULL`. When multiple in-flight sessions exist for a single client (defensive — v1 caps `concurrent_session_cap` at 1 per encoder), the most recently started one wins via `ROW_NUMBER() OVER (PARTITION BY client_id ORDER BY started_at DESC) = 1`. `media_title` falls back to `media_files.name` when the file has no TMDB-derived `title`.
 - `encoder_used` is the encoder picked by `session_router` at session start. `null` for stream-copy sessions (FFmpeg `-c:v copy`) since no encoder was selected.
+- `groups` (M3 of `12_groups_remediation_plan.md`, 2026-05-07): list of `GroupSummary` objects (`{id, name, status}`) for every group the client belongs to. Empty list when the client is in no groups — never `null` or absent, so consumers can read unconditionally. Aggregated server-side via SQLite's `json_group_array(json_object(...))` over `group_members` ⨝ `groups`; pre-M3 callers that don't know the field still parse fine because the desktop entity defaults it to `[]`. Heavier per-group fields (`restrictions`, `member_count`, `created_at`, `updated_at`) live on `/groups/{id}` only — not duplicated here.
 
 **Errors:** `403` not from localhost
 

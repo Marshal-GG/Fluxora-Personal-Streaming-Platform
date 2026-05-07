@@ -69,3 +69,17 @@ const _$GroupStatusEnumMap = {
   GroupStatus.active: 'active',
   GroupStatus.inactive: 'inactive',
 };
+
+_GroupSummary _$GroupSummaryFromJson(Map<String, dynamic> json) =>
+    _GroupSummary(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      status: $enumDecode(_$GroupStatusEnumMap, json['status']),
+    );
+
+Map<String, dynamic> _$GroupSummaryToJson(_GroupSummary instance) =>
+    <String, dynamic>{
+      'id': instance.id,
+      'name': instance.name,
+      'status': _$GroupStatusEnumMap[instance.status]!,
+    };

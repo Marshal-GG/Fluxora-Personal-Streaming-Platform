@@ -1,3 +1,4 @@
+import json
 import logging
 
 import aiosqlite
@@ -14,6 +15,7 @@ from models.client import (
     ClientListResponse,
     ClientMeResponse,
     ClientMeStatsResponse,
+    GroupSummary,
     PairRequestBody,
     PairResponse,
 )
@@ -44,6 +46,30 @@ async def list_clients(
                 encoder_used=row["active_session_encoder"],
                 media_title=row["active_session_media_title"],
             )
+        # Decode the json_group_array aggregation: NULL when the client
+        # is in no groups (no rows in group_members), JSON list otherwise.
+        # Bad JSON is treated as empty rather than 500ing the entire list
+        # call — defensive against schema drift / corruption.
+        groups: list[GroupSummary] = []
+        groups_json = row["groups_json"]
+        if groups_json:
+            try:
+                parsed = json.loads(groups_json)
+                if isinstance(parsed, list):
+                    for item in parsed:
+                        if isinstance(item, dict):
+                            groups.append(
+                                GroupSummary(
+                                    id=item.get("id", ""),
+                                    name=item.get("name", ""),
+                                    status=item.get("status", "active"),
+                                )
+                            )
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(
+                    "list_clients: malformed groups_json for client %s",
+                    row["id"],
+                )
         items.append(
             ClientListItem(
                 id=row["id"],
@@ -54,6 +80,7 @@ async def list_clients(
                 is_trusted=bool(row["is_trusted"]),
                 last_ip=row["last_ip"],
                 active_session=active,
+                groups=groups,
             )
         )
     return ClientListResponse(clients=items, total=len(items))

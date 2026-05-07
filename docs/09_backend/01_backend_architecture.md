@@ -121,7 +121,7 @@ server/
 │       ├── test_info_stats.py   # 5 tests — REST /info/stats shape + active streams + WS /stats localhost & non-localhost auth ✅
 │       ├── test_storage_breakdown.py # 3 tests — empty / aggregation by type / missing-root capacity exclusion ✅
 │       ├── test_info_actions.py # 4 tests — /info/restart + /info/stop localhost (202) and non-localhost (403) ✅
-│       ├── test_groups.py       # 16 tests — CRUD, member management, auth split, stream-gate enforcement ✅
+│       ├── test_groups.py       # 18 tests — CRUD, member management, auth split, stream-gate enforcement, full-restrictions round-trip + status flip (M1 of 12_groups_remediation_plan.md, 2026-05-07) ✅
 │       ├── test_notifications.py # 12 tests — REST CRUD, WS auth + fan-out, unread filter, dismiss, read-all ✅
 │       ├── test_profile.py      # 9 tests — GET/PATCH profile localhost restriction + response schema + avatar_letter computation ✅
 │       ├── test_activity.py     # 12 tests — service CRUD, payload roundtrip, since/type filters, REST endpoints, pair emitter integration, off-loopback 401 ✅

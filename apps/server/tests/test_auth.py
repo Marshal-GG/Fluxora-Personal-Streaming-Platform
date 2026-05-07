@@ -279,6 +279,67 @@ async def test_list_clients_active_session_null_when_session_ended(
 
 
 @pytest.mark.asyncio
+async def test_list_clients_includes_group_memberships(
+    client: AsyncClient, test_db
+):
+    """M3 (2026-05-07): the list_clients query LEFT-JOINs group_members
+    via SQLite's `json_group_array` so the desktop Clients screen can
+    render group chips on the detail panel without a follow-up fetch.
+    Two groups, the client is in both → both surface in the response;
+    a client outside any group returns `groups: []`.  Pins the wire
+    shape the desktop M3 Clients-screen cross-link consumes."""
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+
+    # Create two groups + add the paired client to both.
+    g1 = (
+        await client.post(
+            "/api/v1/groups", json={"name": "Family"}
+        )
+    ).json()
+    g2 = (
+        await client.post(
+            "/api/v1/groups", json={"name": "Kids"}
+        )
+    ).json()
+    await client.post(
+        f"/api/v1/groups/{g1['id']}/members",
+        json={"client_id": PAIR_BODY["client_id"]},
+    )
+    await client.post(
+        f"/api/v1/groups/{g2['id']}/members",
+        json={"client_id": PAIR_BODY["client_id"]},
+    )
+
+    resp = await client.get("/api/v1/auth/clients")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["clients"]) == 1
+    groups = body["clients"][0]["groups"]
+    assert len(groups) == 2
+    names = {g["name"] for g in groups}
+    assert names == {"Family", "Kids"}
+    # Each summary carries id + name + status — the heavier fields
+    # (restrictions, member_count, created_at, updated_at) live on
+    # /groups/{id} only, not in this list response.
+    for g in groups:
+        assert set(g.keys()) == {"id", "name", "status"}
+        assert g["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_list_clients_groups_empty_for_unaffiliated_client(
+    client: AsyncClient, test_db
+):
+    """A client that's not in any group returns `groups: []`, not null
+    or missing.  Lets the desktop render an empty chip row without a
+    null check."""
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    resp = await client.get("/api/v1/auth/clients")
+    assert resp.status_code == 200
+    assert resp.json()["clients"][0]["groups"] == []
+
+
+@pytest.mark.asyncio
 async def test_list_clients_blocked_from_lan(test_db):
     async with AsyncClient(
         transport=ASGITransport(app=app, client=("192.168.1.100", 50000)),

@@ -103,6 +103,77 @@ async def test_get_group_404(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_create_then_get_round_trips_full_restrictions(
+    client: AsyncClient,
+):
+    """Pins the wire format the desktop M1 dialogs send: every restriction
+    field populated in a single POST, then read back via GET /{id} and
+    re-asserted.  Catches any future breakage where one of the four
+    fields gets dropped on serialisation."""
+    payload = {
+        "name": "Kids",
+        "description": "Bedtime gate + only Movies + Cartoons",
+        "restrictions": {
+            "allowed_libraries": ["lib-movies", "lib-cartoons"],
+            "bandwidth_cap_mbps": 8,
+            "time_window": {
+                "start_h": 18,
+                "end_h": 22,
+                "days": [0, 1, 2, 3, 4],
+            },
+            "max_rating": "PG",
+        },
+    }
+    created = await client.post("/api/v1/groups", json=payload)
+    assert created.status_code == 201
+    gid = created.json()["id"]
+
+    fetched = await client.get(f"/api/v1/groups/{gid}")
+    assert fetched.status_code == 200
+    body = fetched.json()
+    r = body["restrictions"]
+    # Every field round-trips byte-for-byte (modulo list ordering, which
+    # the server preserves because allowed_libraries persists as JSON).
+    assert r["allowed_libraries"] == ["lib-movies", "lib-cartoons"]
+    assert r["bandwidth_cap_mbps"] == 8
+    assert r["time_window"] == {
+        "start_h": 18,
+        "end_h": 22,
+        "days": [0, 1, 2, 3, 4],
+    }
+    assert r["max_rating"] == "PG"
+
+
+@pytest.mark.asyncio
+async def test_update_group_status_to_inactive(client: AsyncClient):
+    """Edit dialog's status toggle PATCHes status='inactive'.  Server gate
+    filters `WHERE g.status = 'active'` so flipping inactive disables
+    enforcement immediately for new streams.  Pins the round-trip — a
+    regression where status is silently dropped from the PATCH body
+    would re-enable a paused group without the operator noticing."""
+    created = (
+        await client.post("/api/v1/groups", json={"name": "Paused"})
+    ).json()
+    gid = created["id"]
+    assert created["status"] == "active"
+
+    resp = await client.patch(
+        f"/api/v1/groups/{gid}",
+        json={"status": "inactive"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "inactive"
+
+    # Re-activate.
+    resp2 = await client.patch(
+        f"/api/v1/groups/{gid}",
+        json={"status": "active"},
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["status"] == "active"
+
+
+@pytest.mark.asyncio
 async def test_update_group_partial(client: AsyncClient):
     created = (await client.post("/api/v1/groups", json={"name": "Kids"})).json()
     gid = created["id"]

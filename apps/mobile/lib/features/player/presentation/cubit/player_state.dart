@@ -89,3 +89,17 @@ class PlayerFailure extends PlayerState {
 class PlayerTierLimit extends PlayerState {
   const PlayerTierLimit();
 }
+
+/// The server rejected the stream start because a Client Group restriction
+/// applies — the file's library isn't on this client's allowlist, or the
+/// current time is outside the group's allowed streaming window.
+///
+/// [reason] carries the server-supplied detail string verbatim so the UI
+/// can surface it.  Distinct from [PlayerFailure] so the player screen
+/// renders a soft "this isn't available right now" card instead of an
+/// alarming error — a gate is not a bug.  Pattern mirrors [PlayerTierLimit]
+/// which is the v1 precedent for "not an error, but you can't play this".
+class PlayerGated extends PlayerState {
+  const PlayerGated(this.reason);
+  final String reason;
+}

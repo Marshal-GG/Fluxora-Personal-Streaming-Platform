@@ -257,6 +257,7 @@ class _PlayerViewState extends State<_PlayerView>
                     ],
                   ),
               PlayerTierLimit() => const _TierLimitView(),
+              PlayerGated(:final reason) => _GatedView(reason: reason),
               PlayerFailure(:final message) => _ErrorView(message: message),
             },
           ),
@@ -552,6 +553,78 @@ class _TierLimitView extends StatelessWidget {
                 icon: Icons.arrow_back,
                 onPressed: () => Navigator.of(context).pop(),
                 child: const Text('Go Back'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Soft block view shown when the server denied the stream start with a
+/// Client Group restriction (group_service.reason_to_deny).  Distinct from
+/// [_ErrorView] (which says "Stream failed") because a gate is not a bug
+/// — the operator deliberately set this up.  Mirrors [_TierLimitView]'s
+/// shape but with parental-control framing instead of an upgrade prompt.
+class _GatedView extends StatelessWidget {
+  const _GatedView({required this.reason});
+
+  final String reason;
+
+  /// Friendly title that frames the restriction without sounding like a
+  /// permissions error.  Heuristic: detect the time-window vs library
+  /// flavour from the reason text and pick a header that matches.  Falls
+  /// back to a generic "Not available right now" for any future server
+  /// reason this client doesn't recognise.
+  String get _title {
+    final lower = reason.toLowerCase();
+    if (lower.contains('time window')) return 'Outside playback hours';
+    if (lower.contains('library')) return 'Not in your library access';
+    return 'Not available right now';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.violet.withValues(alpha: 0.16),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.lock_outline_rounded,
+                color: AppColors.violet,
+                size: 40,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              _title,
+              style: AppTypography.displayV2
+                  .copyWith(color: AppColors.textBright),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              reason,
+              style: AppTypography.body.copyWith(color: AppColors.textMutedV2),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              child: FluxButton(
+                fullWidth: true,
+                icon: Icons.arrow_back,
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Got it'),
               ),
             ),
           ],

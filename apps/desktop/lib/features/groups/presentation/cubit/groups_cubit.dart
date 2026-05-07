@@ -1,25 +1,49 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/entities/group.dart';
+import 'package:fluxora_core/entities/library.dart';
 import 'package:fluxora_core/network/api_exception.dart';
 import 'package:logger/logger.dart';
 import 'package:fluxora_desktop/features/groups/domain/repositories/groups_repository.dart';
 import 'package:fluxora_desktop/features/groups/presentation/cubit/groups_state.dart';
+import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 
 class GroupsCubit extends Cubit<GroupsState> {
-  GroupsCubit({required GroupsRepository repository})
-      : _repository = repository,
+  GroupsCubit({
+    required GroupsRepository repository,
+    required LibraryRepository libraryRepository,
+  })  : _repository = repository,
+        _libraryRepository = libraryRepository,
         super(const GroupsInitial());
 
   final GroupsRepository _repository;
+  final LibraryRepository _libraryRepository;
   static final _log = Logger();
+
+  /// Fetch libraries best-effort.  An empty list is fine — the picker shows
+  /// a placeholder, the detail panel falls back to raw ids.  Failures here
+  /// must NOT block the groups load itself.
+  Future<List<Library>> _safeLoadLibraries() async {
+    try {
+      return await _libraryRepository.getLibraries();
+    } catch (e, st) {
+      _log.w('Group library fetch failed', error: e, stackTrace: st);
+      return const <Library>[];
+    }
+  }
 
   Future<void> load() async {
     emit(const GroupsLoading());
     try {
-      final groups = await _repository.list();
+      final results = await Future.wait([
+        _repository.list(),
+        _safeLoadLibraries(),
+      ]);
+      final groups = results[0] as List<Group>;
+      final libraries = results[1] as List<Library>;
       emit(GroupsLoaded(
         groups: groups,
         selectedGroup: groups.isNotEmpty ? groups.first : null,
+        libraries: libraries,
       ));
       if (groups.isNotEmpty) {
         await loadMembers(groups.first.id);
@@ -123,6 +147,29 @@ class GroupsCubit extends Cubit<GroupsState> {
     } catch (e, st) {
       _log.e('Add member failed', error: e, stackTrace: st);
     }
+  }
+
+  /// Bulk variant — adds [clientIds] to [groupId] sequentially and refreshes
+  /// the visible member list once at the end.  Sequential (not
+  /// `Future.wait`) so individual failures stay logged in order and the
+  /// final `loadMembers` reflects the actually-applied state.  Same pattern
+  /// as the F9 Profile Sessions tab's bulk-revoke.  Per-call failures are
+  /// swallowed with a log so one bad insert doesn't abort the rest of the
+  /// batch — operator picks 5 devices, server rejects 1 (e.g. unknown id),
+  /// the other 4 still land.
+  Future<void> addMembers(String groupId, List<String> clientIds) async {
+    for (final clientId in clientIds) {
+      try {
+        await _repository.addMember(groupId, clientId);
+      } catch (e, st) {
+        _log.w(
+          'Bulk add member failed: group=$groupId client=$clientId',
+          error: e,
+          stackTrace: st,
+        );
+      }
+    }
+    await loadMembers(groupId);
   }
 
   Future<void> removeMember(String groupId, String clientId) async {

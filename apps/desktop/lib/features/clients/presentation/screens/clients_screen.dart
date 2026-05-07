@@ -7,14 +7,18 @@ import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_core/entities/client_list_item.dart';
 import 'package:fluxora_core/entities/enums.dart';
+import 'package:fluxora_core/entities/group.dart';
+import 'package:logger/logger.dart';
 import 'package:fluxora_desktop/features/clients/domain/repositories/clients_repository.dart';
 import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_cubit.dart';
 import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_state.dart';
 import 'package:fluxora_desktop/features/clients/presentation/widgets/pair_device_dialog.dart';
+import 'package:fluxora_desktop/features/groups/domain/repositories/groups_repository.dart';
 import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_glass_dialog.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
@@ -1459,6 +1463,18 @@ class _PopulatedDetailPanel extends StatelessWidget {
             _ActiveSessionBlock(session: client.activeSession!),
           ],
 
+          // ── Groups (M3, 2026-05-07) ──────────────────────────────────────
+          // Bidirectional editing: operator can see + manage group
+          // membership from the client side instead of having to navigate
+          // to the Groups screen → drill into a group → Add Member.
+          // Only shown for approved + trusted clients — pending pair
+          // requests can't legally be in a group (server enforces via
+          // group_members FK + the existing add-member 404 path).
+          if (client.status == ClientStatus.approved && client.isTrusted) ...[
+            const SizedBox(height: AppSpacing.s16),
+            _ClientGroupsSection(client: client),
+          ],
+
           const SizedBox(height: AppSpacing.s16),
 
           // ── Client Actions ───────────────────────────────────────────────
@@ -1750,4 +1766,484 @@ String _formatRelative(DateTime dt) {
   if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
   if (diff.inHours < 24) return '${diff.inHours}h ago';
   return '${diff.inDays}d ago';
+}
+
+// ── Groups section (M3, 2026-05-07) ────────────────────────────────────────────
+
+/// "Groups" section on the client detail panel.  Renders one chip per
+/// group the client belongs to (with a hover-revealed × that removes the
+/// client from that group) plus a `+` button that opens [_PickGroupDialog]
+/// to add the client to a group.  Group membership data comes from the
+/// `auth_service.list_clients` join (M3); add/remove operations call
+/// `GroupsRepository` directly + trigger `ClientsCubit.refreshSilent()`
+/// so the chip set updates without flickering through `ClientsLoading`.
+class _ClientGroupsSection extends StatelessWidget {
+  const _ClientGroupsSection({required this.client});
+
+  final ClientListItem client;
+
+  Future<void> _onAddToGroup(BuildContext context) async {
+    final memberOf = client.groups.map((g) => g.id).toSet();
+    final picked = await showDialog<GroupSummary>(
+      context: context,
+      builder: (_) => _PickGroupDialog(
+        clientName: client.name,
+        excludeGroupIds: memberOf,
+      ),
+    );
+    if (picked == null || !context.mounted) return;
+    try {
+      await GetIt.I<GroupsRepository>().addMember(picked.id, client.id);
+    } catch (e, st) {
+      Logger().w('Add client to group failed',
+          error: e, stackTrace: st);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to add to ${picked.name}: $e')),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    // Silent refresh — chip set will pick up the new entry without
+    // collapsing the detail panel.  Note: depending on the build of
+    // ClientsCubit at the time of this M3 ship, `refreshSilent` may not
+    // exist yet; fall back to `load()` if so (the user briefly sees the
+    // loading spinner — acceptable trade-off).
+    final cubit = context.read<ClientsCubit>();
+    try {
+      await cubit.refreshSilent();
+    } catch (_) {
+      await cubit.load();
+    }
+  }
+
+  Future<void> _onRemoveFromGroup(
+    BuildContext context,
+    GroupSummary group,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => FluxGlassDialog(
+        title: Text('Remove from ${group.name}?'),
+        content: Text(
+          '${client.name} will no longer be subject to this group\'s '
+          'restrictions.  Existing in-flight streams continue until '
+          'they end naturally.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.red),
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await GetIt.I<GroupsRepository>().removeMember(group.id, client.id);
+    } catch (e, st) {
+      Logger().w('Remove client from group failed',
+          error: e, stackTrace: st);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to remove from ${group.name}: $e')),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    final cubit = context.read<ClientsCubit>();
+    try {
+      await cubit.refreshSilent();
+    } catch (_) {
+      await cubit.load();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Groups',
+              style: TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textBright,
+              ),
+            ),
+            Tooltip(
+              message: 'Add to group',
+              child: GestureDetector(
+                onTap: () => _onAddToGroup(context),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      color: AppColors.violet.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(AppRadii.sm),
+                    ),
+                    child: const Icon(Icons.add_rounded,
+                        size: 14, color: AppColors.violet),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.s8),
+        if (client.groups.isEmpty)
+          Text(
+            'Not in any group.  Click + to add this device to one.',
+            style: AppTypography.captionV2
+                .copyWith(color: AppColors.textDim),
+          )
+        else
+          Wrap(
+            spacing: 4,
+            runSpacing: 4,
+            children: client.groups
+                .map((g) => _ClientGroupChip(
+                      group: g,
+                      onRemove: () => _onRemoveFromGroup(context, g),
+                    ))
+                .toList(),
+          ),
+      ],
+    );
+  }
+}
+
+/// One group chip in the client detail panel — renders the group name +
+/// a small status dot (emerald = active / muted = inactive) + a
+/// hover-revealed × that triggers [onRemove].  Hidden-on-hover removal
+/// affordance keeps the chip set scannable when the operator isn't
+/// actively trying to detach a client.
+class _ClientGroupChip extends StatefulWidget {
+  const _ClientGroupChip({required this.group, required this.onRemove});
+
+  final GroupSummary group;
+  final VoidCallback onRemove;
+
+  @override
+  State<_ClientGroupChip> createState() => _ClientGroupChipState();
+}
+
+class _ClientGroupChipState extends State<_ClientGroupChip> {
+  bool _hover = false;
+
+  void _setHover(bool v) {
+    if (!mounted) return;
+    setState(() => _hover = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = widget.group.status == GroupStatus.active;
+    return MouseRegion(
+      onEnter: (_) => _setHover(true),
+      onExit: (_) => _setHover(false),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0x14A855F7),
+          border: Border.all(color: const Color(0x40A855F7)),
+          borderRadius: BorderRadius.circular(AppRadii.sm),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 5,
+              height: 5,
+              decoration: BoxDecoration(
+                color: isActive
+                    ? const Color(0xFF10B981)
+                    : AppColors.textDim,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              widget.group.name,
+              style: const TextStyle(
+                fontFamily: 'Inter',
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textBright,
+              ),
+            ),
+            if (_hover) ...[
+              const SizedBox(width: 6),
+              Tooltip(
+                message: 'Remove from group',
+                child: GestureDetector(
+                  onTap: widget.onRemove,
+                  child: const MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: Icon(Icons.close_rounded,
+                        size: 12, color: AppColors.textDim),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Modal that lists every group the operator has + lets them pick one
+/// to add the [clientName] client to.  Filters out groups the client is
+/// already in (passed as [excludeGroupIds]).  Mirrors the pattern of the
+/// Groups screen's `_AddMemberDialog` — same fetch-on-open + scrollable
+/// list shape — but inverted (pick a group instead of a client).
+class _PickGroupDialog extends StatefulWidget {
+  const _PickGroupDialog({
+    required this.clientName,
+    required this.excludeGroupIds,
+  });
+
+  final String clientName;
+  final Set<String> excludeGroupIds;
+
+  @override
+  State<_PickGroupDialog> createState() => _PickGroupDialogState();
+}
+
+class _PickGroupDialogState extends State<_PickGroupDialog> {
+  bool _loading = true;
+  String? _error;
+  List<GroupSummary> _groups = const <GroupSummary>[];
+  String _search = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final repo = GetIt.I<GroupsRepository>();
+      final all = await repo.list();
+      if (!mounted) return;
+      setState(() {
+        // Only show active groups — adding to an inactive group is
+        // permitted server-side but the operator's intent is almost
+        // certainly to pick an enforcing group.  Inactive groups
+        // appear after the operator re-activates them on the Groups
+        // screen.
+        _groups = all
+            .where((g) => g.status == GroupStatus.active)
+            .map((g) => GroupSummary(
+                  id: g.id,
+                  name: g.name,
+                  status: g.status,
+                ))
+            .toList();
+        _loading = false;
+      });
+    } catch (e, st) {
+      Logger().w('Pick-group fetch failed', error: e, stackTrace: st);
+      if (!mounted) return;
+      setState(() {
+        _error = 'Failed to load groups: $e';
+        _loading = false;
+      });
+    }
+  }
+
+  List<GroupSummary> get _filtered {
+    final s = _search.trim().toLowerCase();
+    return _groups.where((g) {
+      if (widget.excludeGroupIds.contains(g.id)) return false;
+      if (s.isEmpty) return true;
+      return g.name.toLowerCase().contains(s);
+    }).toList()
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = _filtered;
+    return FluxGlassDialog(
+      title: Text('Add ${widget.clientName} to group'),
+      content: SizedBox(
+        width: 420,
+        height: 380,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Pick an active group to add this device to.  Restrictions '
+              'apply to new streams immediately.',
+              style: AppTypography.captionV2
+                  .copyWith(color: AppColors.textDim),
+            ),
+            const SizedBox(height: AppSpacing.s10),
+            TextField(
+              autofocus: true,
+              decoration: const InputDecoration(
+                isDense: true,
+                prefixIcon: Icon(Icons.search_rounded, size: 16),
+                hintText: 'Search groups',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (v) => setState(() => _search = v),
+            ),
+            const SizedBox(height: AppSpacing.s10),
+            Expanded(child: _buildBody(filtered)),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBody(List<GroupSummary> filtered) {
+    if (_loading) {
+      return const Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppColors.violet,
+          ),
+        ),
+      );
+    }
+    if (_error != null) {
+      return Center(
+        child: Text(
+          _error!,
+          style: AppTypography.bodySmall.copyWith(color: AppColors.textBody),
+          textAlign: TextAlign.center,
+        ),
+      );
+    }
+    if (filtered.isEmpty) {
+      // Two empty states: search-narrowed-to-zero vs nothing-to-pick-from.
+      // The latter usually means the client is already in every active
+      // group — the operator has nothing left to add.
+      final allConsumed = _groups.isNotEmpty &&
+          _groups.every((g) => widget.excludeGroupIds.contains(g.id));
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.s12),
+          child: Text(
+            _search.isNotEmpty
+                ? 'No active groups match "${_search.trim()}".'
+                : allConsumed
+                    ? 'This device is already in every active group.'
+                    : 'No active groups.  Create one from the '
+                        'Groups screen first.',
+            style:
+                AppTypography.captionV2.copyWith(color: AppColors.textDim),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0x06FFFFFF),
+        border: Border.all(color: const Color(0x14FFFFFF)),
+        borderRadius: BorderRadius.circular(AppRadii.sm),
+      ),
+      child: ListView.separated(
+        padding: EdgeInsets.zero,
+        itemCount: filtered.length,
+        separatorBuilder: (_, _) => const Divider(
+          height: 1,
+          thickness: 1,
+          color: Color(0x06FFFFFF),
+        ),
+        itemBuilder: (_, i) {
+          final g = filtered[i];
+          return _PickGroupRow(
+            group: g,
+            onTap: () => Navigator.pop(context, g),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _PickGroupRow extends StatefulWidget {
+  const _PickGroupRow({required this.group, required this.onTap});
+
+  final GroupSummary group;
+  final VoidCallback onTap;
+
+  @override
+  State<_PickGroupRow> createState() => _PickGroupRowState();
+}
+
+class _PickGroupRowState extends State<_PickGroupRow> {
+  bool _hover = false;
+
+  void _setHover(bool v) {
+    if (!mounted) return;
+    setState(() => _hover = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => _setHover(true),
+      onExit: (_) => _setHover(false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s12,
+            vertical: AppSpacing.s10,
+          ),
+          color: _hover ? const Color(0x06FFFFFF) : Colors.transparent,
+          child: Row(
+            children: [
+              const Icon(Icons.group_work_outlined,
+                  size: 14, color: AppColors.violet),
+              const SizedBox(width: AppSpacing.s8),
+              Expanded(
+                child: Text(
+                  widget.group.name,
+                  style: AppTypography.bodySmall.copyWith(
+                    color: AppColors.textBright,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded,
+                  size: 14, color: AppColors.textDim),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
