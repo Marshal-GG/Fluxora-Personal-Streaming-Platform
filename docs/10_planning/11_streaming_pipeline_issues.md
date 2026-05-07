@@ -1,7 +1,7 @@
 # Streaming Pipeline — Issue Audit & Remediation Plan
 
 > **Category:** Planning
-> **Status:** ✅ All four commits shipped 2026-05-05; §4 leftovers (4.3 / 4.8 / 4.10 closed; 4.5 / 4.7 explicitly deferred to future tickets) closed 2026-05-08.
+> **Status:** ✅ All four commits shipped 2026-05-05; §4 leftovers (4.3 / 4.5 / 4.8 / 4.10 closed; 4.7 explicitly deferred as low priority) closed 2026-05-08.  No outstanding tactical work in this plan.
 > **Scope:** Identifies and prioritises every defect found in the HLS streaming pipeline (mobile/desktop player ⇆ server ⇆ FFmpeg) during the 2026-05-05 user-reported regression triage.  Lays out a sequenced remediation plan with concrete code targets, commit boundaries, and test strategy.
 > **Triggered by:** four user-reported issues (seek delay, GPU/CPU pegging, "code error 1" on HDR→SDR toggle, HDR-not-working) — investigation surfaced six additional issues that share root causes with the reported ones.
 
@@ -228,15 +228,24 @@ These weren't user-reported but came out of the same code paths.
 
 ---
 
-### 4.5 The static VOD playlist over-promises segments ⏸ deferred 2026-05-08
+### 4.5 The static VOD playlist over-promises segments ✅ landed 2026-05-08
 
-**Where:** [`ffmpeg_service.py:514-605`](../../apps/server/services/ffmpeg_service.py#L514) — `_write_static_vod_playlist` lists `ceil(duration / hls_time)` segments and assumes FFmpeg will produce exactly that many.
+**Where:** [`ffmpeg_service.py`](../../apps/server/services/ffmpeg_service.py) — `_write_static_vod_playlist` (spawn-time over-promise) + new `_finalize_vod_playlist` + `_finalize_vod_playlist_on_exit` watcher (post-natural-exit truth).
 
-**Impact:** stream-copy of HEVC sources aligns segments to source keyframes.  If the source has GOPs of, say, 240 frames @ 24 fps = 10 s, and we ask for `hls_time=10`, FFmpeg may produce slightly fewer or more segments than predicted.  The tail segment can mismatch by 5-15 %.  Player hits a 404 on the over-promised final segment(s).
+**Impact (pre-fix):** stream-copy of HEVC sources aligns segments to source keyframes.  If the source has GOPs of, say, 240 frames @ 24 fps = 10 s, and we ask for `hls_time=10`, FFmpeg may produce slightly fewer or more segments than predicted.  The tail segment can mismatch by 5-15 %.  Player hits a 404 on the over-promised final segment(s).
 
-**Status (2026-05-08 audit):** the proper fix needs an FFmpeg-natural-exit hook in the spawn loop that finalises the playlist with the actually-observed segment count — non-trivial because the spawn loop doesn't currently track post-startup completion (it returns once seg00000 lands).  The current 404 + media_kit retry-then-skip behaviour bridges the worst case (final 1-2 segments missing) acceptably; user-visible impact is a brief stutter at end-of-file.  **Deferred to a separate ticket** so the §4 close-out doesn't block on a spawn-loop refactor that touches the just-shipped seek-restart code.
+**Shipped fix (2026-05-08, follow-on to the morning's §4 close-out):**
 
-**Fix shape (when picked up):** add `_finalize_vod_playlist(session_dir)` that scans `seg*.{ts,m4s}` files + rewrites the playlist with the truth, called from a new "FFmpeg natural exit" hook.  The hook is needed for stream-copy specifically; transcode sessions tend to land within ±1 of the prediction.
+The spawn-time playlist is still pre-emitted as an upper bound (so the player's seek bar spans the full duration immediately on first load).  After FFmpeg exits naturally (`returncode == 0`), a background watcher replaces the served playlist with FFmpeg's own incremental playlist (`_ff_playlist.m3u8`) which holds the truth — accurate per-segment `#EXTINF` durations + only the segments actually written.
+
+- **New `_finalize_vod_playlist(session_dir, *, served_playlist_name, ff_playlist_name, discontinuity_seq)`** — copies `_ff_playlist.m3u8` over `playlist.m3u8`.  Preserves seek-restart bookkeeping by re-injecting `#EXT-X-DISCONTINUITY-SEQUENCE:N` after the `#EXT-X-VERSION` line (FFmpeg won't have set it; the inline `#EXT-X-DISCONTINUITY` marker is unnecessary post-finalisation since the player already consumed the boundary at restart time).  Returns False without touching the served playlist when the FFmpeg playlist is missing or empty — better an over-promised playlist than a broken one.
+- **New `_finalize_vod_playlist_on_exit(session_id, proc, session_dir, discontinuity_seq)`** — async background task that awaits `proc.wait()` then fires the finalise.  Self-cleans from a new module-level `_finalize_watchers: dict[str, asyncio.Task]` registry on completion.  No-op when the process exits non-zero (kill or crash) or when the session dir has been torn down between exit and finalise (race with `stop_stream`).
+- **Hook in `start_stream` success path:** spawns the watcher right after the static VOD playlist write.  Replaces any prior watcher entry first (defensive against an in-flight cancel from `restart_stream`).
+- **`_terminate_ffmpeg` cancels the watcher** before tearing down the active process — both `stop_stream` and `restart_stream` paths flow through `_terminate_ffmpeg`, so a single cancel point covers both.
+
+11 new tests in [`test_stream.py`](../../apps/server/tests/test_stream.py): finalise replaces with truth / no-op when ff missing / no-op on empty ff / discontinuity-sequence injection / no injection when seq=0 / watcher fires on natural exit / watcher skips on kill / watcher skips when dir gone / watcher self-cleans from registry / `_terminate_ffmpeg` cancels the watcher / cancellation propagates `CancelledError`.  Server suite **641 → 652 passing.**
+
+**In-progress playback caveat:** clients that already loaded the over-promised list before FFmpeg finished encoding (typical for active sessions) won't pick up the truthful playlist until they re-fetch — `media_kit` / `libmpv` cache VOD playlists.  For those clients the original 404 + retry-then-skip behaviour still kicks in on the over-promised tail.  The fix's main wins are: (a) future loads of the same session URL (resume flows, cross-session reuse); (b) media_kit's small-N retry budget no longer eats the player's confidence in the playlist when the over-promise is severe.
 
 ---
 
@@ -504,7 +513,7 @@ The §4 leftovers from the 2026-05-05 commit batch were closed out on 2026-05-08
 | Issue | Status | Notes |
 |---|---|---|
 | §4.3 5 s segment-wait | ✅ shortened to 2 s | Worker-pinning down 60 %; client retry path unchanged. |
-| §4.5 VOD over-promise tail | ⏸ deferred to a separate ticket | Real fix needs an FFmpeg-natural-exit hook in the spawn loop; current 404 + media_kit retry-skip behaviour is acceptable end-of-file UX. |
+| §4.5 VOD over-promise tail | ✅ shipped | Originally deferred earlier on 2026-05-08; picked back up the same day after the §4 close-out.  Spawn-time playlist still pre-emitted as upper bound; new `_finalize_vod_playlist` + `_finalize_vod_playlist_on_exit` watcher replaces it with FFmpeg's accurate playlist on natural exit (`returncode == 0`).  Watcher tracked in `_finalize_watchers` registry; `_terminate_ffmpeg` cancels it on stop / restart paths.  +11 tests; server suite 641 → 652 passing. |
 | §4.7 alternative tonemap methods | ⏸ low priority — left as-is | Hable is fine for the user's ≤ 1000-nit HDR content; revisit when 4000-nit-mastered movie sources surface as a complaint. |
 | §4.8 redundant `_ensure_fmp4_init_segment` | ✅ no-op (existence check already in place) | Triage misread; the function short-circuits when init.mp4 is present.  The unconditional call is necessary on the bundled FFmpeg. |
 | §4.10 "Start over" affordance | ✅ shipped | New `POST /files/{id}/reset-progress` server route + Endpoints + LibraryRepository method + detail-screen secondary button + 4 tests.  Server 637 → 641 passing. |

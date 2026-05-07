@@ -687,6 +687,334 @@ def test_write_static_vod_playlist_zero_duration_writes_nothing(tmp_path):
     assert not playlist.exists()
 
 
+# ── _finalize_vod_playlist (streaming pipeline §4.5) ────────────────────────
+
+
+def test_finalize_vod_playlist_replaces_with_ff_playlist_truth(tmp_path):
+    """After FFmpeg exits naturally its incremental playlist holds the
+    truth (accurate per-segment EXTINF + only segments actually
+    written).  _finalize_vod_playlist copies that over the served
+    playlist so future loads don't 404 against the spawn-time over-
+    promised tail entries."""
+    from services.ffmpeg_service import _finalize_vod_playlist
+
+    served = tmp_path / "playlist.m3u8"
+    served.write_text(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n"
+        "#EXT-X-PLAYLIST-TYPE:VOD\n"
+        "#EXTINF:10.0,\nseg00000.ts\n"
+        "#EXTINF:10.0,\nseg00001.ts\n"
+        "#EXTINF:10.0,\nseg00002.ts\n"  # over-promised tail
+        "#EXT-X-ENDLIST\n",
+        encoding="utf-8",
+    )
+    ff = tmp_path / "_ff_playlist.m3u8"
+    ff.write_text(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n"
+        "#EXT-X-PLAYLIST-TYPE:VOD\n"
+        "#EXTINF:9.6,\nseg00000.ts\n"
+        "#EXTINF:9.6,\nseg00001.ts\n"
+        "#EXT-X-ENDLIST\n",
+        encoding="utf-8",
+    )
+
+    ok = _finalize_vod_playlist(session_dir=tmp_path)
+    assert ok is True
+    text = served.read_text(encoding="utf-8")
+    assert "seg00002.ts" not in text
+    assert "seg00000.ts" in text
+    assert "seg00001.ts" in text
+    assert "#EXTINF:9.6" in text
+
+
+def test_finalize_vod_playlist_returns_false_when_ff_missing(tmp_path):
+    """No FFmpeg playlist on disk → no-op (return False) and the served
+    playlist is left untouched.  Better an over-promised playlist than
+    a broken one."""
+    from services.ffmpeg_service import _finalize_vod_playlist
+
+    served = tmp_path / "playlist.m3u8"
+    served.write_text("#EXTM3U\nuntouched\n", encoding="utf-8")
+    ok = _finalize_vod_playlist(session_dir=tmp_path)
+    assert ok is False
+    assert served.read_text(encoding="utf-8") == "#EXTM3U\nuntouched\n"
+
+
+def test_finalize_vod_playlist_returns_false_on_empty_ff(tmp_path):
+    """Edge case: FFmpeg playlist exists but is empty (zero bytes).
+    Treat as missing — finalising with an empty playlist would break
+    playback for every future load."""
+    from services.ffmpeg_service import _finalize_vod_playlist
+
+    (tmp_path / "_ff_playlist.m3u8").write_text("", encoding="utf-8")
+    served = tmp_path / "playlist.m3u8"
+    served.write_text("#EXTM3U\nuntouched\n", encoding="utf-8")
+    ok = _finalize_vod_playlist(session_dir=tmp_path)
+    assert ok is False
+    assert "untouched" in served.read_text(encoding="utf-8")
+
+
+def test_finalize_vod_playlist_injects_discontinuity_sequence(tmp_path):
+    """Seek-restart bookkeeping: when a session has been restarted N
+    times, EXT-X-DISCONTINUITY-SEQUENCE:N must survive the finalise so
+    the player picks up the right sequence on the next playlist load.
+    Injected after EXT-X-VERSION (HLS spec ordering)."""
+    from services.ffmpeg_service import _finalize_vod_playlist
+
+    served = tmp_path / "playlist.m3u8"
+    served.write_text("#EXTM3U\nold\n", encoding="utf-8")
+    ff = tmp_path / "_ff_playlist.m3u8"
+    ff.write_text(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n"
+        "#EXTINF:10.0,\nseg00000.ts\n#EXT-X-ENDLIST\n",
+        encoding="utf-8",
+    )
+
+    _finalize_vod_playlist(session_dir=tmp_path, discontinuity_seq=3)
+    text = served.read_text(encoding="utf-8")
+    assert "#EXT-X-DISCONTINUITY-SEQUENCE:3" in text
+    # Must appear right after EXT-X-VERSION, before the segments.
+    version_idx = text.index("#EXT-X-VERSION:3")
+    seq_idx = text.index("#EXT-X-DISCONTINUITY-SEQUENCE:3")
+    seg_idx = text.index("seg00000.ts")
+    assert version_idx < seq_idx < seg_idx
+
+
+def test_finalize_vod_playlist_no_seq_injection_when_zero(tmp_path):
+    """Zero (initial spawn, never restarted) → no SEQUENCE line emitted,
+    just a clean copy."""
+    from services.ffmpeg_service import _finalize_vod_playlist
+
+    served = tmp_path / "playlist.m3u8"
+    served.write_text("#EXTM3U\nold\n", encoding="utf-8")
+    ff = tmp_path / "_ff_playlist.m3u8"
+    ff.write_text(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n"
+        "#EXTINF:10.0,\nseg00000.ts\n#EXT-X-ENDLIST\n",
+        encoding="utf-8",
+    )
+
+    _finalize_vod_playlist(session_dir=tmp_path, discontinuity_seq=0)
+    text = served.read_text(encoding="utf-8")
+    assert "DISCONTINUITY-SEQUENCE" not in text
+
+
+# ── _finalize_vod_playlist_on_exit watcher ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_finalize_watcher_calls_finalize_on_natural_exit(tmp_path):
+    """Watcher awaits proc.wait() then finalises when returncode == 0."""
+    from unittest.mock import MagicMock, patch
+
+    from services.ffmpeg_service import _finalize_vod_playlist_on_exit
+
+    # Fake process that "exits naturally with rc=0".
+    async def _fake_wait():
+        return 0
+
+    proc = MagicMock()
+    proc.wait = _fake_wait
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    with patch(
+        "services.ffmpeg_service._finalize_vod_playlist",
+        return_value=True,
+    ) as mock_finalize:
+        await _finalize_vod_playlist_on_exit(
+            session_id="sess-A",
+            proc=proc,
+            session_dir=tmp_path,
+            discontinuity_seq=0,
+        )
+    mock_finalize.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_finalize_watcher_skips_finalize_on_kill(tmp_path):
+    """rc != 0 (SIGTERM, crash, etc.) → no finalise.  The kill path
+    cleans up the dir; rewriting the playlist would race that."""
+    from unittest.mock import MagicMock, patch
+
+    from services.ffmpeg_service import _finalize_vod_playlist_on_exit
+
+    async def _fake_wait():
+        return 1  # killed-by-us / crashed
+
+    proc = MagicMock()
+    proc.wait = _fake_wait
+
+    with patch(
+        "services.ffmpeg_service._finalize_vod_playlist",
+    ) as mock_finalize:
+        await _finalize_vod_playlist_on_exit(
+            session_id="sess-B",
+            proc=proc,
+            session_dir=tmp_path,
+            discontinuity_seq=0,
+        )
+    mock_finalize.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_finalize_watcher_skips_when_session_dir_gone(tmp_path):
+    """Race: stop_stream cleans the dir between proc exit and our
+    finalise call.  Detect dir absence and bail; rewriting under a
+    deleted dir would fail anyway."""
+    from unittest.mock import MagicMock, patch
+
+    from services.ffmpeg_service import _finalize_vod_playlist_on_exit
+
+    async def _fake_wait():
+        return 0
+
+    proc = MagicMock()
+    proc.wait = _fake_wait
+
+    missing = tmp_path / "deleted-session"
+    # NOTE: never created.
+
+    with patch(
+        "services.ffmpeg_service._finalize_vod_playlist",
+    ) as mock_finalize:
+        await _finalize_vod_playlist_on_exit(
+            session_id="sess-C",
+            proc=proc,
+            session_dir=missing,
+            discontinuity_seq=0,
+        )
+    mock_finalize.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_finalize_watcher_self_cleans_from_registry(tmp_path):
+    """The watcher pops itself from _finalize_watchers on completion so
+    long-running servers don't accumulate stale dict entries."""
+    import asyncio as _asyncio
+    from unittest.mock import MagicMock, patch
+
+    from services.ffmpeg_service import (
+        _finalize_vod_playlist_on_exit,
+        _finalize_watchers,
+    )
+
+    async def _fake_wait():
+        return 0
+
+    proc = MagicMock()
+    proc.wait = _fake_wait
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    sid = "sess-D"
+    with patch(
+        "services.ffmpeg_service._finalize_vod_playlist",
+        return_value=True,
+    ):
+        task = _asyncio.create_task(
+            _finalize_vod_playlist_on_exit(
+                session_id=sid,
+                proc=proc,
+                session_dir=tmp_path,
+                discontinuity_seq=0,
+            )
+        )
+        _finalize_watchers[sid] = task
+        await task
+    assert sid not in _finalize_watchers
+
+
+@pytest.mark.asyncio
+async def test_terminate_ffmpeg_cancels_finalize_watcher(tmp_path):
+    """_terminate_ffmpeg must cancel the natural-exit watcher so it
+    doesn't race the session-dir cleanup on stop / restart paths."""
+    import asyncio as _asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.ffmpeg_service import (
+        _active,
+        _finalize_watchers,
+        _terminate_ffmpeg,
+    )
+
+    sid = "sess-E"
+    # Long-running fake watcher that we expect to be cancelled.
+    started = _asyncio.Event()
+
+    async def _wait_forever():
+        started.set()
+        await _asyncio.sleep(60)
+
+    watcher = _asyncio.create_task(_wait_forever())
+    _finalize_watchers[sid] = watcher
+    await started.wait()
+
+    # Fake the active proc so _terminate_ffmpeg has something to walk.
+    proc = MagicMock()
+    proc.returncode = 0  # already exited — short-circuits the kill path
+    _active[sid] = proc
+    # Stub terminate / wait so the function returns cleanly.
+    proc.terminate = MagicMock()
+    proc.wait = AsyncMock(return_value=0)
+
+    await _terminate_ffmpeg(sid)
+
+    # Drain the cancellation — _terminate_ffmpeg fires cancel() but the
+    # event loop needs another tick (or the await of the task itself) to
+    # flush the CancelledError through.
+    try:
+        await watcher
+    except _asyncio.CancelledError:
+        pass
+
+    assert sid not in _finalize_watchers
+    assert watcher.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_finalize_watcher_cancellation_raises(tmp_path):
+    """When cancelled the watcher must propagate CancelledError so the
+    asyncio scheduler treats it as truly cancelled (not silently
+    swallowed).  Self-clean from registry happens in the cancel path
+    before re-raising."""
+    import asyncio as _asyncio
+    from unittest.mock import MagicMock
+
+    from services.ffmpeg_service import (
+        _finalize_vod_playlist_on_exit,
+        _finalize_watchers,
+    )
+
+    sid = "sess-F"
+
+    # proc.wait() blocks indefinitely until cancelled.
+    async def _wait_forever():
+        await _asyncio.sleep(60)
+
+    proc = MagicMock()
+    proc.wait = _wait_forever
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    task = _asyncio.create_task(
+        _finalize_vod_playlist_on_exit(
+            session_id=sid,
+            proc=proc,
+            session_dir=tmp_path,
+            discontinuity_seq=0,
+        )
+    )
+    _finalize_watchers[sid] = task
+
+    # Yield once so the task starts awaiting proc.wait().
+    await _asyncio.sleep(0)
+    task.cancel()
+    try:
+        await task
+    except _asyncio.CancelledError:
+        pass
+    assert sid not in _finalize_watchers
+    assert task.cancelled()
+
+
 @pytest.mark.asyncio
 async def test_resolve_source_metadata_returns_codec_and_hdr(tmp_path, test_db):
     """Verify the (codec, hdr_format) tuple comes back from the DB row

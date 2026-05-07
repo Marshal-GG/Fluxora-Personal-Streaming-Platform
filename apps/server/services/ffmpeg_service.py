@@ -36,6 +36,15 @@ _seek_locks: dict[str, asyncio.Lock] = {}
 # a single session.
 _discontinuity_seq: dict[str, int] = {}
 
+# Per-session natural-exit watchers (streaming pipeline plan §4.5).  When
+# FFmpeg finishes encoding the file cleanly (returncode == 0) we replace
+# the spawn-time over-promised static VOD playlist with FFmpeg's own
+# accurate one — fixes the 5-15% tail-mismatch on stream-copy HEVC.  The
+# task is tracked so ``_terminate_ffmpeg`` can cancel it: a watcher that
+# fires after a kill would either no-op on the rc != 0 guard or race the
+# session-dir cleanup; cancelling cuts that out cleanly.
+_finalize_watchers: dict[str, asyncio.Task[None]] = {}
+
 
 def _get_seek_lock(session_id: str) -> asyncio.Lock:
     """Return the per-session restart lock, creating it on first access."""
@@ -605,6 +614,121 @@ def _write_static_vod_playlist(
     return n_total - start_segment_index
 
 
+def _finalize_vod_playlist(
+    *,
+    session_dir: Path,
+    served_playlist_name: str = "playlist.m3u8",
+    ff_playlist_name: str = "_ff_playlist.m3u8",
+    discontinuity_seq: int = 0,
+) -> bool:
+    """Replace the served VOD playlist with FFmpeg's accurate one.
+
+    Streaming pipeline plan §4.5.  The served playlist is pre-emitted at
+    spawn time as a static list with ``ceil(duration / hls_time)``
+    entries (see ``_write_static_vod_playlist``) — that's an upper
+    bound.  Stream-copy aligns segments to source keyframes, so the
+    actual count diverges by 5-15% on long-GOP HEVC sources and the
+    over-promised tail entries 404 against files FFmpeg never produced.
+
+    FFmpeg's own incremental playlist (``_ff_playlist.m3u8``) holds the
+    truth: per-segment ``#EXTINF`` durations + only the segments
+    actually written.  After FFmpeg exits naturally we copy its
+    playlist over the served path so future loads (resume flows, cross-
+    session reuse, slow polling clients) see the truthful list.
+
+    Preserves the seek-restart bookkeeping (``EXT-X-DISCONTINUITY-
+    SEQUENCE``) by re-injecting it after the version line — FFmpeg
+    doesn't know about our seek-restart counter.
+
+    Returns True on successful rewrite; False when the FFmpeg playlist
+    is missing or empty (in which case the served playlist is left
+    untouched — better an over-promised playlist than a broken one).
+    """
+    served = session_dir / served_playlist_name
+    ff = session_dir / ff_playlist_name
+    if not ff.exists():
+        return False
+    raw = ff.read_text(encoding="utf-8")
+    if not raw.strip():
+        return False
+    if discontinuity_seq > 0:
+        # Inject right after the EXT-X-VERSION line so the player picks
+        # up the seek-restart bookkeeping the next time it loads the
+        # playlist.  The inline ``#EXT-X-DISCONTINUITY`` marker the
+        # static playlist used (sat before the first listed segment) is
+        # unnecessary now — the player already consumed the
+        # discontinuity at restart time.  Only the SEQUENCE value
+        # matters for downstream caches.
+        lines = raw.splitlines()
+        out: list[str] = []
+        injected = False
+        for line in lines:
+            out.append(line)
+            if not injected and line.startswith("#EXT-X-VERSION"):
+                out.append(
+                    f"#EXT-X-DISCONTINUITY-SEQUENCE:{discontinuity_seq}"
+                )
+                injected = True
+        raw = "\n".join(out)
+        if not raw.endswith("\n"):
+            raw += "\n"
+    served.write_text(raw, encoding="utf-8")
+    return True
+
+
+async def _finalize_vod_playlist_on_exit(
+    session_id: str,
+    proc: asyncio.subprocess.Process,
+    session_dir: Path,
+    discontinuity_seq: int,
+) -> None:
+    """Background task: await FFmpeg's natural exit + finalise the
+    served VOD playlist.
+
+    No-op when:
+      * The task is cancelled (``stop_stream`` / ``restart_stream`` is
+        about to tear down or replace this session).
+      * ``returncode != 0`` — the process was killed or crashed; the
+        existing failure / cleanup paths handle the dir.
+      * The session directory has been torn down between exit and
+        finalise (race with stop_stream's cleanup).
+
+    Self-cleans the entry in ``_finalize_watchers`` on exit so the dict
+    doesn't grow forever on a long-running server.  Streaming pipeline
+    plan §4.5.
+    """
+    try:
+        rc = await proc.wait()
+    except asyncio.CancelledError:
+        _finalize_watchers.pop(session_id, None)
+        raise
+    if rc != 0:
+        _finalize_watchers.pop(session_id, None)
+        return
+    if not session_dir.exists():
+        _finalize_watchers.pop(session_id, None)
+        return
+    try:
+        ok = _finalize_vod_playlist(
+            session_dir=session_dir,
+            discontinuity_seq=discontinuity_seq,
+        )
+        if ok:
+            logger.info(
+                "VOD playlist finalised after natural FFmpeg exit: "
+                "session=%s",
+                session_id,
+            )
+    except Exception:
+        logger.warning(
+            "VOD playlist finalisation raised for session=%s",
+            session_id,
+            exc_info=True,
+        )
+    finally:
+        _finalize_watchers.pop(session_id, None)
+
+
 async def _ensure_fmp4_init_segment(
     session_dir: Path,
     file_path: str,
@@ -1076,6 +1200,30 @@ async def start_stream(
                 exc_info=True,
             )
 
+        # Kick off the natural-exit watcher (streaming pipeline §4.5).
+        # When FFmpeg finishes encoding cleanly, it'll replace the
+        # over-promised static playlist with FFmpeg's accurate one so
+        # the tail-segment 404s the static list causes on stream-copy
+        # disappear from any future playlist load.  Tracked in
+        # _finalize_watchers so _terminate_ffmpeg can cancel it on
+        # stop / restart paths (a watcher firing after a kill would
+        # race the session-dir cleanup).  We replace any existing
+        # watcher first — restart_stream's _terminate_ffmpeg already
+        # cancels, but cancellation propagation is async; we don't
+        # want a stale task lingering against the new spawn's proc.
+        existing = _finalize_watchers.pop(session_id, None)
+        if existing is not None and not existing.done():
+            existing.cancel()
+        _finalize_watchers[session_id] = asyncio.create_task(
+            _finalize_vod_playlist_on_exit(
+                session_id=session_id,
+                proc=proc,
+                session_dir=session_dir,
+                discontinuity_seq=discontinuity_seq,
+            ),
+            name=f"finalize-vod-{session_id}",
+        )
+
         return playlist
 
     # Both attempts failed (or the only attempt did) — release the encoder
@@ -1158,7 +1306,15 @@ async def _terminate_ffmpeg(session_id: str) -> None:
     encoder-cap slot — that's the caller's job.  ``stop_stream`` calls
     this then releases; ``restart_stream`` calls this and keeps the
     slot reserved because the same session is about to spawn again.
+
+    Also cancels the natural-exit watcher (streaming pipeline §4.5):
+    the watcher's rc != 0 guard would no-op anyway, but cancellation
+    is cleaner — avoids the watcher racing the session-dir cleanup
+    on a restart.
     """
+    watcher = _finalize_watchers.pop(session_id, None)
+    if watcher is not None and not watcher.done():
+        watcher.cancel()
     proc = _active.pop(session_id, None)
     if proc is None or proc.returncode is not None:
         return
