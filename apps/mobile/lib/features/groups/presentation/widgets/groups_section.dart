@@ -1,5 +1,14 @@
-/// Profile-screen group surfaces — three cards (Locked / Unlocked /
-/// Visible Libraries) wired to [MobileGroupsCubit].
+/// Profile-screen group surfaces — wired to [MobileGroupsCubit].
+///
+/// 2026-05-08 redesign: collapsed the previous Locked / Unlocked split
+/// into a single "My groups (N)" card so the user can see *every* group
+/// they're a member of (Public, PIN-gated, currently unlocked) at a
+/// glance with a count.  Each row carries a state badge + action;
+/// Locked rows tap into the PIN entry / enrollment sheet (was the only
+/// way to reach a PIN before — but the prior section self-hid for any
+/// client whose locked + unlocked + visible lists were all empty,
+/// stranding users in non-gated groups with no surface).  Visible
+/// Libraries card unchanged.
 ///
 /// Plan: `docs/10_planning/13_groups_v2_content_spaces.md` §M6.
 library;
@@ -13,10 +22,11 @@ import 'package:fluxora_mobile/features/groups/presentation/cubit/groups_cubit.d
 import 'package:fluxora_mobile/features/groups/presentation/cubit/groups_state.dart';
 import 'package:fluxora_mobile/features/groups/presentation/widgets/pin_modals.dart';
 
-/// All-in-one section that renders the three M6 cards.  Designed to be
-/// dropped into the Profile screen between the stat row and the
-/// settings list.  Hides itself entirely when the cubit has no
-/// content to surface (no gated groups + no provenance worth showing).
+/// All-in-one section that renders the consolidated "My groups" card +
+/// the "Visible libraries" card.  Drops into Profile between the stat
+/// row and the settings list.  Hides itself only when the client is in
+/// zero groups AND has zero visible libraries (true fresh install with
+/// no Public-group seeding).
 class GroupsSection extends StatelessWidget {
   const GroupsSection({super.key});
 
@@ -31,29 +41,19 @@ class GroupsSection extends StatelessWidget {
           return _FailureShell(message: state.message);
         }
         final loaded = state as MobileGroupsLoaded;
-        final locked = loaded.lockedGroups;
-        final unlocked = loaded.unlockedGroups;
-        final visible = loaded.libraryIds;
-        // Hide the entire section if nothing meaningful — fresh install
-        // with one operator client + no PIN-gated groups would otherwise
-        // show three empty cards.
-        if (locked.isEmpty && unlocked.isEmpty && visible.isEmpty) {
+        if (loaded.groups.isEmpty && loaded.libraryIds.isEmpty) {
           return const SizedBox.shrink();
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (locked.isNotEmpty) ...[
-              _LockedGroupsCard(groups: locked, parentState: loaded),
+            if (loaded.groups.isNotEmpty) ...[
+              _MembershipsCard(state: loaded),
               const SizedBox(height: 12),
             ],
-            if (unlocked.isNotEmpty) ...[
-              _UnlockedGroupsCard(groups: unlocked, parentState: loaded),
-              const SizedBox(height: 12),
-            ],
-            if (visible.isNotEmpty)
+            if (loaded.libraryIds.isNotEmpty)
               _VisibleLibrariesCard(
-                libraryIds: visible,
+                libraryIds: loaded.libraryIds,
                 provenance: loaded.groupsContributing,
                 groupsById: {for (final g in loaded.groups) g.id: g},
               ),
@@ -64,189 +64,47 @@ class GroupsSection extends StatelessWidget {
   }
 }
 
-// ── Locked Groups ──────────────────────────────────────────────────────────
+// ── My Groups (consolidated) ───────────────────────────────────────────────
 
-class _LockedGroupsCard extends StatelessWidget {
-  const _LockedGroupsCard({
-    required this.groups,
-    required this.parentState,
-  });
+/// Status of a membership row, used to drive ordering + badge + action
+/// affordance.  Locked goes first because it needs the user's input;
+/// Unlocked next so they can see / drop active grants; Open last as
+/// purely informational.
+enum _MembershipKind { locked, unlocked, open }
 
-  final List<MobileGroupRow> groups;
-  final MobileGroupsLoaded parentState;
-
-  @override
-  Widget build(BuildContext context) {
-    return _SectionCard(
-      title: 'Locked groups',
-      caption: 'Tap to unlock content from groups you\'re a member of.',
-      icon: Icons.lock_outline_rounded,
-      iconColor: AppColors.amber,
-      child: Column(
-        children: [
-          for (var i = 0; i < groups.length; i++) ...[
-            if (i > 0)
-              const Divider(
-                height: 1,
-                color: Color(0x10FFFFFF),
-              ),
-            _LockedGroupRow(
-              group: groups[i],
-              isBusy: parentState.actionInFlight == groups[i].id,
-            ),
-          ],
-        ],
-      ),
-    );
+extension on MobileGroupRow {
+  _MembershipKind get _kind {
+    if (isLocked) return _MembershipKind.locked;
+    if (hasActiveGrant) return _MembershipKind.unlocked;
+    return _MembershipKind.open;
   }
 }
 
-class _LockedGroupRow extends StatelessWidget {
-  const _LockedGroupRow({required this.group, required this.isBusy});
+class _MembershipsCard extends StatelessWidget {
+  const _MembershipsCard({required this.state});
 
-  final MobileGroupRow group;
-  final bool isBusy;
-
-  @override
-  Widget build(BuildContext context) {
-    final state = group.enrollmentState;
-    final isEnrollment =
-        state == GroupEnrollmentState.enrollmentRequired;
-    return InkWell(
-      onTap: isBusy ? null : () => _onTap(context),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Row(
-          children: [
-            _GroupAvatar(group: group),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    group.name,
-                    style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.textBright,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    isEnrollment
-                        ? 'Set up a PIN for this device'
-                        : 'Enter PIN to unlock',
-                    style: AppTypography.captionV2.copyWith(
-                      color: AppColors.textMutedV2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (isBusy)
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppColors.violet,
-                ),
-              )
-            else
-              Icon(
-                isEnrollment
-                    ? Icons.add_circle_outline_rounded
-                    : Icons.chevron_right_rounded,
-                size: 20,
-                color: AppColors.violet,
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _onTap(BuildContext context) async {
-    final cubit = context.read<MobileGroupsCubit>();
-    final messenger = ScaffoldMessenger.of(context);
-    if (group.enrollmentState ==
-        GroupEnrollmentState.enrollmentRequired) {
-      final pin = await showFluxBottomSheet<String>(
-        context: context,
-        builder: (_) => PinEnrollmentSheet(
-          groupName: group.name,
-          pinMode: group.pinMode,
-        ),
-      );
-      if (pin == null) return;
-      final ok = await cubit.enroll(group.id, pin);
-      if (ok) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('${group.name} unlocked'),
-            backgroundColor: AppColors.violet,
-          ),
-        );
-      } else {
-        final err = (cubit.state is MobileGroupsLoaded)
-            ? (cubit.state as MobileGroupsLoaded).lastError
-            : null;
-        messenger.showSnackBar(
-          SnackBar(content: Text(err ?? 'Enrollment failed')),
-        );
-      }
-    } else {
-      // Shared mode + per-client-already-enrolled both land on the
-      // entry sheet.  Sheet copy adapts to pin_model.
-      final pin = await showFluxBottomSheet<String>(
-        context: context,
-        builder: (_) => PinEntrySheet(
-          groupName: group.name,
-          pinMode: group.pinMode,
-          pinModel: group.pinModel,
-        ),
-      );
-      if (pin == null) return;
-      final ok = await cubit.enter(group.id, pin);
-      if (ok) {
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('${group.name} unlocked'),
-            backgroundColor: AppColors.violet,
-          ),
-        );
-      } else {
-        final err = (cubit.state is MobileGroupsLoaded)
-            ? (cubit.state as MobileGroupsLoaded).lastError
-            : null;
-        messenger.showSnackBar(
-          SnackBar(content: Text(err ?? 'Wrong PIN')),
-        );
-      }
-    }
-  }
-}
-
-// ── Unlocked Groups ────────────────────────────────────────────────────────
-
-class _UnlockedGroupsCard extends StatelessWidget {
-  const _UnlockedGroupsCard({
-    required this.groups,
-    required this.parentState,
-  });
-
-  final List<MobileGroupRow> groups;
-  final MobileGroupsLoaded parentState;
+  final MobileGroupsLoaded state;
 
   @override
   Widget build(BuildContext context) {
+    final all = state.groups.where((g) => g.isActive).toList();
+    // Stable order: Locked → Unlocked → Open, preserving the cubit's
+    // membership-added order within each bucket.
+    all.sort((a, b) => a._kind.index.compareTo(b._kind.index));
+    final unlockedCount =
+        all.where((g) => g._kind == _MembershipKind.unlocked).length;
+    final lockedCount =
+        all.where((g) => g._kind == _MembershipKind.locked).length;
+    final caption = lockedCount > 0
+        ? 'You\'re in ${all.length} group${all.length == 1 ? '' : 's'}. '
+            'Tap a locked row to enter its PIN.'
+        : 'You\'re in ${all.length} group${all.length == 1 ? '' : 's'}.';
     return _SectionCard(
-      title: 'Unlocked groups',
-      caption: 'Currently accessible.  Tap "Lock" to drop this device\'s '
-          'grant — re-PIN on next access.',
-      icon: Icons.lock_open_rounded,
+      title: 'My groups (${all.length})',
+      caption: caption,
+      icon: Icons.group_rounded,
       iconColor: AppColors.violet,
-      trailing: groups.length > 1
+      trailing: unlockedCount > 1
           ? GestureDetector(
               onTap: () => _confirmLockAll(context),
               child: MouseRegion(
@@ -263,15 +121,15 @@ class _UnlockedGroupsCard extends StatelessWidget {
           : null,
       child: Column(
         children: [
-          for (var i = 0; i < groups.length; i++) ...[
+          for (var i = 0; i < all.length; i++) ...[
             if (i > 0)
               const Divider(
                 height: 1,
                 color: Color(0x10FFFFFF),
               ),
-            _UnlockedGroupRow(
-              group: groups[i],
-              isBusy: parentState.actionInFlight == groups[i].id,
+            _MembershipRow(
+              group: all[i],
+              isBusy: state.actionInFlight == all[i].id,
             ),
           ],
         ],
@@ -325,68 +183,225 @@ class _UnlockedGroupsCard extends StatelessWidget {
   }
 }
 
-class _UnlockedGroupRow extends StatelessWidget {
-  const _UnlockedGroupRow({required this.group, required this.isBusy});
+/// Single membership row — adapts content + action by `_kind`.
+///
+/// Locked   →  state badge "LOCKED" + chevron-right + tap opens PIN sheet
+/// Unlocked →  state badge "UNLOCKED" + "Lock" text button
+/// Open     →  state badge "OPEN"     + no action; informational only
+class _MembershipRow extends StatelessWidget {
+  const _MembershipRow({required this.group, required this.isBusy});
 
   final MobileGroupRow group;
   final bool isBusy;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        children: [
-          _GroupAvatar(group: group),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  group.name,
-                  style: AppTypography.bodySmall.copyWith(
-                    color: AppColors.textBright,
-                    fontWeight: FontWeight.w600,
+    final kind = group._kind;
+    final isLocked = kind == _MembershipKind.locked;
+    final isEnrollment =
+        group.enrollmentState == GroupEnrollmentState.enrollmentRequired;
+    final caption = switch (kind) {
+      _MembershipKind.locked => isEnrollment
+          ? 'Set up a PIN for this device'
+          : 'Enter PIN to unlock',
+      _MembershipKind.unlocked => group.grantExpiresAt != null
+          ? 'Expires ${_formatExpires(group.grantExpiresAt!)}'
+          : 'Currently accessible',
+      _MembershipKind.open =>
+        group.isPublic ? 'Available to every client' : 'Available without a PIN',
+    };
+
+    return InkWell(
+      onTap: (isLocked && !isBusy) ? () => _onTapLocked(context) : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Row(
+          children: [
+            _GroupAvatar(group: group),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          group.name,
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textBright,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _StateBadge(kind: kind),
+                    ],
                   ),
-                ),
-                if (group.grantExpiresAt != null) ...[
                   const SizedBox(height: 2),
                   Text(
-                    'Expires ${_formatExpires(group.grantExpiresAt!)}',
+                    caption,
                     style: AppTypography.captionV2.copyWith(
                       color: AppColors.textMutedV2,
                     ),
                   ),
                 ],
-              ],
-            ),
-          ),
-          if (isBusy)
-            const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: AppColors.violet,
-              ),
-            )
-          else
-            TextButton(
-              onPressed: () => context
-                  .read<MobileGroupsCubit>()
-                  .lock(group.id),
-              child: Text(
-                'Lock',
-                style: AppTypography.captionV2.copyWith(
-                  color: AppColors.red,
-                  fontWeight: FontWeight.w600,
-                ),
               ),
             ),
-        ],
+            const SizedBox(width: 8),
+            _RowAction(
+              kind: kind,
+              isBusy: isBusy,
+              isEnrollment: isEnrollment,
+              onLock: () => context.read<MobileGroupsCubit>().lock(group.id),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _onTapLocked(BuildContext context) async {
+    final cubit = context.read<MobileGroupsCubit>();
+    final messenger = ScaffoldMessenger.of(context);
+    if (group.enrollmentState ==
+        GroupEnrollmentState.enrollmentRequired) {
+      final pin = await showFluxBottomSheet<String>(
+        context: context,
+        builder: (_) => PinEnrollmentSheet(
+          groupName: group.name,
+          pinMode: group.pinMode,
+        ),
+      );
+      if (pin == null) return;
+      final ok = await cubit.enroll(group.id, pin);
+      if (ok) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('${group.name} unlocked'),
+            backgroundColor: AppColors.violet,
+          ),
+        );
+      } else {
+        final err = (cubit.state is MobileGroupsLoaded)
+            ? (cubit.state as MobileGroupsLoaded).lastError
+            : null;
+        messenger.showSnackBar(
+          SnackBar(content: Text(err ?? 'Enrollment failed')),
+        );
+      }
+    } else {
+      final pin = await showFluxBottomSheet<String>(
+        context: context,
+        builder: (_) => PinEntrySheet(
+          groupName: group.name,
+          pinMode: group.pinMode,
+          pinModel: group.pinModel,
+        ),
+      );
+      if (pin == null) return;
+      final ok = await cubit.enter(group.id, pin);
+      if (ok) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('${group.name} unlocked'),
+            backgroundColor: AppColors.violet,
+          ),
+        );
+      } else {
+        final err = (cubit.state is MobileGroupsLoaded)
+            ? (cubit.state as MobileGroupsLoaded).lastError
+            : null;
+        messenger.showSnackBar(
+          SnackBar(content: Text(err ?? 'Wrong PIN')),
+        );
+      }
+    }
+  }
+}
+
+class _StateBadge extends StatelessWidget {
+  const _StateBadge({required this.kind});
+
+  final _MembershipKind kind;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = switch (kind) {
+      _MembershipKind.locked => ('LOCKED', AppColors.amber),
+      _MembershipKind.unlocked => ('UNLOCKED', AppColors.violet),
+      _MembershipKind.open => ('OPEN', AppColors.textMutedV2),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: AppTypography.captionV2.copyWith(
+          color: color,
+          fontWeight: FontWeight.w700,
+          fontSize: 9.5,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
+class _RowAction extends StatelessWidget {
+  const _RowAction({
+    required this.kind,
+    required this.isBusy,
+    required this.isEnrollment,
+    required this.onLock,
+  });
+
+  final _MembershipKind kind;
+  final bool isBusy;
+  final bool isEnrollment;
+  final VoidCallback onLock;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isBusy) {
+      return const SizedBox(
+        width: 18,
+        height: 18,
+        child: CircularProgressIndicator(
+          strokeWidth: 2,
+          color: AppColors.violet,
+        ),
+      );
+    }
+    return switch (kind) {
+      _MembershipKind.locked => Icon(
+          isEnrollment
+              ? Icons.add_circle_outline_rounded
+              : Icons.chevron_right_rounded,
+          size: 20,
+          color: AppColors.violet,
+        ),
+      _MembershipKind.unlocked => TextButton(
+          onPressed: onLock,
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: const Size(0, 28),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: Text(
+            'Lock',
+            style: AppTypography.captionV2.copyWith(
+              color: AppColors.red,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      _MembershipKind.open => const SizedBox.shrink(),
+    };
   }
 }
 

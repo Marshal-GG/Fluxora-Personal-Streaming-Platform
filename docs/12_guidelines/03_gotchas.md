@@ -451,7 +451,7 @@ Override at the cubit level, not the call site. Every existing `emit(...)` becom
 
 **When NOT to apply the override:** if a cubit's emit-after-close case actually represents a logic bug (e.g., you're calling `emit` from the cubit itself after explicitly calling `close()`), the guard hides it. Use the override on cubits whose async methods can outlive disposal (poll timers, stream subscriptions, HTTP fetches) — which in practice is most of them. For a stateless utility cubit with synchronous emits only, the guard adds no value.
 
-**Cubits in this codebase that have the override** (as of 2026-05-06): every cubit under `apps/desktop/lib/features/*/presentation/cubit/`. Mobile cubits don't yet — apply the same pattern when next touching them.
+**Cubits in this codebase that have the override** (as of 2026-05-08): every cubit under `apps/desktop/lib/features/*/presentation/cubit/`; on mobile, `MobileGroupsCubit` (since 2026-05-07) and `DetailCubit` (since 2026-05-08, after a field log surfaced `BlocBase.emit` from `DetailCubit.load` mid-navigate-back).  Remaining mobile cubits without the guard — apply when next touched: `ProfileCubit`, `ProfileStatsCubit`, `RecentCubit`, `ContinueWatchingCubit`, `NotificationsCubit`, `SearchCubit`, `LibraryBloc`, `PlayerCubit` (and `library/presentation/bloc/library_bloc.dart` which is a Bloc, not a Cubit — same fix applies via the `emit` override on its event handlers' `Emitter`).
 
 ---
 

@@ -475,14 +475,19 @@ Tier 3 ships as v1.6 follow-up; ~2 additional days when operators actually ask f
 
 **Mitigation:** The migration ships with a desktop banner ("Groups feature was upgraded — review your group config; access semantics changed.  Click for details").  Banner persists until the operator dismisses or 7 days pass.
 
-### M6 — Mobile UX polish ✅ 2026-05-07
+### M6 — Mobile UX polish ✅ 2026-05-07 · UX revision 2026-05-08
 
 **Goal:** Profile screen surfaces the new model coherently.  Restrictions card from `12_groups_remediation_plan.md` §5.5 is reworked.
 
+**As shipped 2026-05-07 (three cards):**
 - New "Visible Libraries" card on Profile: explicit list of what this device sees right now.  Each library entry shows which group(s) granted it.
 - "Locked Groups" surface: groups the device is a member of but hasn't unlocked.  Tap → PIN entry → unlock.
 - "Unlocked Groups" surface: groups currently unlocked + per-group expiry + lock buttons.
 - PIN entry validates client-side (length + numeric); server-side compare authoritative.
+
+**UX revision 2026-05-08 (consolidated to two cards):** the original three-card layout had a critical gap — when the client was in zero PIN-gated groups (only Public, the typical fresh-pair state) AND had no active grants, the *entire section self-hid*, leaving the user with no visible indicator of group membership and no path to PIN entry for any group whose state hadn't changed.  Field report: "there is no way to see how many groups i am part of and where to enter pin?"
+
+The Locked + Unlocked cards were collapsed into a single "**My groups (N)**" card that always renders when the client is in any group.  Each row shows the group icon, name, a state badge (`LOCKED` / `UNLOCKED` / `OPEN`), and a state-appropriate action: chevron + tap-opens-PIN-sheet for Locked, "Lock" text button for Unlocked, no action for Open.  Rows sort Locked → Unlocked → Open so action-required entries bubble to the top.  "Lock all" still surfaces in the trailing slot when 2+ groups are unlocked.  The Visible Libraries card is unchanged.  The section now only self-hides when the client is in genuinely zero groups AND has zero visible libraries.
 
 ### M7 — Operator quality of life ✅ 2026-05-07
 

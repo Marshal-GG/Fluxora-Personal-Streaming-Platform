@@ -55,4 +55,15 @@ class DetailCubit extends Cubit<DetailState> {
       emit(const DetailFailure('Could not load this title.'));
     }
   }
+
+  /// Guard emits against the "user navigated back mid-fetch, cubit
+  /// closed, in-flight `getFile()` resolves" race — without this the
+  /// 2026-05-08 logs surfaced a `Bad state: Cannot emit new states after
+  /// calling close` from `DetailCubit.load`.  Same pattern as
+  /// `MobileGroupsCubit.emit`.
+  @override
+  void emit(DetailState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }
