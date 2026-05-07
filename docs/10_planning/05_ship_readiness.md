@@ -1,7 +1,7 @@
 # Ship Readiness — v1
 
 > **Category:** Planning
-> **Status:** Active — Updated 2026-05-07 (mobile UI row flipped to ✅ — Groups v2 mobile shipped completes the redesign rollout)
+> **Status:** Active — Updated 2026-05-08 (mobile redesign M10 closed — Offline / X-Ray / Group Watch all shipped as UI shells; trending rip-out + streaming pipeline §4 leftovers + Groups M6 UX revision + DetailCubit emit-after-close + sign-out self-revoke all closed.  Server suite 656; mobile suite 64.  Audit §17.3 #1 (iOS PIP) remains the only open priority that's neither shipped nor explicitly deferred.) 2026-05-07 (mobile UI row flipped to ✅ — Groups v2 mobile shipped completes the redesign rollout)
 > **Purpose:** "Can we ship?" synthesis. What v1's architecture deliberately doesn't need, what's actually blocking the door, and the distribution-side gaps the rest of the docs don't cover. References [`04_manual_tasks.md`](./04_manual_tasks.md) for individual task detail rather than duplicating it.
 
 ---
