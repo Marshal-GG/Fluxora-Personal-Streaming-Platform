@@ -23,4 +23,11 @@ abstract class LibraryRepository {
   /// rail.  Returns files with non-zero resume position that aren't
   /// effectively complete (sorted by `updated_at DESC`).
   Future<List<MediaFile>> listContinueWatching({int limit = 12});
+
+  /// `POST /api/v1/files/{file_id}/reset-progress` — zero out the
+  /// file's `last_progress_sec` so the next playback starts from 0:00.
+  /// Backs the "Start over" affordance on the title detail screen
+  /// (streaming pipeline plan §4.10).  Returns 204 on success; 404 when
+  /// the file doesn't exist or isn't visible to the caller.
+  Future<void> resetProgress(String fileId);
 }

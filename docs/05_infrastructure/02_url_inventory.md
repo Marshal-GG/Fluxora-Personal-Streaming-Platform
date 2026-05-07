@@ -2,7 +2,7 @@
 
 > **Category:** Infrastructure
 > **Status:** Active — Created 2026-05-02
-> **Last Updated:** 2026-05-02
+> **Last Updated:** 2026-05-08 (added `POST /api/v1/files/{file_id}/reset-progress` for the "Start over" affordance — streaming pipeline plan §4.10)
 
 Canonical reference for every URL Fluxora touches today and every URL that needs provisioning in the future. Update this file whenever an endpoint is added, a hostname is provisioned, or a third-party integration changes.
 
@@ -57,6 +57,7 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `GET` | `/api/v1/files/{file_id}` | Token or localhost | Get single file by ID |
 | `POST` | `/api/v1/files/upload` | Token or localhost | Upload a file to a library |
 | `DELETE` | `/api/v1/files/{file_id}` | Token or localhost | Remove file from index (does not delete from disk) |
+| `POST` | `/api/v1/files/{file_id}/reset-progress` | Token or localhost | Zero `last_progress_sec` so next playback starts from 0:00 — backs the "Start over" affordance on title detail (streaming pipeline plan §4.10). 404 (not 403) when bearer caller's groups don't expose the file's library, to prevent enumeration of gated content; localhost skips the visibility filter |
 
 ### `library` router
 

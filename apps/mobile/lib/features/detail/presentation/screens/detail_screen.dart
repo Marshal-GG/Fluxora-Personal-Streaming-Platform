@@ -320,8 +320,66 @@ class _PrimaryActions extends StatelessWidget {
             child: Text(hasResume ? 'Resume' : 'Play'),
           ),
         ),
+        if (hasResume) ...[
+          const SizedBox(width: 10),
+          FluxButton(
+            variant: FluxButtonVariant.secondary,
+            icon: Icons.replay,
+            onPressed: () => _confirmStartOver(context, file),
+            child: const Text('Start over'),
+          ),
+        ],
       ],
     );
+  }
+
+  /// Shows the "Start over?" confirmation, then dispatches the
+  /// reset-progress request via the LibraryRepository.  Pulled out so
+  /// the surrounding `Row` reads cleanly + so we can capture the
+  /// pre-await BuildContext refs (`use_build_context_synchronously`).
+  Future<void> _confirmStartOver(
+    BuildContext context,
+    MediaFile file,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final cubit = context.read<DetailCubit>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surfaceGlass,
+        title: const Text(
+          'Start over?',
+          style: TextStyle(color: AppColors.textBright),
+        ),
+        content: Text(
+          'Reset playback to 0:00 for "${file.title ?? file.name}". '
+          'Your resume marker will be cleared.',
+          style: AppTypography.body.copyWith(color: AppColors.textBody),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Start over'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await GetIt.I<LibraryRepository>().resetProgress(file.id);
+      await cubit.load();
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Progress reset.')),
+      );
+    } catch (_) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Could not reset progress.')),
+      );
+    }
   }
 }
 

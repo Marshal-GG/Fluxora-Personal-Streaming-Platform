@@ -35,6 +35,11 @@ class Endpoints {
   static const String filesSearch = '$_base/files/search';
   static String fileById(String fileId) => '$_base/files/$fileId';
 
+  /// `POST /api/v1/files/{fileId}/reset-progress` — zero out the file's
+  /// `last_progress_sec` (streaming pipeline plan §4.10).
+  static String fileResetProgress(String fileId) =>
+      '$_base/files/$fileId/reset-progress';
+
   // Library
   static const String library = '$_base/library';
   static const String libraryScan = '$_base/library/scan';

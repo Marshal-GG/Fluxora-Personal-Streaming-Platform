@@ -1,7 +1,7 @@
 # Streaming Pipeline — Issue Audit & Remediation Plan
 
 > **Category:** Planning
-> **Status:** ✅ Plan complete — all four commits shipped 2026-05-05
+> **Status:** ✅ All four commits shipped 2026-05-05; §4 leftovers (4.3 / 4.8 / 4.10 closed; 4.5 / 4.7 explicitly deferred to future tickets) closed 2026-05-08.
 > **Scope:** Identifies and prioritises every defect found in the HLS streaming pipeline (mobile/desktop player ⇆ server ⇆ FFmpeg) during the 2026-05-05 user-reported regression triage.  Lays out a sequenced remediation plan with concrete code targets, commit boundaries, and test strategy.
 > **Triggered by:** four user-reported issues (seek delay, GPU/CPU pegging, "code error 1" on HDR→SDR toggle, HDR-not-working) — investigation surfaced six additional issues that share root causes with the reported ones.
 
@@ -208,13 +208,13 @@ These weren't user-reported but came out of the same code paths.
 
 ---
 
-### 4.3 The 5 s "wait for segment to appear" blocks an HTTP worker
+### 4.3 The 5 s "wait for segment to appear" blocks an HTTP worker ✅ landed 2026-05-08
 
-**Where:** [`stream.py:379-382`](../../apps/server/routers/stream.py#L379).
+**Where:** [`stream.py`](../../apps/server/routers/stream.py) — segment-serve handler.
 
-**Impact:** during a seek-ahead the player typically requests 3–5 unfetched segments in parallel.  Each blocks a uvicorn worker for 5 s.  With 3 streaming clients seeking simultaneously, the worker pool can saturate and other endpoints (notifications, settings, info) start backing up.
+**Impact (pre-fix):** during a seek-ahead the player typically requests 3–5 unfetched segments in parallel.  Each blocks a uvicorn worker for 5 s.  With 3 streaming clients seeking simultaneously, the worker pool can saturate and other endpoints (notifications, settings, info) start backing up.
 
-**Fix (after seek-restart ships):** keep the 5 s wait only as a safety net; with seek-restart the gap-window shrinks to a sub-second.  Optionally return `503 + Retry-After: 1` on miss instead of holding the worker.
+**Shipped fix (2026-05-08):** worker-pinning budget tightened from 50 iterations × 100 ms (5 s) → 20 iterations × 100 ms (2 s).  The seek-restart pipeline (Commits 2/3) shrinks the realistic gap between a player request and the segment landing on disk to sub-second for stream-copy + ~1 s for transcode; the 2 s budget still absorbs that with margin.  Tonemap restarts (≥10 s gap) stay bridged client-side by the mobile player's `_SeekingOverlay` + media_kit's 404-retry loop, which together hammer the segment until FFmpeg catches up.  Three concurrent seekers used to chew 15 worker-seconds; now ≤6.  Response stays `404` (rather than `503 + Retry-After`) to keep media_kit's existing 404-retry path live — no client-side change needed.
 
 ---
 
@@ -228,13 +228,15 @@ These weren't user-reported but came out of the same code paths.
 
 ---
 
-### 4.5 The static VOD playlist over-promises segments
+### 4.5 The static VOD playlist over-promises segments ⏸ deferred 2026-05-08
 
-**Where:** [`ffmpeg_service.py:434-487`](../../apps/server/services/ffmpeg_service.py#L434) — `_write_static_vod_playlist` lists `ceil(duration / hls_time)` segments and assumes FFmpeg will produce exactly that many.
+**Where:** [`ffmpeg_service.py:514-605`](../../apps/server/services/ffmpeg_service.py#L514) — `_write_static_vod_playlist` lists `ceil(duration / hls_time)` segments and assumes FFmpeg will produce exactly that many.
 
 **Impact:** stream-copy of HEVC sources aligns segments to source keyframes.  If the source has GOPs of, say, 240 frames @ 24 fps = 10 s, and we ask for `hls_time=10`, FFmpeg may produce slightly fewer or more segments than predicted.  The tail segment can mismatch by 5-15 %.  Player hits a 404 on the over-promised final segment(s).
 
-**Fix:** compute segment count using a tighter heuristic — for stream-copy mode, query FFmpeg's actual segment list once `seg00000` has been written and rewrite the playlist with the observed pattern.  Or accept the imprecision and have the route quietly serve `EXT-X-ENDLIST` when the actually-existing tail segment is found.
+**Status (2026-05-08 audit):** the proper fix needs an FFmpeg-natural-exit hook in the spawn loop that finalises the playlist with the actually-observed segment count — non-trivial because the spawn loop doesn't currently track post-startup completion (it returns once seg00000 lands).  The current 404 + media_kit retry-then-skip behaviour bridges the worst case (final 1-2 segments missing) acceptably; user-visible impact is a brief stutter at end-of-file.  **Deferred to a separate ticket** so the §4 close-out doesn't block on a spawn-loop refactor that touches the just-shipped seek-restart code.
+
+**Fix shape (when picked up):** add `_finalize_vod_playlist(session_dir)` that scans `seg*.{ts,m4s}` files + rewrites the playlist with the truth, called from a new "FFmpeg natural exit" hook.  The hook is needed for stream-copy specifically; transcode sessions tend to land within ±1 of the prediction.
 
 ---
 
@@ -258,13 +260,21 @@ These weren't user-reported but came out of the same code paths.
 
 ---
 
-### 4.8 The HEVC fmp4 init segment generator is always invoked, even when FFmpeg wrote one
+### 4.8 The HEVC fmp4 init segment generator is always invoked, even when FFmpeg wrote one ✅ already in place (closed 2026-05-08)
 
-**Where:** [`ffmpeg_service.py:828-842`](../../apps/server/services/ffmpeg_service.py#L828) — `_ensure_fmp4_init_segment` runs unconditionally when `use_fmp4` is True.
+**Where:** [`ffmpeg_service.py:_ensure_fmp4_init_segment`](../../apps/server/services/ffmpeg_service.py).
 
-**Impact:** a redundant ffprobe + ffmpeg subprocess spawn on every stream-copy HEVC stream, even when FFmpeg's HLS muxer already wrote the init segment correctly (which is most of the time on modern builds).  Adds ~200–500 ms latency to first-segment availability.
+**2026-05-08 audit finding:** the existence-check the original triage proposed is **already at lines 633-635** of the function:
+```python
+init_path = session_dir / "init.mp4"
+if init_path.exists() and init_path.stat().st_size > 0:
+    return True
+```
+The spawn-loop call at line 1015 IS unconditional on `use_fmp4`, but the function itself short-circuits when init.mp4 is present.  The triage's claim of "redundant ffprobe + ffmpeg subprocess spawn" misread the function — there's no ffprobe involved, and the ffmpeg subprocess only spawns when the init file is missing or zero-byte.
 
-**Fix:** check `init.mp4` existence (and non-zero size) first; skip the generator when present.  The generator is already idempotent so this is purely a startup-latency optimisation.
+**On the bundled FFmpeg the regen still fires often** because the bundled build's HLS muxer routinely doesn't write init.mp4 under stream-copy.  That regen is necessary safety, not redundancy — without it, playback fails with 404 on init.mp4.  The 200-500 ms cost is the price of a working fmp4 stream on the bundled build.
+
+**No code change needed.**  Remove from the leftovers list.
 
 ---
 
@@ -278,13 +288,18 @@ These weren't user-reported but came out of the same code paths.
 
 ---
 
-### 4.10 `last_progress_sec ≥ 0.95 × duration` excludes the file from "Continue Watching" — but doesn't reset
+### 4.10 `last_progress_sec ≥ 0.95 × duration` excludes the file from "Continue Watching" — but doesn't reset ✅ landed 2026-05-08
 
-**Where:** [`library_service.py:362-371`](../../apps/server/services/library_service.py#L362) — Continue-Watching query excludes near-end rows.
+**Where:** [`library_service.py`](../../apps/server/services/library_service.py) — Continue-Watching query excludes near-end rows.
 
-**Impact:** correct UX (don't suggest a file the user finished), but if the user re-watches the same file, the new session's progress writes overwrite the resume marker.  When they want to start over, there's no "reset progress" button — they have to seek back to 0 manually.
+**Impact (pre-fix):** correct UX (don't suggest a file the user finished), but if the user re-watches the same file, the new session's progress writes overwrite the resume marker.  When they want to start over, there's no "reset progress" button — they have to seek back to 0 manually.
 
-**Fix:** small UX item; add a "Start over" affordance to the file detail screen that PATCHes `last_progress_sec = 0`.
+**Shipped fix (2026-05-08):**
+- New server route [`POST /api/v1/files/{file_id}/reset-progress`](../../apps/server/routers/files.py) — zeroes `last_progress_sec` + bumps `updated_at`.  Returns 204; consumes the same visibility check `get_file` uses (404 — not 403 — when caller's groups don't expose the file's library, to prevent id-enumeration of gated content).  Localhost callers skip the visibility filter.
+- New `Endpoints.fileResetProgress(fileId)` constant + `LibraryRepository.resetProgress(String)` method.  Mobile impl POSTs through `ApiClient.post`.
+- Mobile [`detail_screen.dart`](../../apps/mobile/lib/features/detail/presentation/screens/detail_screen.dart): `_PrimaryActions` row now renders a secondary "Start over" `FluxButton` next to "Resume" when `file.resumeSec > 0`.  Tapping opens an `AlertDialog` confirmation (titled "Start over?", quoting the file title), then calls `resetProgress` → reloads the cubit → shows a "Progress reset." SnackBar.  Failure path shows "Could not reset progress." SnackBar; cubit state stays as-is.  Message + cubit refs captured pre-await for `use_build_context_synchronously` cleanliness.
+- 4 new server tests in [`tests/test_files.py`](../../apps/server/tests/test_files.py): zero-out happy path, 404 on unknown file, localhost skips visibility, 404 when library not visible (mocks `group_service.get_visible_libraries` empty + sends `CF-Connecting-IP` header to bypass the loopback dep shortcut).
+- Verification: server suite **637 → 641 passing**; mobile **64 still passing**; `flutter analyze` clean × `apps/mobile` + `packages/fluxora_core`.
 
 ---
 
@@ -479,3 +494,19 @@ After commit 4 lands, run the full server pytest (currently 391 tests) + `flutte
 - Ship-readiness gating: [`05_ship_readiness.md`](./05_ship_readiness.md) — none of these are hard blockers, but #3.1 (seek) and #3.2 (HDR toggle) are visible-in-demo regressions and should ship before v1 is announced publicly.
 - Manual tasks already tracking related items: [`04_manual_tasks.md`](./04_manual_tasks.md) — log rotation, cache mgmt, FFmpeg bundling.
 - ADRs: none of the decisions here rise to ADR level (they're tactical fixes within an existing architecture).  When seek-restart ships, capture the design choice "kill-and-restart vs. spawn-secondary-FFmpeg" in [`02_decisions.md`](./02_decisions.md).
+
+---
+
+## 10 · Close-out (2026-05-08)
+
+The §4 leftovers from the 2026-05-05 commit batch were closed out on 2026-05-08:
+
+| Issue | Status | Notes |
+|---|---|---|
+| §4.3 5 s segment-wait | ✅ shortened to 2 s | Worker-pinning down 60 %; client retry path unchanged. |
+| §4.5 VOD over-promise tail | ⏸ deferred to a separate ticket | Real fix needs an FFmpeg-natural-exit hook in the spawn loop; current 404 + media_kit retry-skip behaviour is acceptable end-of-file UX. |
+| §4.7 alternative tonemap methods | ⏸ low priority — left as-is | Hable is fine for the user's ≤ 1000-nit HDR content; revisit when 4000-nit-mastered movie sources surface as a complaint. |
+| §4.8 redundant `_ensure_fmp4_init_segment` | ✅ no-op (existence check already in place) | Triage misread; the function short-circuits when init.mp4 is present.  The unconditional call is necessary on the bundled FFmpeg. |
+| §4.10 "Start over" affordance | ✅ shipped | New `POST /files/{id}/reset-progress` server route + Endpoints + LibraryRepository method + detail-screen secondary button + 4 tests.  Server 637 → 641 passing. |
+
+After this close-out, the streaming pipeline plan has **no outstanding tactical work**.  The remaining items are out-of-scope (WebRTC, browser web player, AV1-libdav1d swap) and live in [`04_manual_tasks.md`](./04_manual_tasks.md) or future plans.

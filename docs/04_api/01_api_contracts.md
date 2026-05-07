@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-04 (**Phase 6 follow-ups:** `POST /api/v1/stream/start/{file_id}` gained `?tonemap=true` query param; `StreamStartResponse` gains `hdr_format: string | null` + `tonemapped: bool` fields. GPU UX Slice A: new `GET /api/v1/transcoding/advisor` endpoint; `/transcoding/status` gains `encoder_test_error` + `encoder_tested_at` fields; `transcoding_encoder` allowed values expanded to all 10 registry encoders; `/stream/start` 503 detail now carries the FFmpeg stderr tail. Earlier 2026-05-04: Phase B real-data backfill: new `GET /api/v1/files/search?q=&limit=`, new `GET /api/v1/auth/clients/me/continue-watching?limit=`, new `GET /api/v1/auth/clients/me/stats` returning `{hours, movies, shows}`. Phase A real-data backfill: new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
+> **Status:** Active - Updated 2026-05-08 (new `POST /api/v1/files/{file_id}/reset-progress` for the "Start over" affordance — streaming pipeline plan §4.10). 2026-05-04 (**Phase 6 follow-ups:** `POST /api/v1/stream/start/{file_id}` gained `?tonemap=true` query param; `StreamStartResponse` gains `hdr_format: string | null` + `tonemapped: bool` fields. GPU UX Slice A: new `GET /api/v1/transcoding/advisor` endpoint; `/transcoding/status` gains `encoder_test_error` + `encoder_tested_at` fields; `transcoding_encoder` allowed values expanded to all 10 registry encoders; `/stream/start` 503 detail now carries the FFmpeg stderr tail. Earlier 2026-05-04: Phase B real-data backfill: new `GET /api/v1/files/search?q=&limit=`, new `GET /api/v1/auth/clients/me/continue-watching?limit=`, new `GET /api/v1/auth/clients/me/stats` returning `{hours, movies, shows}`. Phase A real-data backfill: new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
 
 ---
 
@@ -461,6 +461,16 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
 
 **Response:** `204 No Content`  
 **Errors:** `404` file not found
+
+---
+
+### `POST /api/v1/files/{file_id}/reset-progress`
+**Description:** Reset the file's `last_progress_sec` to 0 so the next playback starts from 0:00. Backs the "Start over" affordance on the title detail screen (streaming pipeline plan §4.10).  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented (2026-05-08)
+
+**Response:** `204 No Content`  
+**Errors:** `404` file not found OR file's library is not visible to the caller (groups don't expose it). Bearer-token callers receive 404 (not 403) on the visibility miss to prevent enumeration of gated content. Localhost callers skip the visibility filter.
 
 ---
 

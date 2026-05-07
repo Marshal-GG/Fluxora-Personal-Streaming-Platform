@@ -550,12 +550,21 @@ async def serve_hls(
     # position.  Wait briefly so a transient miss doesn't surface as a
     # hard error; if FFmpeg genuinely never produces this segment (file
     # ended early, encode failed) we still 404 after the timeout.
+    #
+    # Worker-pinning budget tightened from 5 s → 2 s on 2026-05-08 (plan
+    # §4.3) — the seek-restart pipeline (Commits 2/3, 2026-05-05) shrinks
+    # the realistic gap between a player request and the segment landing
+    # on disk to sub-second for stream-copy and ~1 s for transcode.
+    # Tonemap restarts (≥10 s gap) are bridged client-side by the
+    # mobile player's `_SeekingOverlay` + media_kit's 404-retry loop,
+    # which together hammer the segment until FFmpeg catches up.  Three
+    # concurrent seekers used to chew 15 worker-seconds; now ≤6.
     if not resolved.exists() and (
         filename.startswith("seg") or filename == "init.mp4"
     ):
         import asyncio as _asyncio
 
-        for _ in range(50):  # up to 5 s @ 100 ms
+        for _ in range(20):  # up to 2 s @ 100 ms
             await _asyncio.sleep(0.1)
             if resolved.exists():
                 break

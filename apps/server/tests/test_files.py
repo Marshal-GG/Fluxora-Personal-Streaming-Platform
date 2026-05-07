@@ -350,3 +350,116 @@ async def test_search_does_not_match_file_id_route(client: AsyncClient, monkeypa
     )
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+# ── POST /api/v1/files/{id}/reset-progress ───────────────────────────────────
+
+
+async def _set_progress(test_db, file_id: str, sec: float) -> None:
+    await test_db.execute(
+        "UPDATE media_files SET last_progress_sec = ? WHERE id = ?",
+        (sec, file_id),
+    )
+    await test_db.commit()
+
+
+async def _read_progress(test_db, file_id: str) -> float | None:
+    async with test_db.execute(
+        "SELECT last_progress_sec FROM media_files WHERE id = ?", (file_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    return row["last_progress_sec"] if row else None
+
+
+@pytest.mark.asyncio
+async def test_reset_progress_zeros_last_progress_sec(
+    client: AsyncClient, monkeypatch, test_db
+):
+    token = await _get_token(client, monkeypatch)
+    file_id = await _insert_file(test_db)
+    await _set_progress(test_db, file_id, 90.0)
+
+    resp = await client.post(
+        f"/api/v1/files/{file_id}/reset-progress",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 204
+    assert await _read_progress(test_db, file_id) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_reset_progress_404s_on_unknown_file(
+    client: AsyncClient, monkeypatch
+):
+    token = await _get_token(client, monkeypatch)
+    resp = await client.post(
+        "/api/v1/files/no-such-file/reset-progress",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_reset_progress_local_caller_skips_visibility(
+    client: AsyncClient, test_db
+):
+    """Localhost caller (no bearer token) should be able to reset
+    progress on any file regardless of group visibility — same
+    semantics as the get_file route."""
+    file_id = await _insert_file(test_db)
+    await _set_progress(test_db, file_id, 47.5)
+
+    resp = await client.post(f"/api/v1/files/{file_id}/reset-progress")
+    assert resp.status_code == 204
+    assert await _read_progress(test_db, file_id) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_reset_progress_404s_when_library_not_visible(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """A bearer-token caller whose groups don't expose the file's
+    library should receive 404 (not 403, to avoid id enumeration of
+    gated content) — same semantics as get_file.  We mock
+    `group_service.get_visible_libraries` to return an empty set so
+    the assertion holds independent of the test client's actual group
+    state."""
+    from unittest.mock import AsyncMock, patch
+    from services.group_service import VisibleLibraries
+
+    token = await _get_token(client, monkeypatch)
+
+    library_id = str(uuid.uuid4())
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths, created_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (
+            library_id,
+            "Hidden",
+            "movies",
+            '["/hidden"]',
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+    await test_db.commit()
+    file_id = await _insert_file(test_db, library_id=library_id)
+    await _set_progress(test_db, file_id, 30.0)
+
+    empty_visible = VisibleLibraries(library_ids=frozenset(), groups=())
+    with patch(
+        "services.group_service.get_visible_libraries",
+        new=AsyncMock(return_value=empty_visible),
+    ):
+        # CF-Connecting-IP forces the loopback dep onto the validate_token
+        # path so the bearer token is actually consulted (and our `_client`
+        # ends up non-None inside the route, firing the visibility check).
+        resp = await client.post(
+            f"/api/v1/files/{file_id}/reset-progress",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "CF-Connecting-IP": "203.0.113.1",
+            },
+        )
+    assert resp.status_code == 404
+    # Progress untouched.
+    assert await _read_progress(test_db, file_id) == 30.0

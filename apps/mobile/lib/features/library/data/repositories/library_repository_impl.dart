@@ -88,4 +88,13 @@ class LibraryRepositoryImpl implements LibraryRepository {
           .toList(),
     );
   }
+
+  @override
+  Future<void> resetProgress(String fileId) async {
+    _log.d('Resetting progress for file $fileId');
+    await _apiClient.post<void>(
+      Endpoints.fileResetProgress(fileId),
+      fromJson: (_) {},
+    );
+  }
 }

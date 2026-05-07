@@ -184,6 +184,51 @@ async def get_file(
     return MediaFileResponse(**row)
 
 
+@router.post(
+    "/{file_id}/reset-progress",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def reset_progress(
+    file_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> None:
+    """Reset `last_progress_sec` to 0 for the given file.
+
+    Backs the "Start over" affordance on file detail screens (streaming
+    pipeline plan §4.10).  Use case: a user finished a movie (so it
+    dropped out of Continue Watching at the 95 % cutoff), and now wants
+    to re-watch it from the beginning without manually scrubbing back to
+    0:00 once playback starts.
+
+    Bearer-token callers receive 404 (not 403) when the file lives in
+    a library their groups don't expose — matching the get-file route
+    so progress-reset can't be used to enumerate gated content.
+    Localhost skips the visibility filter.
+    """
+    row = await library_service.get_file(db, file_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
+        )
+    if _client is not None and row["library_id"] is not None:
+        visible = await group_service.get_visible_libraries(db, _client["id"])
+        if row["library_id"] not in visible.library_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found",
+            )
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    await db.execute(
+        "UPDATE media_files SET last_progress_sec = 0, updated_at = ?"
+        " WHERE id = ?",
+        (now, file_id),
+    )
+    await db.commit()
+
+
 @router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_file(
     file_id: str,
