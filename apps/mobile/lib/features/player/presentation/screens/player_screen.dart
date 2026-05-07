@@ -5,6 +5,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit_video/media_kit_video.dart' show Video, VideoController;
 import 'package:fluxora_core/fluxora_core.dart';
+import 'package:fluxora_mobile/core/router/app_router.dart';
 import 'package:fluxora_mobile/features/player/presentation/controllers/player_controls_controller.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.dart';
@@ -244,6 +245,12 @@ class _PlayerViewState extends State<_PlayerView>
                             context.read<PlayerCubit>().setTonemap(v),
                         onSeek: (d) =>
                             context.read<PlayerCubit>().seekTo(d),
+                        onXRay: () =>
+                            context.push(Routes.xray, extra: fileName),
+                        onGroupWatch: () => context.push(
+                          Routes.groupWatch,
+                          extra: fileName,
+                        ),
                         isSeeking: state.isSeeking,
                       ),
                       _MinimizeHandle(
@@ -336,6 +343,8 @@ class _VideoView extends StatelessWidget {
     this.tonemapped = false,
     this.onTonemapChanged,
     this.onSeek,
+    this.onXRay,
+    this.onGroupWatch,
     this.isSeeking = false,
   });
 
@@ -346,6 +355,14 @@ class _VideoView extends StatelessWidget {
   final bool tonemapped;
   final ValueChanged<bool>? onTonemapChanged;
   final ValueChanged<Duration>? onSeek;
+
+  /// X-Ray entry point on the top bar.  Wired from the player_screen's
+  /// BlocBuilder.  Null hides the chip.
+  final VoidCallback? onXRay;
+
+  /// Group Watch entry point in the overflow menu.  Wired from the
+  /// player_screen's BlocBuilder.  Null hides the menu item.
+  final VoidCallback? onGroupWatch;
 
   /// True while a server-side seek-restart is in flight.  Renders a
   /// dimming scrim + spinner so the user understands why playback is
@@ -373,6 +390,8 @@ class _VideoView extends StatelessWidget {
           tonemapped: tonemapped,
           onTonemapChanged: onTonemapChanged,
           onSeek: onSeek,
+          onXRay: onXRay,
+          onGroupWatch: onGroupWatch,
         ),
         if (isSeeking) const _SeekingOverlay(),
       ],

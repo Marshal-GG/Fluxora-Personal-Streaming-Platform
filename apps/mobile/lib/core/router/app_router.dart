@@ -19,8 +19,11 @@ import 'package:fluxora_mobile/features/episodes/presentation/screens/episodes_s
 import 'package:fluxora_mobile/features/home/presentation/screens/home_screen.dart';
 import 'package:fluxora_mobile/features/library/presentation/screens/files_screen.dart';
 import 'package:fluxora_mobile/features/library/presentation/screens/library_screen.dart';
+import 'package:fluxora_mobile/features/group_watch/presentation/screens/group_watch_screen.dart';
 import 'package:fluxora_mobile/features/notifications/presentation/screens/notifications_screen.dart';
+import 'package:fluxora_mobile/features/offline/presentation/screens/offline_screen.dart';
 import 'package:fluxora_mobile/features/player/presentation/screens/player_screen.dart';
+import 'package:fluxora_mobile/features/xray/presentation/screens/xray_screen.dart';
 import 'package:fluxora_mobile/features/profile/presentation/screens/profile_screen.dart';
 import 'package:fluxora_mobile/features/search/presentation/screens/search_screen.dart';
 import 'package:fluxora_mobile/shared/widgets/mobile_shell.dart';
@@ -71,6 +74,28 @@ abstract class Routes {
   /// is already in `PlayerReady` state.
   static const String playerResume = '/player/resume';
   static const String notifications = '/notifications';
+
+  /// Offline empty state — "You're offline / Retry connection"
+  /// (mobile redesign plan §M10).  v1: route registered, screen
+  /// rendered, but no live connectivity detector wired yet (no
+  /// `connectivity_plus` in pubspec).  v1.1 plug-in target.
+  static const String offline = '/offline';
+
+  /// X-Ray side panel over the player (mobile redesign plan §M10).
+  /// v1 ships as a UI shell with static cast + trivia fixtures —
+  /// per decision §1 row 4 "X-Ray uses static cast metadata only";
+  /// live ML / TMDB-credits wiring is v1.1 / Phase C of the real-data
+  /// backfill plan.  Pushed with `extra: MediaFile` so the screen can
+  /// render the source title in its app bar.
+  static const String xray = '/xray';
+
+  /// Group Watch (party / co-watch) over the player (mobile redesign
+  /// plan §M10).  v1 ships as a UI shell — multi-client sync is
+  /// Phase 5+ per decision §1 row 4 "Group Watch is a 'coming soon'
+  /// placeholder that opens but cannot start a session".  Not to be
+  /// confused with "Client Groups" / Groups v2.  Pushed with `extra:
+  /// String` (the source title) so the hero card can render it.
+  static const String groupWatch = '/group-watch';
 
   static String detail(String id) => '/detail/$id';
   static String episodes(String id) => '/episodes/$id';
@@ -186,6 +211,41 @@ final GoRouter appRouter = GoRouter(
     GoRoute(
       path: Routes.notifications,
       builder: (context, state) => const NotificationsScreen(),
+    ),
+    GoRoute(
+      path: Routes.offline,
+      builder: (context, state) {
+        // `extra` may carry a server name string from a future
+        // connectivity-watcher push; null is the safe default.
+        final extra = state.extra;
+        return OfflineScreen(
+          serverName: extra is String ? extra : null,
+        );
+      },
+    ),
+    GoRoute(
+      path: Routes.xray,
+      builder: (context, state) {
+        // `extra` may be a MediaFile (full detail-side push) or a
+        // String (player chrome only carries fileName).  Anything
+        // else falls back to the generic "X-Ray" title.
+        final extra = state.extra;
+        return XRayScreen(
+          file: extra is MediaFile ? extra : null,
+          title: extra is String ? extra : null,
+        );
+      },
+    ),
+    GoRoute(
+      path: Routes.groupWatch,
+      builder: (context, state) {
+        // `extra` is the source title; null falls back to a generic
+        // "this stream" copy in the hero card.
+        final extra = state.extra;
+        return GroupWatchScreen(
+          title: extra is String ? extra : null,
+        );
+      },
     ),
     GoRoute(
       path: '/detail/:id',

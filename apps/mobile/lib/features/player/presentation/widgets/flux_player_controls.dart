@@ -34,6 +34,8 @@ class FluxPlayerControls extends StatefulWidget {
     this.tonemapped = false,
     this.onTonemapChanged,
     this.onSeek,
+    this.onXRay,
+    this.onGroupWatch,
     super.key,
   });
 
@@ -41,6 +43,20 @@ class FluxPlayerControls extends StatefulWidget {
   final PlayerControlsController controller;
   final String title;
   final VoidCallback onBack;
+
+  /// Invoked when the user taps the X-Ray chip on the top bar.  Wired
+  /// from `player_screen.dart` to push `Routes.xray` with the current
+  /// `MediaFile` as `extra`.  Null hides the chip — useful for
+  /// surfaces where X-Ray context isn't meaningful (resume sessions
+  /// where the file isn't in scope).
+  final VoidCallback? onXRay;
+
+  /// Invoked when the user taps "Start Group Watch" in the overflow
+  /// menu.  Wired from `player_screen.dart` to push
+  /// `Routes.groupWatch` with the source title as `extra`.  Null
+  /// hides the entry — useful for resume sessions where group-watch
+  /// context isn't meaningful.
+  final VoidCallback? onGroupWatch;
 
   /// Source HDR format for the current stream (e.g. `"HDR10"`).  Null
   /// hides the HDR badge.  Provided by the player_screen from
@@ -118,7 +134,8 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
   Future<void> _showOverflowMenu() async {
     final isHdr = widget.hdrFormat != null;
     final canTonemap = isHdr && widget.onTonemapChanged != null;
-    if (!canTonemap) {
+    final canGroupWatch = widget.onGroupWatch != null;
+    if (!canTonemap && !canGroupWatch) {
       // Nothing to show yet — the menu would be an empty sheet.  Don't
       // open it; gives the operator a hint that the icon is reserved
       // for future controls without making it look broken.
@@ -144,39 +161,62 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
               ),
             ),
             const SizedBox(height: 16),
-            ListTile(
-              leading: Icon(
-                widget.tonemapped
-                    ? Icons.hdr_off_rounded
-                    : Icons.hdr_on_rounded,
-                color: Colors.white,
-              ),
-              title: const Text(
-                'Tone-map HDR to SDR',
-                style: TextStyle(color: Colors.white),
-              ),
-              subtitle: Text(
-                widget.tonemapped
-                    ? 'Server is converting BT.2020 PQ to BT.709 (slower).'
-                    : 'Source is ${widget.hdrFormat}; tap to convert if '
-                        'colours look washed.',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.6),
-                  fontSize: 12,
+            if (canTonemap)
+              ListTile(
+                leading: Icon(
+                  widget.tonemapped
+                      ? Icons.hdr_off_rounded
+                      : Icons.hdr_on_rounded,
+                  color: Colors.white,
                 ),
-              ),
-              trailing: Switch(
-                value: widget.tonemapped,
-                onChanged: (v) {
+                title: const Text(
+                  'Tone-map HDR to SDR',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  widget.tonemapped
+                      ? 'Server is converting BT.2020 PQ to BT.709 (slower).'
+                      : 'Source is ${widget.hdrFormat}; tap to convert if '
+                          'colours look washed.',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontSize: 12,
+                  ),
+                ),
+                trailing: Switch(
+                  value: widget.tonemapped,
+                  onChanged: (v) {
+                    Navigator.of(ctx).pop();
+                    widget.onTonemapChanged?.call(v);
+                  },
+                ),
+                onTap: () {
                   Navigator.of(ctx).pop();
-                  widget.onTonemapChanged?.call(v);
+                  widget.onTonemapChanged?.call(!widget.tonemapped);
                 },
               ),
-              onTap: () {
-                Navigator.of(ctx).pop();
-                widget.onTonemapChanged?.call(!widget.tonemapped);
-              },
-            ),
+            if (canGroupWatch)
+              ListTile(
+                leading: const Icon(
+                  Icons.groups_rounded,
+                  color: Colors.white,
+                ),
+                title: const Text(
+                  'Group Watch',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  'Co-watch with friends — UI shell, sync ships in v1.1.',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.6),
+                    fontSize: 12,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  widget.onGroupWatch?.call();
+                },
+              ),
             const SizedBox(height: 8),
           ],
         ),
@@ -486,6 +526,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                     onBack: widget.onBack,
                     onMore: _showOverflowMenu,
                     onPip: _pipSupported == true ? _enterPip : null,
+                    onXRay: widget.onXRay,
                     sleepActive: _sleepDuration != null,
                     hdrFormat: widget.hdrFormat,
                     tonemapped: widget.tonemapped,
@@ -634,6 +675,7 @@ class _TopBar extends StatelessWidget {
     required this.onBack,
     required this.onMore,
     required this.onPip,
+    required this.onXRay,
     required this.sleepActive,
     this.hdrFormat,
     this.tonemapped = false,
@@ -647,6 +689,11 @@ class _TopBar extends StatelessWidget {
   /// support PIP (iOS, desktop, Android 7 or older) so the icon hides
   /// instead of rendering a no-op chip.
   final VoidCallback? onPip;
+
+  /// X-Ray entry point.  `null` hides the chip (e.g. resume-session
+  /// where the file isn't in scope on the player_screen side).
+  final VoidCallback? onXRay;
+
   final bool sleepActive;
 
   /// HDR format of the source — drives the `HDR10` / `HLG` / `DV` chip
@@ -695,6 +742,16 @@ class _TopBar extends StatelessWidget {
                 format: hdrFormat!,
                 tonemapped: tonemapped,
               ),
+            ),
+          if (onXRay != null)
+            IconButton(
+              tooltip: 'X-Ray',
+              icon: const Icon(
+                Icons.science_outlined,
+                color: Colors.white,
+              ),
+              onPressed: onXRay,
+              splashRadius: 22,
             ),
           if (onPip != null)
             IconButton(
