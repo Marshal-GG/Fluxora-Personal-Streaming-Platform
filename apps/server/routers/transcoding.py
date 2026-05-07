@@ -88,6 +88,21 @@ class FallbackHistoryResponse(BaseModel):
     events: list[FallbackEventEntry]
 
 
+class ResolutionTuple(BaseModel):
+    """One ``(width, height)`` pair.  Used for matrix-mode benchmark runs
+    where the operator selects multiple resolutions to test in one click.
+
+    The router clamps each pair via :func:`benchmark_service.clamp_resolutions`
+    which both snaps to a known tier and dedupes — so an operator who
+    accidentally selects ``(1280, 720)`` AND ``(1366, 768)`` ends up with a
+    single 720p row instead of two near-identical entries cluttering the
+    history sidebar.
+    """
+
+    width: int = Field(ge=320, le=3840)
+    height: int = Field(ge=240, le=2160)
+
+
 class BenchmarkRequest(BaseModel):
     """Optional knobs for the benchmark run.
 
@@ -119,19 +134,35 @@ class BenchmarkRequest(BaseModel):
         ge=320,
         le=3840,
         description=(
-            "Source frame width in pixels.  Paired with ``height``; both "
-            "default to the server's 1280 (720p).  Larger frames model "
-            "heavier real-world workloads — 1920×1080 for live game "
-            "capture, 3840×2160 for 4K HDR transcodes — and let the "
-            "operator see how throughput / VRAM / concurrent capacity "
-            "scale with the source they actually plan to stream."
+            "Single-resolution source frame width.  Paired with ``height``; "
+            "ignored when ``resolutions`` is also set.  Both default to "
+            "1280 (720p).  Kept for backwards compat with the pre-matrix "
+            "API — new clients should populate ``resolutions`` instead."
         ),
     )
     height: int | None = Field(
         default=None,
         ge=240,
         le=2160,
-        description="Source frame height in pixels.  Paired with ``width``.",
+        description=(
+            "Single-resolution source frame height.  Paired with ``width``; "
+            "ignored when ``resolutions`` is also set."
+        ),
+    )
+    resolutions: list[ResolutionTuple] | None = Field(
+        default=None,
+        description=(
+            "Matrix-mode resolution list.  When set, the benchmark runs each "
+            "encoder against every resolution in this list sequentially "
+            "(outer loop is per-resolution, inner loop is per-encoder); the "
+            "result list contains ``len(encoders) × len(resolutions)`` rows, "
+            "each self-describing its source resolution.  When unset (or "
+            "empty), falls back to the single ``(width, height)`` pair "
+            "above.  The router snaps every pair via "
+            "``clamp_resolutions`` — operators submitting odd values get "
+            "mapped onto known tiers (720p / 1080p / 4K) and duplicates are "
+            "dropped before encoding starts."
+        ),
     )
     verify_caps: bool = Field(
         default=False,
@@ -143,7 +174,10 @@ class BenchmarkRequest(BaseModel):
             "for patched drivers / RTX 40-series / driver 530+ that may "
             "have lifted the documented limit.  Briefly saturates the GPU "
             "(~2 s wall-clock per hw encoder) so it's opt-in to avoid "
-            "disrupting active streams."
+            "disrupting active streams.  In matrix mode the probe runs "
+            "once per (encoder, resolution) pair since the verified cap "
+            "may legitimately differ between resolutions (4K hits VRAM "
+            "exhaustion before 720p hits the session cap)."
         ),
     )
 
@@ -177,6 +211,13 @@ class BenchmarkEncoderResult(BaseModel):
     encoder: str
     vendor: str
     codec: str
+    # Source resolution this row was measured at.  Required because matrix
+    # runs produce N rows per encoder (one per resolution) — each row needs
+    # to self-describe so the desktop can group / pivot without inferring
+    # from the parent run's primary width/height.  Single-resolution runs
+    # populate these too; unconditional keeps the contract simple.
+    width: int
+    height: int
     passed: bool
     error: str | None = None
     fps: float | None = None
@@ -205,8 +246,13 @@ class BenchmarkResponse(BaseModel):
     finished_at: str
     duration_sec: int
     fps: int
+    # Top-level width/height: the FIRST tested resolution.  Single-resolution
+    # runs only have one entry in ``resolutions``; matrix runs have multiple
+    # but width/height stay populated so old clients that don't know about
+    # ``resolutions`` keep rendering the primary tier.
     width: int
     height: int
+    resolutions: list[ResolutionTuple]
     verify_caps: bool
     results: list[BenchmarkEncoderResult]
 
@@ -218,6 +264,10 @@ class BenchmarkProgress(BaseModel):
     The desktop polls this every ~500 ms while its own POST is in flight
     so the operator sees which encoder is currently being tested + a
     derived fraction for the progress bar.
+
+    Matrix-mode adds ``total_resolutions`` + ``current_resolution_*``: in
+    single-resolution runs ``total_resolutions=1`` and the index stays at
+    1 throughout, so the desktop can always read these without branching.
     """
 
     running: bool
@@ -229,6 +279,10 @@ class BenchmarkProgress(BaseModel):
     # status line ("Encoding h264_nvenc" vs "Verifying NVENC session cap").
     current_step: str | None = None
     current_index: int | None = None
+    total_resolutions: int | None = None
+    current_resolution_index: int | None = None
+    current_resolution_width: int | None = None
+    current_resolution_height: int | None = None
 
 
 class BenchmarkHistoryEntry(BaseModel):
@@ -236,6 +290,13 @@ class BenchmarkHistoryEntry(BaseModel):
 
     Operators clicking an entry trigger a follow-up
     ``GET /benchmark/history/{id}`` to fetch the full result body.
+
+    ``resolution_count`` is derived server-side by counting distinct
+    ``(width, height)`` tuples in the stored ``results_json``.  Old rows
+    written before matrix mode shipped have all results at the same
+    resolution → ``resolution_count == 1``, which the desktop renders
+    as the legacy "1080p · 30 fps · 6 enc" format; matrix runs render
+    "3 res · 30 fps · 18 enc" instead.
     """
 
     id: int
@@ -247,6 +308,7 @@ class BenchmarkHistoryEntry(BaseModel):
     height: int
     verify_caps: bool
     encoder_count: int
+    resolution_count: int = 1
 
 
 class BenchmarkHistoryResponse(BaseModel):
@@ -343,10 +405,23 @@ async def run_benchmark(
         body.duration_sec if body else None
     )
     fps = benchmark_service.clamp_fps(body.fps if body else None)
-    width, height = benchmark_service.clamp_resolution(
-        body.width if body else None,
-        body.height if body else None,
-    )
+
+    # Resolution selection precedence:
+    #   1. body.resolutions (matrix mode) — list of ResolutionTuple
+    #   2. body.width + body.height (single-resolution back-compat)
+    #   3. server defaults (720p)
+    if body and body.resolutions:
+        resolutions = benchmark_service.clamp_resolutions(
+            [(r.width, r.height) for r in body.resolutions]
+        )
+    else:
+        single = benchmark_service.clamp_resolution(
+            body.width if body else None,
+            body.height if body else None,
+        )
+        resolutions = [single]
+
+    primary_width, primary_height = resolutions[0]
     verify_caps = bool(body.verify_caps) if body else False
 
     available = await transcoding_service._detect_available_encoders()
@@ -358,21 +433,21 @@ async def run_benchmark(
         available,
         duration_sec=duration,
         fps=fps,
-        width=width,
-        height=height,
+        resolutions=resolutions,
         hwaccel_device=hwaccel_device,
         verify_caps=verify_caps,
     )
     finished = datetime.now(UTC)
 
     logger.info(
-        "Encoder benchmark complete: encoders=%d duration=%ss fps=%s "
-        "size=%dx%d verify_caps=%s elapsed=%.1fs",
-        len(results),
+        "Encoder benchmark complete: encoders=%d resolutions=%d duration=%ss "
+        "fps=%s primary=%dx%d verify_caps=%s elapsed=%.1fs",
+        len(available),
+        len(resolutions),
         duration,
         fps,
-        width,
-        height,
+        primary_width,
+        primary_height,
         verify_caps,
         (finished - started).total_seconds(),
     )
@@ -387,8 +462,8 @@ async def run_benchmark(
         finished_at=finished.isoformat(),
         duration_sec=duration,
         fps=fps,
-        width=width,
-        height=height,
+        width=primary_width,
+        height=primary_height,
         verify_caps=verify_caps,
         results=results,
     )
@@ -399,14 +474,17 @@ async def run_benchmark(
         finished_at=finished.isoformat(),
         duration_sec=duration,
         fps=fps,
-        width=width,
-        height=height,
+        width=primary_width,
+        height=primary_height,
+        resolutions=[ResolutionTuple(width=w, height=h) for w, h in resolutions],
         verify_caps=verify_caps,
         results=[
             BenchmarkEncoderResult(
                 encoder=r.encoder,
                 vendor=r.vendor,
                 codec=r.codec,
+                width=r.width,
+                height=r.height,
                 passed=r.passed,
                 error=r.error,
                 fps=r.fps,
@@ -490,9 +568,18 @@ async def get_benchmark_history_entry(
         fps=row["fps"],
         width=row["width"],
         height=row["height"],
+        # ``resolutions`` is derived server-side from results_json and is
+        # always a non-empty list (matrix runs preserve operator selection
+        # order, single-resolution runs return one entry, malformed blobs
+        # fall back to the run's primary dimensions).
+        resolutions=[
+            ResolutionTuple(width=w, height=h) for w, h in row["resolutions"]
+        ],
         verify_caps=row["verify_caps"],
         # ``results`` from the JSON blob is already a list of dicts shaped
         # like BenchmarkEncoderResult — Pydantic validates on construction.
+        # Old rows had width/height back-filled by get_benchmark_run; new
+        # rows already carry per-row dimensions.
         results=[BenchmarkEncoderResult(**r) for r in row["results"]],
     )
 

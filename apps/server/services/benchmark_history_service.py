@@ -124,11 +124,17 @@ async def list_benchmark_runs(
 
     Returns dicts shaped for the desktop's ``BenchmarkHistoryEntry`` entity.
     Newest first; soft-capped at ``limit`` (which the router clamps).
+
+    ``resolution_count`` is derived per row by parsing ``results_json`` and
+    counting distinct ``(width, height)`` tuples.  Old rows written before
+    matrix mode shipped (no per-row width/height) collapse to 1.  At a
+    50-row cap and ~5 KB per JSON blob, the per-listing cost is sub-ms;
+    not worth a denormalized column.
     """
     async with db.execute(
         """
         SELECT id, started_at, finished_at, duration_sec,
-               fps, width, height, verify_caps, encoder_count
+               fps, width, height, verify_caps, encoder_count, results_json
           FROM benchmark_runs
          ORDER BY started_at DESC
          LIMIT ?
@@ -147,9 +153,71 @@ async def list_benchmark_runs(
             "height": row["height"],
             "verify_caps": bool(row["verify_caps"]),
             "encoder_count": row["encoder_count"],
+            "resolution_count": _count_resolutions(
+                row["results_json"], row["width"], row["height"]
+            ),
         }
         for row in rows
     ]
+
+
+def _count_resolutions(
+    results_json: str, fallback_width: int, fallback_height: int
+) -> int:
+    """Count distinct ``(width, height)`` tuples in a results blob.
+
+    Pre-matrix rows (no per-row width/height) fall back to the run's
+    primary dimensions and always return 1.  Malformed JSON returns 1
+    rather than raising — the sidebar should never blow up because of
+    a corrupt history row.
+    """
+    try:
+        parsed = json.loads(results_json)
+    except json.JSONDecodeError:
+        return 1
+    if not isinstance(parsed, list):
+        return 1
+    seen: set[tuple[int, int]] = set()
+    for r in parsed:
+        if not isinstance(r, dict):
+            continue
+        w = r.get("width", fallback_width)
+        h = r.get("height", fallback_height)
+        if isinstance(w, int) and isinstance(h, int):
+            seen.add((w, h))
+    return len(seen) or 1
+
+
+def _distinct_resolutions(
+    results_json: str, fallback_width: int, fallback_height: int
+) -> list[tuple[int, int]]:
+    """Walk ``results_json`` in order and collect distinct ``(w, h)`` tuples.
+
+    Used by :func:`get_benchmark_run` to populate the response's
+    ``resolutions`` echo.  Preserves first-occurrence order so the
+    desktop gets the same tier sequence the operator selected
+    originally.  Old rows fall back to a single-element list of the
+    run's primary dimensions.
+    """
+    try:
+        parsed = json.loads(results_json)
+    except json.JSONDecodeError:
+        return [(fallback_width, fallback_height)]
+    if not isinstance(parsed, list):
+        return [(fallback_width, fallback_height)]
+    seen: set[tuple[int, int]] = set()
+    out: list[tuple[int, int]] = []
+    for r in parsed:
+        if not isinstance(r, dict):
+            continue
+        w = r.get("width", fallback_width)
+        h = r.get("height", fallback_height)
+        if isinstance(w, int) and isinstance(h, int) and (w, h) not in seen:
+            seen.add((w, h))
+            out.append((w, h))
+    if not out:
+        out.append((fallback_width, fallback_height))
+    return out
 
 
 async def get_benchmark_run(
@@ -181,6 +249,17 @@ async def get_benchmark_run(
             run_id,
         )
         results = []
+    # Backfill per-row width/height for old rows written before matrix mode
+    # shipped.  Their results blob doesn't carry width/height per encoder,
+    # so we synthesize them from the run's primary dimensions.  New rows
+    # already have these populated and pass through unchanged.
+    primary_w = row["width"]
+    primary_h = row["height"]
+    if isinstance(results, list):
+        for r in results:
+            if isinstance(r, dict):
+                r.setdefault("width", primary_w)
+                r.setdefault("height", primary_h)
     return {
         "id": row["id"],
         "started_at": row["started_at"],
@@ -191,6 +270,9 @@ async def get_benchmark_run(
         "height": row["height"],
         "verify_caps": bool(row["verify_caps"]),
         "encoder_count": row["encoder_count"],
+        "resolutions": _distinct_resolutions(
+            row["results_json"], primary_w, primary_h
+        ),
         "results": results,
     }
 

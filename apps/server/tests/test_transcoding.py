@@ -190,8 +190,7 @@ async def test_benchmark_empty_body_uses_default_duration(client: AsyncClient):
         *,
         duration_sec,
         fps,
-        width,
-        height,
+        resolutions,
         hwaccel_device,
         verify_caps,
     ):
@@ -203,6 +202,8 @@ async def test_benchmark_empty_body_uses_default_duration(client: AsyncClient):
                 encoder=enc,
                 vendor="software" if enc.startswith("libx") else "nvidia",
                 codec="h264",
+                width=resolutions[0][0],
+                height=resolutions[0][1],
                 passed=True,
                 error=None,
                 fps=30.0,
@@ -254,8 +255,7 @@ async def test_benchmark_explicit_duration_is_clamped(client: AsyncClient):
         *,
         duration_sec,
         fps,
-        width,
-        height,
+        resolutions,
         hwaccel_device,
         verify_caps,
     ):
@@ -292,8 +292,7 @@ async def test_benchmark_accepts_60_fps(client: AsyncClient):
         *,
         duration_sec,
         fps,
-        width,
-        height,
+        resolutions,
         hwaccel_device,
         verify_caps,
     ):
@@ -334,8 +333,7 @@ async def test_benchmark_verify_caps_flag_threads_to_service(
         *,
         duration_sec,
         fps,
-        width,
-        height,
+        resolutions,
         hwaccel_device,
         verify_caps,
     ):
@@ -373,8 +371,7 @@ async def test_benchmark_verify_caps_defaults_to_false(client: AsyncClient):
         *,
         duration_sec,
         fps,
-        width,
-        height,
+        resolutions,
         hwaccel_device,
         verify_caps,
     ):
@@ -413,13 +410,12 @@ async def test_benchmark_accepts_resolution_and_echoes_in_response(
         *,
         duration_sec,
         fps,
-        width,
-        height,
+        resolutions,
         hwaccel_device,
         verify_caps,
     ):
-        captured["width"] = width
-        captured["height"] = height
+        captured["width"] = resolutions[0][0]
+        captured["height"] = resolutions[0][1]
         return []
 
     with (
@@ -457,13 +453,12 @@ async def test_benchmark_resolution_snaps_to_known_tier(client: AsyncClient):
         *,
         duration_sec,
         fps,
-        width,
-        height,
+        resolutions,
         hwaccel_device,
         verify_caps,
     ):
-        captured["width"] = width
-        captured["height"] = height
+        captured["width"] = resolutions[0][0]
+        captured["height"] = resolutions[0][1]
         return []
 
     with (
@@ -485,6 +480,137 @@ async def test_benchmark_resolution_snaps_to_known_tier(client: AsyncClient):
     assert body["height"] == 720
     assert captured["width"] == 1280
     assert captured["height"] == 720
+
+
+@pytest.mark.asyncio
+async def test_benchmark_accepts_matrix_mode_resolutions_list(client: AsyncClient):
+    """When the request carries ``resolutions: [...]`` the service receives
+    the full list, the response echoes it back, and the per-row width/height
+    on each result reflect the matrix iteration.  Matrix mode is the only
+    way the operator selects multiple tiers in one click."""
+    from services import benchmark_service
+
+    captured: dict[str, list] = {}
+
+    async def _fake_run(
+        encoders,
+        *,
+        duration_sec,
+        fps,
+        resolutions,
+        hwaccel_device,
+        verify_caps,
+    ):
+        captured["resolutions"] = list(resolutions)
+        out = []
+        for w, h in resolutions:
+            for enc in encoders:
+                out.append(
+                    benchmark_service.EncoderBenchmarkResult(
+                        encoder=enc,
+                        vendor="software",
+                        codec="h264",
+                        width=w,
+                        height=h,
+                        passed=True,
+                        error=None,
+                        fps=30.0,
+                        speed_x=1.0,
+                        bitrate_kbps=500.0,
+                        encoded_frames=240,
+                        elapsed_sec=8.0,
+                        realtime_multiplier=1.0,
+                        init_ms=200,
+                        gpu_utilization_percent=None,
+                        vram_used_mb=None,
+                        concurrent_session_cap=None,
+                        recommended_concurrent=1,
+                    )
+                )
+        return out
+
+    with (
+        patch.object(
+            transcoding_service,
+            "_detect_available_encoders",
+            return_value=["libx264"],
+        ),
+        patch.object(benchmark_service, "run_benchmark", side_effect=_fake_run),
+    ):
+        resp = await client.post(
+            "/api/v1/transcoding/benchmark",
+            json={
+                "resolutions": [
+                    {"width": 1280, "height": 720},
+                    {"width": 1920, "height": 1080},
+                    {"width": 3840, "height": 2160},
+                ]
+            },
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    # Service was invoked with the full list.
+    assert captured["resolutions"] == [(1280, 720), (1920, 1080), (3840, 2160)]
+    # Response echoes the operator's selection.
+    assert body["resolutions"] == [
+        {"width": 1280, "height": 720},
+        {"width": 1920, "height": 1080},
+        {"width": 3840, "height": 2160},
+    ]
+    # Top-level width/height = the FIRST tier (back-compat for old clients).
+    assert body["width"] == 1280
+    assert body["height"] == 720
+    # Each result self-describes its (width, height) — 3 resolutions × 1
+    # encoder = 3 results, each with the matching tier.
+    assert len(body["results"]) == 3
+    res_widths = [r["width"] for r in body["results"]]
+    assert res_widths == [1280, 1920, 3840]
+
+
+@pytest.mark.asyncio
+async def test_benchmark_resolutions_list_takes_precedence_over_width_height(
+    client: AsyncClient,
+):
+    """When both ``resolutions`` and the legacy ``width``/``height`` are
+    set, the list wins — the desktop never sends both, but a confused
+    third-party caller shouldn't get a corrupted run."""
+    from services import benchmark_service
+
+    captured: dict[str, list] = {}
+
+    async def _fake_run(
+        encoders,
+        *,
+        duration_sec,
+        fps,
+        resolutions,
+        hwaccel_device,
+        verify_caps,
+    ):
+        captured["resolutions"] = list(resolutions)
+        return []
+
+    with (
+        patch.object(
+            transcoding_service,
+            "_detect_available_encoders",
+            return_value=[],
+        ),
+        patch.object(benchmark_service, "run_benchmark", side_effect=_fake_run),
+    ):
+        resp = await client.post(
+            "/api/v1/transcoding/benchmark",
+            json={
+                "width": 3840,
+                "height": 2160,
+                "resolutions": [{"width": 1280, "height": 720}],
+            },
+        )
+
+    assert resp.status_code == 200
+    # ``resolutions`` wins; legacy width/height are ignored.
+    assert captured["resolutions"] == [(1280, 720)]
 
 
 @pytest.mark.asyncio
@@ -521,8 +647,7 @@ async def test_benchmark_passes_failures_through_to_response(
         *,
         duration_sec,
         fps,
-        width,
-        height,
+        resolutions,
         hwaccel_device,
         verify_caps,
     ):
@@ -531,6 +656,8 @@ async def test_benchmark_passes_failures_through_to_response(
                 encoder="h264_qsv",
                 vendor="intel",
                 codec="h264",
+                width=resolutions[0][0],
+                height=resolutions[0][1],
                 passed=False,
                 error="MFX session: -9",
                 fps=None,

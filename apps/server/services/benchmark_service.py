@@ -189,6 +189,13 @@ class EncoderBenchmarkResult:
     encoder: str
     vendor: str  # software | nvidia | intel | amd | apple
     codec: str   # h264 | hevc | (future) av1
+    # Source resolution this row was measured at.  Required because matrix-mode
+    # runs produce N rows per encoder (one per resolution), and the desktop
+    # needs each row to self-describe rather than infer from the parent run's
+    # primary width/height.  Single-resolution runs still populate these — the
+    # field is unconditionally part of every result.
+    width: int
+    height: int
     passed: bool
     error: str | None
     fps: float | None
@@ -210,6 +217,8 @@ def _failed_result(
     encoder: str,
     meta_vendor: str,
     meta_codec: str,
+    width: int,
+    height: int,
     error: str,
     elapsed_sec: float | None = None,
     init_ms: int | None = None,
@@ -222,6 +231,8 @@ def _failed_result(
         encoder=encoder,
         vendor=meta_vendor,
         codec=meta_codec,
+        width=width,
+        height=height,
         passed=False,
         error=error,
         fps=None,
@@ -266,12 +277,27 @@ async def benchmark_encoder(
         probe_gpu: When True (default) hw encoders get a midpoint GPU probe.
             Tests pass False to skip the probe and dodge the asyncio.sleep.
     """
+    # Parse "WxH" once so every result we return self-describes its
+    # resolution.  Defensive: ``size`` is built by ``run_benchmark`` from
+    # validated ints (the router clamps before passing them), but if a test
+    # passes a malformed string we'd rather return a clean failed_result
+    # than crash with a ValueError.
+    try:
+        _w_str, _h_str = size.split("x", 1)
+        width = int(_w_str)
+        height = int(_h_str)
+    except (ValueError, AttributeError):
+        width = 0
+        height = 0
+
     meta = ENCODER_REGISTRY.get(encoder)
     if meta is None:
         return _failed_result(
             encoder=encoder,
             meta_vendor="unknown",
             meta_codec="unknown",
+            width=width,
+            height=height,
             error=f"unknown encoder: {encoder!r}",
         )
 
@@ -282,6 +308,8 @@ async def benchmark_encoder(
             encoder=encoder,
             meta_vendor=meta.vendor,
             meta_codec=meta.codec,
+            width=width,
+            height=height,
             error="FFmpeg binary not found on PATH",
             cap=meta.concurrent_session_cap,
         )
@@ -329,6 +357,8 @@ async def benchmark_encoder(
             encoder=encoder,
             meta_vendor=meta.vendor,
             meta_codec=meta.codec,
+            width=width,
+            height=height,
             error=f"spawn failed: {exc}",
             cap=meta.concurrent_session_cap,
         )
@@ -425,6 +455,8 @@ async def benchmark_encoder(
             encoder=encoder,
             meta_vendor=meta.vendor,
             meta_codec=meta.codec,
+            width=width,
+            height=height,
             error=f"timed out after {timeout:.0f}s",
             elapsed_sec=elapsed,
             init_ms=init_ms_box[0],
@@ -451,6 +483,8 @@ async def benchmark_encoder(
             encoder=encoder,
             meta_vendor=meta.vendor,
             meta_codec=meta.codec,
+            width=width,
+            height=height,
             error=first_err,
             elapsed_sec=elapsed,
             init_ms=init_ms_box[0],
@@ -490,6 +524,8 @@ async def benchmark_encoder(
         encoder=encoder,
         vendor=meta.vendor,
         codec=meta.codec,
+        width=width,
+        height=height,
         passed=True,
         error=None,
         fps=fps_value,
@@ -552,11 +588,17 @@ def _recommended_concurrent(
 # Schema:
 #     {
 #         "started_at":      ISO timestamp,
-#         "total_encoders":  int,
-#         "completed":       int,                # encoders fully done
+#         "total_encoders":  int,                # encoders × resolutions
+#         "completed":       int,                # encoder × resolution pairs done
 #         "current_encoder": str | None,         # encoder being processed
 #         "current_step":    str,                # "encoding" | "verifying_cap"
-#         "current_index":   int,                # 1-based for UI display
+#         "current_index":   int,                # 1-based pair index for UI
+#         # Matrix-mode fields — single-resolution runs leave these at the
+#         # natural 1/1 values so the desktop can always read them safely.
+#         "total_resolutions":          int,
+#         "current_resolution_index":   int,     # 1-based
+#         "current_resolution_width":   int,
+#         "current_resolution_height":  int,
 #     }
 _progress: dict[str, Any] | None = None
 
@@ -578,8 +620,7 @@ async def run_benchmark(
     *,
     duration_sec: int = _DEFAULT_DURATION_SEC,
     fps: int = _DEFAULT_FPS,
-    width: int = 1280,
-    height: int = 720,
+    resolutions: list[tuple[int, int]] | None = None,
     hwaccel_device: str | None = None,
     verify_caps: bool = False,
 ) -> list[EncoderBenchmarkResult]:
@@ -588,6 +629,14 @@ async def run_benchmark(
     Sequential is intentional — concurrent encodes share GPU/CPU and produce
     noise that defeats the comparison.  Each encoder's perf line in the
     desktop UI must reflect what that encoder can do *alone*.
+
+    When multiple ``resolutions`` are passed, the outer loop is per-resolution
+    and the inner loop is per-encoder.  The result list is ``encoders ×
+    resolutions`` rows; each row self-describes its source resolution via
+    ``EncoderBenchmarkResult.width`` + ``.height``.  Resolution-outer order
+    means the desktop sees results land in chunks of "all encoders at 720p,
+    all encoders at 1080p, ..." which makes the live progress UI tick more
+    intuitively than encoder-outer would (operators think in resolutions).
 
     When ``verify_caps`` is True, encoders that carry a registry session cap
     (currently NVENC) get a brief concurrent-stress probe after the main
@@ -598,9 +647,14 @@ async def run_benchmark(
 
     The probe briefly saturates the GPU while it runs (~2 s wall-clock per
     encoder) so it's opt-in — running it with active streams in flight
-    would degrade them.
+    would degrade them.  In matrix mode the probe runs once per
+    (encoder, resolution) pair so a 4K NVENC verified cap can legitimately
+    differ from a 720p NVENC verified cap (VRAM exhaustion comes earlier
+    at 4K).
     """
-    size = f"{width}x{height}"
+    if not resolutions:
+        resolutions = [(1280, 720)]
+
     results: list[EncoderBenchmarkResult] = []
 
     # Publish initial progress before the first encoder spawn so the desktop
@@ -608,65 +662,77 @@ async def run_benchmark(
     # one tick of clicking the button.
     global _progress
     started_iso = datetime.now(UTC).isoformat()
+    total_pairs = len(encoders) * len(resolutions)
     _progress = {
         "started_at": started_iso,
-        "total_encoders": len(encoders),
+        "total_encoders": total_pairs,
         "completed": 0,
         "current_encoder": None,
         "current_step": "starting",
         "current_index": 0,
+        "total_resolutions": len(resolutions),
+        "current_resolution_index": 0,
+        "current_resolution_width": resolutions[0][0],
+        "current_resolution_height": resolutions[0][1],
     }
 
     try:
-        for index, enc in enumerate(encoders, start=1):
-            _progress = {
-                **(_progress or {}),
-                "current_encoder": enc,
-                "current_step": "encoding",
-                "current_index": index,
-            }
-            res = await benchmark_encoder(
-                enc,
-                duration_sec=duration_sec,
-                fps=fps,
-                size=size,
-                hwaccel_device=hwaccel_device,
-            )
-            if (
-                verify_caps
-                and res.passed
-                and res.concurrent_session_cap is not None
-            ):
-                # Switch to "verifying_cap" so the desktop status line
-                # changes from "Encoding h264_nvenc" → "Verifying NVENC
-                # session cap" — operators wonder why a single encoder
-                # is taking ~12 s otherwise (8 s main + 2 s probe + buffer).
+        pair_index = 0
+        for r_index, (width, height) in enumerate(resolutions, start=1):
+            size = f"{width}x{height}"
+            for enc in encoders:
+                pair_index += 1
                 _progress = {
                     **(_progress or {}),
-                    "current_step": "verifying_cap",
+                    "current_encoder": enc,
+                    "current_step": "encoding",
+                    "current_index": pair_index,
+                    "current_resolution_index": r_index,
+                    "current_resolution_width": width,
+                    "current_resolution_height": height,
                 }
-                # Probe with the *same* fps + resolution as the main run
-                # so the verified count reflects the operator's actual
-                # workload — a 4K HDR encode is materially heavier than
-                # 720p and may hit VRAM exhaustion before the documented
-                # session cap.
-                verified = await probe_concurrent_cap(
+                res = await benchmark_encoder(
                     enc,
-                    registry_cap=res.concurrent_session_cap,
-                    hwaccel_device=hwaccel_device,
+                    duration_sec=duration_sec,
                     fps=fps,
                     size=size,
+                    hwaccel_device=hwaccel_device,
                 )
-                if verified is not None:
-                    # Re-derive recommended_concurrent against the verified
-                    # cap since it may differ from the registry default —
-                    # a patched driver might actually allow 6 streams.
-                    res = _with_verified_cap(res, verified)
-            results.append(res)
-            _progress = {
-                **(_progress or {}),
-                "completed": index,
-            }
+                if (
+                    verify_caps
+                    and res.passed
+                    and res.concurrent_session_cap is not None
+                ):
+                    # Switch to "verifying_cap" so the desktop status line
+                    # changes from "Encoding h264_nvenc" → "Verifying NVENC
+                    # session cap" — operators wonder why a single encoder
+                    # is taking ~12 s otherwise (8 s main + 2 s probe).
+                    _progress = {
+                        **(_progress or {}),
+                        "current_step": "verifying_cap",
+                    }
+                    # Probe with the *same* fps + resolution as the main run
+                    # so the verified count reflects the operator's actual
+                    # workload — a 4K HDR encode is materially heavier than
+                    # 720p and may hit VRAM exhaustion before the documented
+                    # session cap.
+                    verified = await probe_concurrent_cap(
+                        enc,
+                        registry_cap=res.concurrent_session_cap,
+                        hwaccel_device=hwaccel_device,
+                        fps=fps,
+                        size=size,
+                    )
+                    if verified is not None:
+                        # Re-derive recommended_concurrent against the verified
+                        # cap since it may differ from the registry default —
+                        # a patched driver might actually allow 6 streams.
+                        res = _with_verified_cap(res, verified)
+                results.append(res)
+                _progress = {
+                    **(_progress or {}),
+                    "completed": pair_index,
+                }
         return results
     finally:
         # Always clear progress on exit (success / exception / cancellation)
@@ -689,6 +755,8 @@ def _with_verified_cap(
         encoder=base.encoder,
         vendor=base.vendor,
         codec=base.codec,
+        width=base.width,
+        height=base.height,
         passed=base.passed,
         error=base.error,
         fps=base.fps,
@@ -868,3 +936,29 @@ def clamp_resolution(
         _RESOLUTION_TIERS,
         key=lambda wh: abs(wh[0] * wh[1] - target_pixels),
     )
+
+
+def clamp_resolutions(
+    pairs: list[tuple[int, int]] | None,
+) -> list[tuple[int, int]]:
+    """Snap a list of (width, height) pairs to known tiers + dedupe.
+
+    Used by the matrix-mode benchmark path.  Each input pair gets snapped
+    by :func:`clamp_resolution`; duplicates that collapse onto the same
+    tier (e.g. operator selected both 1280×720 and 1366×768) are removed
+    while preserving first-occurrence order so the result list reflects
+    the operator's selection sequence.
+
+    Falls back to the single 720p default when the input is empty / None
+    so single-resolution callers keep their existing behaviour.
+    """
+    if not pairs:
+        return [_RESOLUTION_TIERS[0]]
+    seen: set[tuple[int, int]] = set()
+    out: list[tuple[int, int]] = []
+    for w, h in pairs:
+        snapped = clamp_resolution(w, h)
+        if snapped not in seen:
+            seen.add(snapped)
+            out.append(snapped)
+    return out

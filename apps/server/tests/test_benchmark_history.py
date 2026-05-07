@@ -18,13 +18,20 @@ from main import app
 from services import benchmark_history_service, benchmark_service, transcoding_service
 
 
-def _result(encoder: str = "h264_nvenc") -> benchmark_service.EncoderBenchmarkResult:
+def _result(
+    encoder: str = "h264_nvenc",
+    *,
+    width: int = 1280,
+    height: int = 720,
+) -> benchmark_service.EncoderBenchmarkResult:
     """Helper — minimal valid result for persistence tests."""
     meta = benchmark_service.ENCODER_REGISTRY[encoder]
     return benchmark_service.EncoderBenchmarkResult(
         encoder=encoder,
         vendor=meta.vendor,
         codec=meta.codec,
+        width=width,
+        height=height,
         passed=True,
         error=None,
         fps=120.0,
@@ -177,9 +184,21 @@ async def _seed_run(client: AsyncClient) -> int:
     need real FFmpeg.  Returns the new row's id."""
 
     async def _fake_run(
-        encoders, *, duration_sec, fps, width, height, hwaccel_device, verify_caps
+        encoders,
+        *,
+        duration_sec,
+        fps,
+        resolutions,
+        hwaccel_device,
+        verify_caps,
     ):
-        return [_result("h264_nvenc"), _result("libx264")]
+        # Mirror the production resolution-outer × encoder-inner ordering so
+        # the persisted results carry the right (encoder, resolution) tuples.
+        out = []
+        for w, h in resolutions:
+            for enc in encoders:
+                out.append(_result(enc, width=w, height=h))
+        return out
 
     with (
         patch.object(
@@ -246,6 +265,77 @@ async def test_delete_benchmark_history_entry_404s_for_unknown_id(
 ) -> None:
     resp = await client.delete("/api/v1/transcoding/benchmark/history/99999")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_history_entry_carries_resolution_count_for_matrix_run(
+    test_db,
+) -> None:
+    """List + get-by-id derive ``resolution_count`` from the persisted
+    results blob.  A matrix run with 3 distinct resolutions across 6
+    results must surface count=3 in the sidebar list AND hand back the
+    full ``resolutions`` echo on get-by-id so the desktop can render the
+    operator's tier selection."""
+    run_id = await benchmark_history_service.save_benchmark_run(
+        test_db,
+        started_at="2026-05-07T18:00:00+00:00",
+        finished_at="2026-05-07T18:01:30+00:00",
+        duration_sec=8,
+        fps=30,
+        width=1280,  # primary tier (= first selected)
+        height=720,
+        verify_caps=False,
+        results=[
+            _result("libx264", width=1280, height=720),
+            _result("h264_nvenc", width=1280, height=720),
+            _result("libx264", width=1920, height=1080),
+            _result("h264_nvenc", width=1920, height=1080),
+            _result("libx264", width=3840, height=2160),
+            _result("h264_nvenc", width=3840, height=2160),
+        ],
+    )
+
+    listed = await benchmark_history_service.list_benchmark_runs(test_db)
+    matched = next(row for row in listed if row["id"] == run_id)
+    assert matched["resolution_count"] == 3
+    assert matched["encoder_count"] == 6  # total rows, not distinct encoders
+
+    full = await benchmark_history_service.get_benchmark_run(test_db, run_id)
+    assert full is not None
+    # Resolutions echoed in operator-selection order (first occurrence wins).
+    assert full["resolutions"] == [
+        (1280, 720),
+        (1920, 1080),
+        (3840, 2160),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_history_entry_resolution_count_defaults_to_one_for_legacy_rows(
+    test_db,
+) -> None:
+    """Pre-matrix rows have all results at the run's primary resolution
+    so the count derivation collapses to 1.  Required because the
+    desktop reads the field unconditionally and a missing / 0 value
+    would crash the sidebar caption."""
+    run_id = await benchmark_history_service.save_benchmark_run(
+        test_db,
+        started_at="2026-05-06T10:00:00+00:00",
+        finished_at="2026-05-06T10:01:00+00:00",
+        duration_sec=8,
+        fps=30,
+        width=1920,
+        height=1080,
+        verify_caps=False,
+        results=[
+            _result("libx264", width=1920, height=1080),
+            _result("h264_nvenc", width=1920, height=1080),
+        ],
+    )
+
+    listed = await benchmark_history_service.list_benchmark_runs(test_db)
+    matched = next(row for row in listed if row["id"] == run_id)
+    assert matched["resolution_count"] == 1
 
 
 @pytest.mark.asyncio

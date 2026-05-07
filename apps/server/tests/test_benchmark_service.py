@@ -577,6 +577,8 @@ async def test_run_benchmark_with_verify_caps_runs_probe_for_capped_encoders() -
             encoder=encoder,
             vendor=meta.vendor,
             codec=meta.codec,
+            width=1280,
+            height=720,
             passed=True,
             error=None,
             fps=60.0,
@@ -630,6 +632,8 @@ async def test_run_benchmark_threads_fps_into_cap_probe() -> None:
             encoder=encoder,
             vendor=meta.vendor,
             codec=meta.codec,
+            width=1280,
+            height=720,
             passed=True,
             error=None,
             fps=120.0,
@@ -679,6 +683,8 @@ async def test_run_benchmark_without_verify_caps_skips_probe() -> None:
             encoder=encoder,
             vendor=meta.vendor,
             codec=meta.codec,
+            width=1280,
+            height=720,
             passed=True,
             error=None,
             fps=60.0,
@@ -731,6 +737,8 @@ async def test_run_benchmark_publishes_progress_per_encoder() -> None:
             encoder=encoder,
             vendor=meta.vendor,
             codec=meta.codec,
+            width=1280,
+            height=720,
             passed=True,
             error=None,
             fps=60.0,
@@ -801,6 +809,8 @@ async def test_run_benchmark_progress_step_flips_to_verifying_cap() -> None:
             encoder=encoder,
             vendor=meta.vendor,
             codec=meta.codec,
+            width=1280,
+            height=720,
             passed=True,
             error=None,
             fps=120.0,
@@ -853,6 +863,8 @@ async def test_run_benchmark_runs_encoders_sequentially_and_collects_results() -
             encoder=encoder,
             vendor=meta.vendor,
             codec=meta.codec,
+            width=1280,
+            height=720,
             passed=True,
             error=None,
             fps=30.0,
@@ -882,3 +894,144 @@ async def test_run_benchmark_runs_encoders_sequentially_and_collects_results() -
         "h264_qsv",
     ]
     assert all(r.passed for r in results)
+
+
+# ── Matrix-mode (resolution × encoder) ───────────────────────────────────────
+
+
+def test_clamp_resolutions_dedupes_after_snap() -> None:
+    """Operator selecting both 1280×720 and 1366×768 ends up with a single
+    720p tier — clamp snaps the second to 720p and dedup drops it.
+    Order preserved on first occurrence so the matrix runs in the order
+    the operator selected (an operator who picked 4K then 720p sees 4K
+    results land first, which matches their mental model)."""
+    out = benchmark_service.clamp_resolutions(
+        [(1280, 720), (1366, 768), (1920, 1080), (3840, 2160), (1920, 1080)]
+    )
+    assert out == [(1280, 720), (1920, 1080), (3840, 2160)]
+
+
+def test_clamp_resolutions_falls_back_to_default_for_empty() -> None:
+    """Single-resolution callers passing None / [] keep their existing
+    behaviour: a single 720p tier."""
+    assert benchmark_service.clamp_resolutions(None) == [(1280, 720)]
+    assert benchmark_service.clamp_resolutions([]) == [(1280, 720)]
+
+
+@pytest.mark.asyncio
+async def test_run_benchmark_matrix_produces_n_times_m_results() -> None:
+    """Outer loop is per-resolution, inner loop is per-encoder.  Two
+    encoders × three resolutions = six results in resolution-outer order
+    so the desktop sees results land in chunks of "all encoders at 720p,
+    all encoders at 1080p, ...".  Each result self-describes its
+    resolution via the new width/height fields on EncoderBenchmarkResult."""
+    seen: list[tuple[str, str]] = []
+
+    async def _fake_benchmark(encoder, *, size, **_kwargs):
+        seen.append((encoder, size))
+        meta = benchmark_service.ENCODER_REGISTRY[encoder]
+        w_str, h_str = size.split("x")
+        return benchmark_service.EncoderBenchmarkResult(
+            encoder=encoder,
+            vendor=meta.vendor,
+            codec=meta.codec,
+            width=int(w_str),
+            height=int(h_str),
+            passed=True,
+            error=None,
+            fps=30.0,
+            speed_x=1.0,
+            bitrate_kbps=500.0,
+            encoded_frames=240,
+            elapsed_sec=8.0,
+            realtime_multiplier=1.0,
+            init_ms=200,
+            gpu_utilization_percent=None,
+            vram_used_mb=None,
+            concurrent_session_cap=meta.concurrent_session_cap,
+            recommended_concurrent=1,
+        )
+
+    with patch.object(
+        benchmark_service, "benchmark_encoder", side_effect=_fake_benchmark
+    ):
+        results = await benchmark_service.run_benchmark(
+            ["libx264", "h264_nvenc"],
+            resolutions=[(1280, 720), (1920, 1080), (3840, 2160)],
+        )
+
+    # Outer = resolution, inner = encoder; each pair invoked exactly once.
+    assert seen == [
+        ("libx264", "1280x720"),
+        ("h264_nvenc", "1280x720"),
+        ("libx264", "1920x1080"),
+        ("h264_nvenc", "1920x1080"),
+        ("libx264", "3840x2160"),
+        ("h264_nvenc", "3840x2160"),
+    ]
+    assert len(results) == 6
+    # Each result self-describes its resolution — the desktop groups by
+    # encoder + reads each row's (width, height) directly rather than
+    # inferring from the parent run's primary dimensions.
+    assert results[0].width == 1280 and results[0].height == 720
+    assert results[2].width == 1920 and results[2].height == 1080
+    assert results[5].width == 3840 and results[5].height == 2160
+
+
+@pytest.mark.asyncio
+async def test_run_benchmark_matrix_publishes_resolution_index_in_progress() -> (
+    None
+):
+    """In matrix mode the progress snapshot must include
+    ``total_resolutions`` and ``current_resolution_index`` so the desktop
+    can render "Resolution 2 of 3 · Encoder 4 of 6" instead of just an
+    encoder counter that resets at each resolution boundary."""
+    seen_progress: list[dict | None] = []
+
+    async def _capturing_benchmark(encoder, *, size, **_kwargs):
+        seen_progress.append(benchmark_service.get_progress())
+        meta = benchmark_service.ENCODER_REGISTRY[encoder]
+        w_str, h_str = size.split("x")
+        return benchmark_service.EncoderBenchmarkResult(
+            encoder=encoder,
+            vendor=meta.vendor,
+            codec=meta.codec,
+            width=int(w_str),
+            height=int(h_str),
+            passed=True,
+            error=None,
+            fps=60.0,
+            speed_x=2.0,
+            bitrate_kbps=900.0,
+            encoded_frames=480,
+            elapsed_sec=4.0,
+            realtime_multiplier=2.0,
+            init_ms=200,
+            gpu_utilization_percent=None,
+            vram_used_mb=None,
+            concurrent_session_cap=meta.concurrent_session_cap,
+            recommended_concurrent=2,
+        )
+
+    with patch.object(
+        benchmark_service, "benchmark_encoder", side_effect=_capturing_benchmark
+    ):
+        await benchmark_service.run_benchmark(
+            ["libx264", "h264_nvenc"],
+            resolutions=[(1280, 720), (1920, 1080)],
+        )
+
+    assert len(seen_progress) == 4  # 2 encoders × 2 resolutions
+    # First two snapshots are at 720p; next two at 1080p.
+    assert seen_progress[0]["total_resolutions"] == 2
+    assert seen_progress[0]["current_resolution_index"] == 1
+    assert seen_progress[0]["current_resolution_width"] == 1280
+    assert seen_progress[0]["current_resolution_height"] == 720
+    assert seen_progress[2]["current_resolution_index"] == 2
+    assert seen_progress[2]["current_resolution_width"] == 1920
+    assert seen_progress[2]["current_resolution_height"] == 1080
+    # Total encoders counter reflects pair count, not encoder count.
+    assert seen_progress[0]["total_encoders"] == 4
+    assert seen_progress[3]["current_index"] == 4
+    # Progress cleared after run completes.
+    assert benchmark_service.get_progress() is None
