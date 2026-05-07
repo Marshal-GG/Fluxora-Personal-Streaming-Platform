@@ -677,3 +677,38 @@ The same trap applies to `patch(...)` (without `.object`) and to any test-side m
 **Fix (shipped 2026-05-07).** Drop `mainAxisSize.min` so the Row defaults to `MainAxisSize.max`.  Tabs themselves stay left-aligned via the default `mainAxisAlignment` (start).  Container then fills the parent's width and the border extends across.
 
 The `bottom: 16` padding on the same Container is also worth removing so the active tab's 2 px violet underline overlaps the 1 px divider — the prototype's `marginBottom: -1` design intent.  Both fixed in `flux_tab_bar.dart` together.
+
+---
+
+## Polling cubits need a silent-refresh path or the UI flickers every tick
+
+**Symptom.** A `BlocBuilder` consumer of a polling cubit visibly flickers — list collapses to a spinner, then reappears — every poll interval.  Classic instance: a `Timer.periodic` calling `cubit.load()` every 5 s.
+
+**Root cause.** The standard `load()` method on a Bloc / Cubit emits a `Loading` state first, then `Loaded` once the API call returns.  That's correct for a one-shot fetch (operator opens the screen, sees a spinner, then content) but unusable for a poll loop.  Every tick replaces the visible content with a spinner.
+
+A second, subtler trap: even if the user-facing widget is unaffected, **derived UI state riding on the `Loaded` instance gets blown away** — e.g. `processingIds` in `ClientsCubit` (which dims the row buttons during a revoke) is set to `{}` on every Loading→Loaded cycle.  A poll tick during a revoke would thus re-enable the row's button mid-call.
+
+**Fix.** Add a separate `refreshSilent()` (or whatever name fits the cubit) method that:
+1. **No-ops unless the state is already `Loaded`.** Refresh has nothing to render against `Initial` / `Loading` / `Failure`; let the user's manual `load()` handle those.
+2. **Calls the repo, then `emit(current.copyWith(items: fresh))`.** Crucially, `copyWith` preserves `filter`, `processingIds`, and any other derived UI state.
+3. **Re-checks `state` after the await.** If the state changed under the silent refresh (e.g. operator triggered a hard `load()` mid-poll), bail out instead of stomping the new state.
+4. **Swallows errors silently** with a warn-level log.  A transient blip on a poll tick should NOT replace the last-known good state with a `Failure`.  The whole point is best-effort — surface errors only on the explicit `load()` path.
+
+```dart
+Future<void> refreshSilent() async {
+  final current = state;
+  if (current is! ClientsLoaded) return;
+  try {
+    final clients = await _repository.getClients();
+    final next = state;
+    if (next is! ClientsLoaded) return;  // state changed under us
+    emit(next.copyWith(clients: clients));
+  } catch (e, st) {
+    _log.w('Silent refresh failed', error: e, stackTrace: st);
+  }
+}
+```
+
+`ActivityCubit` does the same thing implicitly via "only emit Loading on first load"; `ClientsCubit` (post-2026-05-07) does it explicitly via `refreshSilent`.  Either pattern is fine — pick the one that reads better for your call sites.
+
+**Pin it in tests.** A regression test that asserts `expect: () => []` on a poll-tick during a transient API failure is the only way to catch a future refactor that re-introduces the flicker.
