@@ -320,4 +320,106 @@ void main() {
       expect: () => [],
     );
   });
+
+  group('ClientsCubit.refreshSilent', () {
+    final approvedClient2 = ClientListItem(
+      id: 'client-3',
+      name: 'iPad Pro',
+      platform: ClientPlatform.ios,
+      status: ClientStatus.approved,
+      lastSeen: DateTime.utc(2026, 4, 28),
+      isTrusted: true,
+    );
+
+    blocTest<ClientsCubit, ClientsState>(
+      'replaces clients without flickering through ClientsLoading',
+      build: () {
+        when(() => mockRepo.getClients()).thenAnswer(
+          (_) async => [approvedClient, approvedClient2],
+        );
+        return buildCubit();
+      },
+      seed: () => ClientsLoaded(clients: [approvedClient]),
+      act: (cubit) => cubit.refreshSilent(),
+      expect: () => [
+        // Single emit — no ClientsLoading in between, that's the point.
+        isA<ClientsLoaded>()
+            .having((s) => s.clients.length, 'updated client count', 2),
+      ],
+    );
+
+    blocTest<ClientsCubit, ClientsState>(
+      'preserves filter across silent refresh',
+      build: () {
+        when(() => mockRepo.getClients())
+            .thenAnswer((_) async => [approvedClient, pendingClient]);
+        return buildCubit();
+      },
+      seed: () => ClientsLoaded(
+        clients: [approvedClient],
+        filter: ClientStatus.approved,
+      ),
+      act: (cubit) => cubit.refreshSilent(),
+      expect: () => [
+        isA<ClientsLoaded>()
+            .having((s) => s.filter, 'filter retained', ClientStatus.approved)
+            .having((s) => s.filtered.length, 'filtered count', 1),
+      ],
+    );
+
+    blocTest<ClientsCubit, ClientsState>(
+      'preserves processingIds so a revoke-in-flight stays disabled',
+      build: () {
+        when(() => mockRepo.getClients())
+            .thenAnswer((_) async => [approvedClient]);
+        return buildCubit();
+      },
+      seed: () => ClientsLoaded(
+        clients: [approvedClient],
+        processingIds: const {'client-1'},
+      ),
+      act: (cubit) => cubit.refreshSilent(),
+      expect: () => [
+        isA<ClientsLoaded>().having(
+          (s) => s.processingIds,
+          'in-flight ids preserved',
+          {'client-1'},
+        ),
+      ],
+    );
+
+    blocTest<ClientsCubit, ClientsState>(
+      'no-op when state is ClientsInitial',
+      build: () => buildCubit(),
+      act: (cubit) => cubit.refreshSilent(),
+      expect: () => [],
+      verify: (_) => verifyNever(() => mockRepo.getClients()),
+    );
+
+    blocTest<ClientsCubit, ClientsState>(
+      'no-op when state is ClientsFailure',
+      build: () => buildCubit(),
+      seed: () => const ClientsFailure('whatever'),
+      act: (cubit) => cubit.refreshSilent(),
+      expect: () => [],
+      verify: (_) => verifyNever(() => mockRepo.getClients()),
+    );
+
+    blocTest<ClientsCubit, ClientsState>(
+      'swallows errors silently — never emits ClientsFailure on a poll tick',
+      build: () {
+        when(() => mockRepo.getClients()).thenThrow(
+          const ApiException(message: 'transient blip', statusCode: 502),
+        );
+        return buildCubit();
+      },
+      seed: () => ClientsLoaded(clients: [approvedClient]),
+      act: (cubit) => cubit.refreshSilent(),
+      // Critical: a failed poll must NOT replace the last-known good state
+      // with an error UI. The whole point of refreshSilent is "best-effort
+      // background update" — if the network blips, the operator's view
+      // stays stable instead of flickering to an error and back.
+      expect: () => [],
+    );
+  });
 }

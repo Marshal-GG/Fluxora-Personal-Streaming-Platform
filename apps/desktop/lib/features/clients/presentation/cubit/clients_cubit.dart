@@ -27,6 +27,26 @@ class ClientsCubit extends Cubit<ClientsState> {
     }
   }
 
+  /// Re-fetch the client list without flickering through `ClientsLoading`.
+  /// Intended for poll-driven refreshes (e.g. the Profile Sessions tab):
+  /// preserves the existing `filter` + `processingIds` so the UI doesn't
+  /// reset mid-revoke. No-op unless the cubit is already in
+  /// [ClientsLoaded] — silent refresh has nothing to show against an
+  /// initial / loading / failure state.
+  Future<void> refreshSilent() async {
+    final current = state;
+    if (current is! ClientsLoaded) return;
+    try {
+      final clients = await _repository.getClients();
+      final next = state;
+      if (next is! ClientsLoaded) return;
+      emit(next.copyWith(clients: clients));
+    } catch (e, st) {
+      // Preserve last-known state — don't surface error UI for poll noise.
+      _log.w('Clients silent refresh failed', error: e, stackTrace: st);
+    }
+  }
+
   void setFilter(ClientStatus? filter) {
     final current = state;
     if (current is ClientsLoaded) {

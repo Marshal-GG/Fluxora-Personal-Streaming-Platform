@@ -3,9 +3,13 @@
 /// Matches `docs/11_design/desktop_prototype/app/pages/profile.jsx`.
 /// Left column: avatar + tab nav. Right column: tab content.
 /// Tabs: Profile · Security · Preferences · Sessions · Danger Zone.
-/// Only Profile tab is wired to the real `ProfileCubit`; remaining tabs
-/// are informational shells (no backend today).
+///
+/// Profile + Sessions tabs are wired to live data (`ProfileCubit`,
+/// `ClientsCubit`); Security / Preferences / Danger Zone remain
+/// informational shells.
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -14,14 +18,20 @@ import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_radii.dart';
 import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
+import 'package:fluxora_core/entities/client_list_item.dart';
+import 'package:fluxora_core/entities/enums.dart';
 import 'package:fluxora_core/entities/profile.dart';
 
 import 'package:fluxora_desktop/core/di/injector.dart';
+import 'package:fluxora_desktop/features/clients/domain/repositories/clients_repository.dart';
+import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_cubit.dart';
+import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_state.dart';
 import 'package:fluxora_desktop/features/profile/presentation/cubit/profile_cubit.dart';
 import 'package:fluxora_desktop/features/profile/presentation/cubit/profile_state.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_glass_dialog.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_text_field.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
@@ -719,7 +729,11 @@ class _SwitchRowState extends State<_SwitchRow> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tab: Active Sessions (informational shell)
+// Tab: Active Sessions
+//
+// Lists every paired client with a live bearer token. The desktop CP itself
+// is localhost-only and never pairs as a client, so there is no "this device"
+// row to render — the tab is exclusively about mobile / remote desktop pairs.
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _SessionsTab extends StatelessWidget {
@@ -727,45 +741,234 @@ class _SessionsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FluxCard(
-      padding: 0,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return BlocProvider<ClientsCubit>(
+      create: (_) => ClientsCubit(
+        repository: getIt<ClientsRepository>(),
+      )..load(),
+      child: const _SessionsTabBody(),
+    );
+  }
+}
+
+class _SessionsTabBody extends StatefulWidget {
+  const _SessionsTabBody();
+
+  @override
+  State<_SessionsTabBody> createState() => _SessionsTabBodyState();
+}
+
+class _SessionsTabBodyState extends State<_SessionsTabBody> {
+  bool _bulkRevoking = false;
+  Timer? _refreshTimer;
+
+  /// Silent-refresh cadence. Clients change rarely (operator pairs / revokes),
+  /// so 5 s is fast enough to surface a new pair before the operator wonders
+  /// "did it work" without hammering the loopback. Mirrors the lighter end
+  /// of [`ActivityCubit`]'s 2 s cadence — that one polls live progress, this
+  /// one polls a near-static list.
+  static const Duration _refreshInterval = Duration(seconds: 5);
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshTimer = Timer.periodic(_refreshInterval, (_) {
+      if (!mounted || _bulkRevoking) return;
+      context.read<ClientsCubit>().refreshSilent();
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  static List<ClientListItem> _activeSessions(List<ClientListItem> all) {
+    final filtered = all
+        .where((c) => c.status == ClientStatus.approved && c.isTrusted)
+        .toList()
+      ..sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
+    return filtered;
+  }
+
+  Future<void> _confirmRevokeOne(
+    BuildContext ctx,
+    ClientListItem c,
+  ) async {
+    final cubit = ctx.read<ClientsCubit>();
+    final ok = await showDialog<bool>(
+      context: ctx,
+      builder: (dialogCtx) => FluxGlassDialog(
+        title: const Text('Sign Out Device?'),
+        content: Text(
+          'This signs ${c.name} out immediately. The device must re-pair from '
+          'the Connect screen to access this server again.',
+        ),
+        actions: [
+          FluxButton(
+            variant: FluxButtonVariant.outline,
+            size: FluxButtonSize.sm,
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FluxButton(
+            variant: FluxButtonVariant.danger,
+            size: FluxButtonSize.sm,
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await cubit.revoke(c.id);
+  }
+
+  Future<void> _confirmRevokeAll(
+    BuildContext ctx,
+    List<ClientListItem> active,
+  ) async {
+    final cubit = ctx.read<ClientsCubit>();
+    final count = active.length;
+    final ok = await showDialog<bool>(
+      context: ctx,
+      builder: (dialogCtx) => FluxGlassDialog(
+        title: const Text('Sign Out All Devices?'),
+        content: Text(
+          'This signs out $count ${count == 1 ? "device" : "devices"} '
+          'immediately. Each will need to re-pair from the Connect screen.',
+        ),
+        actions: [
+          FluxButton(
+            variant: FluxButtonVariant.outline,
+            size: FluxButtonSize.sm,
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FluxButton(
+            variant: FluxButtonVariant.danger,
+            size: FluxButtonSize.sm,
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Sign Out All'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _bulkRevoking = true);
+    // Sequential revoke so the cubit's processingIds + reload sequence
+    // stays predictable; per-encoder latency is dominated by the DB write
+    // (~milliseconds) so the wall-clock cost is negligible at any
+    // realistic device count.
+    for (final c in active) {
+      await cubit.revoke(c.id);
+      if (!mounted) return;
+    }
+    if (!mounted) return;
+    setState(() => _bulkRevoking = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<ClientsCubit, ClientsState>(
+      builder: (context, state) {
+        final active = state is ClientsLoaded
+            ? _activeSessions(state.clients)
+            : const <ClientListItem>[];
+        return FluxCard(
+          padding: 0,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _SessionsHeader(
+                state: state,
+                activeCount: active.length,
+                bulkBusy: _bulkRevoking,
+                onSignOutAll: active.isEmpty
+                    ? null
+                    : () => _confirmRevokeAll(context, active),
+              ),
+              if (state is ClientsLoading) const _SessionsLoadingRow(),
+              if (state is ClientsFailure)
+                _SessionsErrorRow(message: state.message),
+              if (state is ClientsLoaded) ...[
+                if (active.isEmpty)
+                  const _NoSessionsRow()
+                else
+                  for (final c in active)
+                    _SessionRow(
+                      client: c,
+                      isProcessing:
+                          state.processingIds.contains(c.id) || _bulkRevoking,
+                      onRevoke: () => _confirmRevokeOne(context, c),
+                    ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SessionsHeader extends StatelessWidget {
+  const _SessionsHeader({
+    required this.state,
+    required this.activeCount,
+    required this.bulkBusy,
+    required this.onSignOutAll,
+  });
+
+  final ClientsState state;
+  final int activeCount;
+  final bool bulkBusy;
+  final VoidCallback? onSignOutAll;
+
+  @override
+  Widget build(BuildContext context) {
+    final subtitle = switch (state) {
+      ClientsLoading() => 'Loading paired devices…',
+      ClientsFailure() => 'Could not load paired devices',
+      ClientsLoaded() => activeCount == 0
+          ? 'No devices signed in to your server'
+          : '$activeCount paired '
+              '${activeCount == 1 ? "device" : "devices"} signed in',
+      _ => 'Devices currently signed in to your server',
+    };
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(22, 16, 22, 16),
+      child: Row(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(22, 16, 22, 16),
-            child: Row(
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Active Sessions',
-                        style: AppTypography.body.copyWith(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Devices currently signed in to your account',
-                        style: AppTypography.bodySmall.copyWith(
-                          color: AppColors.textDim,
-                        ),
-                      ),
-                    ],
+                Text(
+                  'Active Sessions',
+                  style: AppTypography.body.copyWith(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  style: AppTypography.bodySmall.copyWith(
+                    color: AppColors.textDim,
                   ),
                 ),
               ],
             ),
           ),
-          const _SessionRow(
-            device: 'This device',
-            meta: 'Desktop Control Panel',
-            ip: 'localhost',
-            when: 'Now',
-            isCurrent: true,
+          FluxButton(
+            variant: FluxButtonVariant.outline,
+            size: FluxButtonSize.sm,
+            icon: Icons.logout,
+            onPressed: bulkBusy ? null : onSignOutAll,
+            child: Text(
+              bulkBusy ? 'Signing Out…' : 'Sign Out All Devices',
+            ),
           ),
         ],
       ),
@@ -775,18 +978,40 @@ class _SessionsTab extends StatelessWidget {
 
 class _SessionRow extends StatelessWidget {
   const _SessionRow({
-    required this.device,
-    required this.meta,
-    required this.ip,
-    required this.when,
-    required this.isCurrent,
+    required this.client,
+    required this.isProcessing,
+    required this.onRevoke,
   });
 
-  final String device;
-  final String meta;
-  final String ip;
-  final String when;
-  final bool isCurrent;
+  final ClientListItem client;
+  final bool isProcessing;
+  final VoidCallback onRevoke;
+
+  IconData get _platformIcon => switch (client.platform) {
+        ClientPlatform.android => Icons.phone_android,
+        ClientPlatform.ios => Icons.phone_iphone,
+        ClientPlatform.windows => Icons.desktop_windows_outlined,
+        ClientPlatform.macos => Icons.desktop_mac_outlined,
+        ClientPlatform.linux => Icons.computer_outlined,
+      };
+
+  String get _platformLabel => switch (client.platform) {
+        ClientPlatform.android => 'Android',
+        ClientPlatform.ios => 'iOS',
+        ClientPlatform.windows => 'Windows',
+        ClientPlatform.macos => 'macOS',
+        ClientPlatform.linux => 'Linux',
+      };
+
+  String _relativeTime(DateTime dt) {
+    final delta = DateTime.now().toUtc().difference(dt.toUtc());
+    if (delta.inSeconds < 30) return 'Just now';
+    if (delta.inMinutes < 1) return '${delta.inSeconds}s ago';
+    if (delta.inMinutes < 60) return '${delta.inMinutes}m ago';
+    if (delta.inHours < 24) return '${delta.inHours}h ago';
+    if (delta.inDays < 7) return '${delta.inDays}d ago';
+    return '${delta.inDays ~/ 7}w ago';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -797,38 +1022,20 @@ class _SessionRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(
-            Icons.desktop_windows_outlined,
-            size: 16,
-            color: AppColors.violet,
-          ),
+          Icon(_platformIcon, size: 16, color: AppColors.violet),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text(
-                      device,
-                      style: AppTypography.bodySmall.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (isCurrent) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        '● Current',
-                        style: AppTypography.bodySmall.copyWith(
-                          fontSize: 10.5,
-                          color: const Color(0xFF10B981),
-                        ),
-                      ),
-                    ],
-                  ],
+                Text(
+                  client.name,
+                  style: AppTypography.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 Text(
-                  meta,
+                  _platformLabel,
                   style: AppTypography.bodySmall.copyWith(
                     color: AppColors.textMutedV2,
                   ),
@@ -836,19 +1043,140 @@ class _SessionRow extends StatelessWidget {
               ],
             ),
           ),
-          Text(
-            ip,
-            style: AppTypography.bodySmall.copyWith(
-              color: AppColors.textMutedV2,
-              fontFamily: 'JetBrainsMono',
+          SizedBox(
+            width: 110,
+            child: Text(
+              client.lastIp ?? '—',
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textMutedV2,
+                fontFamily: 'JetBrainsMono',
+              ),
+              textAlign: TextAlign.right,
             ),
           ),
           const SizedBox(width: 14),
+          SizedBox(
+            width: 80,
+            child: Text(
+              _relativeTime(client.lastSeen),
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textMutedV2,
+              ),
+              textAlign: TextAlign.right,
+            ),
+          ),
+          const SizedBox(width: 14),
+          FluxButton(
+            variant: FluxButtonVariant.ghost,
+            size: FluxButtonSize.sm,
+            onPressed: isProcessing ? null : onRevoke,
+            child: Text(isProcessing ? '…' : 'Sign Out'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SessionsLoadingRow extends StatelessWidget {
+  const _SessionsLoadingRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0x08FFFFFF))),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation(AppColors.violet),
+            ),
+          ),
+          const SizedBox(width: 10),
           Text(
-            when,
+            'Loading sessions…',
             style: AppTypography.bodySmall.copyWith(
               color: AppColors.textMutedV2,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SessionsErrorRow extends StatelessWidget {
+  const _SessionsErrorRow({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 22),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0x08FFFFFF))),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.error_outline,
+            size: 16,
+            color: Color(0xFFEF4444),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textBody,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NoSessionsRow extends StatelessWidget {
+  const _NoSessionsRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 36),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0x08FFFFFF))),
+      ),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.devices_outlined,
+            size: 22,
+            color: AppColors.textMutedV2,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'No paired devices',
+            style: AppTypography.bodySmall.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Pair a device from the Clients screen to see it here.',
+            style: AppTypography.bodySmall.copyWith(
+              color: AppColors.textDim,
+            ),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
