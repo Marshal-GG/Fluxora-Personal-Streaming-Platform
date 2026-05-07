@@ -6,6 +6,9 @@ import 'package:fluxora_mobile/features/auth/data/repositories/auth_repository_i
 import 'package:fluxora_mobile/features/auth/domain/repositories/auth_repository.dart';
 import 'package:fluxora_mobile/features/connect/data/repositories/server_discovery_repository_impl.dart';
 import 'package:fluxora_mobile/features/connect/domain/repositories/server_discovery_repository.dart';
+import 'package:fluxora_mobile/features/groups/data/repositories/groups_repository_impl.dart';
+import 'package:fluxora_mobile/features/groups/domain/repositories/groups_repository.dart';
+import 'package:fluxora_mobile/features/groups/presentation/cubit/groups_cubit.dart';
 import 'package:fluxora_mobile/features/home/presentation/cubit/continue_watching_cubit.dart';
 import 'package:fluxora_mobile/features/home/presentation/cubit/recent_cubit.dart';
 import 'package:fluxora_mobile/features/library/data/repositories/library_repository_impl.dart';
@@ -122,5 +125,16 @@ Future<void> setupInjector() async {
   // can't blank the avatar header (and vice versa).  Singleton.
   getIt.registerLazySingleton<ProfileStatsCubit>(
     () => ProfileStatsCubit(repository: getIt<AuthRepository>()),
+  );
+
+  // Mobile groups (M4 + M8 + M6 of `13_groups_v2_content_spaces.md`).
+  // Singleton scope so the Profile screen's group cards survive
+  // bottom-tab hops; a successful /enter or /enroll on the first
+  // visit doesn't have to repeat on the second.
+  getIt.registerLazySingleton<GroupsRepository>(
+    () => GroupsRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+  getIt.registerLazySingleton<MobileGroupsCubit>(
+    () => MobileGroupsCubit(repository: getIt<GroupsRepository>()),
   );
 }

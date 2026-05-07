@@ -15,6 +15,9 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:fluxora_mobile/core/router/app_router.dart';
+import 'package:fluxora_mobile/features/groups/presentation/cubit/groups_cubit.dart';
+import 'package:fluxora_mobile/features/groups/presentation/cubit/groups_state.dart';
+import 'package:fluxora_mobile/features/groups/presentation/widgets/groups_section.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
 import 'package:fluxora_mobile/features/profile/presentation/cubit/profile_cubit.dart';
 import 'package:fluxora_mobile/features/profile/presentation/cubit/profile_stats_cubit.dart';
@@ -29,22 +32,31 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   late final ProfileCubit _profile;
   late final ProfileStatsCubit _stats;
+  late final MobileGroupsCubit _groups;
 
   @override
   void initState() {
     super.initState();
     _profile = GetIt.I<ProfileCubit>();
     _stats = GetIt.I<ProfileStatsCubit>();
+    _groups = GetIt.I<MobileGroupsCubit>();
     if (_profile.state is ProfileInitial) {
       _profile.load();
     }
     if (_stats.state is ProfileStatsInitial) {
       _stats.load();
     }
+    if (_groups.state is MobileGroupsInitial) {
+      _groups.load();
+    }
   }
 
   Future<void> _refresh() async {
-    await Future.wait([_profile.refresh(), _stats.refresh()]);
+    await Future.wait([
+      _profile.refresh(),
+      _stats.refresh(),
+      _groups.refreshSilent(),
+    ]);
   }
 
   @override
@@ -53,6 +65,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       providers: [
         BlocProvider<ProfileCubit>.value(value: _profile),
         BlocProvider<ProfileStatsCubit>.value(value: _stats),
+        BlocProvider<MobileGroupsCubit>.value(value: _groups),
       ],
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -90,6 +103,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     const Padding(
                       padding: EdgeInsets.fromLTRB(16, 12, 16, 0),
                       child: _StatRow(),
+                    ),
+                    // M6 group surfaces — Locked / Unlocked / Visible
+                    // Libraries cards.  Self-hides when there's nothing
+                    // to surface (no gated groups + no provenance) so a
+                    // fresh single-client install doesn't see empty
+                    // sections.
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 14, 16, 0),
+                      child: GroupsSection(),
                     ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
