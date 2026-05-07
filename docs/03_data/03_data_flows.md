@@ -1,7 +1,7 @@
 # Data Flow Diagrams
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-07 (Flow 6 stream-gate flow rewritten for v2 content-spaces redesign — `get_visible_libraries` + `reason_to_deny_stream` replace v1 intersection logic; multi-group composition is now UNION not intersection; new Flow 6b for the PIN-flow + per-client enrollment).  Earlier 2026-05-02: Polar payment webhook flow + Notification fan-out + Activity event log + §7.9 Log Pipeline flow.
+> **Status:** Active - Updated 2026-05-08 (Flow 4 gains a Sign-out / self-revoke sub-flow — mobile sign-out now calls `DELETE /auth/clients/me` before clearing local state so the bearer can't outlive the user's tap; mobile redesign audit §17.3 #3).  Earlier 2026-05-07: Flow 6 stream-gate flow rewritten for v2 content-spaces redesign — `get_visible_libraries` + `reason_to_deny_stream` replace v1 intersection logic; multi-group composition is now UNION not intersection; new Flow 6b for the PIN-flow + per-client enrollment.  Earlier 2026-05-02: Polar payment webhook flow + Notification fan-out + Activity event log + §7.9 Log Pipeline flow.
 
 ---
 
@@ -107,6 +107,33 @@
 The post-pair `/info` fetch is wrapped in a try/catch — if it fails the
 client persists with `remoteUrl = null` and operates LAN-direct. See
 `docs/05_infrastructure/03_public_routing.md` Phase 4.
+
+### Sign-out (self-revoke) — added 2026-05-08
+
+```
+[Flutter Client] ──▶ User taps Sign out → confirm dialog
+    │
+    ├──▶ DELETE /auth/clients/me  (bearer-validated)
+    │       │
+    │   [FastAPI Server]
+    │       └──▶ auth_service.revoke_client(client_id)
+    │             • status → 'rejected'
+    │             • auth_token zeroed
+    │             • is_trusted = 0
+    │       └──▶ activity_events INSERT (type=client.revoke,
+    │            actor_kind='client', actor_id=target_id=client_id)
+    │       └──▶ 204 No Content
+    │
+    ├──▶ apiClient.clearBearerToken()
+    ├──▶ secureStorage.deleteAll()
+    └──▶ context.go(/connect)
+```
+
+Server-side revoke fires **first** so a stolen-and-not-yet-cleared token
+on the same device can't authenticate after the user taps.  Network
+failure on the DELETE is non-fatal — the local teardown still runs so
+a dead network can't trap the user on the screen (audit §17.3 #3 of
+the mobile redesign plan).
 
 ---
 

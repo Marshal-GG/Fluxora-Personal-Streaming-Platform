@@ -30,6 +30,14 @@ abstract class AuthRepository {
   /// client.  All three values degrade gracefully — a fresh client
   /// returns `{0, 0, 0}` rather than 404.
   Future<ClientStats> getMyStats();
+
+  /// `DELETE /api/v1/auth/clients/me` — self-revoke.  Server flips the
+  /// calling client to `status='rejected'` + zeroes its `auth_token`
+  /// so the bearer token stops working server-side immediately.  The
+  /// mobile sign-out flow calls this *before* clearing local state so
+  /// a stolen-and-not-yet-cleared token can't outlive the user's tap.
+  /// Mobile redesign audit §17.3 #3.
+  Future<void> revokeMe();
 }
 
 class PairRejectedException implements Exception {

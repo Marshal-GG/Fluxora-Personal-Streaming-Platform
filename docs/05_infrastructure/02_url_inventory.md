@@ -2,7 +2,7 @@
 
 > **Category:** Infrastructure
 > **Status:** Active — Created 2026-05-02
-> **Last Updated:** 2026-05-08 (added `POST /api/v1/files/{file_id}/reset-progress` for the "Start over" affordance — streaming pipeline plan §4.10)
+> **Last Updated:** 2026-05-08 (added `DELETE /api/v1/auth/clients/me` self-revoke for mobile sign-out — audit §17.3 #3; added `POST /api/v1/files/{file_id}/reset-progress` for the "Start over" affordance — streaming pipeline plan §4.10)
 
 Canonical reference for every URL Fluxora touches today and every URL that needs provisioning in the future. Update this file whenever an endpoint is added, a hostname is provisioned, or a third-party integration changes.
 
@@ -42,6 +42,7 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `DELETE` | `/api/v1/auth/revoke/{client_id}` | Localhost only | Revoke an approved client (operator action) |
 | `GET` | `/api/v1/auth/clients` | Localhost only | List all paired clients |
 | `GET` | `/api/v1/auth/clients/me` | Token required | Calling client's own profile (mobile profile screen) |
+| `DELETE` | `/api/v1/auth/clients/me` | Token required | Self-revoke — caller's bearer + client row are torched in the same teardown as the operator-driven `/auth/revoke/{id}`. Backs the mobile sign-out flow (mobile redesign audit §17.3 #3) so the token stops authenticating immediately, not at natural expiry |
 | `GET` | `/api/v1/auth/clients/me/stats` | Token required | Aggregate `{hours, movies, shows}` watch stats (mobile profile stats row) |
 | `GET` | `/api/v1/auth/clients/me/continue-watching` | Token required | Files with non-zero resume position, sorted most-recent-first (mobile Home rail) |
 | `GET` | `/api/v1/auth/clients/me/visible-libraries` | Token required | M6 of `13_groups_v2_content_spaces.md` — mobile Profile-screen "Locked / Unlocked / Visible Libraries" cards. Same shape as the localhost View-As route below, scoped to the calling client |

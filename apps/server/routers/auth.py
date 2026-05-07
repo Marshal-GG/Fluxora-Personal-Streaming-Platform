@@ -257,6 +257,43 @@ async def revoke_client(
         logger.warning("Failed to record client.revoke activity event", exc_info=True)
 
 
+@router.delete("/clients/me", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_me(
+    me: aiosqlite.Row = Depends(validate_token),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> None:
+    """Self-revoke — caller's bearer token + client row are torched.
+
+    Backs the mobile sign-out flow.  Before this route the mobile app
+    only cleared its local bearer-token cache (and SecureStorage) on
+    sign-out; the server side stayed valid until the token's natural
+    expiry, leaving a window where a stolen-and-not-yet-cleared token
+    on the same device could still authenticate.  Closes that gap by
+    flipping the calling client to `status='rejected'` + zeroing
+    `auth_token` + dropping `is_trusted`, same teardown the operator-
+    driven `DELETE /auth/revoke/{client_id}` performs.
+
+    Streaming-pipeline plan §17.3 #3 of the mobile redesign audit.
+    """
+    client_id = me["id"]
+    await auth_service.revoke_client(db, client_id)
+    try:
+        await activity_service.record(
+            db,
+            type="client.revoke",
+            summary=f"Client {client_id} signed out (self-revoke)",
+            actor_kind="client",
+            actor_id=client_id,
+            target_kind="client",
+            target_id=client_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to record client.revoke (self) activity event",
+            exc_info=True,
+        )
+
+
 @router.get("/clients/me", response_model=ClientMeResponse)
 async def get_me(
     me: aiosqlite.Row = Depends(validate_token),

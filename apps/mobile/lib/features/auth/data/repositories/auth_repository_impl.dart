@@ -60,6 +60,12 @@ class AuthRepositoryImpl implements AuthRepository {
   }
 
   @override
+  Future<void> revokeMe() async {
+    _log.i('Self-revoking client (sign-out)');
+    await _apiClient.delete(Endpoints.authClientsMe);
+  }
+
+  @override
   Future<String?> pollStatus(String clientId) async {
     final data = await _apiClient.get<Map<String, dynamic>>(
       Endpoints.authStatus(clientId),

@@ -2,7 +2,7 @@
 
 > **Category:** Security  
 > **Status:** Active  
-> **Last Updated:** 2026-05-06 (migration 023 — added `clients.last_ip` field + per-request heartbeat narrative to "Stored fields & PII surface" section). 2026-05-04 (Phase B QA round — added QR-code pairing flow doc + mDNS-fallback narrative; the QR carries only network location, not credentials, so the operator-approve security model is unchanged. Phase A backfill plan §8.5 bug 1 fix — same-`client_id` re-pair now resets the row to `pending` and invalidates the prior token; new bearer-protected `GET /auth/clients/me`). 2026-05-01 added Cloudflare Tunnel threat model + admin-route hardening.
+> **Last Updated:** 2026-05-08 (added `DELETE /api/v1/auth/clients/me` self-revoke for mobile sign-out — closes the window where a sign-out cleared local state but left the bearer valid server-side; mobile redesign audit §17.3 #3). 2026-05-06 (migration 023 — added `clients.last_ip` field + per-request heartbeat narrative to "Stored fields & PII surface" section). 2026-05-04 (Phase B QA round — added QR-code pairing flow doc + mDNS-fallback narrative; the QR carries only network location, not credentials, so the operator-approve security model is unchanged. Phase A backfill plan §8.5 bug 1 fix — same-`client_id` re-pair now resets the row to `pending` and invalidates the prior token; new bearer-protected `GET /auth/clients/me`). 2026-05-01 added Cloudflare Tunnel threat model + admin-route hardening.
 
 ---
 
@@ -116,6 +116,7 @@ Mobile Sign Out:
 | `POST /api/v1/auth/approve/{id}` | 🔒 Localhost only | `require_local_caller` dep — 403 if `request.client.host` not in `{127.0.0.1, ::1, localhost}` |
 | `POST /api/v1/auth/reject/{id}` | 🔒 Localhost only | Same `require_local_caller` restriction |
 | `GET /api/v1/auth/clients/me` | 🔑 Token required | `validate_token` — returns the calling client's profile (name/email/tier/paired_at/last_seen). Mobile profile screen, Phase A. |
+| `DELETE /api/v1/auth/clients/me` | 🔑 Token required | `validate_token` — self-revoke. The calling client tears down its own bearer + row in the same teardown the operator-driven `/auth/revoke/{id}` performs. Mobile sign-out flow calls this before clearing local state so a stolen-and-not-yet-cleared token can't outlive the user's tap (mobile redesign audit §17.3 #3, 2026-05-08). |
 | `DELETE /api/v1/auth/revoke/{id}` | 🔒 Localhost only | `require_local_caller` — operator action surfaced from desktop Clients screen. Earlier versions accepted any bearer token, which let one client revoke another (privilege escalation); tightened to localhost-only. |
 | `GET /api/v1/files` | ✅ Bearer token | List indexed media files |
 | `GET /api/v1/files/{id}` | ✅ Bearer token | Single file lookup |

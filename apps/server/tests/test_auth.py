@@ -461,6 +461,117 @@ async def test_clients_me_requires_token(client: AsyncClient):
     assert resp.status_code == 401
 
 
+# ── DELETE /clients/me (mobile redesign audit §17.3 #3 — self-revoke) ───────
+
+
+@pytest.mark.asyncio
+async def test_clients_me_self_revoke_returns_204(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """Self-revoke happy path: the calling client's bearer token + row
+    are torched, returning 204."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    resp = await client.delete(
+        "/api/v1/auth/clients/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_clients_me_self_revoke_invalidates_token(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """After self-revoke, the same bearer token must no longer
+    authenticate the next request — that's the whole point of the
+    fix.  Without server-side revoke the token would still work
+    until natural expiry."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    # Confirm token works pre-revoke.
+    pre = await client.get(
+        "/api/v1/auth/clients/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert pre.status_code == 200
+
+    # Self-revoke.
+    await client.delete(
+        "/api/v1/auth/clients/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    # Same token must now fail token-validated routes.
+    post = await client.get(
+        "/api/v1/auth/clients/me",
+        headers={
+            "Authorization": f"Bearer {token}",
+            # Force the loopback dep onto the validate-token branch so
+            # the bearer is actually consulted (httpx sees the request
+            # as 127.0.0.1 by default, which would short-circuit to
+            # localhost-allowed).
+            "CF-Connecting-IP": "203.0.113.1",
+        },
+    )
+    assert post.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_clients_me_self_revoke_requires_token(client: AsyncClient):
+    """No bearer + non-loopback origin → 401.  Matches the rest of
+    the `/clients/me/...` family."""
+    resp = await client.delete(
+        "/api/v1/auth/clients/me",
+        headers={"CF-Connecting-IP": "1.2.3.4"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_clients_me_self_revoke_records_activity_event(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """The self-revoke path emits an activity event so the operator's
+    Activity feed shows the sign-out.  Same row as operator-driven
+    `client.revoke` events but with `actor_kind='client'` instead of
+    `'operator'`."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    await client.delete(
+        "/api/v1/auth/clients/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    async with test_db.execute(
+        "SELECT type, actor_kind, actor_id, target_id, summary"
+        " FROM activity_events"
+        " WHERE type = 'client.revoke'"
+        " ORDER BY created_at DESC LIMIT 1"
+    ) as cur:
+        row = await cur.fetchone()
+    assert row is not None
+    assert row["actor_kind"] == "client"
+    assert row["actor_id"] == PAIR_BODY["client_id"]
+    assert row["target_id"] == PAIR_BODY["client_id"]
+    assert "self-revoke" in row["summary"]
+
+
 # ── /clients/me/stats (Phase B backfill plan §3 row 3) ──────────────────────
 
 

@@ -15,6 +15,7 @@ import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:fluxora_mobile/core/router/app_router.dart';
+import 'package:fluxora_mobile/features/auth/domain/repositories/auth_repository.dart';
 import 'package:fluxora_mobile/features/groups/presentation/cubit/groups_cubit.dart';
 import 'package:fluxora_mobile/features/groups/presentation/cubit/groups_state.dart';
 import 'package:fluxora_mobile/features/groups/presentation/widgets/groups_section.dart';
@@ -182,6 +183,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await getIt<PlayerCubit>().dismiss();
     } catch (_) {
       // PlayerCubit may not have an active session — ignore.
+    }
+    // Self-revoke server-side BEFORE clearing the local bearer cache
+    // (mobile redesign audit §17.3 #3).  Failure is non-fatal: a dead
+    // network or a server that's already forgotten the client should
+    // not block the user from signing out locally.  Without this call
+    // the bearer token stays valid server-side until natural expiry —
+    // a stolen-and-not-yet-cleared token could still authenticate.
+    try {
+      await getIt<AuthRepository>().revokeMe();
+    } catch (_) {
+      // Server unreachable, token already revoked, etc. — proceed
+      // with local teardown so the user isn't trapped on the screen.
     }
     getIt<ApiClient>().clearBearerToken();
     await getIt<SecureStorage>().deleteAll();
