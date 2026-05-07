@@ -68,12 +68,18 @@ class GroupsCubit extends Cubit<GroupsState> {
     await loadMembers(group.id);
   }
 
-  Future<void> loadMembers(String groupId) async {
+  Future<void> loadMembers(
+    String groupId, {
+    bool includePinState = false,
+  }) async {
     final current = state;
     if (current is! GroupsLoaded) return;
     emit(current.copyWith(membersLoading: true));
     try {
-      final members = await _repository.listMembers(groupId);
+      final members = await _repository.listMembers(
+        groupId,
+        includePinState: includePinState,
+      );
       emit(current.copyWith(members: members, membersLoading: false));
     } catch (e, st) {
       _log.e('Group members load failed', error: e, stackTrace: st);
@@ -85,12 +91,24 @@ class GroupsCubit extends Cubit<GroupsState> {
     required String name,
     String? description,
     GroupRestrictions? restrictions,
+    String? pin,
+    PinMode? pinMode,
+    PinModel? pinModel,
+    String? icon,
+    String? color,
+    int? maxConcurrentStreams,
   }) async {
     try {
       await _repository.create(
         name: name,
         description: description,
         restrictions: restrictions,
+        pin: pin,
+        pinMode: pinMode ?? PinMode.session,
+        pinModel: pinModel ?? PinModel.shared,
+        icon: icon,
+        color: color,
+        maxConcurrentStreams: maxConcurrentStreams,
       );
       await load();
     } on ApiException catch (e, st) {
@@ -108,6 +126,12 @@ class GroupsCubit extends Cubit<GroupsState> {
     String? description,
     GroupStatus? status,
     GroupRestrictions? restrictions,
+    String? pin,
+    PinMode? pinMode,
+    PinModel? pinModel,
+    String? icon,
+    String? color,
+    int? maxConcurrentStreams,
   }) async {
     try {
       await _repository.update(
@@ -116,6 +140,12 @@ class GroupsCubit extends Cubit<GroupsState> {
         description: description,
         status: status,
         restrictions: restrictions,
+        pin: pin,
+        pinMode: pinMode,
+        pinModel: pinModel,
+        icon: icon,
+        color: color,
+        maxConcurrentStreams: maxConcurrentStreams,
       );
       await load();
     } on ApiException catch (e, st) {
@@ -178,6 +208,21 @@ class GroupsCubit extends Cubit<GroupsState> {
       await loadMembers(groupId);
     } catch (e, st) {
       _log.e('Remove member failed', error: e, stackTrace: st);
+    }
+  }
+
+  /// Operator action — drop a member's per-client PIN enrollment so
+  /// they re-enroll on next access.  Server also drops any active grant
+  /// so visibility flips immediately.  Refreshes the members list with
+  /// pin_state so the UI reflects the cleared row without a manual
+  /// reload.
+  Future<void> clearMemberPin(String groupId, String clientId) async {
+    try {
+      await _repository.clearMemberPin(groupId, clientId);
+      await loadMembers(groupId, includePinState: true);
+    } catch (e, st) {
+      _log.e('Clear member PIN failed', error: e, stackTrace: st);
+      rethrow; // surface to the caller for snackbar feedback
     }
   }
 

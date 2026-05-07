@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:fluxora_desktop/features/activity/presentation/screens/activity_screen.dart';
 import 'package:fluxora_desktop/features/clients/presentation/screens/clients_screen.dart';
 import 'package:fluxora_desktop/features/dashboard/presentation/screens/dashboard_screen.dart';
+import 'package:fluxora_desktop/features/groups/presentation/screens/group_edit_screen.dart';
 import 'package:fluxora_desktop/features/groups/presentation/screens/groups_screen.dart';
 import 'package:fluxora_desktop/features/library/presentation/screens/library_files_screen.dart';
 import 'package:fluxora_desktop/features/library/presentation/screens/library_screen.dart';
@@ -24,6 +25,8 @@ class Routes {
   static String libraryFiles(String id) => '/library/$id/files';
   static const String clients = '/clients';
   static const String groups = '/groups';
+  static const String groupNew = '/groups/new';
+  static String groupEdit(String id) => '/groups/$id/edit';
   static const String activity = '/activity';
   static const String transcoding = '/transcoding';
   static const String logs = '/logs';
@@ -71,6 +74,21 @@ final appRouter = GoRouter(
         GoRoute(
           path: Routes.groups,
           builder: (_, _) => const GroupsScreen(),
+        ),
+        // Dedicated group create / edit page — plan in
+        // `docs/10_planning/14_groups_management_page.md`.  `/groups/new`
+        // must be registered BEFORE `/groups/:id/edit` so go_router
+        // matches the literal segment instead of treating "new" as an
+        // id.  The list page (`/groups`) keeps using its existing
+        // create/edit modal during M1-M3 of the plan; M4 retires it.
+        GoRoute(
+          path: Routes.groupNew,
+          builder: (_, _) => const GroupEditScreen.create(),
+        ),
+        GoRoute(
+          path: '/groups/:id/edit',
+          builder: (_, state) =>
+              GroupEditScreen.edit(id: state.pathParameters['id']!),
         ),
         GoRoute(
           path: Routes.activity,
