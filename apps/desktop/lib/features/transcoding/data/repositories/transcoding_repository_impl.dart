@@ -45,8 +45,7 @@ class TranscodingRepositoryImpl implements TranscodingRepository {
   Future<EncoderBenchmarkRun> benchmark({
     int? durationSec,
     int? fps,
-    int? width,
-    int? height,
+    List<Resolution>? resolutions,
   }) {
     final body = <String, dynamic>{
       // Always-on cap verification — the concurrent chip would otherwise
@@ -56,18 +55,23 @@ class TranscodingRepositoryImpl implements TranscodingRepository {
     };
     if (durationSec != null) body['duration_sec'] = durationSec;
     if (fps != null) body['fps'] = fps;
-    if (width != null) body['width'] = width;
-    if (height != null) body['height'] = height;
+    if (resolutions != null && resolutions.isNotEmpty) {
+      body['resolutions'] = resolutions
+          .map((r) => {'width': r.width, 'height': r.height})
+          .toList();
+    }
+    // Wall-clock budget scales with len(encoders) × len(resolutions).  The
+    // baseline single-resolution case takes ~60–90 s; a 3-resolution matrix
+    // can run ~3× that.  9-min ceiling absorbs 4K + 60 fps + cap probe on
+    // a slow CPU.  Higher than that and the operator should raise it on
+    // their end — server itself caps each encoder at 35 s anyway.
+    final timeout = (resolutions != null && resolutions.length > 1)
+        ? const Duration(minutes: 12)
+        : const Duration(minutes: 6);
     return _apiClient.post(
       Endpoints.transcodingBenchmark,
       data: body,
-      // Sequential per-encoder × up to 35 s ceiling each — a 3-encoder
-      // system can take 90 s+ wall-clock, 60 fps and 4K both roughly
-      // double each encoder's wall-clock, and the cap probe adds ~2 s
-      // per hw encoder.  Override the default 10 s desktop receive
-      // timeout so the call doesn't time out client-side before the
-      // server finishes the last encoder.
-      receiveTimeout: const Duration(minutes: 6),
+      receiveTimeout: timeout,
       fromJson: (json) =>
           EncoderBenchmarkRun.fromJson(json as Map<String, dynamic>),
     );

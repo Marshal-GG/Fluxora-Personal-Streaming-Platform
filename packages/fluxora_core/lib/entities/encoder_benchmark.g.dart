@@ -6,12 +6,22 @@ part of 'encoder_benchmark.dart';
 // JsonSerializableGenerator
 // **************************************************************************
 
+_Resolution _$ResolutionFromJson(Map<String, dynamic> json) => _Resolution(
+  width: (json['width'] as num).toInt(),
+  height: (json['height'] as num).toInt(),
+);
+
+Map<String, dynamic> _$ResolutionToJson(_Resolution instance) =>
+    <String, dynamic>{'width': instance.width, 'height': instance.height};
+
 _EncoderBenchmarkResult _$EncoderBenchmarkResultFromJson(
   Map<String, dynamic> json,
 ) => _EncoderBenchmarkResult(
   encoder: json['encoder'] as String,
   vendor: json['vendor'] as String,
   codec: json['codec'] as String,
+  width: (json['width'] as num).toInt(),
+  height: (json['height'] as num).toInt(),
   passed: json['passed'] as bool,
   error: json['error'] as String?,
   fps: (json['fps'] as num?)?.toDouble(),
@@ -34,6 +44,8 @@ Map<String, dynamic> _$EncoderBenchmarkResultToJson(
   'encoder': instance.encoder,
   'vendor': instance.vendor,
   'codec': instance.codec,
+  'width': instance.width,
+  'height': instance.height,
   'passed': instance.passed,
   'error': instance.error,
   'fps': instance.fps,
@@ -59,6 +71,11 @@ _EncoderBenchmarkRun _$EncoderBenchmarkRunFromJson(Map<String, dynamic> json) =>
       fps: (json['fps'] as num).toInt(),
       width: (json['width'] as num).toInt(),
       height: (json['height'] as num).toInt(),
+      resolutions:
+          (json['resolutions'] as List<dynamic>?)
+              ?.map((e) => Resolution.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          const <Resolution>[],
       verifyCaps: json['verify_caps'] as bool,
       results: (json['results'] as List<dynamic>)
           .map(
@@ -77,6 +94,7 @@ Map<String, dynamic> _$EncoderBenchmarkRunToJson(
   'fps': instance.fps,
   'width': instance.width,
   'height': instance.height,
+  'resolutions': instance.resolutions.map((e) => e.toJson()).toList(),
   'verify_caps': instance.verifyCaps,
   'results': instance.results.map((e) => e.toJson()).toList(),
 };
@@ -93,6 +111,7 @@ _BenchmarkHistoryEntry _$BenchmarkHistoryEntryFromJson(
   height: (json['height'] as num).toInt(),
   verifyCaps: json['verify_caps'] as bool,
   encoderCount: (json['encoder_count'] as num).toInt(),
+  resolutionCount: (json['resolution_count'] as num?)?.toInt() ?? 1,
 );
 
 Map<String, dynamic> _$BenchmarkHistoryEntryToJson(
@@ -107,6 +126,7 @@ Map<String, dynamic> _$BenchmarkHistoryEntryToJson(
   'height': instance.height,
   'verify_caps': instance.verifyCaps,
   'encoder_count': instance.encoderCount,
+  'resolution_count': instance.resolutionCount,
 };
 
 _BenchmarkHistory _$BenchmarkHistoryFromJson(Map<String, dynamic> json) =>
@@ -121,16 +141,21 @@ Map<String, dynamic> _$BenchmarkHistoryToJson(_BenchmarkHistory instance) =>
       'entries': instance.entries.map((e) => e.toJson()).toList(),
     };
 
-_BenchmarkProgress _$BenchmarkProgressFromJson(Map<String, dynamic> json) =>
-    _BenchmarkProgress(
-      running: json['running'] as bool,
-      startedAt: json['started_at'] as String?,
-      totalEncoders: (json['total_encoders'] as num?)?.toInt(),
-      completed: (json['completed'] as num?)?.toInt(),
-      currentEncoder: json['current_encoder'] as String?,
-      currentStep: json['current_step'] as String?,
-      currentIndex: (json['current_index'] as num?)?.toInt(),
-    );
+_BenchmarkProgress _$BenchmarkProgressFromJson(
+  Map<String, dynamic> json,
+) => _BenchmarkProgress(
+  running: json['running'] as bool,
+  startedAt: json['started_at'] as String?,
+  totalEncoders: (json['total_encoders'] as num?)?.toInt(),
+  completed: (json['completed'] as num?)?.toInt(),
+  currentEncoder: json['current_encoder'] as String?,
+  currentStep: json['current_step'] as String?,
+  currentIndex: (json['current_index'] as num?)?.toInt(),
+  totalResolutions: (json['total_resolutions'] as num?)?.toInt(),
+  currentResolutionIndex: (json['current_resolution_index'] as num?)?.toInt(),
+  currentResolutionWidth: (json['current_resolution_width'] as num?)?.toInt(),
+  currentResolutionHeight: (json['current_resolution_height'] as num?)?.toInt(),
+);
 
 Map<String, dynamic> _$BenchmarkProgressToJson(_BenchmarkProgress instance) =>
     <String, dynamic>{
@@ -141,4 +166,8 @@ Map<String, dynamic> _$BenchmarkProgressToJson(_BenchmarkProgress instance) =>
       'current_encoder': instance.currentEncoder,
       'current_step': instance.currentStep,
       'current_index': instance.currentIndex,
+      'total_resolutions': instance.totalResolutions,
+      'current_resolution_index': instance.currentResolutionIndex,
+      'current_resolution_width': instance.currentResolutionWidth,
+      'current_resolution_height': instance.currentResolutionHeight,
     };

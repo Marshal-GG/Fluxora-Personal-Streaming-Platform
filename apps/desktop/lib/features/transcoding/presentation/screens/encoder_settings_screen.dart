@@ -696,18 +696,23 @@ class _CrfSlider extends StatelessWidget {
 /// Visually mirrors `_FpsSelector` so the two controls feel consistent.
 /// Selection is by ``(width, height)`` tuple rather than a label string so
 /// the value flows directly into the API request without an extra lookup.
+///
+/// **Multi-select**: operators can pick any subset of [_resolutionOptions]
+/// and the benchmark runs each tier sequentially through every encoder
+/// (matrix mode).  At least one tier must stay selected — the parent
+/// disables the Run button when [selected] is empty.
 class _ResolutionSelector extends StatelessWidget {
   const _ResolutionSelector({
     required this.options,
     required this.selected,
     required this.enabled,
-    required this.onChanged,
+    required this.onToggle,
   });
 
   final List<({int width, int height, String label})> options;
-  final ({int width, int height}) selected;
+  final Set<({int width, int height})> selected;
   final bool enabled;
-  final ValueChanged<({int width, int height})> onChanged;
+  final ValueChanged<({int width, int height})> onToggle;
 
   @override
   Widget build(BuildContext context) {
@@ -728,15 +733,15 @@ class _ResolutionSelector extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Source resolution',
+                  'Source resolutions',
                   style: AppTypography.body.copyWith(
                     color: AppColors.textBright,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
                 Text(
-                  '720p = library content · 1080p = live capture · '
-                  '4K = HDR sources',
+                  'Pick one or more — each runs sequentially through every '
+                  'encoder',
                   style: AppTypography.captionV2
                       .copyWith(color: AppColors.textDim),
                 ),
@@ -747,8 +752,9 @@ class _ResolutionSelector extends StatelessWidget {
           Wrap(
             spacing: 4,
             children: options.map((opt) {
-              final isSelected = opt.width == selected.width &&
-                  opt.height == selected.height;
+              final isSelected = selected.contains(
+                (width: opt.width, height: opt.height),
+              );
               return Semantics(
                 button: true,
                 selected: isSelected,
@@ -756,7 +762,7 @@ class _ResolutionSelector extends StatelessWidget {
                     '${isSelected ? ', selected' : ''}',
                 child: GestureDetector(
                   onTap: enabled
-                      ? () => onChanged(
+                      ? () => onToggle(
                           (width: opt.width, height: opt.height))
                       : null,
                   child: MouseRegion(
@@ -932,13 +938,15 @@ class _BenchmarkBlockState extends State<_BenchmarkBlock> {
   // ``_running`` is true.  Null between runs.
   BenchmarkProgress? _progress;
   Timer? _progressTimer;
-  // Resolution selector — width × height of the synthetic source.  Picked
-  // to span the realistic streaming space (720p library content / 1080p
-  // game capture / 4K HDR sources).  The cap probe + main encode both run
-  // at the chosen resolution so the per-encoder numbers reflect the real
-  // workload the operator is planning for.
-  ({int width, int height}) _selectedRes =
-      (width: 1280, height: 720);
+  // Resolution selection — multi-pick.  Defaults to 1080p alone (matches
+  // the prior single-resolution baseline so the first-time experience is
+  // unchanged for operators who don't care about matrix mode).  Adding a
+  // tier extends the run; the encode + cap probe both honor each tier so
+  // the per-(encoder, resolution) row reflects that exact workload.
+  // Operators can pick any subset; an empty set disables Run.
+  Set<({int width, int height})> _selectedResolutions = {
+    (width: 1920, height: 1080),
+  };
 
   Future<void> _runBenchmark() async {
     setState(() {
@@ -949,10 +957,19 @@ class _BenchmarkBlockState extends State<_BenchmarkBlock> {
     _startProgressPolling();
     try {
       final repo = GetIt.I<TranscodingRepository>();
+      // Walk in canonical-tier order (720p → 1080p → 4K) so the matrix
+      // executes smallest-first.  Smallest-first means the operator sees
+      // results land for the lighter workload before the heavier ones —
+      // a 4K-first run would have the desktop spinning silently for
+      // 30+ s before any rows appear.
+      final ordered = _resolutionOptions
+          .where((opt) => _selectedResolutions
+              .contains((width: opt.width, height: opt.height)))
+          .map((opt) => Resolution(width: opt.width, height: opt.height))
+          .toList();
       final run = await repo.benchmark(
         fps: _selectedFps,
-        width: _selectedRes.width,
-        height: _selectedRes.height,
+        resolutions: ordered,
         // Cap verification is no longer opt-in — the chip would lie about
         // capacity if the operator never enabled it (registry default of
         // 3 is just a vendor doc; the real number on patched / RTX-40 /
@@ -1032,19 +1049,35 @@ class _BenchmarkBlockState extends State<_BenchmarkBlock> {
             variant: FluxButtonVariant.secondary,
             size: FluxButtonSize.sm,
             icon: _running ? null : Icons.play_arrow_rounded,
-            onPressed: _running ? null : _runBenchmark,
+            // Disabled while running OR when no resolutions are selected
+            // — running with an empty set would just hand the server the
+            // 720p default, which surprises an operator who deliberately
+            // unticked every tier.  Explicit disabled state is honest.
+            onPressed: (_running || _selectedResolutions.isEmpty)
+                ? null
+                : _runBenchmark,
             child: Text(_running ? 'Running…' : 'Run Benchmark'),
           ),
         ),
-        // Resolution selector — 720p library content / 1080p live capture /
-        // 2160p HDR.  Bigger frames need more GPU bandwidth + VRAM per
-        // session, so the per-encoder concurrent-capacity chip can drop
-        // sharply when going 720p → 4K.
+        // Resolution selector — multi-pick (720p library content / 1080p
+        // live capture / 2160p HDR).  Bigger frames need more GPU bandwidth
+        // + VRAM per session, so the per-encoder concurrent-capacity chip
+        // can drop sharply when going 720p → 4K; matrix mode lets the
+        // operator see all three tiers in one click.
         _ResolutionSelector(
           options: _resolutionOptions,
-          selected: _selectedRes,
+          selected: _selectedResolutions,
           enabled: !_running,
-          onChanged: (v) => setState(() => _selectedRes = v),
+          onToggle: (v) => setState(() {
+            // Toggle membership.  Allows the operator to drop down to
+            // zero tiers transiently — Run is gated on non-empty above so
+            // they can't accidentally trigger an empty-set request.
+            if (_selectedResolutions.contains(v)) {
+              _selectedResolutions = {..._selectedResolutions}..remove(v);
+            } else {
+              _selectedResolutions = {..._selectedResolutions, v};
+            }
+          }),
         ),
         // Frame-rate selector — 60 fps roughly halves each encoder's
         // realtime multiplier (twice the frames per source-second), so
@@ -1357,13 +1390,20 @@ class _HistoryEntryRowState extends State<_HistoryEntryRow> {
     return '$m ${local.day} $hh:$mm';
   }
 
+  /// Sidebar caption resolution label.  Single-resolution runs name the
+  /// tier ("1080p"); matrix runs collapse to a "N res" count so a long
+  /// row doesn't blow past the 280-px sidebar width.  Operators clicking
+  /// into the run see the full tier list in the source caption.
   String _resolutionLabel() {
+    if (widget.entry.resolutionCount > 1) {
+      return '${widget.entry.resolutionCount} res';
+    }
     final w = widget.entry.width;
     final h = widget.entry.height;
     if (w == 1280 && h == 720) return '720p';
     if (w == 1920 && h == 1080) return '1080p';
     if (w == 3840 && h == 2160) return '4K';
-    return '$w×$h';
+    return '${w}x$h';
   }
 
   @override
@@ -1482,20 +1522,38 @@ class _BenchmarkProgressCard extends StatelessWidget {
 
   final BenchmarkProgress? progress;
 
+  /// Friendly tier label for matrix-mode status copy.  Falls back to
+  /// "WxH" for non-canonical sizes.
+  static String _tierLabel(int width, int height) {
+    if (width == 1280 && height == 720) return '720p';
+    if (width == 1920 && height == 1080) return '1080p';
+    if (width == 3840 && height == 2160) return '4K';
+    return '${width}x$height';
+  }
+
   String _statusLine() {
     final p = progress;
     if (p == null || !p.running) return 'Preparing benchmark…';
     final step = p.currentStep ?? 'starting';
     final encoder = p.currentEncoder;
+    // Matrix mode tagging — when total > 1, prefix the encoder name with
+    // its current resolution so the operator always knows which tier
+    // the row in flight belongs to without checking the caption.
+    final inMatrix = (p.totalResolutions ?? 1) > 1;
+    final resTag = inMatrix &&
+            p.currentResolutionWidth != null &&
+            p.currentResolutionHeight != null
+        ? ' [${_tierLabel(p.currentResolutionWidth!, p.currentResolutionHeight!)}]'
+        : '';
     switch (step) {
       case 'encoding':
         return encoder == null
             ? 'Encoding…'
-            : 'Encoding $encoder';
+            : 'Encoding $encoder$resTag';
       case 'verifying_cap':
         return encoder == null
             ? 'Verifying session cap…'
-            : 'Verifying $encoder session cap';
+            : 'Verifying $encoder session cap$resTag';
       case 'starting':
         return 'Starting benchmark…';
       default:
@@ -1511,7 +1569,15 @@ class _BenchmarkProgressCard extends StatelessWidget {
         p.currentIndex == null) {
       return null;
     }
-    return 'Encoder ${p.currentIndex} of ${p.totalEncoders}';
+    final base = 'Step ${p.currentIndex} of ${p.totalEncoders}';
+    // Matrix-mode adds "(Resolution N of M)" so the operator can see how
+    // far through the resolution sweep they are independently of the
+    // step counter (which counts encoder × resolution pairs).
+    final totalRes = p.totalResolutions ?? 1;
+    if (totalRes > 1 && p.currentResolutionIndex != null) {
+      return '$base  ·  Res ${p.currentResolutionIndex} of $totalRes';
+    }
+    return base;
   }
 
   /// Determinate fraction in [0.0, 1.0], or null while we're between
@@ -1844,12 +1910,31 @@ class _BenchmarkResultsTable extends StatelessWidget {
       );
     }
 
+    // Distinct (width, height) tuples in this run.  Single-resolution
+    // runs collapse to one entry; matrix runs preserve operator-selection
+    // order.  Used both to drive the row layout (per-row resolution chip
+    // when > 1) and to render the source caption.
+    final resolutions = run.resolutions.isNotEmpty
+        ? run.resolutions
+        : <Resolution>[Resolution(width: run.width, height: run.height)];
+    final isMatrix = resolutions.length > 1;
+
     // Group results by vendor.  Each section gets a small caps label;
     // unknown vendors (shouldn't happen but defensive) get rendered last
-    // under their raw name.
+    // under their raw name.  Within a vendor, sort by (encoder name,
+    // resolution pixel count) so a matrix run reads as
+    // ``h264_nvenc[720p, 1080p, 4K]`` then ``hevc_nvenc[...]`` — operator
+    // mental model is "I want to compare the same encoder across tiers".
     final byVendor = <String, List<EncoderBenchmarkResult>>{};
     for (final r in run.results) {
       byVendor.putIfAbsent(r.vendor, () => []).add(r);
+    }
+    for (final list in byVendor.values) {
+      list.sort((a, b) {
+        final byEncoder = a.encoder.compareTo(b.encoder);
+        if (byEncoder != 0) return byEncoder;
+        return (a.width * a.height).compareTo(b.width * b.height);
+      });
     }
 
     final sections = <Widget>[
@@ -1857,8 +1942,7 @@ class _BenchmarkResultsTable extends StatelessWidget {
       // 89 fps?" confusion by making it clear the encoder result line's
       // ``out fps`` is the *encoder's* output rate, not the source rate.
       _SourceWorkloadCaption(
-        width: run.width,
-        height: run.height,
+        resolutions: resolutions,
         fps: run.fps,
         durationSec: run.durationSec,
       ),
@@ -1869,7 +1953,11 @@ class _BenchmarkResultsTable extends StatelessWidget {
       if (list == null || list.isEmpty) continue;
       sections.add(_VendorSectionHeader(label: _vendorLabels[v] ?? v));
       for (final r in list) {
-        sections.add(_BenchmarkResultRow(result: r, sourceFps: run.fps));
+        sections.add(_BenchmarkResultRow(
+          result: r,
+          sourceFps: run.fps,
+          showResolutionChip: isMatrix,
+        ));
       }
       sections.add(const SizedBox(height: AppSpacing.s10));
     }
@@ -1878,7 +1966,11 @@ class _BenchmarkResultsTable extends StatelessWidget {
     for (final entry in byVendor.entries) {
       sections.add(_VendorSectionHeader(label: entry.key.toUpperCase()));
       for (final r in entry.value) {
-        sections.add(_BenchmarkResultRow(result: r, sourceFps: run.fps));
+        sections.add(_BenchmarkResultRow(
+          result: r,
+          sourceFps: run.fps,
+          showResolutionChip: isMatrix,
+        ));
       }
       sections.add(const SizedBox(height: AppSpacing.s10));
     }
@@ -1897,26 +1989,44 @@ class _BenchmarkResultsTable extends StatelessWidget {
 /// frames per wall-clock second".
 class _SourceWorkloadCaption extends StatelessWidget {
   const _SourceWorkloadCaption({
-    required this.width,
-    required this.height,
+    required this.resolutions,
     required this.fps,
     required this.durationSec,
   });
 
-  final int width;
-  final int height;
+  /// One entry for single-resolution runs; multiple entries for matrix
+  /// runs (rendered as a comma-joined tier list).  Order preserved.
+  final List<Resolution> resolutions;
   final int fps;
   final int durationSec;
 
+  /// Friendly label for a single tier — falls back to "1280x720" for
+  /// non-canonical sizes (which the server clamps away anyway, but we
+  /// stay defensive against unexpected history payloads).
+  static String _tierLabel(int width, int height) {
+    if (width == 1280 && height == 720) return '720p';
+    if (width == 1920 && height == 1080) return '1080p';
+    if (width == 3840 && height == 2160) return '4K';
+    return '${width}x$height';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final size = resolutions.length == 1
+        ? '${resolutions.first.width}x${resolutions.first.height}'
+        : resolutions
+            .map((r) => _tierLabel(r.width, r.height))
+            .join(', ');
     return Row(
       children: [
         const Icon(Icons.movie_outlined, size: 13, color: AppColors.textDim),
         const SizedBox(width: AppSpacing.s8),
-        Text(
-          'Source: $width×$height · $fps fps · $durationSec s synthetic clip',
-          style: AppTypography.captionV2.copyWith(color: AppColors.textDim),
+        Expanded(
+          child: Text(
+            'Source: $size  -  $fps fps  -  $durationSec s synthetic clip',
+            style: AppTypography.captionV2.copyWith(color: AppColors.textDim),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ],
     );
@@ -1955,10 +2065,30 @@ class _BenchmarkResultRow extends StatelessWidget {
   const _BenchmarkResultRow({
     required this.result,
     required this.sourceFps,
+    this.showResolutionChip = false,
   });
 
   final EncoderBenchmarkResult result;
   final int sourceFps;
+
+  /// Set by [_BenchmarkResultsTable] when the run carries multiple
+  /// resolutions.  Renders a "720p" / "1080p" / "4K" pill next to the
+  /// codec chip so the operator can tell at a glance which tier each
+  /// row belongs to.  Off in single-resolution mode (the source caption
+  /// at the top already names the tier; per-row chips would just be
+  /// noise).
+  final bool showResolutionChip;
+
+  /// Friendly tier label for [result.width] x [result.height].  Falls
+  /// back to "WxH" for non-canonical sizes.
+  String get _resolutionLabel {
+    final w = result.width;
+    final h = result.height;
+    if (w == 1280 && h == 720) return '720p';
+    if (w == 1920 && h == 1080) return '1080p';
+    if (w == 3840 && h == 2160) return '4K';
+    return '${w}x$h';
+  }
 
   // Header colour: emerald = ≥1× realtime, amber = sub-realtime, red = failed.
   Color get _passColor {
@@ -2087,6 +2217,17 @@ class _BenchmarkResultRow extends StatelessWidget {
                 result.codec.toUpperCase(),
                 color: FluxChipColor.neutral,
               ),
+              if (showResolutionChip) ...[
+                const SizedBox(width: AppSpacing.s6),
+                FluxChip(
+                  _resolutionLabel,
+                  // Violet neutral pill — same family as the codec chip
+                  // but tinted so the operator's eye groups encoder rows
+                  // by tier visually (every "1080p" pill in the table
+                  // shares the same colour).
+                  color: FluxChipColor.purple,
+                ),
+              ],
               const Spacer(),
               if (result.recommendedConcurrent != null)
                 Tooltip(

@@ -36,12 +36,39 @@ part 'encoder_benchmark.g.dart';
 /// [recommendedConcurrent] is `min(effective_cap, floor(speed_x))` — the
 /// practical "how many streams can I sustain at realtime" answer the UI
 /// surfaces as a chip per row.
+/// One ``(width, height)`` pair returned in the benchmark response's
+/// ``resolutions`` echo + by the cubit when sending matrix-mode requests.
+///
+/// Defaulted to a freezed entity (rather than a Dart record) so the
+/// json_serializable plumbing matches every other DTO in the
+/// fluxora_core surface — keeps the codegen path uniform and avoids
+/// hand-rolled Map<->record converters in the repo layer.
+@freezed
+abstract class Resolution with _$Resolution {
+  const factory Resolution({
+    required int width,
+    required int height,
+  }) = _Resolution;
+
+  factory Resolution.fromJson(Map<String, dynamic> json) =>
+      _$ResolutionFromJson(json);
+}
+
 @freezed
 abstract class EncoderBenchmarkResult with _$EncoderBenchmarkResult {
   const factory EncoderBenchmarkResult({
     required String encoder,
     required String vendor,
     required String codec,
+
+    /// Source resolution this row was measured at.  Required because
+    /// matrix-mode runs produce N rows per encoder (one per resolution),
+    /// so each row must self-describe rather than infer from the parent
+    /// run's primary [EncoderBenchmarkRun.width] / [EncoderBenchmarkRun.height].
+    /// Single-resolution runs still populate these — the contract is
+    /// unconditional.
+    required int width,
+    required int height,
     required bool passed,
     String? error,
     double? fps,
@@ -62,13 +89,15 @@ abstract class EncoderBenchmarkResult with _$EncoderBenchmarkResult {
       _$EncoderBenchmarkResultFromJson(json);
 }
 
-/// Top-level benchmark response.  [results] is one row per encoder the server
-/// detected as available, in the same order the server walked them.
+/// Top-level benchmark response.  [results] is one row per
+/// (encoder, resolution) pair the server actually measured, in
+/// resolution-outer × encoder-inner order — single-resolution runs collapse
+/// to one row per encoder.
 ///
-/// [fps], [width], [height] echo the source workload the server actually used
-/// (after the router clamp + resolution-tier snap) so the desktop can label
-/// the result set + the cached history with the workload that produced the
-/// numbers.  [verifyCaps] echoes whether the cap probe ran.
+/// [fps] echoes the source frame rate.  [width] / [height] are the *primary*
+/// (= first) tested resolution; [resolutions] is the full operator-selected
+/// list.  Single-resolution runs leave [resolutions] as a one-element list
+/// matching `(width, height)`.  [verifyCaps] echoes whether the cap probe ran.
 @freezed
 abstract class EncoderBenchmarkRun with _$EncoderBenchmarkRun {
   const factory EncoderBenchmarkRun({
@@ -82,6 +111,7 @@ abstract class EncoderBenchmarkRun with _$EncoderBenchmarkRun {
     required int fps,
     required int width,
     required int height,
+    @Default(<Resolution>[]) List<Resolution> resolutions,
     required bool verifyCaps,
     required List<EncoderBenchmarkResult> results,
   }) = _EncoderBenchmarkRun;
@@ -107,6 +137,12 @@ abstract class BenchmarkHistoryEntry with _$BenchmarkHistoryEntry {
     required int height,
     required bool verifyCaps,
     required int encoderCount,
+
+    /// Distinct ``(width, height)`` pair count.  Defaults to 1 so legacy
+    /// rows persisted before matrix mode shipped (no per-row width/height
+    /// in their results blob) render the historical "1080p · 30 fps · 6 enc"
+    /// caption.  Matrix runs render "3 res · 30 fps · 18 enc" instead.
+    @Default(1) int resolutionCount,
   }) = _BenchmarkHistoryEntry;
 
   factory BenchmarkHistoryEntry.fromJson(Map<String, dynamic> json) =>
@@ -146,6 +182,18 @@ abstract class BenchmarkProgress with _$BenchmarkProgress {
     String? currentEncoder,
     String? currentStep,
     int? currentIndex,
+
+    /// Matrix-mode counters.  ``totalResolutions`` is the size of the
+    /// operator's resolution list (1 for single-resolution runs);
+    /// ``currentResolutionIndex`` is 1-based so the UI can render
+    /// "Resolution N of M" without subtracting; the width/height pair
+    /// names the resolution currently being measured.  All four are
+    /// null in the idle state and populated as soon as ``running``
+    /// flips to true.
+    int? totalResolutions,
+    int? currentResolutionIndex,
+    int? currentResolutionWidth,
+    int? currentResolutionHeight,
   }) = _BenchmarkProgress;
 
   factory BenchmarkProgress.fromJson(Map<String, dynamic> json) =>

@@ -21,10 +21,14 @@ abstract class TranscodingRepository {
   /// Higher fps roughly halves each encoder's realtime multiplier — useful
   /// for gauging 60 fps capability.
   ///
-  /// `width` × `height` set the synthetic source resolution.  720p is the
-  /// representative library-content default; 1080p models live game capture;
-  /// 2160p (4K) tells the operator whether their hardware can drive 4K HDR
-  /// transcodes.  Null on either dimension = server default (1280×720).
+  /// `resolutions` is the operator's selected list of source resolutions —
+  /// the matrix-mode axis added 2026-05-07.  Each one runs sequentially
+  /// through every encoder, so `len(resolutions) × len(encoders)` total
+  /// rows come back.  720p is the library-content default; 1080p models
+  /// live game capture; 2160p (4K) tells the operator whether their
+  /// hardware drives 4K HDR transcodes.  Null / empty list = server default
+  /// (a single 720p tier).  Server snaps each pair to a known tier and
+  /// dedupes, so the operator's accidental near-duplicates collapse.
   ///
   /// The cap-verification probe is always on — without it the concurrent
   /// chip would lie about capacity (NVIDIA's documented cap of 3 doesn't
@@ -32,8 +36,7 @@ abstract class TranscodingRepository {
   Future<EncoderBenchmarkRun> benchmark({
     int? durationSec,
     int? fps,
-    int? width,
-    int? height,
+    List<Resolution>? resolutions,
   });
 
   /// Live progress snapshot for an in-flight benchmark run.  Polled by
