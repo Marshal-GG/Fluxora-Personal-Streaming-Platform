@@ -1,7 +1,7 @@
 # Data Flow Diagrams
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-02 (Polar payment webhook flow added; stream-gate group enforcement flow added; Notification fan-out flow added; Activity event log flow added; §7.9 Log Pipeline flow added)
+> **Status:** Active - Updated 2026-05-07 (Flow 6 stream-gate flow rewritten for v2 content-spaces redesign — `get_visible_libraries` + `reason_to_deny_stream` replace v1 intersection logic; multi-group composition is now UNION not intersection; new Flow 6b for the PIN-flow + per-client enrollment).  Earlier 2026-05-02: Polar payment webhook flow + Notification fan-out + Activity event log + §7.9 Log Pipeline flow.
 
 ---
 
@@ -140,10 +140,11 @@ Notes:
 
 ---
 
-## Flow 6 — Stream-Gate Group Enforcement
+## Flow 6 — Stream-Gate Visibility Resolution (v2 content-spaces)
 
-When a client requests `POST /api/v1/stream/start/{file_id}`, the stream router
-performs a group-restriction check before the existing tier-concurrency check:
+**v2 redesign 2026-05-07** — replaces the v1 subtractive `get_effective_restrictions` + `reason_to_deny` flow.  Plan: [`docs/10_planning/13_groups_v2_content_spaces.md`](../10_planning/13_groups_v2_content_spaces.md).  ADR-018 captures the semantic flip.
+
+Every list endpoint (`/library`, `/files`, `/files/recent`, `/files/search`, `/files/{id}`, `/auth/clients/me/continue-watching`) AND the stream-gate consume the same `get_visible_libraries(client_id, *, now)` function — single source of truth so the surfaces a client sees can never disagree with what they can play.
 
 ```
 [Flutter Client]
@@ -153,59 +154,117 @@ performs a group-restriction check before the existing tier-concurrency check:
 [FastAPI Server — routers/stream.py]
     │
     ├──▶ Validate bearer token → resolve client_id
-    ├──▶ Fetch media_file row → get library_id
+    ├──▶ Fetch media_file row → get library_id (may be NULL for legacy uploads)
     │
-    ├──▶ group_service.get_effective_restrictions(client_id)
+    ├──▶ group_service.reason_to_deny_stream(
+    │       db, client_id, library_id=file.library_id, now=...
+    │    )
     │       │
-    │       └──▶ Query: JOIN group_members → groups → group_restrictions
-    │                   WHERE g.status = 'active' AND m.client_id = ?
+    │       └──▶ _resolve_membership(db, client_id, now=...)
+    │             │
+    │             └──▶ ONE SQL query joins group_members → groups
+    │                  → group_restrictions LEFT JOINs grant + enrollment +
+    │                  attempt-count subqueries.  Returns _MembershipState
+    │                  per group: { name, is_active, requires_pin, pin_model,
+    │                  pin_mode, is_enrolled, is_pin_unlocked, in_time_window,
+    │                  libraries (JSON-decoded set), icon, color,
+    │                  grant_expires_at }.  The per-member time_window_override
+    │                  (M5) wins over the group's window when present.
     │
-    │           Combine across all matching rows:
-    │             allowed_libraries  → set intersection (most restrictive)
-    │             bandwidth_cap_mbps → minimum (most restrictive)
-    │             time_windows       → collected as a list (AND-combined)
-    │             max_rating         → last non-null value (advisory)
+    │       For each membership state, picks the most-informative deny reason:
+    │         1. If at least one group exposes the library but is currently
+    │            time-locked → "Outside the allowed streaming time window"
+    │         2. Otherwise → "Library not allowed for this client's group(s)"
+    │            — covers PIN-locked AND missing-from-allowlist; deny is
+    │            generic so the surface doesn't leak the existence of
+    │            gated content the client hasn't unlocked.
     │
-    │           Returns: EffectiveRestrictions(
-    │             allowed_libraries: frozenset | None,
-    │             bandwidth_cap_mbps: int | None,
-    │             time_windows: tuple[dict, ...],
-    │             max_rating: str | None
-    │           )
+    │       Returns:
+    │         None      → stream allowed to proceed
+    │         <reason>  → string for the 403 response body
     │
-    ├──▶ group_service.reason_to_deny(restrictions, library_id=file.library_id)
-    │       │
-    │       ├── If allowed_libraries is not None AND library_id not in set
-    │       │       → return "Library not allowed for this client's group(s)"
-    │       │
-    │       ├── For each time_window in time_windows:
-    │       │       if current server-local time is NOT inside the window
-    │       │           → return "Outside the allowed streaming time window"
-    │       │
-    │       └── Return None  ← stream is allowed to proceed
+    ├── reason_to_deny_stream returns a string → 403 Forbidden + reason
     │
-    ├── reason_to_deny returns a string → 403 Forbidden with the reason string
-    │
-    └── reason_to_deny returns None
+    └── reason_to_deny_stream returns None
             │
-            └──▶ [Existing tier-concurrency check → FFmpeg spawn → session creation]
+            └──▶ [Tier-concurrency check → per-group concurrent-stream-cap
+                  check (M7 Tier-2; checks active sessions among group
+                  members; 503 with retry-after when exceeded) → FFmpeg
+                  spawn → session creation]
 ```
 
-### Multi-group intersection semantics
+`media_files.library_id IS NULL` (uploaded outside any library) is an explicit passthrough — those files stay universally visible so legacy uploads don't disappear post-migration-025.
 
-A client can be in multiple groups. The effective restriction is the
-**most restrictive** combination across every active group:
+### Multi-group composition — UNION (additive content-spaces)
 
-| Field | Combine rule | Example |
-|-------|-------------|---------|
-| `allowed_libraries` | Set intersection — library must be in *every* group's allow-list | Group A allows `[lib-1, lib-2]`; Group B allows `[lib-2, lib-3]` → effective = `{lib-2}` |
-| `bandwidth_cap_mbps` | Minimum — lowest cap wins | Group A caps at 20 Mbps; Group B caps at 10 Mbps → effective = 10 Mbps |
-| `time_windows` | AND-combined — stream must satisfy *every* group's window | Group A: 15:00–21:00; Group B: 08:00–22:00 → must be within both windows simultaneously |
-| `max_rating` | Advisory only in v1 — recorded but not enforced | `media_files` has no rating column; enforcement deferred |
+v2 flips the v1 intersection rule (ADR-015 → superseded by ADR-018).  A client in multiple groups now sees the **union** of every active group's `allowed_libraries`:
 
-Inactive groups (`status = 'inactive'`) are completely ignored — they contribute no restrictions and their members are treated as if unrestricted.
+| Field | v2 combine rule | Example |
+|---|---|---|
+| `allowed_libraries` | **UNION** — library is visible if ANY group exposes it (additive content-spaces) | Public exposes `[lib-movies]`; Kids exposes `[lib-cartoons]` → kid in Public+Kids sees `{lib-movies, lib-cartoons}` |
+| `time_window` | per-group; group is filtered out at "now" if outside its window | Public always-on; Kids 18:00–22:00 → outside that window the kid sees only Public's libraries.  Member's `time_window_override` (M5) wins over the group's window. |
+| `bandwidth_cap_mbps` | min-wins per group (advisory in v2 — recorded, not enforced) | Group A caps 20 Mbps; B caps 10 → effective 10 Mbps |
+| `max_concurrent_streams` (M7 Tier-2) | per-group; checked at stream-start by counting active sessions among the group's members; 503 when exceeded | Adults caps at 2; if 2 Adults members streaming, the third's stream-start returns 503 |
+| `max_rating` | advisory in v2 — recorded, not enforced | `media_files` has no rating column; enforcement deferred |
+
+Inactive groups (`status = 'inactive'`) are skipped entirely — they contribute nothing to visibility.  The mandatory Public group every paired client auto-joins (via `auth_service.approve_client`) provides the household-shared baseline so a client in zero groups is impossible by construction.
+
+PIN-gated groups (M4 + M8) only contribute when the client has a non-expired `group_pin_grants` row.  Per-client mode (M8) additionally requires a `group_member_pins` enrollment row before the client can even attempt `/enter`.
 
 ---
+
+## Flow 6b — PIN unlock (M4) + Per-client enrollment (M8)
+
+```
+Mobile / desktop client wants to access a gated group's libraries
+    │
+    ├──▶ GET /api/v1/groups/{id}/grant-status
+    │       Returns { unlocked, expires_at, pin_model, enrollment_state }
+    │
+    ├── enrollment_state = 'enrollment_required'  (M8 per-client mode + no enrollment)
+    │       │
+    │       └──▶ POST /api/v1/groups/{id}/enroll  body: {pin}
+    │              → server validates strength; HMAC-hashes; inserts
+    │                group_member_pins row + immediate session-length grant
+    │              → mobile renders PinEnrollmentSheet (set + confirm)
+    │
+    ├── enrollment_state = 'enrolled' OR 'not_required'
+    │       │
+    │       └──▶ POST /api/v1/groups/{id}/enter  body: {pin}
+    │              → server branches on pin_model: shared reads
+    │                groups.pin_hash; per-client reads
+    │                group_member_pins(group_id, client_id).pin_hash
+    │              → success: insert grant_pin_grants row with TTL by
+    │                pin_mode (session=12h, per-entry=5min);
+    │                fire activity_event 'group.pin.unlock'
+    │              → failure: write group_pin_attempts(success=0); rate
+    │                limit 5 fails / 60 s / (client, group) → 429;
+    │                burst aggregator (M7 follow-up) emits one
+    │                activity_event 'group.pin.failed-burst' per 5
+    │                fails / 10 min window
+    │              → mobile renders PinEntrySheet (label adapts to
+    │                pin_model: "Group PIN" vs "Your PIN")
+    │
+    ├──▶ Operator-side recovery
+    │       │
+    │       ├── POST /api/v1/groups/{id}/master-override?client_id=
+    │       │     (localhost only — auth = network proximity to server,
+    │       │      no stored secret; ADR-020).  Issues 12 h grant
+    │       │      without PIN; logs success=1 attempt for audit.
+    │       │
+    │       ├── DELETE /api/v1/groups/{id}/members/{cid}/pin
+    │       │     (M8 per-client recovery — clears one member's
+    │       │      enrollment + grant; re-enrolls on next access)
+    │       │
+    │       └── POST /api/v1/groups/{id}/grants/reset
+    │             (M7 shared-mode bulk drop; emits
+    │              'group.pin.grants-reset' event)
+    │
+    └──▶ DELETE /api/v1/groups/{id}/grant
+            (mobile "Lock" button; idempotent)
+```
+
+`housekeep_pin_state(db)` is called from the existing `main.py` startup background task — prunes expired `group_pin_grants` and 24 h-old `group_pin_attempts`.
 
 ---
 

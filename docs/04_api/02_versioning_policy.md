@@ -2,7 +2,7 @@
 
 > **Category:** API
 > **Status:** Active
-> **Last Updated:** 2026-05-01
+> **Last Updated:** 2026-05-07 (Groups v2 semantic-flip exception documented)
 
 How Fluxora's REST + WebSocket API evolves over time without breaking shipped clients.
 
@@ -66,6 +66,16 @@ Currently nothing is deprecated. The table exists for the future.
 | Endpoint | Field | Deprecated on | Replacement | Removed in |
 |----------|-------|---------------|-------------|------------|
 | *(none yet)* | | | | |
+
+---
+
+## Pre-v1-launch breaking changes (documented exceptions)
+
+Some changes formally violate the additive-only rules above but landed before v1 had any shipped public clients (Phase 4 status — paid customers don't exist yet, the only consumer is the operator's own household).  Listed here for transparency; future agents should NOT take these as precedent for in-version breaking changes once v1 ships publicly.
+
+| Date | Endpoint(s) | Change | Reason it landed in-place |
+|---|---|---|---|
+| 2026-05-07 | `GET/POST/PATCH /api/v1/groups`, `GET /api/v1/groups/{id}/members`, `POST /api/v1/stream/start/{id}` (gate consumes `get_visible_libraries` instead of `get_effective_restrictions`) | **Groups v2 semantic flip** — `group_restrictions.allowed_libraries` reinterpretation: subtractive ("client can ONLY stream from these") → additive ("this group EXPOSES these to its members").  JSON wire format unchanged; meaning flipped.  Multi-group composition flipped from intersection to UNION.  ADR-018. | Pre-launch.  No paid v1 clients shipped against the subtractive semantic.  v2 redesign + immediate switch was simpler than running both gates in parallel.  Migration 025 manufactures Public + back-fills its allowed_libraries with every existing library so v1 single-household deployments keep their visibility on the upgrade.  Operator-side audit banner ships in the desktop CP per `docs/10_planning/13_groups_v2_content_spaces.md` §M5. |
 
 ---
 

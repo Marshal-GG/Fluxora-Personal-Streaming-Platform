@@ -44,6 +44,8 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `GET` | `/api/v1/auth/clients/me` | Token required | Calling client's own profile (mobile profile screen) |
 | `GET` | `/api/v1/auth/clients/me/stats` | Token required | Aggregate `{hours, movies, shows}` watch stats (mobile profile stats row) |
 | `GET` | `/api/v1/auth/clients/me/continue-watching` | Token required | Files with non-zero resume position, sorted most-recent-first (mobile Home rail) |
+| `GET` | `/api/v1/auth/clients/me/visible-libraries` | Token required | M6 of `13_groups_v2_content_spaces.md` — mobile Profile-screen "Locked / Unlocked / Visible Libraries" cards. Same shape as the localhost View-As route below, scoped to the calling client |
+| `GET` | `/api/v1/auth/clients/{id}/visible-libraries` | Localhost only | M5 of `14_groups_management_page.md` — operator "View as" debug.  Returns `VisibleLibraries` snapshot (library_ids + provenance + locked-state buckets) for the target client right now |
 
 ### `files` router
 
@@ -98,16 +100,27 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 
 ### `groups` router
 
+v2 endpoints (PIN flow + per-client enrollment + master override) extend the v1 surface; full semantics in [`docs/04_api/01_api_contracts.md`](../04_api/01_api_contracts.md) and the v2 plan [`docs/10_planning/13_groups_v2_content_spaces.md`](../10_planning/13_groups_v2_content_spaces.md).
+
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| `GET` | `/api/v1/groups` | Token or localhost | List all groups with restrictions + member counts |
-| `POST` | `/api/v1/groups` | Localhost only | Create group with optional restrictions |
+| `GET` | `/api/v1/groups` | Token or localhost | List all groups with restrictions + member counts + v2 fields (`is_public`, `requires_pin`, `pin_mode`, `pin_model`, `icon`, `color`, `max_concurrent_streams`) |
+| `POST` | `/api/v1/groups` | Localhost only | Create group with optional restrictions + optional `pin`/`pin_mode`/`pin_model`/`icon`/`color`/`max_concurrent_streams` (per-client groups reject `pin` at create) |
 | `GET` | `/api/v1/groups/{id}` | Token or localhost | Get single group |
-| `PATCH` | `/api/v1/groups/{id}` | Localhost only | Update group fields or restrictions |
-| `DELETE` | `/api/v1/groups/{id}` | Localhost only | Delete group (cascades members + restrictions) |
+| `PATCH` | `/api/v1/groups/{id}` | Localhost only | Update group fields or restrictions; `pin` semantic null=unchanged / `""`=remove / `"<digits>"`=set; `pin_model` flip rules in API contracts |
+| `DELETE` | `/api/v1/groups/{id}` | Localhost only | Delete group (cascades members + restrictions). 400 on the Public group |
 | `GET` | `/api/v1/groups/{id}/members` | Token or localhost | List group members |
 | `POST` | `/api/v1/groups/{id}/members` | Localhost only | Add client to group (idempotent) |
 | `DELETE` | `/api/v1/groups/{id}/members/{client_id}` | Localhost only | Remove client from group |
+| `PATCH` | `/api/v1/groups/{id}/members/{client_id}` | Localhost only | M5 of `14_groups_management_page.md` — set / clear per-member overrides (currently `time_window_override`).  Sentinel `start_h=0, end_h=0, days=[]` clears |
+| `DELETE` | `/api/v1/groups/{id}/members/{client_id}/pin` | Localhost only | **M8** — clear a member's per-client PIN enrollment so they re-enroll on next access; also drops their grant. Idempotent |
+| `POST` | `/api/v1/groups/{id}/enter` | Token only | Submit PIN to unlock a gated group for the calling client; rate-limited 5 fails / 60 s / (client, group); returns 200 + `expires_at` on success |
+| `POST` | `/api/v1/groups/{id}/enroll` | Token only | **M8** — first-time per-client PIN enrollment; immediate session-length grant on success |
+| `POST` | `/api/v1/groups/{id}/enroll/change` | Token only | **M8** — replace own per-client PIN; verifies `old_pin` against rate limiter |
+| `DELETE` | `/api/v1/groups/{id}/grant` | Token only | Lock a previously-unlocked group on the calling client (drop own grant); idempotent |
+| `GET` | `/api/v1/groups/{id}/grant-status` | Token or localhost | Whether the calling client holds a valid grant + `pin_model` + `enrollment_state ∈ {not_required, enrolled, enrollment_required}` for mobile UX routing |
+| `POST` | `/api/v1/groups/{id}/grants/reset` | Localhost only | M7 follow-up — bulk-drop every active PIN grant for the group (shared-mode "Reset all PINs" Danger Zone action). Returns `{dropped: int}`. Per-client mode uses `DELETE /members/{cid}/pin` per row instead |
+| `POST` | `/api/v1/groups/{id}/master-override?client_id=` | Localhost only | Operator recovery — issue a 12 h grant for `client_id` without supplying the PIN; no stored secret (auth = network proximity to the server) |
 
 ### `notifications` router
 

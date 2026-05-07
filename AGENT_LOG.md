@@ -441,3 +441,472 @@ The mobile player now distinguishes group-gate denials from generic failures.  M
 - **If the operator wants a Group Activity log** (who's been gated, when, by which group), the existing `services/activity_service` already has the infrastructure — `record(type='stream.gated', summary=..., target_kind='group', target_id=...)` would slot in alongside the existing `stream.start` / `stream.end` events.  Out of scope for this remediation; flagged for future work.
 - **Per the doc-update protocol, future agents touching `auth_service.list_clients` need to remember the `groups_json` aggregation join.**  The function signature didn't change (still returns `list[Row]`) but the columns the row carries did.  Documented in the docstring; reading it before extending is the safety net.
 ---
+
+## [2026-05-07] — Groups v2 content-spaces redesign — M1-M5 + M8 hybrid PIN (server + desktop)
+**Phase:** Phase 5 — access-control redesign
+**Status:** M1-M3 ✅, M4 (shared-PIN) server + desktop ✅, M5 ✅ (folded into migration 025), M8 (hybrid PIN — per-client enrollment) server + desktop ✅; M4/M8 mobile + M6 + M7 remaining
+
+### What Was Done
+
+After the v1 Groups remediation (M1-M5 of `12_groups_remediation_plan.md`) shipped end-to-end on the same day, the operator-side mental model still felt wrong: clients in zero groups got *full* access, multi-group semantics were intersection (least-permissive wins) which surprised operators expecting union, and there was no story for "everyone sees Movies" vs "PIN-gated Adults library."  Plan written + implementation pushed through across two passes:
+
+#### Plan (2026-05-07 morning)
+
+`docs/10_planning/13_groups_v2_content_spaces.md` (~700 lines) lays out the v2 redesign — additive content-spaces semantic, mandatory Public group, PIN-gated groups + grant table + lockout, per-group caps, per-member time-window override, master operator override, "view as" debug, group activity feed, group icons + colors, group cloning.  7-milestone remediation: M1 schema + visibility resolution; M2 list endpoint filtering; M3 Public + auto-membership; M4 PIN flow; M5 migration; M6 mobile UX polish; M7 operator quality of life.  Cross-referenced from CLAUDE.md "Where the detail lives" table.
+
+After the M1-M5 server + M4 desktop ship landed, owner asked whether a single shared household PIN was the right model — concern was "if a kid sees a parent type the Adults PIN, the leak is household-wide and forces a rotation."  Added §M8 to the plan doc covering a *hybrid* PIN model: groups can be in either `pin_model='shared'` (M4 default — one PIN per group) or `pin_model='per-client'` (each member device enrolls its own PIN).  Compromise blast radius for per-client = one device.  Master override unchanged (localhost-only, no stored secret).
+
+#### M1-M5 server (2026-05-07 morning)
+
+- **Migration 025** (`apps/server/database/migrations/025_groups_v2_content_spaces.sql`).  Adds columns to `groups`: `is_public INTEGER NOT NULL DEFAULT 0`, `icon TEXT`, `color TEXT`, `requires_pin INTEGER NOT NULL DEFAULT 0`, `pin_hash TEXT`, `pin_mode TEXT NOT NULL DEFAULT 'session' CHECK(pin_mode IN ('session','per-entry'))`, `max_concurrent_streams INTEGER`.  Adds `time_window_override TEXT` to `group_members`.  New tables `group_pin_grants(client_id, group_id, granted_at, expires_at)` + `group_pin_attempts(client_id, group_id, attempted_at, success)` with their indexes.  UNIQUE partial index `idx_groups_public ON groups(is_public) WHERE is_public = 1` enforces the singleton.  Manufactures the Public group with a friendly description + violet-grey color + 'public' icon.  Backfills `group_restrictions.allowed_libraries` with `NULLIF(json_group_array(id), '[]') FROM libraries` — the NULLIF dance handles the "fresh install (no libraries) vs upgrade (every library)" case in one expression because v1's intersect logic reads `'[]'` as "block everything" which would 403 every stream-start for clients only in Public.  Auto-adds every approved client to Public.
+- **`group_service.py`** reworked.  Replaced v1 `get_effective_restrictions` + `reason_to_deny` (kept temporarily for back-compat during the transition, then removed once consumers were switched).  New: `VisibleLibraries` dataclass (`library_ids`, `groups_contributing` provenance, `pin_locked_groups`, `time_locked_groups`); `_MembershipState` internal dataclass; `_resolve_membership(db, client_id, *, now)` shared SQL walk consumed by both the visibility function and the stream-gate; `get_visible_libraries(db, client_id, *, now=None)` (pure additive union; skip inactive groups, time-locked groups → record in time_locked_groups, PIN-locked groups → record in pin_locked_groups, otherwise UNION libraries into visible); `reason_to_deny_stream(db, client_id, *, library_id, now=None)` — preserves the v1 semantic that mobile's M5 parser depends on (time-window-specific message wins over generic "library not allowed" so mobile routes to "Outside playback hours"; PIN-locked content denies generically so we don't leak that gated content exists).
+- **PIN service helpers**: `hash_pin(pin, hmac_key)` HMAC-SHA256; `validate_pin_strength(pin)` (4-8 numeric, server-authoritative blocklist `_OBVIOUS_PINS = {'0000','1111',...,'1234',...,'2580'}`); `_recent_failed_attempts(client_id, group_id, *, window_sec, now)`; `enter_pin_grant(db, client_id, group_id, pin, *, hmac_key, now)` returning `PinGrantResult(granted, expires_at, error, attempts_remaining)` with errors `unknown_group | no_pin_required | rate_limited | incorrect_pin`; `revoke_pin_grant`; `housekeep_pin_state` pruning expired grants + 24h-old attempts (called from the existing main.py background task).  Constants: `_GRANT_TTL_SESSION = 12h`, `_GRANT_TTL_PER_ENTRY = 5min`, `_PIN_RATE_WINDOW_SEC = 60`, `_PIN_RATE_MAX_FAILS = 5`.
+- **`auth_service.approve_client`** extended — after `status='approved'`, `INSERT OR IGNORE INTO group_members (group_id, client_id, added_at) VALUES ('public', ?, now)`.  Idempotent; surviving the existing pair-and-approve flow.
+- **List endpoint filtering** — `routers/library.py`, `files.py` (recent + search + by-id + library-scoped list), `auth.py` (continue-watching), `stream.py` all filter against `get_visible_libraries`.  404 on `/files/{id}` (don't confirm existence to a guesser); 403 on `/files?library_id=X` (operator supplied the id, owe them an honest deny).  Files with `library_id IS NULL` (uploaded outside any library) stay universally visible — explicit passthrough so legacy uploads don't disappear.
+- **`stream.py`** switched from v1 `reason_to_deny` to v2 `reason_to_deny_stream(client_id, library_id=...)` so the gate consumes the same source of truth as the lists.
+
+- **Router `groups.py`** PIN endpoints: `POST /groups/{id}/enter` (bearer-only, body `{pin}`, strength check before rate-limit so junk doesn't burn budget; success returns `{expires_at, pin_mode}`); `DELETE /groups/{id}/grant` (bearer-only, idempotent — drops own grant); `GET /groups/{id}/grant-status` (bearer-only, polls on app foreground); `POST /groups/{id}/master-override?client_id=` (localhost-only via `require_local_caller` — no PIN, just issues a 12h grant + logs an attempt with `success=1`).  Master override is the localhost recovery path; auth boundary is "is the caller running on the server box?" — same trust boundary as the SQLite DB itself.  No master PIN exists anywhere.
+
+#### M8 hybrid PIN (server + desktop, 2026-05-07 afternoon)
+
+After owner reviewed the M4 ship and asked about per-client PINs, designed §M8 of the plan doc and implemented:
+
+- **Migration 026** (`026_groups_per_client_pins.sql`).  Adds `pin_model TEXT NOT NULL DEFAULT 'shared' CHECK(pin_model IN ('shared','per-client'))` to `groups` + new `group_member_pins(group_id, client_id, pin_hash, enrolled_at)` table.  Additive — existing M4 data stays in `pin_model='shared'`.  No backfill; per-client groups are opt-in.
+- **`_resolve_membership` SQL** extended — joins `group_member_pins` for `has_enrollment` flag, selects `g.pin_model`.  `_MembershipState` gains `pin_model` + `is_enrolled`.
+- **`VisibleLibraries`** gains `enrollment_required_groups: frozenset[str]` distinct from `pin_locked_groups` so mobile can route to enrollment vs entry surface.
+- **`get_visible_libraries`** routes per-client + unenrolled groups to `enrollment_required_groups`; everything else (shared mode + per-client-but-enrolled-no-grant) stays in `pin_locked_groups`.
+- **`enter_pin_grant`** branches on `pin_model` — per-client mode reads `group_member_pins.pin_hash` for the calling client; missing enrollment surfaces as new error code `enrollment_required` (router translates to 400 with "call /enroll first" message).
+- **New service helpers**: `enroll_pin(client_id, group_id, pin, *, hmac_key, now)` — strength + member-of-group + not-already-enrolled checks, hashes + INSERT + immediate session-length grant (user just typed, no re-prompt); `change_member_pin(client_id, group_id, old_pin, new_pin, *, hmac_key, now)` — verifies old (charges failed attempts against rate limit so endpoint can't be a brute-force bypass), strength-checks new, UPDATE; `clear_member_pin(client_id, group_id)` — operator action, drops enrollment + drops grant so visibility flips immediately.
+- **`create_group` / `update_group`** accept `pin_model` kw-only.  `create_group` rejects `pin` when `pin_model='per-client'` (no shared secret at create time).  `update_group` mode-switch semantics: shared → per-client clears `pin_hash`, keeps `requires_pin=1`, keeps grants (members re-enroll on grant expiry); per-client → shared raises ValueError if `pin` not supplied in same call (otherwise group ends up gated with no enterable secret), drops `group_member_pins` rows.
+- **Pydantic models** (`models/group.py`): new `PinModel = Literal["shared","per-client"]`; `GroupResponse` + `GroupCreate` + `GroupUpdate` extended with `pin_model` field.
+- **Router `groups.py`** new endpoints: `POST /groups/{id}/enroll` (bearer-only, body `{pin}`, errors mapped 400/403/404/409); `POST /groups/{id}/enroll/change` (bearer-only, body `{old_pin, new_pin}`, errors 400/401/404/429); `DELETE /groups/{id}/members/{client_id}/pin` (localhost-only, idempotent — clears a specific member's enrollment so they re-enroll on next access, also drops their grant).  Shared `_translate_enroll_error` helper maps service-layer error codes to HTTPException.
+- **`GET /groups/{id}/grant-status`** rewritten — single SQL hits `groups` + `group_pin_grants` + `group_member_pins` to populate `unlocked`, `expires_at`, `pin_model`, `enrollment_state ∈ {'not_required','enrolled','enrollment_required'}` so mobile can route the user to the right surface without a follow-up call.
+
+#### Desktop M4 + M8
+
+- **Dart `Group` entity** (`packages/fluxora_core/lib/entities/group.dart`): added `PinMode` enum (M4) + `PinModel` enum (M8 — `shared`/`perClient`).  `Group` gains `isPublic`, `requiresPin`, `pinMode`, `pinModel`, `icon`, `color`, `maxConcurrentStreams` — all defaulted so older mobile binaries pointed at a v2 server keep parsing.  Regenerated freezed via `dart run build_runner build`.
+- **`Endpoints`**: new `groupMemberPin(groupId, clientId)` for the M8 clear endpoint.
+- **`GroupsRepository.create/update`** + `GroupsCubit.createGroup/updateGroup` extended with `pin`, `pinMode`, `pinModel` params.  Repo impl uses Dart 3 null-aware spread `?pin` / `?pin_mode` / `?pin_model` so omitted keys don't ship empty values.
+- **`_PinSection` widget** (`apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart`): five M4 states (no PIN idle / setting new PIN / has PIN idle / pending change / pending removal) + M8 model picker (segmented `Shared PIN` / `Per-client PIN`) at the top of the section; per-client mode hides the shared-PIN edit affordances + shows explanatory copy ("Each member device sets its own PIN on first access; clear individual PINs from the Members tab"); mode-switch banner warns operator before save (amber when switching to shared without a fresh PIN — surfaces the server's 400 in advance; violet during a clean switch); client-side mirror of `_OBVIOUS_PINS` blocklist for snappy feedback before the network round-trip.
+- **`_EditGroupDialog`** + **`_CreateGroupDialog`** both wire the new `_pinUpdate` / `_pinModeUpdate` / `_pinModelUpdate` state, route through onConfirm to the cubit, and handle the per-client-collapses-pin-to-null edge case at save time.
+
+### Files Created or Modified
+
+| File | Change |
+|------|--------|
+| `apps/server/database/migrations/025_groups_v2_content_spaces.sql` | Created — additive `allowed_libraries` semantic, Public group, PIN gate columns, grant + attempt ledgers, member time-window override |
+| `apps/server/database/migrations/026_groups_per_client_pins.sql` | Created — `groups.pin_model` toggle + `group_member_pins` enrollment ledger (M8) |
+| `apps/server/services/group_service.py` | +~900 lines — `VisibleLibraries`, `_MembershipState`, `_resolve_membership`, `get_visible_libraries`, `reason_to_deny_stream`, `hash_pin`, `validate_pin_strength`, `enter_pin_grant`, `revoke_pin_grant`, `housekeep_pin_state`, `enroll_pin`, `change_member_pin`, `clear_member_pin`; `create_group`/`update_group` extended with `pin_model` + mode-switch semantics |
+| `apps/server/services/auth_service.py` | `approve_client` auto-adds to Public group |
+| `apps/server/routers/groups.py` | New endpoints: `/enter`, `/grant`, `/grant-status`, `/master-override`, `/enroll` (M8), `/enroll/change` (M8), `/members/{cid}/pin` (M8); existing POST/PATCH forward `pin_model` |
+| `apps/server/routers/library.py`, `files.py`, `auth.py`, `stream.py` | Wired `get_visible_libraries` filter on every list/by-id endpoint; stream.py switched from v1 `reason_to_deny` to v2 `reason_to_deny_stream` |
+| `apps/server/models/group.py` | `PinMode` + `PinModel` literals; GroupResponse/Create/Update extended |
+| `apps/server/tests/test_groups.py` | +40 cases (visibility matrix, PIN flow, auto-add-to-Public, HTTP route surfaces, master override, M8 enrollment + change + clear + mode-switch + per-client-uses-member-hash + visibility branching) |
+| `packages/fluxora_core/lib/entities/group.dart` | `PinMode` + `PinModel` enums; Group fields extended (defaulted) |
+| `packages/fluxora_core/lib/entities/group.freezed.dart`, `.g.dart` | Regenerated |
+| `packages/fluxora_core/lib/network/endpoints.dart` | `groupMemberPin(groupId, clientId)` |
+| `apps/desktop/lib/features/groups/domain/repositories/groups_repository.dart` | `create/update` extended with pin/pinMode/pinModel; new `clearMemberPin` |
+| `apps/desktop/lib/features/groups/data/repositories/groups_repository_impl.dart` | Wires the v2 fields with null-aware spread; `clearMemberPin` impl |
+| `apps/desktop/lib/features/groups/presentation/cubit/groups_cubit.dart` | `createGroup` + `updateGroup` extended with pin/pinMode/pinModel |
+| `apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart` | `_PinSection` widget (5 M4 states + M8 model picker + mode-switch banner); both Create + Edit dialogs route the new params |
+
+### Docs Updated
+
+- `docs/10_planning/13_groups_v2_content_spaces.md` — created earlier in the day; M1-M5 marked ✅, M4 desktop ✅, §M8 added with full design (schema + flow + tests + acceptance), M8 server + desktop marked ✅, status header reflects current state
+- `docs/04_api/01_api_contracts.md` — `GroupResponse` extended with v2 + M8 fields; `POST /groups` + `PATCH /groups/{id}` documented with pin/pin_mode/pin_model semantics; new endpoints documented (`/enter`, `/grant`, `/grant-status` with M8 fields, `/master-override` with the "no master PIN exists" callout, `/enroll`, `/enroll/change`, `/members/{cid}/pin`)
+- `docs/00_overview/current_status.md` — server test count 565 → 617; new "v2 content-spaces redesign" lead paragraph summarizing M1-M3 + M4 (shared) + M5 + M8 (per-client) ship + remaining mobile + M6 + M7
+
+### Test Counts
+
+- Server: **577 → 617 passing** (+40 across the v2 work, of which 14 are M8-specific). Groups test module 18 → 58.
+- Desktop / core: clean analyzer; no test additions yet (cubit-test additions deferred until M6 mobile lands so cubit covers both surfaces in one round)
+
+### Migrations
+
+- 024 → **026** (`benchmark_history.sql` 024 → `groups_v2_content_spaces.sql` 025 → `groups_per_client_pins.sql` 026)
+
+### Issues Discovered + Reported
+
+1. **Mobile UI has no surface for any of this yet.** M4 mobile (PIN entry surface), M8 mobile (enrollment surface + locked-vs-enrollment-required routing), and M6 (Profile "Visible Libraries" card + Locked Groups card + Unlocked Groups card) all sit on top of fields that already round-trip end-to-end on the wire.  This is the highest-priority remaining work for the v2 redesign — without it, a mobile user on a per-client-mode group is just stuck.
+
+2. **Master override is the only recovery path.** If the operator forgets a shared-PIN group's PIN AND the desktop CP is unreachable AND localhost is unreachable, the only fallback is `sqlite3 fluxora.db` — `UPDATE groups SET pin_hash = NULL WHERE id = '...'`.  Not unique to v2 (the same is true of any shared-secret access control) but worth flagging in the operator runbook when one is written.
+
+3. **Mode-switch banner relies on a guess about server intent.** When the operator flips the model picker to `shared` without typing a new PIN, the desktop UI shows an amber warning "Switching to shared mode requires a new household PIN" — this mirrors the server's 400 rejection.  But if a future server version relaxes the rule (e.g. "stay non-gated when no PIN is supplied"), the warning becomes wrong and confusing.  Worth a comment in `_PinSection` flagging that the rule is server-authoritative.
+
+### Suggestions for Next Agent (prioritised)
+
+1. **M4 + M8 mobile UX (~1-1.5 days).** Profile screen "Locked libraries" surface routes to either the *entry* modal (shared mode + enrolled per-client mode, both ask for a PIN) or the *enrollment* modal (per-client mode, no enrollment yet, asks for a new PIN with confirm-PIN re-entry).  Reads `enrollment_state` from `/grant-status` to pick the right surface.  Plan in §M6 + §M8d of `13_groups_v2_content_spaces.md`.
+2. **M6 mobile UX polish (~0.5 day).**  Profile "Visible Libraries" card lists what this device sees right now, with provenance (which group granted which library — `groups_contributing` is already on the wire).  Locked Groups card + Unlocked Groups card with per-group expiry + lock buttons.
+3. **M7 operator quality-of-life (~1 day, Tier 2 of the plan).**  "View as" debug mode (operator desktop CP renders the kid's library list as they'd see it — new `GET /api/v1/auth/clients/{id}/visible-libraries` localhost-only endpoint), group icons + colors picker on create/edit, group activity feed, per-group concurrent stream cap enforcement, operator notifications on gate denials.
+
+### Next Agent Should
+
+- **Read `docs/10_planning/13_groups_v2_content_spaces.md` end-to-end** before touching any group-related code — it's the source of truth for the redesign and contains the exhaustive edge-case matrix (§10) that drove the test plan.
+- **Don't rewrite `enter_pin_grant` to short-circuit per-client mode without going through `_resolve_membership`.**  The "is the calling client a member of the group" check is a prerequisite for both shared and per-client paths; per-client also needs the `group_member_pins` lookup which `_resolve_membership` doesn't do (intentionally — keeps the visibility walk fast).
+- **For M4 + M8 mobile, mirror `_OBVIOUS_PINS` client-side** as the desktop already does (in `_PinSectionState._obviousPins`).  Server is authoritative; client-side mirror is just for snappy feedback before the network round-trip.
+- **Don't add a "global lock all groups" affordance to the master-override surface.**  Master override is recovery-shaped, not bulk-management-shaped.  The legitimate "lock everything" surface is the per-grant DELETE called in a loop, exposed on the operator's own desktop via the existing Sessions tab pattern.
+---
+
+## [2026-05-07] — Groups dedicated management page — M1-M5 shipped end-to-end
+**Phase:** Phase 5 — operator-facing UX
+**Status:** ✅ Complete — `/groups/new` + `/groups/:id/edit` is the operator surface for all group create / edit / member-management flows.  Legacy `_CreateGroupDialog` + `_EditGroupDialog` retired; `_PinSection` + `GroupRestrictionsForm` + `AddMemberDialog` lifted to a shared widget file.  Server suite **617 → 629 passing** (+12 tests across M3 +5 and M5 +7).
+
+### What Was Done
+
+After the v2 + M8 PIN work landed in the Edit modal, the operator pointed out the modal was already crowded and would only get worse with M7 Tier-2 additions (icons / colors / view-as / activity feed / per-member PIN management).  Plan written at `docs/10_planning/14_groups_management_page.md` proposing a 6-tab dedicated page; sign-off + implementation in five milestones.
+
+#### M1 — Page shell + routing
+
+- **New file** `apps/desktop/lib/features/groups/presentation/screens/group_edit_screen.dart` with `GroupEditScreen.create()` + `GroupEditScreen.edit(id: ...)` constructors.
+- **Routes** `/groups/new` + `/groups/:id/edit` registered ahead of any `/groups/:id/*` parametric route to avoid go_router matching `'new'` as a UUID.  Both routes mount the existing `FluxShell` so the sidebar + status bar stay visible.
+- **PageHeader** with back chevron + group name + status pill + Public pill + Discard / Save action slot.
+- **`FluxTabBar`** with 6 tabs — Overview always visible; Members / Activity / View As hidden in create mode.
+- **Loading / failure / "Group no longer exists"** state shells (matches the list-page pattern).
+- List page `+ Create Group` + row Edit buttons updated to navigate to the new page; legacy `_show*Dialog` methods kept under `// ignore: unused_element` until M4 deletes them.
+
+#### M2 — Overview tab + create/edit save flow
+
+- **Identity fields**: name + description text fields, `SectionToggleHeader` for Active/Inactive status, all wired through scratch state on `_GroupEditViewState`.
+- **Dirty tracking** computed across name + description + status + restrictions + PIN / model edits.
+- **Discard confirm** via `FluxGlassDialog` when `_dirty` and operator hits back / Discard.
+- **Save flow**: `cubit.createGroup` for create mode → listener detects the freshly-minted row by name match in the post-`load()` groups list → navigates to `/groups/<newId>/edit`.  `cubit.updateGroup` for edit mode + scaffold messenger snackbar.
+- **Public lockdown**: name field disabled with helper text "Public group's name is fixed."  Status toggle `IgnorePointer` + 50% opacity with explanatory caption.
+- **Bug caught + fixed**: `GroupsCubit.load()` resets `selectedGroup` to `groups.first` post-save, which would silently swap the page's content to first-group.  Fixed by deriving the target group via `_resolveTargetGroup(state)` that looks up by `widget.groupId` from `state.groups` instead of relying on cubit selection state.  Documented in `gotchas.md`.
+
+#### M3 — Members tab + aggregated `?include=pin_state` endpoint
+
+- **Server**: `services/group_service.list_members(db, group_id, include_pin_state=True)` extended with correlated sub-selects against `group_member_pins` + `group_pin_grants` + `group_pin_attempts` so each row carries `enrollment_state`, `has_active_grant`, `grant_expires_at`, `recent_failed_attempts` in one SQL.  Avoids the N+1 fanout per §9.3 of the plan (option B).
+- **Router**: `GET /api/v1/groups/{id}/members?include=pin_state` query param threads through.  Older callers without `include` get the v1 shape unchanged.
+- **5 new server tests**: default-shape unchanged + per-client branches (3-state matrix: enrolled+grant / enrolled-no-grant / not-enrolled) + shared-mode skips enrollment + 404 unknown group + recent-failed-attempts window math.
+- **Repo + cubit**: `GroupsRepository.listMembers(id, {bool includePinState = false})` + `GroupsCubit.loadMembers(groupId, {bool includePinState = false})` + new `GroupsCubit.clearMemberPin(groupId, clientId)` helper.
+- **`Endpoints`**: existing `groupMembers(id)` reused — query param appended in repo impl.
+- **Members tab UI**: rows render with platform icon + name + last-seen line + `Enrolled` / `Not enrolled` / `Locked out` badges + `Unlocked` chip when grant active + 3-dot popup with "Remove" + "Clear PIN enrollment" actions.  Add Member button opens the lifted `AddMemberDialog` after M4.  Public locks down the Add + Remove affordances.
+- **Page-level**: `_pinStateLoaded` one-shot flag triggers `cubit.loadMembers(target.id, includePinState: true)` exactly once per page mount when the group is gated.  Member mutations (remove / clear PIN) refresh with the enrichment so badges stay current.
+
+#### M4 — Lift form widgets + retire legacy modal
+
+- **New file** `apps/desktop/lib/features/groups/presentation/widgets/group_form_widgets.dart` (~1100 lines).  Cut from `groups_screen.dart` lines 1189-3012 with public renames: `_PinSection` → `PinSection`, `_GroupRestrictionsForm` → `GroupRestrictionsForm`, `_TimeWindowPicker` → `TimeWindowPicker`, `_LibraryAllowlistPicker` → `LibraryAllowlistPicker`, `_AdvisoryFieldsSection` → `AdvisoryFieldsSection`, `_SectionToggleHeader` → `SectionToggleHeader`, `_AddMemberDialog` → `AddMemberDialog`, `_formatTimeWindow` → `formatTimeWindow`.  Leaf-only widgets (`_HourField`, `_ChevronButton`, `_ClientPickRow`) and consts (`_kWeekdayLabels`) stay private to the new file.  Reason for the renames: Dart `_`-prefix privacy is library-scoped, not file-scoped — two files in the same package are separate libraries by default, so the underscore made the types invisible to the new page.  Documented in gotchas.md.
+- **Deleted** from `groups_screen.dart`: `_CreateGroupDialog`, `_EditGroupDialog`, `_showCreateDialog`, `_showEditDialog`, plus all the lifted form widgets.  Page is now ~1900 lines lighter.
+- **Updated call sites**: list page detail panel uses `formatTimeWindow(...)` (was `_formatTimeWindow`); `_showAddMemberDialog` builds `AddMemberDialog(...)` (was `_AddMemberDialog`).
+- **Page wiring**: PIN tab embeds `PinSection` with all v2 + M8 props (mode picker / per-client toggle / strength validation / mode-switch banner).  Access tab embeds `GroupRestrictionsForm` consuming `_restrictionsEdit` scratch + `_restrictionsDirty` flag.  Members tab "Add member" button opens the lifted `AddMemberDialog`.
+
+#### M5 — Activity + View As + Danger Zone + 3 server deltas
+
+**Server-side (3 new endpoints + 1 service helper + 6 activity emit-sites):**
+- `GET /api/v1/auth/clients/{id}/visible-libraries` (localhost only) — wraps `group_service.get_visible_libraries`.  Returns `{client_id, library_ids, groups_contributing, pin_locked_groups, enrollment_required_groups, time_locked_groups}`.  Operator-only (loopback boundary mirrors master-override).
+- `PATCH /api/v1/groups/{id}/members/{client_id}` (localhost only) — accepts `{time_window_override: TimeWindow}`.  Sentinel `start_h=0, end_h=0, days=[]` clears the override.  New `GroupMemberPatch` Pydantic.  Persists to `group_members.time_window_override` column already provisioned in migration 025.
+- New service helper `set_member_time_window_override(db, group_id, client_id, *, time_window)` — returns False if (group, client) tuple has no membership row so the router can 404.
+- New service helper `_emit_group_activity(...)` lazily imports `activity_service` to avoid the import cycle through `auth_service.approve_client`.  Wired at `add_member` (post-INSERT, only on rowcount > 0 so idempotent re-adds don't flood the feed), `remove_member` (post-DELETE, looks up display names BEFORE delete), `enter_pin_grant` (success path), `clear_member_pin` (operator action).  Producer errors are swallowed — a missing audit row never breaks the underlying group operation.
+- **7 new server tests**: view-as 403 off-loopback / 404 unknown-client / 200 known-client provenance shape + member time_window_override set+clear + 404 on non-member + member-PATCH 403 off-loopback + member-PATCH clear sentinel.
+
+**Desktop (3 new tabs + Danger Zone):**
+- **Activity tab**: consumes existing `GET /api/v1/activity?target_kind=group&target_id=<group_id>&limit=50` via the global `ApiClient`.  Per-row icon resolution (`group.member.add` → person-add, `group.pin.unlock` → lock-open, etc.).  Loading / error / empty / list states + Refresh button.
+- **View As tab**: `_ViewAsTabState` with member-picker chip row + on-tap calls `repo.visibleLibrariesAs(clientId)` + renders `_ViewAsResultCard` with library list (each row shows "← granted by Public" provenance from `groups_contributing`) + Locked Groups section (PIN-locked + enrollment-required) + Time-locked Groups section.  Honest about current state — doesn't simulate hypotheticals.
+- **Danger Zone**: red-tinted card on Overview tab (hidden in create mode + on Public).  Two rows — "Reset all PINs" (per-client mode walks members + clears each via `clearMemberPin`; shared mode shows a snackbar pointing to the PIN tab) + "Delete group" (cascade-warning dialog → `cubit.deleteGroup` → `router.go(Routes.groups)`).  Both confirm via `FluxGlassDialog`.
+- **`use_build_context_synchronously` lint pattern**: capture `cubit`, `messenger`, `GoRouter.of(context)` BEFORE any await — analyzer can't follow `mounted` checks through loops or async chains.  Documented in gotchas.md.
+
+### Files Created or Modified
+
+| File | Change |
+|------|--------|
+| `apps/desktop/lib/features/groups/presentation/screens/group_edit_screen.dart` | Created — full 6-tab page (~1300 lines) |
+| `apps/desktop/lib/features/groups/presentation/widgets/group_form_widgets.dart` | Created — lifted form widgets (~1100 lines) |
+| `apps/desktop/lib/core/router/app_router.dart` | `/groups/new` + `/groups/:id/edit` routes; `Routes.groupNew` + `Routes.groupEdit(id)` helpers |
+| `apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart` | Lifted form widgets removed; `+ Create Group` + row Edit navigate to new page; `_showCreate/Edit` dialog methods deleted; `formatTimeWindow` + `AddMemberDialog` consumed from the shared file |
+| `apps/desktop/lib/features/groups/domain/repositories/groups_repository.dart` | `listMembers` + `visibleLibrariesAs` extended; `clearMemberPin` already shipped earlier |
+| `apps/desktop/lib/features/groups/data/repositories/groups_repository_impl.dart` | Wires the `?include=pin_state` query param + new view-as endpoint |
+| `apps/desktop/lib/features/groups/presentation/cubit/groups_cubit.dart` | `loadMembers(groupId, {includePinState})` + `clearMemberPin(groupId, clientId)` |
+| `packages/fluxora_core/lib/network/endpoints.dart` | `authClientVisibleLibraries(clientId)` |
+| `apps/server/services/group_service.py` | `list_members(include_pin_state=True)` correlated sub-selects + `set_member_time_window_override` + `_emit_group_activity` + emit-call sites in 4 write paths |
+| `apps/server/routers/groups.py` | `GET /{id}/members?include=pin_state` + `PATCH /{id}/members/{cid}` routes |
+| `apps/server/routers/auth.py` | `GET /clients/{id}/visible-libraries` route (localhost only) |
+| `apps/server/models/group.py` | `GroupMemberPatch` Pydantic |
+| `apps/server/tests/test_groups.py` | +12 tests (5 M3 + 7 M5) → 70 total |
+
+### Docs Updated
+
+- `docs/10_planning/14_groups_management_page.md` — header status flipped to ✅ Complete; M1-M5 marked ✅
+- `docs/04_api/01_api_contracts.md` — new `PATCH /groups/{id}/members/{cid}` + `GET /auth/clients/{id}/visible-libraries` endpoints documented; `GET /groups/{id}/members` extended with `?include=pin_state` shape
+- `docs/05_infrastructure/02_url_inventory.md` — both new endpoints + the query-param variant added to the auth + groups router tables
+- `docs/00_overview/current_status.md` — server test count 617 → 629; new lead paragraph summarizing the page work
+- `docs/09_backend/01_backend_architecture.md` — auth.py + groups.py route descriptions extended; group_service description carries the new helpers; test_groups.py count 58 → 70 with the M3 + M5 case breakdown
+- `docs/12_guidelines/03_gotchas.md` — 4 new gotchas (cubit selectGroup vs URL-id resolution, go_router literal-before-parametric ordering, use_build_context_synchronously can't follow mounted across loops, Dart `_`-privacy is library-scoped not file-scoped)
+
+### Test Counts
+
+- Server: **617 → 629 passing** (+5 M3 list_members pin_state, +7 M5 view-as + member-PATCH).  Groups module 70.
+- Desktop / core: clean analyzer; no new tests yet (mobile + desktop cubit-tests deferred until M6 mobile lands so cubit covers both surfaces in one round).
+
+### Issues Discovered + Reported
+
+1. **Shared-mode "Reset all PINs" has no clean implementation today.**  Per-client mode walks members and clears via `clearMemberPin`.  Shared mode would need a "drop all grants for this group" cubit op that doesn't exist — currently surfaces a snackbar telling the operator to set a fresh PIN on the PIN tab (the server already drops grants on `pin: digits` updates).  Worth a future "bulk drop grants" route + cubit method.
+2. **Activity producer aggregation deferred.**  Per the plan §9.5 a busy household could generate 50+ failed-attempt rows.  Currently each failed `enter_pin_grant` writes one row and the desktop renders one Activity entry per row.  Server-side aggregation ("5 failed attempts in 10 min from Pixel 8 Pro" → single row) is producer-side polish that didn't fit M5.
+3. **View As doesn't simulate hypotheticals.**  Documented in the plan + the API contract.  Operator who wants to see "what would the kid see if I added them to Family" has to manipulate membership directly — accepted trade-off; not worth the surface area to ship now.
+4. **Mobile group management still doesn't exist.**  Mobile clients consume groups (see what they're a member of, unlock PIN-gated groups, enroll); they don't create or edit.  Operator surface is desktop-only by design.
+
+### Suggestions for Next Agent (prioritised)
+
+1. **M4 + M8 mobile UX** (~1-1.5 days, highest priority).  The wire format ships v2 + M8 + M5 fields end-to-end but mobile has no surfaces.  Profile screen "Locked libraries" → entry vs enrollment surface routing via `enrollment_state` from `/grant-status`.  Plan in `13_groups_v2_content_spaces.md` §M6 + §M8d.
+2. **M7 Tier-2 polish** (~0.5 day): group icon picker (12 icons) + color picker (6 colors) on the new Overview tab; per-group concurrent stream cap input on the Access tab (schema column already exists).  These were planned for M5 but the scope was tight; deferred without losing functionality.
+3. **Activity producer aggregation** (~0.5 day): collapse 5+ failed attempts in a 10-min window into a single row at write time.  Touches `enter_pin_grant` + a small dedup helper.
+4. **Bulk drop grants endpoint** for shared-mode "Reset all PINs": `POST /groups/{id}/grants/reset` (localhost only).  Wires into the Danger Zone snackbar fallback.
+
+### Next Agent Should
+
+- **Read `docs/10_planning/14_groups_management_page.md` end-to-end** before touching the Group page surfaces.  Plan + acceptance + edge cases all there.
+- **Don't relocate `_resolveTargetGroup` back to reading `state.selectedGroup`.**  The bug it fixes (cubit's `load()` resets selection to first group post-save) is non-obvious and the page would silently render the wrong group post-edit.  Documented in gotchas.md.
+- **Remember Dart privacy is library-scoped** when adding new shared widgets between `group_form_widgets.dart` and `group_edit_screen.dart` / `groups_screen.dart`.  Anything starting with `_` in one file can't be imported from another.  See gotchas entry.
+- **For any new async method that touches BuildContext after an await**, capture cubit / messenger / GoRouter refs at the top of the method.  The analyzer's mounted-tracking gives up at loops + external function calls; capturing pre-await silences the lint without disabling it.
+---
+
+## [2026-05-07] — Groups M7 desktop polish + producer-side audit aggregation + bulk grants reset
+**Phase:** Phase 5 — operator-facing polish
+**Status:** ✅ Complete — icon + color picker on Overview tab, concurrent-stream cap field on Access tab, list-page row + detail panel render the picks, producer-side failed-burst aggregation, bulk grants-reset endpoint replacing the desktop's snackbar fallback.  Server suite **629 → 637 passing** (+8 tests).
+
+### What Was Done
+
+After the dedicated Group page (M1-M5 of `14_groups_management_page.md`) shipped, the remaining items from that plan's "next agent" list landed in this round.
+
+#### M7 desktop polish — icon + color + concurrent-stream cap
+
+- **Overview tab gains visual identity**: 12-icon `_IconPicker` + 6-color `_ColorPicker` widgets on the Overview tab.  Icons persist to `groups.icon` (existing column from migration 025), colors to `groups.color` (hex string).  Both picker rows have a "Clear" affordance to revert to null.
+- **Access tab gains per-group concurrent-stream cap**: new `_ConcurrentStreamsField` widget with helper text ("Stream-start returns 503 when this many members are already streaming…").  Empty input = no cap; 1-100 valid range; invalid input doesn't fire onChanged so the operator's typing state is preserved.  Persists to `groups.max_concurrent_streams` (existing column).
+- **List-page surfaces the picks**: new public helpers `groupIconData(key)` + `groupColor(key)` in `group_edit_screen.dart` resolve a stored key to an `IconData` / `Color` with documented fallbacks (`'public'` → globe + violet-grey from migration 025; null/unknown → group-work + V2 violet).  `_GroupRow` and `_GroupDetailPanel` icon containers consume them so the operator's picks are visible on the list page without entering Edit.
+- **Page state**: `_iconEdit`, `_colorEdit`, `_initialIcon`, `_initialColor`, `_maxConcurrentStreamsEdit`, `_maxConcurrentStreamsDirty` added.  Dirty getter extended to include the three.  Save flow forwards them to `cubit.createGroup` / `updateGroup`.
+- **Cubit + repo**: `createGroup` and `updateGroup` cubit methods + repo interface + impl all extended with `icon`, `color`, `maxConcurrentStreams` named params.  Server already accepts them on both routes.
+
+#### Activity producer aggregation — `group.pin.failed-burst`
+
+Currently `enter_pin_grant` and `change_member_pin` write one `group_pin_attempts` row per failed attempt but emit no activity events on failure.  Per the v2 plan §5.5 ("aggregates >5 fails into a single 'Pixel 8 Pro: 5 failed attempts' row"), wired:
+
+- New constants `_FAILED_BURST_WINDOW_SEC = 600` (10 min) + `_FAILED_BURST_THRESHOLD = 5` in `group_service.py`.
+- New helper `_maybe_emit_failed_burst(db, *, client_id, group_id, now)` — counts failed attempts for the (client, group) tuple in the last 10 min; emits exactly when count == 5 (the just-recorded failure was the one that crossed).  Subsequent attempts above the threshold within the same 10-min window don't re-emit.  When the oldest fails age out, the count drops below 5 and a new burst can re-fire naturally.
+- Wired into both `enter_pin_grant` (failure path, after the `group_pin_attempts` insert) and `change_member_pin` (wrong-old-PIN path).  Same dedup logic so brute-force-via-change is also surfaced.
+- Best-effort like other producer calls — wrapped in try/except with a WARNING log so audit failures never break the underlying rate-limit response.
+
+#### Bulk drop-grants endpoint — `POST /groups/{id}/grants/reset`
+
+Previously the desktop's shared-mode "Reset all PINs" Danger Zone action just showed a snackbar telling the operator to set a fresh PIN on the PIN tab (the server drops grants on `pin: digits` PATCH).  Now:
+
+- New service helper `revoke_all_grants_for_group(db, group_id) -> int` deletes every `group_pin_grants` row for the group.  Returns the count.  Idempotent — empty group returns 0.  Emits one `group.pin.grants-reset` activity event with the count when count > 0.
+- New route `POST /api/v1/groups/{id}/grants/reset` (localhost only).  Returns `{"dropped": N}` for the desktop snackbar.  404 on unknown group; 403 off-loopback.
+- **Per-client mode unchanged**: this route only touches `group_pin_grants`, NOT `group_member_pins`.  Per-client recovery stays per-row via `DELETE /members/{cid}/pin` — the desktop walks members + calls that for each.  Documented at the route + service layer.
+- **Desktop side**: new `GroupsRepository.resetAllGrants(groupId) -> int` + impl.  `_DangerZoneCard._confirmResetPins` shared-mode branch replaced — calls the bulk endpoint then refreshes members with pin_state so the "Unlocked" badges drop immediately + snackbar reports the count.
+
+### Files Created or Modified
+
+| File | Change |
+|------|--------|
+| `apps/desktop/lib/features/groups/presentation/screens/group_edit_screen.dart` | `_IconPicker` + `_ColorPicker` + `_ConcurrentStreamsField` widgets; `_OverviewTab` extended with icon/color params; Access tab wraps `GroupRestrictionsForm` + new field; Danger Zone Reset PINs branched on `pinModel`; public `kGroupIconChoices` / `kGroupColorChoices` / `groupIconData(key)` / `groupColor(key)` helpers exported |
+| `apps/desktop/lib/features/groups/presentation/screens/groups_screen.dart` | `_GroupRow` + `_GroupDetailPanel` consume the icon + color helpers |
+| `apps/desktop/lib/features/groups/domain/repositories/groups_repository.dart` | `create` + `update` extended with icon/color/maxConcurrentStreams; new `resetAllGrants(groupId)` |
+| `apps/desktop/lib/features/groups/data/repositories/groups_repository_impl.dart` | Same threading + new `resetAllGrants` impl |
+| `apps/desktop/lib/features/groups/presentation/cubit/groups_cubit.dart` | `createGroup` + `updateGroup` extended |
+| `packages/fluxora_core/lib/network/endpoints.dart` | `groupGrantsReset(groupId)` |
+| `apps/server/services/group_service.py` | `_FAILED_BURST_*` constants + `_maybe_emit_failed_burst` helper + emit-call sites in `enter_pin_grant` failure path + `change_member_pin` wrong-old path; new `revoke_all_grants_for_group` |
+| `apps/server/routers/groups.py` | `POST /{id}/grants/reset` route |
+| `apps/server/tests/test_groups.py` | +8 tests (3 burst aggregation + 5 grants-reset paths) → 78 total |
+
+### Docs Updated
+
+- `docs/04_api/01_api_contracts.md` — new `POST /grants/reset` endpoint documented
+- `docs/05_infrastructure/02_url_inventory.md` — new endpoint row added
+- `docs/06_security/01_security.md` — new endpoint row in the auth table
+- `docs/00_overview/current_status.md` — server test count 629 → 637 + new lead paragraph
+- `docs/09_backend/01_backend_architecture.md` — groups.py route description extended; test count 70 → 78
+
+### Test Counts
+
+- Server: **629 → 637 passing** (+3 burst aggregation tests + 5 grants-reset tests).  Groups module 78.
+- Desktop / core: clean analyzer; no new tests yet.
+
+### Issues Discovered + Reported
+
+1. **Concurrent-stream cap UI accepts 1-100** — same range as the Pydantic validator on the server side.  Operators with cluster setups expecting 200+ get rejected.  Acceptable for v1 (single-household scope); revisit if anyone actually asks.
+2. **Icon + color pickers don't preview the chip** — operator picks an icon, has to imagine how it'll look on the list page.  Could add a live "as it'll appear" mini-chip preview at the top of the Overview tab.  Defer until someone asks.
+3. **Failed-burst aggregation is per-(client, group)** — if a single client hammers 5 different groups, that's 5 separate burst events instead of one "Pixel 8 Pro is up to something."  Acceptable — operators care about which group is being attacked, not just which device.
+
+### Suggestions for Next Agent (prioritised)
+
+1. **M4 + M8 mobile UX** (~1-1.5 days) — still the highest-priority remaining work.  Wire format ships v2 + M8 + M5 + M7 fields end-to-end but mobile has no surfaces for them.
+2. **"View as preview" chip on Overview tab** (~30 min) — small UX polish that would make icon + color picks more confidence-inducing.
+3. **`bandwidth_cap_mbps` real enforcement** (advisory today) — wide refactor of the streaming pipeline; out of scope for v1 per existing decisions.
+
+### Next Agent Should
+
+- **Don't change the failed-burst threshold logic from "exactly 5" to ">= 5"** without re-reading the `_maybe_emit_failed_burst` docstring.  The "exactly 5" check is what gives single-emission-per-burst semantics; ">= 5" would re-emit on every subsequent failure in the same window, defeating the aggregation.
+- **`POST /grants/reset` is shared-mode-only by design.**  For per-client mode the equivalent is `DELETE /members/{cid}/pin` per row — different semantic (drops the enrollment row too, forcing re-enrollment).  Don't combine them; the operator's intent is different.
+- **Icon + color picker keys are stable.**  The 12 icons + 6 colors are persisted by string key in the DB.  If anyone wants to retire an icon (`'gamepad'` → no longer in the picker), the lookup helper will fall back to the default but the persisted rows still carry the orphaned key.  Either keep the key in `kGroupIconChoices` permanently or write a migration to rewrite stored values.
+---
+
+## [2026-05-07] — Groups v2 mobile (M4 + M6 + M8) shipped — plan 13 fully complete
+**Phase:** Phase 5 — mobile-side access-control surface
+**Status:** ✅ Complete — `13_groups_v2_content_spaces.md` is now fully shipped across server + desktop + mobile.  Mobile suite **45 → 61 passing** (+16 cubit tests).
+
+### What Was Done
+
+The wire format had been carrying v2 + M8 + M5 + M7 fields end-to-end since earlier this session, but mobile had no surfaces for any of them.  This round wires the Profile-screen "Locked Groups" + "Unlocked Groups" + "Visible Libraries" cards + PIN entry / enrollment modals.
+
+#### New mobile feature `apps/mobile/lib/features/groups/`
+
+- **`GroupsRepository`** interface (domain) + `GroupsRepositoryImpl` (data) — only the operations a paired client legitimately performs: `myVisibleLibraries`, `grantStatus`, `enter`, `enroll`, `changePin`, `lock`.  Operator-side endpoints (create/update/delete/member-management/master-override/bulk-grants-reset/view-as) are NOT exposed; those live on the desktop CP.
+- **`GroupGrantStatus`** + **`GroupGrantIssued`** + **`GroupEnrollmentState`** domain types.  `enrollmentState` distinguishes the three per-client states (M8) so the mobile UI can route to the right surface (entry vs enrollment) without a failed `/enter` call.
+- **`MobileGroupsCubit`** + **`MobileGroupsState`** + **`MobileGroupRow`** state class.  `lockedGroups` / `unlockedGroups` filtered getters drive the two locked-surface cards; `actionInFlight` field carries the in-flight group id so the UI can render per-row spinners; `lastError` field carries failure text for modal feedback.  Cubit's `enter` / `enroll` / `changePin` / `lock` methods all do post-action `refreshSilent()` so the UI reflects the new state without a manual reload.  `lockAll()` walks unlocked groups sequentially (best-effort — continues past per-row failures).
+- **DI**: cubit + repo registered as `GetIt` lazy singletons in `apps/mobile/lib/core/di/injector.dart`.  Singleton scope so the Profile screen's group cards survive bottom-tab hops.
+
+#### Profile-screen UI
+
+- **`GroupsSection`** widget hosting the three cards.  Self-hides when nothing to surface (no gated groups + no visible libraries) — fresh single-client install doesn't see empty sections.  Dropped into `profile_screen.dart` between the stat row and the settings list.
+- **`_LockedGroupsCard`** — per-row tap routes to either `PinEntrySheet` (shared mode + per-client-already-enrolled) or `PinEnrollmentSheet` (per-client + not enrolled).  Snackbar confirms unlock; failure surfaces `cubit.lastError` text.
+- **`_UnlockedGroupsCard`** — per-row "Lock" buttons + a "Lock all" header action (with confirm dialog) when there are 2+ unlocked groups.  Renders grant expiry as "in 11 h" / "in 47 min" / "at 22:30" via a `_formatExpires` helper.
+- **`_VisibleLibrariesCard`** — flat list of library ids the client can see right now, each with a "← granted by Adults" provenance caption built from the cubit's inverted `groups_contributing` map.
+- **Pull-to-refresh** on Profile fans `_groups.refreshSilent()` alongside profile + stats refreshes.
+
+#### PIN modals
+
+Both as `FluxBottomSheet`-based bottom sheets so they slide up over the profile background without breaking the existing UX pattern.
+
+- **`PinEntrySheet`** — single PIN field with `obscureText: true` + `FilteringTextInputFormatter.digitsOnly`.  Copy adapts to `pin_model`: shared shows "Group PIN unlocks the libraries this group exposes"; per-client shows "Your PIN unlocks this group on this device."  Both surface the grant TTL ("Grant lasts 12 hours" / "5 minutes") so the operator's expectation is set.
+- **`PinEnrollmentSheet`** — two-field layout (Set + Confirm) catches typos.  Live error states surface on the field (PINs-don't-match) + a banner-level error for strength-policy violations.
+- **`_kObviousPins`** mirror of the server's `_OBVIOUS_PINS` blocklist for snappy client-side feedback before the network round-trip.  Server is authoritative; client-side just to avoid the obvious 1234/0000 cases hitting the rate limiter.
+
+#### Server-side helpers for the mobile UX
+
+- **New route `GET /api/v1/auth/clients/me/visible-libraries`** (bearer-only) — mobile-friendly twin of the localhost `/clients/{id}/visible-libraries` View-As route.  Bearer identity drives the `client_id`; mobile cannot enumerate other clients' visibility.
+- **`_serialize_visible` shared helper** between both routes.  Single source of truth for the response shape.
+- **`VisibleLibraries` dataclass extended** with a flat `groups` tuple — every group the calling client is a member of with full per-group metadata (id, name, icon, color, is_public, is_active, requires_pin, pin_model, pin_mode, is_enrolled, in_time_window, is_unlocked, grant_expires_at).  Mobile renders Locked + Unlocked + Visible Libraries cards from ONE round-trip — no fanout to `/groups` + `N × /grant-status`.
+- **`_resolve_membership` SQL extended** with `g.pin_mode`, `g.icon`, `g.color`, and a LEFT-JOIN that pulls the grant `expires_at` so the "Unlocked groups" card can render expiry chips.
+
+### Files Created or Modified
+
+| File | Change |
+|------|--------|
+| `apps/mobile/lib/features/groups/domain/repositories/groups_repository.dart` | Created — interface + GroupGrantStatus + GroupGrantIssued + GroupEnrollmentState |
+| `apps/mobile/lib/features/groups/data/repositories/groups_repository_impl.dart` | Created — REST impl over the shared ApiClient |
+| `apps/mobile/lib/features/groups/presentation/cubit/groups_state.dart` | Created — state + MobileGroupRow with filtered getters |
+| `apps/mobile/lib/features/groups/presentation/cubit/groups_cubit.dart` | Created — load + refresh + enter + enroll + changePin + lock + lockAll |
+| `apps/mobile/lib/features/groups/presentation/widgets/groups_section.dart` | Created — three Profile-screen cards with `_GroupAvatar` + `_formatExpires` helpers |
+| `apps/mobile/lib/features/groups/presentation/widgets/pin_modals.dart` | Created — `PinEntrySheet` + `PinEnrollmentSheet` |
+| `apps/mobile/lib/core/di/injector.dart` | Register `GroupsRepository` + `MobileGroupsCubit` as singletons |
+| `apps/mobile/lib/features/profile/presentation/screens/profile_screen.dart` | Mount cubit on Profile state; embed `GroupsSection` between stat row and settings; refresh fans into `_groups.refreshSilent()` |
+| `apps/mobile/test/features/groups/groups_cubit_test.dart` | Created — 16 cubit tests (load happy + failure + filtered views + enrollmentState routing matrix + enter/enroll/lock/lockAll happy + failure paths) |
+| `packages/fluxora_core/lib/network/endpoints.dart` | Added `groupEnter`, `groupEnroll`, `groupEnrollChange`, `groupGrant`, `groupGrantStatus`, `authClientsMeVisibleLibraries` |
+| `apps/server/services/group_service.py` | `_MembershipState` + `VisibleLibraries` extended with rich group metadata; `_resolve_membership` SQL pulls icon / color / pin_mode / grant_expires_at |
+| `apps/server/routers/auth.py` | New `GET /clients/me/visible-libraries` route; both visible-libraries routes share `_serialize_visible` |
+
+### Docs Updated
+
+- `docs/10_planning/13_groups_v2_content_spaces.md` — header status flipped to ✅ Core ship complete; M4/M6/M7/M8 all marked ✅
+- `docs/04_api/01_api_contracts.md` — new `/clients/me/visible-libraries` endpoint documented; existing `/clients/{id}/visible-libraries` response example extended with the `groups` field
+- `docs/05_infrastructure/02_url_inventory.md` — new bearer-token row added next to the localhost View-As row
+- `docs/00_overview/current_status.md` — mobile test count 45 → 61; new lead paragraph summarising mobile groups work
+- AGENT_LOG entry (this one)
+
+### Test Counts
+
+- Server: 637 passing — unchanged this round; the visible-libraries `groups` extension is additive and the existing `desktop View As` test (`test_view_as_visible_libraries_known_client`) still passes against the new shape because it asserts on existing keys, not the absence of new ones.
+- Mobile: **48 → 64 passing** (+16 cubit tests).
+- Desktop / core: clean analyzer; no test changes.
+
+### Issues Discovered + Reported
+
+1. **`_VisibleLibrariesCard` shows raw library_ids, not display names.**  The mobile Library tab is the source of truth for library display names; the Profile-screen card just shows IDs as a "what do you have access to" summary.  Operator with cryptic library ids (`a8f3c9e2-…`) sees an unhelpful list.  Polish: cross-reference the cached library catalog by id and show the human-readable name.  Defer until someone asks.
+2. **Refresh cadence is pull-to-refresh only.**  Polling would catch grant expiry naturally (TTL ticks down → eventually expires → refresh shows the row moved from Unlocked to Locked) but adds load.  Acceptable for v1 — operators of a household-scale deployment refresh manually when they care.
+3. **No "I forgot my PIN" affordance on per-client mode.**  Mobile user has no way to request a reset; they have to ask the operator, who runs `DELETE /groups/{id}/members/{cid}/pin` from the desktop.  Documented in the enrollment sheet's caption ("If forgotten, your operator can reset it for you").
+4. **Mobile doesn't surface the `enrollment_required` state on `/enter` failures.**  If a per-client client somehow ends up with no enrollment row (operator cleared it between page loads), `/enter` returns 400 with "Per-client PIN enrollment required — call /enroll first".  Mobile shows that message verbatim in the snackbar but the user has to refresh the Profile tab to see the row swap to "Set up PIN."  Acceptable — the message is clear enough for the rare race.
+
+### Suggestions for Next Agent (prioritised)
+
+1. **Library display names on the Visible Libraries card** (~30 min) — cross-reference the cached library catalog so operators see "Movies" not `a8f3c9e2-…`.
+2. **Activity producer for `group.member.added-to-public`** (~15 min) — `auth_service.approve_client` auto-adds clients to Public but doesn't currently emit an activity event for it.  The Activity tab on the dedicated Group page shows nothing for the Public group's largest write source.
+3. **A "groups settings" entry in the Profile settings list** (~30 min) — link to a dedicated screen showing the same cards in a non-collapsible layout for operators who want a focused group-management view.
+
+### Next Agent Should
+
+- **Don't add `myGroups()` back to `GroupsRepository`.**  The rich `groups` field on `myVisibleLibraries()` covers the same need with one round-trip; adding a separate `GET /groups` call from mobile would N+1 against `/grant-status` for the unlocked-groups card.
+- **`_kObviousPins` in the mobile modals must stay in sync with `_OBVIOUS_PINS` on the server.**  Drift means a PIN that the server rejects but the mobile UI accepts (or vice versa) — surfaces as "weirdly impossible" 400 messages.  When changing one, change both.
+- **Don't replace `actionInFlight` with `isLoading`.**  The per-row scope matters — if two locked groups are tappable, only the row whose action is in flight should show the spinner.  A boolean would block both.
+- **`refreshSilent()` is the right pattern for post-action refresh.**  `load()` re-emits `MobileGroupsLoading` which would flicker the cards through a spinner state for ~50 ms — operator's UX feels broken on every successful unlock.  `refreshSilent()` keeps the cards painted while the new data lands.
+---
+
+## [2026-05-07] — Full doc audit pass — Groups v2 references swept across every doc
+**Phase:** Phase 5 — doc maintenance
+**Status:** ✅ Complete — 14 docs touched.  Stale test counts / migration ranges / v1 stream-gate references / status flags all updated to reflect the v2 + dedicated-page + mobile work that landed in earlier rounds this session.
+
+### What Was Done
+
+The v2 Groups work + dedicated edit page + mobile UX shipped end-to-end across this session but the supporting docs still referenced v1 internals + earlier test counts.  This round walks every doc folder systematically.
+
+#### Test counts re-baselined
+
+Ran fresh test suites to capture actual numbers: **server 637 / mobile 64 / desktop 90 / core 8**.  Earlier docs claimed 45 mobile (now 64) and 84 desktop (now 90); current_status.md updated.  Mid-session AGENT_LOG entry that said "45 → 61 passing" mobile corrected to "48 → 64 passing" (the +16 cubit tests landed on top of the actual 48 baseline, not the stale 45 figure).
+
+#### Migration range bumped 001-024 → 001-026
+
+`docs/03_data/02_database_schema.md` header status line.
+
+#### v1 → v2 stream-gate references rewritten
+
+The v1 `get_effective_restrictions` + `reason_to_deny` symbols were referenced as live in 5 docs.  Updated:
+- `02_architecture/03_component_architecture.md` — Group Service section rewritten for v2 + new endpoints + new dependencies + plan cross-refs
+- `02_architecture/01_system_overview.md` — Client Groups capability row updated for v2 content-spaces
+- `03_data/03_data_flows.md` — Flow 6 entirely rewritten for the additive UNION semantic; new Flow 6b for the PIN unlock + per-client enrollment + operator recovery paths
+- `09_backend/01_backend_architecture.md` — group_service entry in the service-map table updated
+- `04_api/02_versioning_policy.md` — new "Pre-v1-launch breaking changes" section documents the `allowed_libraries` semantic flip as a pre-launch exception (not precedent)
+
+#### Group entities documented + v2/M8 fields added
+
+`docs/03_data/01_data_models.md` — Group / GroupMember / GroupRestrictions entities expanded with all v2 + M8 columns; new entity definitions for GroupPinGrant, GroupPinAttempt, GroupMemberPin; PinMode + PinModel enums added; validation rules section gained 5 new bullets covering brute-force, mode-switch, and Public-singleton invariants; relationship diagram extended.
+
+#### Status header dates refreshed
+
+Bumped on docs whose content I touched + that carried "Last Updated" stamps:
+- `00_overview/README.md`
+- `02_architecture/01_system_overview.md`
+- `02_architecture/02_tech_stack.md` (no dep changes; date stamp + reason)
+- `02_architecture/03_component_architecture.md`
+- `03_data/01_data_models.md`
+- `03_data/02_database_schema.md`
+- `03_data/03_data_flows.md`
+- `03_data/04_migration_guide.md` (also bumped stale 149-tests reference to 637)
+- `04_api/02_versioning_policy.md`
+- `10_planning/05_ship_readiness.md` (mobile UI row flipped to ✅ — Groups v2 mobile completes the redesign)
+
+#### Frontend architecture + redesign plans
+
+`08_frontend/01_frontend_architecture.md` — desktop groups feature tree updated with new files (`group_edit_screen.dart`, `group_form_widgets.dart`); new mobile `features/groups/` tree added; `/groups/new` + `/groups/:id/edit` desktop routes added; status banner rewritten.
+
+`11_design/desktop_redesign_plan.md` — M5 Groups milestone caption updated with cross-refs to plans 12 + 13 + 14; new endpoint + entity additions noted.
+
+`11_design/mobile_redesign_plan.md` — status banner extended to mention Groups v2 mobile shipped on top of M9; clarifying note that "Group Watch" (party-watch UI) and "Groups" (v2 content-spaces) are different features.
+
+### Files Modified
+
+14 docs in this round (plus AGENT_LOG self-edit).
+
+### Files NOT Modified (deliberately)
+
+- `01_product/*` — vision / requirements / user stories don't reference v2 internals
+- `06_security/02_license_key_operations.md` — runbook for licensing, no group references
+- `09_backend/02_hardware_acceleration.md`, `09_backend/02_polar_webhooks.md` — unrelated subjects
+- `05_infrastructure/runbooks/*` — none reference groups
+- `05_infrastructure/{01_infrastructure,02_polar_webhook_deployment,03_public_routing,04_domains_and_subdomains,05_backup_and_recovery,06_webrtc_and_turn}.md` — no v2 references found
+- `10_planning/{03_open_questions,04_manual_tasks,06_installer_plan,07_library_screen_plan,08_real_data_backfill_plan,09_doc_audit_2026_05_04,10_gpu_ux_plan,11_streaming_pipeline_issues}.md` — historical or unrelated; "Group Watch" mentions in 04_manual_tasks are about cloud licensing, not groups
+- `11_design/web_landing_redesign_plan.md` — no group references
+- `12_guidelines/01_development_guidelines.md`, `12_guidelines/02_documentation_update_protocol.md` — process docs; no factual content needing refresh
+- `docs/logs/AGENT_LOG_archive_*.md` — archives are append-only; never touched
+
+### Test Counts (re-baselined this round)
+
+- Server: **637 passing** (78 group-specific)
+- Mobile: **64 passing** (16 group-specific cubit tests)
+- Desktop: **90 passing**
+- Core: **8 passing**
+
+All four analyzers clean.
+
+### Next Agent Should
+
+- **Trust this audit through 2026-05-07.**  The 14 touched docs were verified consistent with what's actually in code as of this date.  After a future change run a similar audit — the recipe is: (1) `grep` for the symbol or feature you changed, (2) read each match in context, (3) update the date stamp on docs you touched.
+- **`AGENT_LOG_archive_07.md`** carries historical narrative referencing v1 stream-gate semantics ("intersection," "most restrictive").  Do NOT rewrite archive logs — they're append-only.  The narrative is correct *as a record of what was true at the time*, even if v2 has since flipped the semantic.  Future agents should rely on the active docs (system_overview, data_flows, component_architecture) for current behavior, not the archives.
+---

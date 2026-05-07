@@ -1,7 +1,7 @@
 # System Architecture Overview
 
 > **Category:** Architecture  
-> **Status:** Active - Updated 2026-05-01 (Client Groups capability added)
+> **Status:** Active - Updated 2026-05-07 (Client Groups v2 content-spaces redesign — additive semantic + Public group + PIN gate + per-client enrollment)
 
 ---
 
@@ -58,7 +58,7 @@
 | PC Control Panel | Desktop server management UI | Flutter Desktop |
 | TMDB Integration | Metadata fetching for media libraries | TMDB REST API |
 | Polar Webhook | Paid-order license key issuance | Standard Webhooks + HMAC-SHA256 |
-| Client Groups | Bundle paired clients into groups; apply shared library-access and time-window restrictions | SQLite (`groups`, `group_members`, `group_restrictions`); enforced at stream-gate |
+| Client Groups | v2 additive content-spaces — groups GRANT library access from a default-nothing baseline.  Mandatory Public group every paired client auto-joins.  Optional PIN-gate per group with shared (one PIN per group) or per-client (each member enrolls own PIN) modes.  Operator desktop CP at `/groups/:id/edit` (6-tab page).  Mobile Profile screen surfaces Locked / Unlocked / Visible-libraries cards. | SQLite (`groups`, `group_members`, `group_restrictions`, `group_pin_grants`, `group_pin_attempts`, `group_member_pins`); enforced at stream-gate via `reason_to_deny_stream` AND list-endpoint filter via `get_visible_libraries`.  Plans: [`docs/10_planning/13_groups_v2_content_spaces.md`](../10_planning/13_groups_v2_content_spaces.md) + [`docs/10_planning/14_groups_management_page.md`](../10_planning/14_groups_management_page.md). |
 
 ---
 

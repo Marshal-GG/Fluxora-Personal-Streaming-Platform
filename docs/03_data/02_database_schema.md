@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-07 (migrations 001-024; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device, encoder sanitiser, license-key sanitiser, encoder priority chain (Slice C), per-session encoder_used, corrupt-path data cleanup, `clients.last_ip` + per-request heartbeat, **`benchmark_runs` history table**)
+> **Status:** Active - Updated 2026-05-07 (migrations 001-026; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device, encoder sanitiser, license-key sanitiser, encoder priority chain (Slice C), per-session encoder_used, corrupt-path data cleanup, `clients.last_ip` + per-request heartbeat, `benchmark_runs` history table, **Groups v2 content-spaces redesign (Public group + PIN gate + grant/attempt ledgers + per-member time-window override + icon/color/concurrent-stream cap), Groups v2 §M8 hybrid PIN model (per-client enrollment ledger)**)
 
 ---
 
@@ -138,31 +138,89 @@ CREATE TABLE polar_orders (
     processed_at   TEXT NOT NULL
 );
 
--- Client groups (migration 011)
--- A client can belong to multiple groups; restrictions are stream-gate enforced.
+-- Client groups (migration 011, extended by 025 + 026)
+-- A client can belong to multiple groups.  v2 (migration 025) flips the
+-- `allowed_libraries` semantic from subtractive (v1: "ONLY these") to
+-- additive (v2: "this group EXPOSES these").  Multi-group is UNION.
 CREATE TABLE IF NOT EXISTS groups (
-    id          TEXT PRIMARY KEY,            -- UUID
-    name        TEXT NOT NULL,
-    description TEXT,
-    status      TEXT NOT NULL DEFAULT 'active'
-                CHECK(status IN ('active','inactive')),
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    id                       TEXT PRIMARY KEY,            -- UUID, or literal 'public' for the singleton Public row
+    name                     TEXT NOT NULL,
+    description              TEXT,
+    status                   TEXT NOT NULL DEFAULT 'active'
+                             CHECK(status IN ('active','inactive')),
+    created_at               TEXT NOT NULL,
+    updated_at               TEXT NOT NULL,
+    -- migration 025 (v2 content-spaces redesign)
+    is_public                INTEGER NOT NULL DEFAULT 0,  -- exactly one row may carry 1; UNIQUE partial idx_groups_public enforces
+    icon                     TEXT,                        -- operator-set key ('home','kids','lock',...); v2 Tier-2 visual identity
+    color                    TEXT,                        -- hex like '#A855F7'
+    requires_pin             INTEGER NOT NULL DEFAULT 0,  -- gate is active when 1
+    pin_hash                 TEXT,                        -- HMAC-SHA256(pin, settings.pin_hmac_key); shared mode only
+    pin_mode                 TEXT NOT NULL DEFAULT 'session'
+                             CHECK(pin_mode IN ('session','per-entry')),  -- grant TTL: session=12h, per-entry=5min
+    max_concurrent_streams   INTEGER,                     -- per-group cap (Tier-2 enforcement); NULL = unlimited
+    -- migration 026 (M8 — hybrid PIN model)
+    pin_model                TEXT NOT NULL DEFAULT 'shared'
+                             CHECK(pin_model IN ('shared','per-client'))  -- per-client → enrollments live in group_member_pins
 );
 
+-- Singleton-Public enforcement: exactly one row may carry is_public = 1.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_public
+    ON groups(is_public) WHERE is_public = 1;
+
 CREATE TABLE IF NOT EXISTS group_members (
-    group_id  TEXT NOT NULL REFERENCES groups(id)  ON DELETE CASCADE,
-    client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-    added_at  TEXT NOT NULL,
+    group_id              TEXT NOT NULL REFERENCES groups(id)  ON DELETE CASCADE,
+    client_id             TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    added_at              TEXT NOT NULL,
+    -- migration 025
+    time_window_override  TEXT,        -- JSON {start_h, end_h, days[]}; NULL = inherit group's; per-member ("older kid stays up later")
     PRIMARY KEY (group_id, client_id)
 );
 
 CREATE TABLE IF NOT EXISTS group_restrictions (
     group_id           TEXT PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
-    allowed_libraries  TEXT,        -- JSON array of library ids; NULL = all
-    bandwidth_cap_mbps INTEGER,     -- NULL = unlimited
-    time_window        TEXT,        -- JSON {start_h, end_h, days:[0..6]}; NULL = always
-    max_rating         TEXT         -- e.g. "PG-13"; NULL = none
+    allowed_libraries  TEXT,        -- JSON array of library ids.  v2: this group EXPOSES these.  NULL = no libraries from this group.
+    bandwidth_cap_mbps INTEGER,     -- advisory in v2; real enforcement deferred to v2 follow-up
+    time_window        TEXT,        -- JSON {start_h, end_h, days:[0..6]}; NULL = always.  Member's time_window_override beats this.
+    max_rating         TEXT         -- advisory in v2 until media_files.rating column lands
+);
+
+-- PIN grant ledger (migration 025).  A client unlocking a PIN-gated group
+-- inserts a row; visibility resolution treats the group as unlocked while
+-- a row with `expires_at > now` exists.  Pruned by housekeep_pin_state.
+CREATE TABLE IF NOT EXISTS group_pin_grants (
+    client_id   TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    group_id    TEXT NOT NULL REFERENCES groups(id)  ON DELETE CASCADE,
+    granted_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL,
+    PRIMARY KEY (client_id, group_id)
+);
+CREATE INDEX IF NOT EXISTS idx_group_pin_grants_expiry
+    ON group_pin_grants(expires_at);
+
+-- PIN attempt ledger (migration 025) — brute-force protection.  5 fails
+-- in 60 s per (client, group) → rate-limited (429 + retry-after).  Rows
+-- older than 24 h pruned by housekeep_pin_state.
+CREATE TABLE IF NOT EXISTS group_pin_attempts (
+    client_id    TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    group_id     TEXT NOT NULL REFERENCES groups(id)  ON DELETE CASCADE,
+    attempted_at TEXT NOT NULL,
+    success      INTEGER NOT NULL CHECK(success IN (0, 1))
+);
+CREATE INDEX IF NOT EXISTS idx_group_pin_attempts_lookup
+    ON group_pin_attempts(client_id, group_id, attempted_at DESC);
+
+-- Per-member PIN enrollment ledger (migration 026 — M8 hybrid PIN model).
+-- One row per (group, member device) when the group is in
+-- pin_model='per-client'.  Each member device chooses its own PIN on first
+-- access; operator never sees the plaintext.  Recovery = DELETE the row,
+-- which forces re-enrollment on next access.  Empty in shared-mode groups.
+CREATE TABLE IF NOT EXISTS group_member_pins (
+    group_id    TEXT NOT NULL REFERENCES groups(id)  ON DELETE CASCADE,
+    client_id   TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    pin_hash    TEXT NOT NULL,                     -- HMAC-SHA256(pin, settings.pin_hmac_key)
+    enrolled_at TEXT NOT NULL,
+    PRIMARY KEY (group_id, client_id)
 );
 
 -- Notifications table (migration 013)
@@ -242,7 +300,10 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at
 | `stream_sessions` | `client_id` | B-Tree | Client history lookup |
 | `stream_sessions` | `file_id` | B-Tree | File stream history |
 | `stream_sessions` | `ended_at` | B-Tree | Active session queries (WHERE ended_at IS NULL) |
-| `group_members` | `client_id` | B-Tree | Fast lookup of all groups a client belongs to (stream-gate query) |
+| `group_members` | `client_id` | B-Tree (`idx_group_members_client`) | Fast lookup of all groups a client belongs to (stream-gate query) |
+| `groups` | `is_public` (partial WHERE `is_public = 1`) | UNIQUE (`idx_groups_public`) | Enforces the singleton Public group at the schema level |
+| `group_pin_grants` | `expires_at` | B-Tree (`idx_group_pin_grants_expiry`) | Housekeeping prune of expired grants |
+| `group_pin_attempts` | `(client_id, group_id, attempted_at DESC)` | B-Tree (`idx_group_pin_attempts_lookup`) | Rate-limit window scan for failed PIN attempts |
 | `notifications` | `(read_at, dismissed_at, created_at DESC)` | B-Tree (`idx_notifications_unread`) | Fast unread / visible notification queries |
 | `activity_events` | `created_at DESC` | B-Tree (`idx_activity_created`) | Default most-recent-first list query |
 | `activity_events` | `(type, created_at DESC)` | B-Tree (`idx_activity_type_created`) | Type-prefix filter + ordering |
@@ -285,3 +346,5 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at
 | `022_remove_corrupt_media_paths.sql` | One-shot data migration. Deletes `media_files` rows whose `path` is non-absolute or starts with `[\` / `[/` — the residue of a prior buggy upload path that consumed `Library.root_paths` JSON character-wise so `root_paths[0]` returned `'['`. Deletes their dependent `stream_sessions` first to satisfy the `file_id REFERENCES media_files(id)` foreign key. Idempotent: a future run finds no matching rows once `library_service._is_valid_absolute_media_path` blocks new bad rows from landing. |
 | `023_clients_last_ip.sql` | Adds nullable `last_ip TEXT` to `clients`. Populated by `auth_service.create_pair_request` (initial pair, captures `request.client.host`) and `auth_service.update_client_heartbeat` (called from the `validate_token` dependency on every authenticated request). Drives the desktop Clients screen's IP column (table + detail panel). Two semantics changes piggyback on this migration: (a) `last_seen` was previously frozen at pair / approval — the heartbeat write now refreshes it on every authenticated request too; (b) the heartbeat path is wrapped in try/except + WARNING log so a transient SQLite write failure can't 401 a valid request. **Known limitation:** when the request arrives via the Cloudflare Tunnel, `request.client.host` is the cloudflared loopback (`127.0.0.1`), not the real public IP — the `CF-Connecting-IP` header isn't currently consumed in the heartbeat path. Acceptable in v1: the field's primary use case is LAN device identification for pair-debug. |
 | `024_benchmark_history.sql` | Creates the `benchmark_runs` table for encoder-benchmark history persistence. Top-level metadata columns (`started_at`, `finished_at`, `duration_sec`, `fps`, `width`, `height`, `verify_caps`, `encoder_count`) + a `results_json TEXT` blob holding the per-encoder array as JSON (always fetched together with the parent run; relational split would add a join + order-preservation hassle for no query benefit at this scale). Indexed on `started_at DESC` to support the desktop sidebar's newest-first list. Auto-pruned to 50 entries by `benchmark_history_service.prune_history` after every save — runs are cheap to recreate and the operator only ever cares about recent comparisons. New endpoints: `GET /api/v1/transcoding/benchmark/history`, `GET /api/v1/transcoding/benchmark/history/{id}`, `DELETE /api/v1/transcoding/benchmark/history/{id}` (all localhost-only). `POST /transcoding/benchmark` persists every run before responding and returns the new `id` so the desktop's history sidebar can keep the visible result aligned with the highlighted row. |
+| `025_groups_v2_content_spaces.sql` | Groups v2 content-spaces redesign (plan: `docs/10_planning/13_groups_v2_content_spaces.md`). Adds 7 columns to `groups` (`is_public`, `icon`, `color`, `requires_pin`, `pin_hash`, `pin_mode`, `max_concurrent_streams`) + UNIQUE partial `idx_groups_public ON groups(is_public) WHERE is_public = 1` enforcing the singleton.  Adds `time_window_override TEXT` to `group_members` (per-member override of the group's window — "older kid stays up later").  Creates `group_pin_grants` (PIN unlock ledger) + `group_pin_attempts` (brute-force ledger) with their indexes.  Manufactures the singleton Public group with a friendly description + violet-grey color + 'public' icon.  Backfills `group_restrictions.allowed_libraries` for Public with `NULLIF(json_group_array(id), '[]') FROM libraries` — fresh installs (no libraries) store NULL (Public exposes nothing yet); upgrades store the full library set (Public exposes everything so v1 paired clients don't lose visibility on the upgrade).  The NULLIF dance is critical: v1's intersect logic reads `'[]'` as "block everything" which would 403 every stream-start for clients only in Public.  Auto-adds every approved client to Public so post-migration paired devices keep a baseline visibility.  **Semantic flip:** `group_restrictions.allowed_libraries` flips from subtractive ("client can ONLY stream from these") to additive ("this group EXPOSES these to its members"); JSON value is identical, only interpretation changes.  Operator audit recommended post-migration — see plan §M5. |
+| `026_groups_per_client_pins.sql` | Groups v2 §M8 — hybrid PIN model.  Adds `pin_model TEXT NOT NULL DEFAULT 'shared' CHECK(pin_model IN ('shared','per-client'))` to `groups`; existing rows default to `shared` so no behavior change for already-shipped data.  Creates `group_member_pins(group_id, client_id, pin_hash, enrolled_at)` ledger.  Per-client mode: each member device chooses + remembers its own PIN on first access; operator never sees the plaintext.  Recovery path = `DELETE FROM group_member_pins` for that (group, client), forcing re-enrollment on next access (operator-facing route is `DELETE /api/v1/groups/{id}/members/{cid}/pin`, localhost-only).  Compromise blast radius for per-client = one device, vs whole household for shared mode. |

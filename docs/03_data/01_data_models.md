@@ -1,7 +1,7 @@
 # Data Models
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-02 (TMDB fields, resume progress, license keys, Polar orders + customer_email, transcoding settings, Groups + stream-gate, Profile fields, Notification entity, ActivityEvent entity, UserSettings 18 new §7.10 columns, LogRecord computed entity)
+> **Status:** Active - Updated 2026-05-07 (TMDB fields, resume progress, license keys, Polar orders + customer_email, transcoding settings, Groups + stream-gate, Profile fields, Notification entity, ActivityEvent entity, UserSettings 18 new §7.10 columns, LogRecord computed entity, **Groups v2 content-spaces redesign — Public group + PIN-gate columns + grant/attempt ledgers + per-member time-window override + icon/color/concurrent-stream cap + M8 hybrid PIN per-client enrollment ledger**)
 
 ---
 
@@ -151,11 +151,11 @@ The desktop's `GET /api/v1/auth/clients` (localhost-only) returns each client as
 ---
 
 ### Entity: `Group`
-> A named bundle of clients that share a common set of streaming restrictions
+> A named bundle of clients that share a common set of streaming restrictions.  v2 (migration 025, 2026-05-07): groups are now **additive content-spaces** — they GRANT access to the libraries they expose, not REMOVE access.  Multi-group membership is UNION, not intersection.  Plan: [`docs/10_planning/13_groups_v2_content_spaces.md`](../10_planning/13_groups_v2_content_spaces.md).  ADR-018 captures the semantic flip.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| id | TEXT (UUID) | ✅ | Primary key |
+| id | TEXT (UUID) | ✅ | Primary key.  The literal `'public'` is reserved for the auto-managed Public group (see `is_public`). |
 | name | TEXT | ✅ | Display name (max 120 chars) |
 | description | TEXT | ❌ | Optional free-text description |
 | status | TEXT | ✅ | Enum: `active`, `inactive`; default `active` |
@@ -163,6 +163,14 @@ The desktop's `GET /api/v1/auth/clients` (localhost-only) returns each client as
 | updated_at | TEXT | ✅ | UTC ISO-8601 timestamp |
 | member_count | INTEGER | — | Computed: number of members (not stored) |
 | restrictions | GroupRestrictions | — | Embedded from `group_restrictions` row (never null in API response; all fields default to null = no restriction) |
+| is_public | INTEGER (bool) | ✅ | v2: True for the singleton Public group every paired client auto-joins.  Schema-level UNIQUE partial index enforces "exactly one row" (`idx_groups_public`).  Cannot be deleted via the API. |
+| icon | TEXT | ❌ | v2 / M7 Tier-2: operator-set icon key (`'home'`, `'kids'`, `'lock'`, `'family'`, `'music'`, `'video'`, `'tv'`, `'gamepad'`, `'headphones'`, `'download'`, `'globe'`, `'coffee'`).  Public uses `'public'` → globe icon by convention. |
+| color | TEXT | ❌ | v2 / M7 Tier-2: operator-set hex color (e.g. `'#A855F7'`).  6 presets in the desktop picker; null falls back to V2 violet. |
+| requires_pin | INTEGER (bool) | ✅ | v2: True if a PIN must be entered before this group's libraries become visible to a member |
+| pin_hash | TEXT | ❌ | v2: `HMAC-SHA256(pin, settings.pin_hmac_key)`.  Used in `pin_model='shared'` mode; cleared when `pin_model='per-client'`. |
+| pin_mode | TEXT | ✅ | v2: `'session'` (12 h grants) or `'per-entry'` (5 min grants for adult / sensitive content).  Default `'session'`. |
+| pin_model | TEXT | ✅ | M8 hybrid PIN: `'shared'` (one PIN per group, household secret) or `'per-client'` (each member device enrolls its own PIN).  Default `'shared'`. |
+| max_concurrent_streams | INTEGER | ❌ | v2 / M7 Tier-2: per-group concurrent stream cap; `null` = no per-group cap (the global tier limit still applies). |
 
 ---
 
@@ -174,21 +182,62 @@ The desktop's `GET /api/v1/auth/clients` (localhost-only) returns each client as
 | group_id | TEXT (UUID) | ✅ | FK → Group (CASCADE DELETE) |
 | client_id | TEXT (UUID) | ✅ | FK → Client (CASCADE DELETE) |
 | added_at | TEXT | ✅ | UTC ISO-8601 timestamp when the member was added |
+| time_window_override | TEXT (JSON) | ❌ | v2 / M5: per-member override of the group's `time_window`.  Same JSON shape as `group_restrictions.time_window`.  Drives the "older kid stays up later" pattern without forcing per-kid groups.  `null` = inherit group's window. |
 
 Composite primary key: `(group_id, client_id)`. A client may belong to multiple groups simultaneously.
+
+`approve_client` auto-inserts a `(public, client_id)` row so every paired client joins Public on approval (v2 §M3).
 
 ---
 
 ### Entity: `GroupRestrictions`
-> Optional streaming restrictions attached to a Group (at most one row per Group)
+> Streaming restrictions attached to a Group (at most one row per Group).  v2: `allowed_libraries` semantic flipped from subtractive ("client can ONLY stream from these") to additive ("this group EXPOSES these to its members").
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | group_id | TEXT (UUID) | ✅ | PK + FK → Group (CASCADE DELETE) |
-| allowed_libraries | TEXT (JSON) | ❌ | JSON array of library UUIDs; `null` = all libraries allowed |
-| bandwidth_cap_mbps | INTEGER | ❌ | Maximum throughput in Mbps; `null` = unlimited (advisory in v1) |
-| time_window | TEXT (JSON) | ❌ | JSON `{"start_h": 0-23, "end_h": 0-23, "days": [0-6]}`; `null` = always allowed. `days` uses Python weekday convention (0 = Monday … 6 = Sunday). If `end_h <= start_h` the window wraps midnight. |
-| max_rating | TEXT | ❌ | Content-rating ceiling (e.g. `"PG-13"`); `null` = no restriction (advisory in v1 — `media_files` has no rating column yet) |
+| allowed_libraries | TEXT (JSON) | ❌ | JSON array of library UUIDs the group EXPOSES.  `null` = no libraries from this group.  Multi-group composition is UNION (every group the client belongs to contributes its allowlist).  v2: empty `'[]'` is normalised to `null` by migration 025 because v1 read `'[]'` as "block everything" — see [`gotchas.md`](../12_guidelines/03_gotchas.md). |
+| bandwidth_cap_mbps | INTEGER | ❌ | Maximum throughput in Mbps; `null` = unlimited (advisory in v2 — server records but doesn't enforce yet) |
+| time_window | TEXT (JSON) | ❌ | JSON `{"start_h": 0-23, "end_h": 0-23, "days": [0-6]}`; `null` = always allowed. `days` uses Python weekday convention (0 = Monday … 6 = Sunday). If `end_h <= start_h` the window wraps midnight. Per-member override on `group_members.time_window_override` wins when present. |
+| max_rating | TEXT | ❌ | Content-rating ceiling (e.g. `"PG-13"`); `null` = no restriction (advisory in v2 — `media_files` has no rating column yet) |
+
+---
+
+### Entity: `GroupPinGrant`
+> v2 PIN unlock ledger.  One row per (client, group) tuple while the grant is active.  Inserted by `enter_pin_grant` / `enroll_pin` / master-override; deleted by `revoke_pin_grant` / `housekeep_pin_state` / `revoke_all_grants_for_group`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| client_id | TEXT (UUID) | ✅ | PK part 1; FK → Client (CASCADE DELETE) |
+| group_id | TEXT (UUID) | ✅ | PK part 2; FK → Group (CASCADE DELETE) |
+| granted_at | TEXT | ✅ | UTC ISO-8601 timestamp when grant was issued |
+| expires_at | TEXT | ✅ | UTC ISO-8601 timestamp when grant becomes invalid.  Drives `get_visible_libraries` — the group is unlocked iff a row exists with `expires_at > now`. |
+
+---
+
+### Entity: `GroupPinAttempt`
+> v2 brute-force protection ledger.  Every `/enter` and `/enroll/change` attempt writes a row (success or failure).  Pruned to 24 h by `housekeep_pin_state`.  Drives the rate limiter (5 fails / 60 s / `(client, group)` → 429) AND the activity-feed aggregator (5 fails / 10 min → one `group.pin.failed-burst` event).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| client_id | TEXT (UUID) | ✅ | FK → Client (CASCADE DELETE) |
+| group_id | TEXT (UUID) | ✅ | FK → Group (CASCADE DELETE) |
+| attempted_at | TEXT | ✅ | UTC ISO-8601 timestamp of the attempt |
+| success | INTEGER (bool) | ✅ | 0 = failed (counts toward rate limit), 1 = succeeded (audit trail; master-override + enroll also write `success=1` rows so the operator activity feed shows the bypass) |
+
+Indexed on `(client_id, group_id, attempted_at DESC)` for the rate-limiter window scan.
+
+---
+
+### Entity: `GroupMemberPin`
+> M8 hybrid PIN model — per-member PIN enrollment for `pin_model='per-client'` groups.  Empty in shared-mode groups.  Each member device chooses + remembers its own PIN on first access; operator never sees the plaintext.  Recovery: operator runs `DELETE /groups/{id}/members/{cid}/pin` from the desktop CP (forces re-enrollment on next access).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| group_id | TEXT (UUID) | ✅ | PK part 1; FK → Group (CASCADE DELETE) |
+| client_id | TEXT (UUID) | ✅ | PK part 2; FK → Client (CASCADE DELETE) |
+| pin_hash | TEXT | ✅ | `HMAC-SHA256(pin, settings.pin_hmac_key)` — same key as `groups.pin_hash` in shared mode |
+| enrolled_at | TEXT | ✅ | UTC ISO-8601 timestamp of first enrollment (never updated; on PIN change `pin_hash` is replaced but the timestamp stays) |
 
 ---
 
@@ -264,6 +313,9 @@ UserSettings ──1:1──▶ (singleton)
 PolarOrder ── independent idempotency table for payment webhooks
 Group ──1:N──▶ GroupMember ──N:1──▶ Client
 Group ──1:0..1──▶ GroupRestrictions
+Group ──1:N──▶ GroupPinGrant ──N:1──▶ Client      # v2 PIN unlock ledger
+Group ──1:N──▶ GroupPinAttempt ──N:1──▶ Client    # v2 brute-force ledger
+Group ──1:N──▶ GroupMemberPin ──N:1──▶ Client     # M8 per-client enrollment
 Notification ── independent event log; no FK constraints
 ActivityEvent ── independent audit log; no FK constraints
 ```
@@ -279,6 +331,8 @@ ActivityEvent ── independent audit log; no FK constraints
 | `Platform` | `android`, `ios`, `windows`, `macos`, `linux` |
 | `SubscriptionTier` | `free`, `plus`, `pro`, `ultimate` |
 | `GroupStatus` | `active`, `inactive` |
+| `PinMode` (v2) | `session` (12 h grants), `per-entry` (5 min grants) |
+| `PinModel` (v2 §M8) | `shared` (one PIN per group), `per-client` (each member device enrolls its own PIN) |
 | `NotificationType` | `info`, `warning`, `error`, `success` |
 | `NotificationCategory` | `system`, `client`, `license`, `transcode`, `storage` |
 | `DefaultLibraryView` | `grid`, `list` |
@@ -298,7 +352,11 @@ ActivityEvent ── independent audit log; no FK constraints
 - `Group.name` is 1–120 characters; `status` must be `active` or `inactive`
 - `GroupMember` is idempotent — adding the same client twice (INSERT OR IGNORE) is safe
 - `GroupRestrictions` rows are always present (created alongside the group); all restriction fields default to `null` (no restriction of that kind)
-- A client can belong to any number of groups simultaneously; the stream-gate combines restrictions across every active group
+- A client can belong to any number of groups simultaneously; **v2: the stream-gate UNIONs the libraries each active group exposes — multi-group is "more access," not "less."  See ADR-018**
+- v2 PIN strength policy: 4-8 numeric digits; obvious sequences (`0000`, `1111`, `1234`, `2580`, etc.) rejected server-side via `_OBVIOUS_PINS` blocklist
+- v2 PIN brute-force protection: 5 failed attempts per (client, group) in 60 s triggers a 60 s lockout; `change_member_pin` charges wrong-old-PIN attempts against the same ledger so the change endpoint can't be a brute-force bypass
+- v2 mode-switch rules: shared → per-client clears `pin_hash`, keeps existing grants; per-client → shared requires a new shared `pin` in the same call (otherwise the group ends up gated with no enterable secret), drops all `group_member_pins` rows
+- The Public group (`id='public'`) cannot be deleted (server returns 400) and only one row may carry `is_public = 1` (UNIQUE partial index `idx_groups_public`)
 - `UserSettings.display_name` and `UserSettings.email` have a server-enforced `max_length` (via `ProfileUpdate` Pydantic model); pass an empty string `""` to clear a field, pass `null` to leave it unchanged
 - `UserSettings.avatar_letter` is computed on every read — it is never stored in the DB
 - `UserSettings.default_library_view` must be `'grid'` or `'list'` (Pydantic `Literal` guard)

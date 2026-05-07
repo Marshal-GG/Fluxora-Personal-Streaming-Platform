@@ -2,7 +2,7 @@
 
 > **Category:** Data
 > **Status:** Active
-> **Last Updated:** 2026-05-01
+> **Last Updated:** 2026-05-07 (current migration range 001-026; 025 + 026 added the Groups v2 content-spaces redesign + M8 hybrid PIN ledger.  Migration 025 is the most semantically-loaded migration shipped to date — it flips the meaning of `group_restrictions.allowed_libraries` from subtractive to additive without changing the wire format; landed pre-launch under the [`docs/04_api/02_versioning_policy.md`](../04_api/02_versioning_policy.md) "Pre-v1-launch breaking changes" exception.  Pattern note: `NULLIF(json_group_array(id), '[]')` to handle the empty-list case where v1 read `'[]'` as "block everything" — see [`gotchas.md`](../12_guidelines/03_gotchas.md).)
 
 How to add, test, and ship SQLite schema changes safely. Read first if you're touching `apps/server/database/`.
 
@@ -180,7 +180,7 @@ For settings/data changes: assert the row count or expected values in a fresh DB
 python -m pytest -q
 ```
 
-The full server test suite (149 tests as of 2026-05-01) must still pass. If a previously-passing test breaks, your migration changed something the rest of the code relied on.
+The full server test suite (637 tests as of 2026-05-07) must still pass. If a previously-passing test breaks, your migration changed something the rest of the code relied on.
 
 ---
 

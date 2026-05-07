@@ -1,7 +1,7 @@
 # Ship Readiness — v1
 
 > **Category:** Planning
-> **Status:** Active — Updated 2026-05-03
+> **Status:** Active — Updated 2026-05-07 (mobile UI row flipped to ✅ — Groups v2 mobile shipped completes the redesign rollout)
 > **Purpose:** "Can we ship?" synthesis. What v1's architecture deliberately doesn't need, what's actually blocking the door, and the distribution-side gaps the rest of the docs don't cover. References [`04_manual_tasks.md`](./04_manual_tasks.md) for individual task detail rather than duplicating it.
 
 ---
@@ -87,7 +87,7 @@ These are real ship-blockers that the rest of the docs don't currently cover. Ea
 
 | Gap | Status |
 |-----|--------|
-| **Mobile UI redesign** | M0 foundation landed 2026-05-03 (V2 tokens + gradient backdrop); M1+ pending. Mobile screens still use legacy widgets — usable but visibly behind the polished desktop V2 + landing site. Plan in [`docs/11_design/mobile_redesign_plan.md`](../11_design/mobile_redesign_plan.md). |
+| **Mobile UI redesign** | ✅ M0–M9 complete 2026-05-03; Phase A + B real-data backfill complete 2026-05-04; player polish (PIP + audio_service + bg toggle) added 2026-05-04; seek-restart wire-up landed 2026-05-05; Groups v2 mobile UX (M4 + M6 + M8) shipped 2026-05-07.  Mobile is now V2-pure end-to-end.  Plan in [`docs/11_design/mobile_redesign_plan.md`](../11_design/mobile_redesign_plan.md). |
 | **Real Dashboard screenshot on landing page** | Currently a faux mockup; tracked in [`04_manual_tasks.md`](./04_manual_tasks.md). |
 | **Footer placeholder links** (Documentation, Help Center, Status, Roadmap, Blog, Discord, X/Twitter) | Tracked in [`04_manual_tasks.md`](./04_manual_tasks.md). |
 

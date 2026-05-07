@@ -1068,10 +1068,31 @@ Client connects → sends auth message → server replies auth_ok
       "bandwidth_cap_mbps": null,
       "time_window": {"start_h": 15, "end_h": 21, "days": [0,1,2,3,4,5,6]},
       "max_rating": "PG"
-    }
+    },
+
+    "is_public": false,
+    "requires_pin": false,
+    "pin_mode": "session",
+    "icon": null,
+    "color": null,
+    "max_concurrent_streams": null
   }
 ]
 ```
+
+**v2 (content-spaces) fields** — added by migration 025 (2026-05-07).  Older clients that pre-date the migration parse these as defaulted nulls and continue to function.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `is_public` | bool | True for the auto-managed Public group (id=`'public'`).  Exactly one row may carry this — enforced by a UNIQUE partial index. |
+| `requires_pin` | bool | True if a PIN must be entered before this group's libraries become visible to a member. |
+| `pin_mode` | `'session'` \| `'per-entry'` | How long a PIN grant lasts: `session` = 12 h, `per-entry` = 5 min (refreshes on every navigation; for adult / sensitive content). |
+| `pin_model` | `'shared'` \| `'per-client'` | M8 — `shared` = one PIN per group, every member uses the same secret.  `per-client` = each member device enrolls its own PIN (compromise blast radius is one device).  Default `shared`. |
+| `icon` | string? | Operator-set icon key (`'home'`, `'kids'`, `'lock'`, …); v2 Tier-2 visual identity. |
+| `color` | string? | Operator-set hex color (`'#A855F7'`); v2 Tier-2 visual identity. |
+| `max_concurrent_streams` | int? | Per-group concurrent stream cap (v2 Tier-2 enforcement); NULL = unlimited. |
+
+**Public group semantics:** every approved client is auto-added to the Public group on `auth_service.approve_client`.  Public cannot be deleted (the route returns 400).  `allowed_libraries` semantic is **additive** in v2 — multi-group visibility is the union of every group's `allowed_libraries`, not the v1 intersection.
 
 ---
 
@@ -1090,11 +1111,21 @@ Client connects → sends auth message → server replies auth_ok
     "bandwidth_cap_mbps": null,
     "time_window": {"start_h": 15, "end_h": 21, "days": [0,1,2,3,4,5,6]},
     "max_rating": "PG"
-  }
+  },
+
+  "pin": "8472",
+  "pin_mode": "session",
+  "icon": "kids",
+  "color": "#22C55E",
+  "max_concurrent_streams": 2
 }
 ```
 
 `restrictions` is optional — omit it or pass `null` to create a group with no restrictions. All restriction fields default to `null` (no restriction of that kind).
+
+**v2 (content-spaces) fields** — all optional.  When `pin` is supplied, the server stores `HMAC-SHA256(pin, settings.pin_hmac_key)` in `pin_hash` and sets `requires_pin = true`.  PIN must be 4-8 numeric digits and not in the obvious-PIN blocklist (`0000`, `1234`, `1111`, …) — server returns 400 with the violation reason if it isn't.  `pin_mode` defaults to `'session'`.
+
+**M8 — `pin_model`** controls whether the group has one shared PIN or per-client enrollment.  When `pin_model='per-client'`, the request must NOT include `pin` — per-client groups have no shared secret at create time; each member device enrolls its own PIN via `/enroll`.  Server enforces this with a 400 if both are supplied.
 
 **Response:** `201 Created` — `GroupResponse` (same schema as list item above).
 
@@ -1126,12 +1157,36 @@ Client connects → sends auth message → server replies auth_ok
     "bandwidth_cap_mbps": 10,
     "time_window": null,
     "max_rating": null
-  }
+  },
+
+  "pin": "8472",
+  "pin_mode": "per-entry",
+  "icon": "kids",
+  "color": "#22C55E",
+  "max_concurrent_streams": 2
 }
 ```
 
+**`pin` semantic** (v2):
+
+| Value | Effect |
+|---|---|
+| `null` (key omitted) | Leave the PIN unchanged. |
+| `""` (empty string) | Remove the PIN; `requires_pin` flips to `false` and every existing grant for the group is deleted. |
+| `"<4-8 digits>"` | Set / change the PIN.  Existing grants are deleted — every member device must re-enter on next access.  Strength-validated against the obvious-PIN blocklist; 400 on rejection. |
+
+`pin_mode` only takes effect when the group ends up with a PIN; passing it without `pin` for a non-gated group is a no-op.  Public group (`id='public'`) rejects `requires_pin` flips and `is_public` mutations (returns 400).
+
+**`pin_model` semantic on PATCH (M8):**
+
+| `pin_model` value | Effect |
+|---|---|
+| `null` (key omitted) | Leave mode unchanged. |
+| `'shared'` | Switch to shared mode.  **`pin` must be supplied in the same call** — otherwise the group ends up gated with no shared secret to enter.  Server rejects with 400 if missing.  All per-client enrollment rows are deleted; existing grants kept (members aren't kicked off mid-session). |
+| `'per-client'` | Switch to per-client mode.  Shared `pin_hash` cleared; existing grants kept; on grant expiry each member is prompted to enroll their own PIN via `/enroll`. |
+
 **Response:** Updated `GroupResponse`.  
-**Errors:** `404` group not found · `403` not from localhost
+**Errors:** `400` invalid PIN / cannot mutate Public · `404` group not found · `403` not from localhost
 
 ---
 
@@ -1150,7 +1205,13 @@ Client connects → sends auth message → server replies auth_ok
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
-**Response:**
+**Query parameters:**
+
+| Param | Effect |
+|---|---|
+| `include=pin_state` | M3 of [`14_groups_management_page.md`](../10_planning/14_groups_management_page.md).  Augments each row with `enrollment_state`, `has_active_grant`, `grant_expires_at`, `recent_failed_attempts` so the desktop Members tab can render PIN status badges without N+1 fanout.  Older callers that don't pass `include` get the v1 shape unchanged. |
+
+**Response (default shape):**
 ```json
 [
   {
@@ -1164,6 +1225,32 @@ Client connects → sends auth message → server replies auth_ok
   }
 ]
 ```
+
+**Response (`?include=pin_state`):**
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Pixel 8 Pro",
+    "platform": "android",
+    "last_seen": "2026-05-01T12:00:00",
+    "is_trusted": true,
+    "status": "approved",
+    "added_at": "2026-05-01T10:00:00+00:00",
+    "enrollment_state": "enrolled",
+    "has_active_grant": true,
+    "grant_expires_at": "2026-05-08T10:00:00+00:00",
+    "recent_failed_attempts": 0
+  }
+]
+```
+
+| Pin-state field | Meaning |
+|---|---|
+| `enrollment_state` | `'not_required'` (shared mode or no-PIN group) / `'enrolled'` (per-client mode + has enrollment row) / `'not_enrolled'` (per-client mode + awaiting first-time enrollment). |
+| `has_active_grant` | True iff a non-expired `group_pin_grants` row exists for this `(group, client)`. |
+| `grant_expires_at` | ISO timestamp or null. |
+| `recent_failed_attempts` | Failed `/enter` + `/enroll/change` attempts in the last 60 s — drives the "Locked out" badge when ≥5. |
 
 **Errors:** `404` group not found
 
@@ -1191,6 +1278,232 @@ Client connects → sends auth message → server replies auth_ok
 
 **Response:** `204 No Content`  
 **Errors:** `404` group member not found · `403` not from localhost
+
+---
+
+### `PATCH /api/v1/groups/{id}/members/{client_id}`
+**Description:** Update per-member overrides on a group membership row (M5 of [`docs/10_planning/14_groups_management_page.md`](../10_planning/14_groups_management_page.md)).  Currently surfaces `time_window_override` only — operator can extend or contract a member's effective window without affecting other members of the same group ("older kid stays up later").  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented (2026-05-07)
+
+**Request (all fields optional):**
+```json
+{
+  "time_window_override": {
+    "start_h": 18,
+    "end_h": 23,
+    "days": [0, 1, 2, 3, 4, 5, 6]
+  }
+}
+```
+
+**Sentinel for "clear the override":** pass `{"start_h": 0, "end_h": 0, "days": []}` and the server treats it as `UPDATE … SET time_window_override = NULL`.  This keeps the JSON shape consistent across set/clear paths instead of mixing in a magic null.
+
+**Response:** `204 No Content`  
+**Errors:** `404` group member not found · `403` not from localhost
+
+---
+
+### `GET /api/v1/auth/clients/me/visible-libraries`
+**Description:** Mobile-side "what does my client see right now" — same shape the desktop View As tab returns, scoped to the bearer-identified calling client.  Powers the M6 Profile-screen group cards (Locked / Unlocked / Visible Libraries).  
+**Auth:** Bearer token only.  
+**Status:** ✅ Implemented (2026-05-07)
+
+**Response shape:** identical to `GET /clients/{id}/visible-libraries` below, with `client_id` set to the calling client's id.
+
+**Errors:** `401` invalid / missing token
+
+---
+
+### `GET /api/v1/auth/clients/{client_id}/visible-libraries`
+**Description:** Operator "View as" debug surface — returns the `VisibleLibraries` snapshot for a target client right now (M5 of `14_groups_management_page.md`, §M7 Tier-2 of `13_groups_v2_content_spaces.md`).  Renders the kid's library list as the kid would see it, with provenance ("granted by Public") + locked-state buckets so the operator understands *why* a library is or isn't visible.  
+**Auth:** Localhost only — `require_local_caller`.  Reveals operator-only access-control state across the operator's whole client base; not for paired-client consumption.  
+**Status:** ✅ Implemented (2026-05-07)
+
+**Response:**
+```json
+{
+  "client_id": "uuid",
+  "library_ids": ["lib-movies", "lib-songs"],
+  "groups_contributing": {
+    "public": ["lib-movies", "lib-songs"],
+    "kids": ["lib-cartoons"]
+  },
+  "pin_locked_groups": ["adults"],
+  "enrollment_required_groups": [],
+  "time_locked_groups": ["bedtime-only"],
+  "groups": [
+    {
+      "id": "public",
+      "name": "Public",
+      "icon": "public",
+      "color": "#94A3B8",
+      "is_public": true,
+      "is_active": true,
+      "requires_pin": false,
+      "pin_model": "shared",
+      "pin_mode": "session",
+      "is_enrolled": false,
+      "in_time_window": true,
+      "is_unlocked": true,
+      "grant_expires_at": null
+    }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `library_ids` | Sorted set of library ids visible to the client right now. |
+| `groups_contributing` | Map of group id → libraries that group granted.  Drives the "← granted by Public" provenance captions on the desktop View As tab. |
+| `pin_locked_groups` | Groups the client is a member of but hasn't unlocked.  Mobile would route to the PIN entry surface; desktop View As just labels the row. |
+| `enrollment_required_groups` | M8 — per-client groups awaiting first-time enrollment. |
+| `time_locked_groups` | Groups outside their time window right now. |
+| `groups` | Flat list of every group the client is a member of with full per-group metadata.  M6 mobile UX uses this to render the Locked / Unlocked / Visible Libraries Profile cards from one round-trip — no fanout to `/groups` + `N × /grant-status`.  Each item carries `id`, `name`, `icon`, `color`, `is_public`, `is_active`, `requires_pin`, `pin_model`, `pin_mode`, `is_enrolled`, `in_time_window`, `is_unlocked`, `grant_expires_at`. |
+
+**Honesty caveats:** doesn't simulate "what would the kid see if I added them to Family right now" — only current membership.  Hypotheticals are out of scope; operator manipulates membership directly to test.  PIN-gated groups appear in `pin_locked_groups` — if the kid hasn't unlocked Adults, View As doesn't show Adults libraries.
+
+**Errors:** `404` client not found · `403` not from localhost
+
+---
+
+### `POST /api/v1/groups/{id}/enter`
+**Description:** Submit a PIN to unlock a PIN-gated group for the calling client.  On success the server inserts a row in `group_pin_grants` valid for 12 h (`pin_mode='session'`) or 5 min (`'per-entry'`); the group's `allowed_libraries` then appear in `get_visible_libraries(client_id)` until the grant expires.  
+**Auth:** Bearer token (calling client's grant) **or** localhost (master override; PIN compare skipped — see notes).  
+**Status:** ✅ Implemented (v2 M4, 2026-05-07)
+
+**Request:**
+```json
+{ "pin": "8472" }
+```
+
+**Response (200):**
+```json
+{
+  "group_id": "uuid",
+  "expires_at": "2026-05-08T10:00:00+00:00",
+  "pin_mode": "session"
+}
+```
+
+**Errors:**
+- `400` group is not PIN-gated (`requires_pin = false`)
+- `401` wrong PIN — body includes `{detail: "...", attempts_remaining: int}`
+- `404` group not found
+- `429` too many failed attempts — 5 fails / 60 s / `(client, group)` tuple triggers a temporary lockout; `Retry-After` header set
+
+**Master override:** the dedicated `POST /api/v1/groups/{id}/master-override?client_id=...` endpoint (below) is the operator-side recovery path; do not bypass on `/enter` itself.
+
+---
+
+### `DELETE /api/v1/groups/{id}/grant`
+**Description:** Drop the calling client's PIN grant for a group ("Lock" action).  Idempotent — returns 204 even if no grant existed.  
+**Auth:** Bearer token (drops own grant) **or** localhost (drops the grant for any client supplied via `?client_id=...`; master operator action).  
+**Status:** ✅ Implemented (v2 M4, 2026-05-07)
+
+**Response:** `204 No Content`  
+**Errors:** `404` group not found
+
+---
+
+### `GET /api/v1/groups/{id}/grant-status`
+**Description:** Check whether the calling client currently holds a valid PIN grant for the group.  Used by the mobile "Locked / Unlocked" surfaces on the Profile screen to seed initial state without prompting.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented (v2 M4, 2026-05-07)
+
+**Response:**
+```json
+{
+  "group_id": "uuid",
+  "unlocked": true,
+  "expires_at": "2026-05-08T10:00:00+00:00",
+  "pin_mode": "session",
+  "pin_model": "per-client",
+  "enrollment_state": "enrolled"
+}
+```
+
+When `unlocked = false`, `expires_at` is `null`.
+
+**M8 fields** — let the mobile UI route to the right surface without a follow-up call:
+
+| `enrollment_state` | Meaning |
+|---|---|
+| `'not_required'` | Shared mode (no per-client enrollment concept), or group isn't gated. |
+| `'enrolled'` | Per-client mode + this client has an enrollment row.  Mobile shows the entry surface. |
+| `'enrollment_required'` | Per-client mode + no enrollment yet.  Mobile shows the *enrollment* surface ("Set up a PIN") instead of the entry surface. |
+
+**Errors:** `404` group not found
+
+---
+
+### `POST /api/v1/groups/{id}/enroll`
+**Description:** First-time per-client PIN enrollment for a `pin_model='per-client'` group (M8).  Records the calling client's PIN and immediately issues a session-length grant (the user just typed it — no need to re-enter).  
+**Auth:** Bearer token only.  
+**Status:** ✅ Implemented (v2 M8, 2026-05-07)
+
+**Request:** `{ "pin": "5283" }`  
+**Response:** same shape as `/enter` — `{group_id, expires_at, pin_mode}`.  
+**Errors:**
+- `400` strength rejection / not-pin-required / wrong mode (group is shared) / already-enrolled (use `/enroll/change`) / not-enrolled (use `/enter`)
+- `403` calling client isn't a member of the group
+- `404` group not found
+- `409` PIN already enrolled — call `/enroll/change` instead
+
+---
+
+### `POST /api/v1/groups/{id}/enroll/change`
+**Description:** Replace the calling client's per-client PIN.  Verifies `old_pin` against the brute-force rate limiter so this endpoint can't be used to guess the existing PIN.  
+**Auth:** Bearer token only.  
+**Status:** ✅ Implemented (v2 M8, 2026-05-07)
+
+**Request:** `{ "old_pin": "5283", "new_pin": "9182" }`  
+**Response:** `204 No Content` (existing grant carries — the user already authenticated successfully).  
+**Errors:**
+- `400` strength rejection on new_pin / wrong mode / not-enrolled
+- `401` `old_pin` is wrong (with `attempts_remaining` in detail)
+- `404` group not found
+- `429` rate limited (5 fails / 60 s / `(client, group)` tuple)
+
+---
+
+### `DELETE /api/v1/groups/{id}/members/{client_id}/pin`
+**Description:** Operator action — drop a member's per-client PIN enrollment so they re-enroll on next access.  Also drops any active grant for that member so visibility flips immediately.  Idempotent — clearing a non-existent enrollment returns 204.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented (v2 M8, 2026-05-07)
+
+**Use case:** member's device suspected compromised; operator wants to invalidate just that one PIN without rotating the whole group's secret (which would force every member to re-enter).
+
+**Response:** `204 No Content`  
+**Errors:** `403` not from localhost
+
+---
+
+### `POST /api/v1/groups/{id}/grants/reset`
+**Description:** Bulk-drop every active PIN grant for a group.  Operator-side "Reset all PINs" Danger Zone action for shared-mode groups (M7 follow-up of [`docs/10_planning/14_groups_management_page.md`](../10_planning/14_groups_management_page.md)).  Members re-enter the shared PIN on next access.  
+**Auth:** Localhost only — `require_local_caller`.  
+**Status:** ✅ Implemented (2026-05-07)
+
+**Per-client mode:** this route only touches `group_pin_grants`, not `group_member_pins`.  For per-client mode the equivalent operation is `DELETE /groups/{id}/members/{cid}/pin` per member (the per-client recovery path); the desktop "Reset all PINs" action walks members + calls that endpoint sequentially.
+
+**Response:** `200 OK` with `{"dropped": int}` — count of grants deleted (drives the desktop snackbar feedback).  Idempotent — calling on a group with no active grants returns `{"dropped": 0}`.  
+**Errors:** `403` not from localhost · `404` group not found
+
+**Audit:** when `dropped > 0`, emits one `group.pin.grants-reset` activity event with the count in `payload`.
+
+---
+
+### `POST /api/v1/groups/{id}/master-override?client_id={client_id}`
+**Description:** Operator-side recovery — issue a 12 h grant for `client_id` on a PIN-gated group **without** supplying the PIN.  Used when the operator forgets the group PIN or when a member's device is locked out.  
+**Auth:** Localhost only — `require_local_caller` (the desktop CP is the only legitimate caller; off-loopback callers get 403).  No bearer credential is ever accepted; the auth boundary is "is the caller running on the server box?"  
+**Status:** ✅ Implemented (v2 M4, 2026-05-07)
+
+**Why localhost-only and not a password:** there is **no master PIN or shared secret stored anywhere** that an attacker could exfiltrate.  The override authority is the network proximity to the server itself — physical access to the operator's box.  An attacker who already has localhost access to the machine running the database can bypass the entire access-control layer with `sqlite3` regardless; the override endpoint simply gives the desktop CP a clean recovery action without requiring the operator to drop to a SQL CLI.
+
+**Response (200):** same shape as `/enter`.  
+**Errors:** `400` group is not PIN-gated · `403` not from localhost · `404` group not found
+
+**Audit:** every override writes a row to `group_pin_attempts` with `success=1` and an INFO-level server log line.  The desktop CP surfaces these in the operator activity feed (Tier-2 work).
 
 ---
 

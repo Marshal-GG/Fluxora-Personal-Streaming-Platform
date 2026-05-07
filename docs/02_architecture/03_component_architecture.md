@@ -1,7 +1,7 @@
 # Component Architecture
 
 > **Category:** Architecture  
-> **Status:** Active — Updated 2026-05-02 (added system stats, license, webhook, and orders services; refreshed desktop screen list; Profile Service added; Notification Service added; Activity Service added; §7.8 Transcoding Service added; §7.9 Log Service + BroadcastHandler added)
+> **Status:** Active — Updated 2026-05-07 (Group Service rewritten for v2 content-spaces redesign — additive semantic + Public group + PIN-gate + per-client enrollment + activity-feed aggregation + bulk grants reset.  Earlier 2026-05-02 round added system stats / license / webhook / orders / Profile / Notification / Activity / Transcoding / Log services + desktop screen list refresh.)
 
 ---
 
@@ -78,8 +78,10 @@
 │  │  SQLite DB (metadata, library, sessions, │   │
 │  │  user_settings [+ profile fields],       │   │
 │  │  polar_orders, groups, group_members,    │   │
-│  │  group_restrictions, notifications,      │   │
-│  │  activity_events)                        │   │
+│  │  group_restrictions, group_pin_grants,   │   │
+│  │  group_pin_attempts, group_member_pins,  │   │
+│  │  notifications, activity_events,         │   │
+│  │  benchmark_runs)                         │   │
 │  └──────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────┘
 
@@ -183,9 +185,10 @@
 - **Plan:** [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_public_routing.md) (v1 single-tenant + v2 multi-tenant track)
 
 ### Group Service
-- **Responsibility:** Manages client groups — logical bundles of paired clients that share streaming restrictions. CRUD for groups, membership, and per-group restriction records. Exposes `get_effective_restrictions(client_id)` which aggregates all active groups the client belongs to and returns the most-restrictive intersection (allowed libraries, time window, advisory bandwidth cap and max rating).
-- **Interfaces:** `GET /api/v1/groups`, `POST /api/v1/groups` (localhost-only), `GET/PATCH/DELETE /api/v1/groups/{id}` (mutations localhost-only), `GET /api/v1/groups/{id}/members`, `POST /api/v1/groups/{id}/members` (localhost-only), `DELETE /api/v1/groups/{id}/members/{client_id}` (localhost-only). GETs accept bearer token or loopback auth.
-- **Dependencies:** SQLite (`groups`, `group_members`, `group_restrictions` tables); consumed by `stream` router as a stream-gate hook.
+- **Responsibility:** v2 content-spaces redesign (2026-05-07) — manages client groups as additive content-spaces.  Groups GRANT library access from a default-nothing baseline; multi-group composition is UNION (every group the client belongs to contributes its `allowed_libraries`).  Mandatory Public group auto-joined by every paired client at `auth_service.approve_client` time.  Optional PIN-gate per group with shared / per-client modes (M8).  Exposes `get_visible_libraries(client_id, *, now)` returning `VisibleLibraries(library_ids, groups_contributing, pin_locked_groups, enrollment_required_groups, time_locked_groups, groups)` — single source of truth consumed by every list endpoint AND the stream-gate via `reason_to_deny_stream`.  PIN flow helpers: `enter_pin_grant`, `enroll_pin`, `change_member_pin`, `clear_member_pin`, `revoke_pin_grant`, `revoke_all_grants_for_group`, `housekeep_pin_state`.  Activity-feed aggregation via `_emit_group_activity` + `_maybe_emit_failed_burst`.
+- **Interfaces:** `GET /api/v1/groups`, `POST /api/v1/groups` (localhost-only), `GET/PATCH/DELETE /api/v1/groups/{id}` (mutations localhost-only), `GET /api/v1/groups/{id}/members` (with optional `?include=pin_state` for desktop Members-tab badges), `POST /api/v1/groups/{id}/members` (localhost-only), `PATCH /api/v1/groups/{id}/members/{cid}` (M5 — per-member time_window_override; localhost), `DELETE /api/v1/groups/{id}/members/{client_id}` (localhost-only), `DELETE /api/v1/groups/{id}/members/{cid}/pin` (M8 — clear per-client PIN; localhost), `POST /api/v1/groups/{id}/enter` (bearer — submit PIN), `POST /api/v1/groups/{id}/enroll` + `/enroll/change` (M8 bearer — per-client enrollment), `DELETE /api/v1/groups/{id}/grant` (bearer — lock), `GET /api/v1/groups/{id}/grant-status` (bearer — pin_model + enrollment_state for mobile UX routing), `POST /api/v1/groups/{id}/grants/reset` (M7 — bulk drop grants for shared-mode Reset PINs; localhost), `POST /api/v1/groups/{id}/master-override?client_id=` (localhost — operator recovery, no PIN).  Mobile bearer-twin: `GET /api/v1/auth/clients/me/visible-libraries`.  GETs accept bearer token or loopback auth.
+- **Dependencies:** SQLite (`groups`, `group_members`, `group_restrictions`, `group_pin_grants`, `group_pin_attempts`, `group_member_pins` tables; migrations 011 + 025 + 026); `auth_service.approve_client` for the Public auto-membership hook; `activity_service.record` for audit-trail emit (lazy import to avoid cycle); consumed by every list endpoint (`library`, `files`, `auth/me/continue-watching`) for visibility filtering AND by the `stream` router for the gate hook.
+- **Plans:** [`docs/10_planning/13_groups_v2_content_spaces.md`](../10_planning/13_groups_v2_content_spaces.md) (semantic redesign + Public + PIN gate + M8) + [`docs/10_planning/14_groups_management_page.md`](../10_planning/14_groups_management_page.md) (dedicated desktop edit page).  ADRs: ADR-018 / ADR-019 / ADR-020 in [`docs/10_planning/02_decisions.md`](../10_planning/02_decisions.md).
 
 ### Profile Service
 - **Responsibility:** Reads and writes operator profile metadata stored in the `user_settings` singleton (`display_name`, `email`, `avatar_path`, `profile_created_at`, `last_login_at`). Computes `avatar_letter` on every read — not stored in the DB. First non-whitespace char of `display_name`, else first char of `email` local-part, else `'F'`. Pass `""` to clear a field; pass `None` to leave it unchanged.

@@ -1,7 +1,7 @@
 # Tech Stack
 
 > **Category:** Architecture
-> **Status:** Active — full canonical inventory of every dependency, codegen tool, build tool, and external service in use across the monorepo. Updated 2026-05-03.
+> **Status:** Active — full canonical inventory of every dependency, codegen tool, build tool, and external service in use across the monorepo. Updated 2026-05-07 (no dep changes since 2026-05-03; date stamp reflects last sweep).
 
 This doc lists what's *actually installed* (with versions) per package, why it's there, and what category it serves. When you add or remove a dep, update the relevant section here.
 

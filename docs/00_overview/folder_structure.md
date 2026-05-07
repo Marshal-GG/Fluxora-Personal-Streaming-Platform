@@ -62,7 +62,10 @@ apps/server/
 │       ├── 020_encoder_chain.sql   # transcoding_chain TEXT (JSON list) on user_settings
 │       ├── 021_session_encoder.sql # encoder_used TEXT on stream_sessions
 │       ├── 022_remove_corrupt_media_paths.sql  # one-shot deletion of `[\filename` rows + dependent stream_sessions
-│       └── 023_clients_last_ip.sql # clients.last_ip TEXT — written at pair + every authenticated request via validate_token heartbeat
+│       ├── 023_clients_last_ip.sql # clients.last_ip TEXT — written at pair + every authenticated request via validate_token heartbeat
+│       ├── 024_benchmark_history.sql  # benchmark_runs table + idx_benchmark_runs_started_at
+│       ├── 025_groups_v2_content_spaces.sql  # v2 redesign — is_public/icon/color/requires_pin/pin_hash/pin_mode/max_concurrent_streams on groups; time_window_override on group_members; group_pin_grants + group_pin_attempts; manufactures Public; backfills allowed_libraries; auto-adds approved clients to Public
+│       └── 026_groups_per_client_pins.sql  # M8 hybrid PIN model — pin_model on groups + group_member_pins enrollment ledger
 ├── routers/
 │   ├── auth.py
 │   ├── activity.py             # GET /api/v1/activity; validate_token_or_local

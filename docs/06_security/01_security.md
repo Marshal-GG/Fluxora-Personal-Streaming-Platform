@@ -139,6 +139,14 @@ Mobile Sign Out:
 | `GET /api/v1/groups/{id}/members` | ✅ Bearer token or localhost | List group members |
 | `POST /api/v1/groups/{id}/members` | 🔒 Localhost only | Add member to group — `require_local_caller` |
 | `DELETE /api/v1/groups/{id}/members/{client_id}` | 🔒 Localhost only | Remove member from group — `require_local_caller` |
+| `DELETE /api/v1/groups/{id}/members/{client_id}/pin` | 🔒 Localhost only | M8 — clear member's per-client PIN (operator action; forces re-enrollment) — `require_local_caller` |
+| `POST /api/v1/groups/{id}/enter` | ✅ Bearer token | Submit PIN to unlock a gated group; rate-limited 5 fails / 60 s / (client, group) |
+| `POST /api/v1/groups/{id}/enroll` | ✅ Bearer token | M8 — first-time per-client PIN enrollment; PIN strength enforced server-side |
+| `POST /api/v1/groups/{id}/enroll/change` | ✅ Bearer token | M8 — replace own per-client PIN; verifies `old_pin` against the same rate limiter to prevent brute-force-via-change |
+| `DELETE /api/v1/groups/{id}/grant` | ✅ Bearer token | Lock previously-unlocked group on calling client (drop own grant); idempotent |
+| `GET /api/v1/groups/{id}/grant-status` | ✅ Bearer token or localhost | Whether calling client holds a valid grant + `pin_model` + `enrollment_state` |
+| `POST /api/v1/groups/{id}/grants/reset` | 🔒 Localhost only | M7 follow-up — bulk-drop every active PIN grant; shared-mode "Reset all PINs" Danger Zone action; emits `group.pin.grants-reset` activity event |
+| `POST /api/v1/groups/{id}/master-override?client_id=` | 🔒 Localhost only | Operator recovery — issue 12 h grant without PIN; auth = network proximity to server (no stored secret); audited via `group_pin_attempts` |
 | `GET /api/v1/profile` | 🔒 Localhost only | Read operator profile — `require_local_caller` |
 | `PATCH /api/v1/profile` | 🔒 Localhost only | Update operator profile — `require_local_caller` |
 | `GET /api/v1/notifications` | ✅ Bearer token or localhost | List notifications (`validate_token_or_local`) |
@@ -172,6 +180,9 @@ Mobile Sign Out:
 | Malicious file path in request | 🔴 High | Server validates and sanitizes all file path params |
 | Payment webhook spoofing or replay | 🔴 High | Standard Webhooks HMAC validation, signed timestamp tolerance, `polar_orders.order_id` idempotency |
 | License key sharing or theft | 🟡 Medium | Phase 1-4: None (honor system, fully self-hosted validation). Phase 5/Future: Bind key to unique Server ID via cloud activation check. |
+| Group PIN brute-force | 🟡 Medium | 4-8 digit numeric PIN (10 000–100 M combinations); HMAC-SHA256 stored hash; rate limiter caps 5 fails / 60 s / (client, group) tuple; 24 h ledger pruning. Sustained attack ceiling ~7 200 attempts/day. **Honestly: PIN is a barrier-to-casual-access on a shared device, not real auth.** For sensitive content, use M8 per-client mode (compromise blast radius = one device). |
+| Group PIN shoulder-surf on shared device | 🟡 Medium | Inherent to shared-PIN model. Documented in the create-PIN dialog copy. Mitigation = M8 per-client mode where each device picks its own PIN; operator can clear individual enrollments without rotating the household secret. |
+| Master-override abuse | 🟡 Medium | Endpoint is `require_local_caller` only — auth boundary is network proximity to the server's loopback interface. **No stored secret to leak.** An attacker with localhost access already has SQLite write access to bypass everything; the override doesn't widen the attack surface. Every override writes a `success=1` row to `group_pin_attempts` for audit. |
 
 ---
 
@@ -191,6 +202,53 @@ To prevent widespread key sharing while maintaining privacy, Phase 5 will introd
 3.  **Local Lease:** The server receives a signed "activation lease" that allows it to continue running the Pro/Ultimate tier offline for a set duration.
 4.  **Key Locking:** The cloud API will reject activation requests for the same key from different `server_id` values once the seat limit is reached.
 
+
+---
+
+## Group PIN Security (v2 — content-spaces redesign)
+
+> **Threat model framing:** Group PINs are a *barrier-to-casual-access on a shared household device*, not real auth.  Anyone with file-system access to the server can bypass them with `sqlite3` regardless.  The realistic attacker is "kid on the family tablet who saw the PIN typed once" — not "remote attacker with bearer token."  Designed accordingly.
+
+### Storage
+- PIN never persisted as plaintext.  `groups.pin_hash` (shared mode) and `group_member_pins.pin_hash` (per-client mode, M8) hold `HMAC-SHA256(pin, settings.pin_hmac_key)`.
+- The HMAC key reuses the existing `TOKEN_HMAC_KEY` rotation discipline — same env var, same key-rotation runbook, same operator hygiene.
+- Rotating the HMAC key invalidates every existing PIN hash (members must re-enter / re-enroll on next access).  Same pattern as bearer-token rotation.
+
+### Strength Policy
+Server-authoritative `validate_pin_strength` rejects:
+- Non-numeric input (PINs are numeric only — keypad-friendly on mobile).
+- Length outside 4–8 digits.
+- Obvious sequences and repeats: `0000`, `1111`, … `9999`, `1234`, `2345`, … `6789`, `4321`, … `0987`, `2580` (vertical line on keypad).
+
+Desktop CP mirrors the blocklist client-side for snappy feedback (`_OBVIOUS_PINS` constant in `_PinSection`); server is authoritative — client-side is just to avoid the network round-trip on obviously-bad input.
+
+### Brute-Force Protection
+- Every `/enter` and `/enroll/change` attempt writes a row to `group_pin_attempts(client_id, group_id, attempted_at, success)`.
+- Rate limiter: 5 failed attempts in 60 s per `(client, group)` tuple → 429 with `Retry-After`.  Successful attempt does NOT reset the counter (same window applies — failures age out at the 60 s mark).
+- `group_pin_attempts` rows older than 24 h pruned by `housekeep_pin_state` (called from the existing main.py background task).
+- `change_member_pin` charges its `old_pin` mismatches against the same ledger — otherwise the change endpoint would be a brute-force bypass for the existing PIN.
+
+### Grant Lifecycle
+- Successful `/enter` writes a row to `group_pin_grants(client_id, group_id, granted_at, expires_at)`.  Visibility resolution treats the group as unlocked while `expires_at > now`.
+- Grant TTL by `pin_mode`: `session` = 12 h (default); `per-entry` = 5 min (refreshes on every navigation; for adult / sensitive content where the operator wants every visit to re-prompt).
+- Mobile "Lock" button + `DELETE /grant` drops the grant immediately.  Idempotent.
+
+### Hybrid PIN Model (M8)
+- `groups.pin_model = 'shared'` (default) — one PIN per group, every member uses it.  Compromise blast radius = whole household; rotation = operator types a new PIN, every device re-enters on next access.
+- `groups.pin_model = 'per-client'` — each member device enrolls its own PIN on first access via `/enroll`.  Operator never sees the plaintext.  Compromise blast radius = one device.  Recovery = operator clears that member's enrollment row via `DELETE /groups/{id}/members/{cid}/pin`, member re-enrolls (operator can NOT recover or reveal the existing PIN).
+- Mode-switching is operator-controlled per group; semantic documented in [`docs/04_api/01_api_contracts.md`](../04_api/01_api_contracts.md) PATCH /groups/{id}.
+
+### Master Override (operator recovery)
+- `POST /groups/{id}/master-override?client_id=` is gated by `require_local_caller` only — no PIN body, no stored secret.
+- The auth boundary is "is the caller running on the server's loopback interface?"  An attacker with localhost access already has SQLite write access to bypass the entire access-control layer; the override endpoint just gives the desktop CP a clean recovery action without dropping to a SQL CLI.
+- **No master credential exists anywhere.**  This is intentional — see ADR-020.  Adding a recovery passphrase would be operator self-harm theater (a second secret to leak with no improvement to the threat model).
+- Every override writes a `success=1` row to `group_pin_attempts` + INFO-level server log line for audit.  Tier-2 work surfaces this in the desktop activity feed.
+
+### Known Limitations
+1. **Shoulder-surf on shared device** — kid watching parent type the PIN defeats the model instantly.  Use per-client mode for sensitive content.
+2. **4-digit PINs are weak** — 10 000 combinations.  Rate-limited brute-force ceiling is ~7 200 attempts/day, meaningful but not impossible.  Use 6-8 digits when the content is sensitive (UI surfaces the length in the input field; server enforces 4–8 range).
+3. **Operator distributing the PIN** — out of scope.  Document in operator onboarding.
+4. **Mid-stream gate violation** — currently only checked at stream start.  An in-flight stream survives a member being removed from a group / a grant expiring / a PIN change.  Documented; not a v1 blocker.
 
 ---
 

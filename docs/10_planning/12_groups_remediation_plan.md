@@ -2,6 +2,7 @@
 
 > **Category:** Planning
 > **Status:** ✅ Complete — M1–M5 all shipped 2026-05-07
+> **Succeeded by:** [`13_groups_v2_content_spaces.md`](./13_groups_v2_content_spaces.md) — v2 content-spaces redesign (additive semantic + Public group + PIN-gated groups + hybrid PIN model). The v1 model this plan completed was kept intact through v2 M1; the semantic flip (subtractive → additive) landed via migration 025 on the same day this plan finished.  ADR-015 (intersection rule) → superseded by ADR-018 (union content-spaces); ADR-014 (stream-gate location) still valid.
 > **Scope:** Identifies why the Client Groups feature is unusable in practice despite a working backend, and lays out a sequenced remediation plan with concrete code targets, milestone boundaries, and test strategy.
 > **Triggered by:** user report ("groups are unusable currently") on 2026-05-07 — confirmed by code audit: every defect is on the desktop UI side; the server enforcement plumbing works.
 
