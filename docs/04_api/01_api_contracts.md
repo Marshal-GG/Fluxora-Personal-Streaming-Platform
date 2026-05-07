@@ -1599,21 +1599,48 @@ All producer call-sites are wrapped in `try/except` with logging — an activity
 | `duration_sec` | int? | 2–20 (Pydantic-validated; 422 outside) | Source clip length per encoder. Server-side `clamp_duration` also applies the [2, 20] floor/ceiling defensively. Defaults to 8 s. |
 | `fps` | int? | 24–60 (Pydantic-validated; 422 outside) | Source frame rate. Higher fps roughly halves each encoder's realtime multiplier — useful for gauging 60 fps capability (sports, gaming captures, smartphone footage). 60 is the cap because the player doesn't render high-refresh material specially, so 120 fps would tell the operator nothing actionable about a media-streaming workload. Defaults to 30. |
 | `verify_caps` | bool | true / false | When true, hw encoders that carry a registry session cap get an extra concurrent-stress probe — spawns up to `max(8, registry_cap*3)` short parallel encodes per such encoder and counts survivors. The empirical answer to "what's my actual NVENC cap" because the registry value (3) is just a vendor default; driver 530+, RTX 40-series, and patched drivers may exceed it. Briefly saturates the GPU (~2 s wall-clock per hw encoder) so it's opt-in. Defaults to false. (The desktop client always sends `true` so the chip is honest by default.) |
-| `width` | int? | 320–3840 (Pydantic-validated; 422 outside) | Source frame width. Server-side `clamp_resolution` snaps the (`width`, `height`) pair to the nearest documented tier (720p / 1080p / 4K) so the benchmark history doesn't accumulate one-off resolutions. Defaults to 1280. |
-| `height` | int? | 240–2160 (Pydantic-validated; 422 outside) | Source frame height. Paired with `width`; same snap behaviour. Defaults to 720. |
+| `width` | int? | 320–3840 (Pydantic-validated; 422 outside) | **Single-resolution only** (back-compat). Source frame width. Server-side `clamp_resolution` snaps the (`width`, `height`) pair to the nearest documented tier (720p / 1080p / 4K). Defaults to 1280. Ignored when `resolutions` is set. |
+| `height` | int? | 240–2160 (Pydantic-validated; 422 outside) | **Single-resolution only** (back-compat). Source frame height. Paired with `width`; same snap behaviour. Defaults to 720. Ignored when `resolutions` is set. |
+| `resolutions` | list[ResolutionTuple]? | each tuple's width 320–3840, height 240–2160 | **Matrix mode (2026-05-07).** When set, the benchmark runs each encoder against every resolution in this list sequentially (outer loop is per-resolution, inner loop is per-encoder); the result list contains `len(encoders) × len(resolutions)` rows, each self-describing its source resolution via the new per-row `width` + `height` fields. Server-side `clamp_resolutions` snaps every pair to a known tier and drops duplicates that collapse onto the same one — operator submitting both `(1280, 720)` and `(1366, 768)` ends up with a single 720p entry. Empty / null falls back to single-resolution mode (above). Each `ResolutionTuple` is `{"width": <int>, "height": <int>}`. |
 
-**Response:**
+**Matrix-mode example body:**
 ```json
 {
+  "fps": 30,
+  "resolutions": [
+    {"width": 1280, "height": 720},
+    {"width": 1920, "height": 1080},
+    {"width": 3840, "height": 2160}
+  ]
+}
+```
+
+**Response:**
+
+Each result row carries `width` + `height` so the desktop can render matrix-mode tables without inferring per-row dimensions from the parent run. Top-level `width`/`height` are the **first tested resolution** (= primary tier); the new `resolutions` echo lists every tested tier in operator-selection order.
+
+```json
+{
+  "id": 42,
   "started_at": "2026-05-07T15:30:12.123456+00:00",
   "finished_at": "2026-05-07T15:30:35.987654+00:00",
   "duration_sec": 8,
   "fps": 30,
+  "width": 1280,
+  "height": 720,
+  "resolutions": [
+    {"width": 1280, "height": 720},
+    {"width": 1920, "height": 1080},
+    {"width": 3840, "height": 2160}
+  ],
+  "verify_caps": true,
   "results": [
     {
       "encoder": "h264_nvenc",
       "vendor": "nvidia",
       "codec": "h264",
+      "width": 1280,
+      "height": 720,
       "passed": true,
       "error": null,
       "fps": 174.0,

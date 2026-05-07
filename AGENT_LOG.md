@@ -41,3 +41,127 @@
 ---
 
 <!-- New session entries go below this line. -->
+
+## [2026-05-07] — Tier 2 benchmark axis: resolution-tier matrix mode
+**Phase:** Phase 5 — encoder benchmark UX maturation
+**Status:** Complete
+
+### What Was Done
+
+Same-day continuation of the §11.1 F10 surface (encoder benchmark).  User asked for the Tier 2 axis chosen out of {resolution matrix / CBR mode / concurrent stress} and picked the matrix.  Single-select chip row reworked to multi-select; one click can now produce a per-encoder × per-resolution table comparing 720p / 1080p / 4K throughput.
+
+#### Server
+
+- **`BenchmarkRequest`** (`routers/transcoding.py`): new `resolutions: list[ResolutionTuple] | None` field additive to the existing `width` + `height`.  When set, takes precedence; when null/empty, the router falls back to clamping the legacy single pair.  `ResolutionTuple` is a tiny Pydantic model with `width: int = Field(ge=320, le=3840)` + `height: int = Field(ge=240, le=2160)`.  Backwards compat preserved — old clients passing `width: 1920, height: 1080` produce identical results.
+- **`benchmark_service.clamp_resolutions(pairs)`** — new helper.  Snaps each `(w, h)` to the nearest known tier via `clamp_resolution`, then dedupes preserving first-occurrence order.  Operator submitting both `(1280, 720)` and `(1366, 768)` collapses to a single `(1280, 720)` so history rows stay clean.  Empty/None input falls back to `[(1280, 720)]` for single-resolution back-compat.
+- **`EncoderBenchmarkResult`** (`benchmark_service.py` dataclass + `routers/transcoding.py` Pydantic): gains required `width: int` + `height: int` fields.  Each row self-describes its resolution — necessary because matrix runs produce N rows per encoder (one per resolution).  `_failed_result` helper extended to accept width/height; `benchmark_encoder` parses the input `size` string at the top and threads the dimensions into every result construction site.  `_with_verified_cap` preserves them across the cap-probe re-derivation.
+- **`run_benchmark(encoders, *, resolutions: list[tuple[int, int]] | None = None, ...)`** reworked: signature replaces single `width`/`height` with `resolutions`.  Outer loop per-resolution, inner loop per-encoder.  Total pair count = `len(encoders) × len(resolutions)`.  Each iteration calls `benchmark_encoder` with the right `size` string + invokes the cap-probe (when enabled) at that exact resolution.  Resolution-outer ordering means the desktop sees results land in chunks of "all encoders at 720p, all encoders at 1080p, ..." which matches operator mental model better than encoder-outer would.
+- **Module-level `_progress` schema** extended: `total_resolutions`, `current_resolution_index` (1-based), `current_resolution_width`, `current_resolution_height` — populated continuously through the run; single-resolution callers see `total_resolutions=1` and the index pinned at 1, so the desktop can read these unconditionally without a branch.
+- **`BenchmarkResponse.resolutions: list[ResolutionTuple]`** echoes the tested list back to the client (operator-selection order preserved); top-level `width`/`height` stay populated as the *primary* (= first tested) tier so old clients that don't know about `resolutions` keep rendering the primary tier.
+- **`BenchmarkProgress`** Pydantic mirrors the new `_progress` fields.  Matrix-aware desktop reads them; idle-state response (`running=False`) leaves them all null.
+- **`BenchmarkHistoryEntry.resolution_count: int = 1`** new field.  Derived server-side in `benchmark_history_service.list_benchmark_runs` by parsing each row's `results_json` once and counting distinct `(width, height)` tuples.  Defaults to 1 so legacy rows (no per-row width/height in their stored blob) collapse to the historical "1080p · 30 fps · 6 enc" sidebar caption; matrix runs render "3 res · 30 fps · 18 enc" instead.  Cost: parsing 50 ~5 KB blobs is sub-ms; not worth a denormalized column + migration.
+- **`benchmark_history_service.get_benchmark_run`** back-fills per-row width/height from the run's primary dimensions when reading legacy rows that pre-date matrix mode — desktop entity expects the field unconditionally and would otherwise fail JSON parse.  New rows already carry per-row dimensions and pass through unchanged.
+- **`get_benchmark_run` also returns `resolutions: list[tuple[int, int]]`** derived in-order from the JSON blob's distinct tuples.  Used by the history-by-id router to populate the response's `resolutions` echo for stored runs.
+- **Router `run_benchmark`** rewritten: builds the resolution list with `body.resolutions or [single fallback]`, threads through to the service, persists `primary_width`/`primary_height` (= `resolutions[0]`) for back-compat with the existing schema, and constructs the response with the full `resolutions` list + per-row width/height.  Logs include resolution count.
+- **No migration** — schema unchanged.  Top-level `width`/`height` columns retain their meaning (= first tested tier).  Per-row dimensions live inside the existing `results_json` blob.
+
+#### Core (`packages/fluxora_core`)
+
+- **New `Resolution` freezed entity** in `entities/encoder_benchmark.dart`.  Tiny `(width, height)` DTO; freezed + json_serializable for uniformity with every other DTO in the surface.  Also makes the cubit-side body construction cleaner than hand-rolling Map<->record converters.
+- **`EncoderBenchmarkResult`** gains required `width: int` + `height: int`.
+- **`EncoderBenchmarkRun`** gains `@Default(<Resolution>[]) List<Resolution> resolutions` (defaulted so legacy responses without the field still parse — though all new server responses populate it).
+- **`BenchmarkHistoryEntry`** gains `@Default(1) int resolutionCount`.
+- **`BenchmarkProgress`** gains the four new matrix-mode fields (all nullable).
+- Regenerated `.freezed.dart` + `.g.dart` via `dart run build_runner build`.
+
+#### Desktop
+
+- **`TranscodingRepository.benchmark`** signature: `width`/`height` → `resolutions: List<Resolution>?`.  Impl builds the request body with `resolutions` (falls back to legacy width/height only when caller doesn't pass a list — which the desktop UI never does post-Tier-2).
+- **`ApiClient` receive timeout** dynamic: 12 minutes in matrix mode (more than 1 resolution), 6 minutes for single-resolution.  3 tiers × cap-probe + 4K + 60 fps can comfortably triple the worst-case wall-clock so the existing 6 min was tight.
+- **`_ResolutionSelector`** widget reworked: parameter `selected: ({int width, int height})` → `selected: Set<({int width, int height})>`; callback `onChanged` → `onToggle`.  Each chip toggles its membership in the set.  Header copy + caption updated ("Source resolutions" / "Pick one or more — each runs sequentially through every encoder").
+- **`_BenchmarkBlockState._selectedResolutions: Set<…>`** defaults to `{1080p}` so the first-run UX matches the prior single-resolution baseline (operators who don't care about matrix don't notice the change).  Set toggles via copy-and-mutate so `setState` sees a new identity.  Run button gated on non-empty.
+- **Run sequence smallest-first** (`_resolutionOptions.where(_selectedResolutions.contains)`) — operator sees results land for the lighter workload before the heavier ones; 4K-first would have the desktop spinning silently for 30+ s before any rows appear.
+- **`_BenchmarkResultsTable`** sorts within each vendor section by `(encoder name, resolution pixels)` so matrix rows read as `h264_nvenc[720p, 1080p, 4K]` then `hevc_nvenc[...]`.  Operators want to compare the same encoder across tiers, not all encoders at one tier.
+- **`_BenchmarkResultRow.showResolutionChip`** new param.  Set to true by the table when `run.resolutions.length > 1`.  Renders a violet `FluxChip(_resolutionLabel)` (720p/1080p/4K/raw) next to the codec pill.  Off in single-resolution mode — the source caption already names the tier and per-row chips would just be noise.
+- **`_SourceWorkloadCaption`** rewritten to take `resolutions: List<Resolution>` (was `width` + `height`).  Single-resolution renders the existing "Source: 1280x720 ..." form; matrix collapses to "Source: 720p, 1080p, 4K · 30 fps · 8 s synthetic clip" (tier list comma-joined).  Wrapped in `Expanded + ellipsis` so a long tier list doesn't overflow.
+- **`_BenchmarkProgressCard._statusLine`** matrix-aware: tags the current encoder with its tier when `totalResolutions > 1` ("Encoding h264_nvenc [1080p]" / "Verifying h264_nvenc session cap [4K]").  `_captionLine` swaps "Encoder N of M" → "Step N of M  ·  Res P of Q" so the operator can track both axes.
+- **`_HistoryEntryRow._resolutionLabel`** flips to "N res" caption when `widget.entry.resolutionCount > 1`.  Sidebar is 280-px wide; spelling out "720p, 1080p, 4K" would wrap awkwardly.
+
+#### Tests
+
+- **`tests/test_benchmark_service.py`** (+5 cases):
+  - `test_clamp_resolutions_dedupes_after_snap` — `[(1280,720), (1366,768), (1920,1080), (3840,2160), (1920,1080)]` → `[(1280,720), (1920,1080), (3840,2160)]`.
+  - `test_clamp_resolutions_falls_back_to_default_for_empty` — `None` and `[]` both return `[(1280, 720)]`.
+  - `test_run_benchmark_matrix_produces_n_times_m_results` — 2 encoders × 3 resolutions = 6 results in resolution-outer × encoder-inner order; each result self-describes its resolution.
+  - `test_run_benchmark_matrix_publishes_resolution_index_in_progress` — progress snapshots carry the right `total_resolutions` / `current_resolution_index` per pair; `total_encoders` tracks pair count, not encoder count.
+- **`tests/test_benchmark_history.py`** (+2):
+  - `test_history_entry_carries_resolution_count_for_matrix_run` — 6 results across 3 distinct tiers → `resolution_count=3`; `get_benchmark_run` returns `resolutions=[(1280,720), (1920,1080), (3840,2160)]` in operator-selection order.
+  - `test_history_entry_resolution_count_defaults_to_one_for_legacy_rows` — 2 results all at 1080p → `resolution_count=1`.
+- **`tests/test_transcoding.py`** (+2):
+  - `test_benchmark_accepts_matrix_mode_resolutions_list` — POST with `resolutions: [...]` body; service receives the full list; response echoes; per-row width/height match.
+  - `test_benchmark_resolutions_list_takes_precedence_over_width_height` — both fields set in body → list wins.
+- All existing fixtures updated to thread width/height through `EncoderBenchmarkResult` constructions + the `_fake_run` mocks now accept `resolutions` instead of `width`/`height`.
+- **Server suite 565 → 573 passing.**  `flutter analyze` clean across desktop + core (19.3 s desktop, 20.6 s core).  Desktop cubit tests still 23/23.  Ruff still clean.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/services/benchmark_service.py` (EncoderBenchmarkResult dataclass +width/height; benchmark_encoder parses size; _failed_result + _with_verified_cap accept width/height; run_benchmark signature `resolutions: list[tuple[int,int]] \| None`; outer/inner loop reworked; _progress schema extended; new `clamp_resolutions(pairs)` helper) |
+| Modified | `apps/server/services/benchmark_history_service.py` (list_benchmark_runs derives `resolution_count` via `_count_resolutions`; get_benchmark_run back-fills per-row dimensions from primary + returns `resolutions` via `_distinct_resolutions`) |
+| Modified | `apps/server/routers/transcoding.py` (new ResolutionTuple model; BenchmarkRequest.resolutions field; BenchmarkEncoderResult +width/height; BenchmarkResponse.resolutions echo; BenchmarkProgress matrix-mode fields; BenchmarkHistoryEntry.resolution_count; route handler builds the resolution list with precedence body.resolutions > legacy width/height > default) |
+| Modified | `apps/server/tests/test_benchmark_service.py` (fixtures + 5 new matrix cases) |
+| Modified | `apps/server/tests/test_benchmark_history.py` (`_result` helper accepts width/height; `_seed_run` builds matrix-shaped results; +2 new cases for resolution_count derivation) |
+| Modified | `apps/server/tests/test_transcoding.py` (every `_fake_run` signature swapped width/height → resolutions; +2 new matrix-router cases) |
+| Modified | `packages/fluxora_core/lib/entities/encoder_benchmark.dart` (new Resolution freezed entity; EncoderBenchmarkResult +width/height; EncoderBenchmarkRun.resolutions; BenchmarkHistoryEntry.resolutionCount; BenchmarkProgress matrix-mode fields) |
+| Regenerated | `packages/fluxora_core/lib/entities/encoder_benchmark.freezed.dart` + `.g.dart` |
+| Modified | `apps/desktop/lib/features/transcoding/domain/repositories/transcoding_repository.dart` (`benchmark` signature: width/height → `resolutions: List<Resolution>?`) |
+| Modified | `apps/desktop/lib/features/transcoding/data/repositories/transcoding_repository_impl.dart` (sends `resolutions` body; dynamic timeout 6/12 min by mode) |
+| Modified | `apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart` (`_ResolutionSelector` multi-select; `_selectedResolutions` Set state; sequential smallest-first walk; `_BenchmarkResultsTable` sorts by (encoder, resolution-pixels); `_BenchmarkResultRow.showResolutionChip` + violet tier pill; `_SourceWorkloadCaption` resolution-list aware; `_BenchmarkProgressCard` matrix-mode status + caption; `_HistoryEntryRow` "N res" caption when resolutionCount > 1) |
+| Modified | `docs/00_overview/current_status.md` (new "As of 2026-05-07 (latest)" entry) |
+| Modified | `docs/11_design/desktop_redesign_plan.md` (change-log entry) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Decisions Made
+
+- **Additive `resolutions` over breaking the existing `width`/`height` API.** Old clients (third-party callers, smoke-test scripts) keep working — the router walks precedence `body.resolutions > body.width/height > server default`.  Cost is minimal (a 4-line precedence block in the route handler) and avoids a coordinated client rollout.
+- **Resolution outer × encoder inner order.** Two equally-valid choices; chose resolution-outer because operator mental model is "first I want to see how everyone does at 720p, then move up the ladder".  Encoder-outer would show "h264_nvenc at every tier, then hevc_nvenc at every tier" — useful for some workflows but worse for the live-progress UX (operator sees all tiers cycle for one encoder before any other encoder shows up).  Documented in the run_benchmark docstring.
+- **Smallest-first iteration order on the desktop.** The selector renders chips in canonical-tier order (720p → 1080p → 4K) regardless of click sequence.  Submitting in that order means lighter results land first; a 4K-first run would leave the operator staring at silence for 30+ s.
+- **`resolution_count` derived on-the-fly, no migration.** Cost of parsing 50 results blobs once for the sidebar list is sub-ms.  Adding a denormalized column would require a migration, a backfill, and a coordinated server-restart — not worth it for a single integer surface.
+- **Per-row resolution chip only in matrix mode.** Single-resolution mode already names the tier in the source caption; per-row chips would be redundant noise.  Chip uses `FluxChipColor.purple` (existing variant) so every "1080p" pill in the table shares the same visual identity, helping the operator's eye group rows by tier.
+- **`_HistoryEntryRow` caption "N res" instead of full tier list.** Sidebar is 280 px wide; spelling out "720p, 1080p, 4K · 30 fps · 18 enc" wraps awkwardly.  Operators who want the full tier list click into the run — the source caption above the results table renders it.
+- **Default selection is `{1080p}`.** Matches the prior single-resolution baseline so first-time UX is unchanged.  Operators who never touch matrix mode get identical behaviour to before; matrix is opt-in by selecting additional chips.
+- **Receive timeout 12 min in matrix mode, 6 min single.** 3 tiers × cap probe + 4K + 60 fps can comfortably triple the worst-case wall-clock; a single-tier 6 min ceiling would time out client-side before the server finished a slow CPU's libx265 pass on 4K.
+
+### Issues / Sharp Edges Discovered
+
+- **U+202F NARROW NO-BREAK SPACE in `_SourceWorkloadCaption`'s string literal.**  The pre-existing caption used U+202F (narrow no-break space) between `$durationSec` and `s synthetic clip`.  Edit tool's exact-match couldn't paper over the unicode; had to use Python to do the replacement directly.  Worth flagging to future agents — the file may have other invisible whitespace in literal strings; treat replace-by-substring with care when the surrounding context contains punctuation.
+- **`Resolution` freezed entity carries empty `@Default(<Resolution>[])` for `EncoderBenchmarkRun.resolutions`.**  Without this, parsing legacy responses (which don't have the field) blows up.  Same trick used elsewhere in the codebase but worth re-flagging since matrix mode shipped after most of the existing `freezed` patterns settled.
+- **Backwards compat for legacy history rows requires per-row width/height back-fill on read.**  `EncoderBenchmarkResult` makes width/height required (no nullable, no default); old rows in `benchmark_runs.results_json` predate matrix mode and don't carry these.  Fix in `get_benchmark_run`: walk the parsed list and `setdefault('width', primary)` / `setdefault('height', primary)` before handing to Pydantic.  Decision documented inline.
+
+### Hard Rules Checklist
+
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No silent exceptions.  `_pollProgress` catch in the desktop is intentional (per-tick noise) and was already there pre-Tier-2.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps.
+- [x] No layer-boundary violations.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+- [x] No raw SQL string concatenation.
+- [x] No bearer tokens / PII logged.
+
+### Proactive Suggestions for Next Work
+
+- **Smoke-test matrix mode on the user's box** — pick all three tiers, run, verify (a) progress bar advances smoothly across all 3 × N pairs, (b) status line shows "Encoding h264_nvenc [4K]" mid-run, (c) results table shows per-row violet resolution chip, (d) sidebar caption flips to "3 res · 30 fps · 18 enc".
+- **CBR mode** (Tier 2 row 2) — `BenchmarkRequest.bitrate_kbps`; FFmpeg switches from `-crf 23` to `-b:v {kbps}k -maxrate {kbps}k -bufsize {2*kbps}k`; result fields gain `bitrate_target_met: bool`.  Same UI shell + an extra knob.
+- **Concurrent stress test** (Tier 2 row 3) — extends `probe_concurrent_cap` from survivor counting to per-N throughput measurement (fps + bitrate at N=1, 2, 3, ...).  Surfaceable as a chart in the progress card.
+- **Installer hard blockers** — three small server-side patches still gate the v1 ship (config.py FLUXORA_DATA_DIR, ffmpeg_service.py FLUXORA_FFMPEG_BIN + Nuitka frozen detection, main.py __main__ launcher).  Specs in `installer/SHIP.md` §3.
+
+### Next Agent Should
+
+- **Smoke-test matrix mode** — the user's hardware (i7-9750H + integrated UHD 630 + occasional NVENC) is a great test bench since it exercises software + Intel + occasionally NVIDIA all at once.  Three-tier run should take ~3-5 minutes; watch for the progress card flickering or sticking, and confirm the history sidebar entry shows "3 res" + clicking it surfaces the full tier list in the source caption.
+- **If results table cramps at narrow widths** — the new violet resolution chip adds ~50 px per row; the encoder-name + codec-pill row was already tight on small windows.  May need a second-line layout for matrix rows on <1280 px wide windows.  Not blocking; bring up if the user's screenshot shows wrapping.
+---
