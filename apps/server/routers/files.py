@@ -16,7 +16,7 @@ from config import settings
 from database.db import get_db
 from models.media_file import MediaFileResponse
 from routers.deps import validate_token_or_local
-from services import activity_service, library_service
+from services import activity_service, group_service, library_service
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,33 @@ async def list_files(
     db: aiosqlite.Connection = Depends(get_db),
     _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> list[MediaFileResponse]:
+    """List media files, optionally filtered to one library.
+
+    Bearer-token callers (paired clients) see only files in libraries
+    their group memberships expose — v2 content-spaces visibility model.
+    When `library_id` is supplied AND the library is not in the caller's
+    visible set, return 403 (operator-supplied id; honest deny).  When no
+    `library_id` is supplied, the result is filtered to the caller's
+    visible libraries.  Localhost callers (operator's desktop CP) skip
+    the filter entirely.
+    """
+    if _client is not None:
+        visible = await group_service.get_visible_libraries(db, _client["id"])
+        if library_id is not None and library_id not in visible.library_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Library not allowed for this client's group(s)",
+            )
+        rows = await library_service.list_files(db, library_id=library_id)
+        # Files with NULL library_id (orphan uploads, pre-library-system
+        # rows) are unconditionally visible — they can't be group-gated
+        # by definition.  Same v1 behaviour.
+        return [
+            MediaFileResponse(**row)
+            for row in rows
+            if row["library_id"] is None
+            or row["library_id"] in visible.library_ids
+        ]
     rows = await library_service.list_files(db, library_id=library_id)
     return [MediaFileResponse(**row) for row in rows]
 
@@ -88,8 +115,18 @@ async def list_recent_files(
     added" rail (Phase A backfill plan §9.1).  Sorted by `created_at DESC`.
     Route is registered before `/{file_id}` so FastAPI does not treat
     "recent" as a literal id.
+
+    Bearer-token callers see only files from libraries their groups
+    expose; localhost skips the filter.
     """
     rows = await library_service.list_recent_files(db, limit=limit)
+    if _client is not None:
+        visible = await group_service.get_visible_libraries(db, _client["id"])
+        rows = [
+            r for r in rows
+            if r["library_id"] is None
+            or r["library_id"] in visible.library_ids
+        ]
     return [MediaFileResponse(**row) for row in rows]
 
 
@@ -104,8 +141,18 @@ async def search_files(
     substring match).  Backs the mobile Search tab (Phase B backfill plan
     §3 row 2).  v1 uses SQL `LIKE` per decision §5 row 1 — FTS5 is the
     v2 swap-in.  `q` is required; `limit` clamped to `[1, 50]`.
+
+    Bearer-token callers see only files from libraries their groups
+    expose; localhost skips the filter.
     """
     rows = await library_service.search_files(db, query=q, limit=limit)
+    if _client is not None:
+        visible = await group_service.get_visible_libraries(db, _client["id"])
+        rows = [
+            r for r in rows
+            if r["library_id"] is None
+            or r["library_id"] in visible.library_ids
+        ]
     return [MediaFileResponse(**row) for row in rows]
 
 
@@ -115,11 +162,25 @@ async def get_file(
     db: aiosqlite.Connection = Depends(get_db),
     _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> MediaFileResponse:
+    """Fetch a single file's metadata.
+
+    Bearer-token callers receive 404 (not 403) when the file lives in
+    a library their groups don't expose — we don't even confirm the
+    file exists, to prevent enumeration of gated content via id-guessing.
+    Localhost skips the filter.
+    """
     row = await library_service.get_file(db, file_id)
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
         )
+    if _client is not None and row["library_id"] is not None:
+        visible = await group_service.get_visible_libraries(db, _client["id"])
+        if row["library_id"] not in visible.library_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found",
+            )
     return MediaFileResponse(**row)
 
 

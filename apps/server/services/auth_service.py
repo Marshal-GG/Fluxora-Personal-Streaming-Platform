@@ -150,6 +150,24 @@ async def approve_client(
         """,
         (token_hash, now, now, client_id),
     )
+
+    # M3 of docs/10_planning/13_groups_v2_content_spaces.md — every newly-
+    # approved client auto-joins the mandatory Public group.  Without this,
+    # the v2 visibility model leaves the client with empty visible_libraries
+    # (post-migration the v1 "no-group = full-access" default no longer
+    # applies).  INSERT OR IGNORE so a repeat-approve (re-pair flow) is
+    # idempotent.  The Public group itself is created by migration 025;
+    # we don't conditionally check for it because its absence would mean
+    # the migration didn't run, which is a server-config bug, not a flow
+    # we should defensively work around.
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO group_members (group_id, client_id, added_at)
+        VALUES ('public', ?, ?)
+        """,
+        (client_id, now),
+    )
+
     await db.commit()
     logger.info("Client approved: %s", client_id)
 

@@ -13,7 +13,7 @@ from models.library import (
     UpdateLibraryBody,
 )
 from routers.deps import validate_token_or_local
-from services import activity_service, library_service
+from services import activity_service, group_service, library_service
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,15 @@ async def list_libraries(
     db: aiosqlite.Connection = Depends(get_db),
     _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> list[LibraryResponse]:
+    """List all libraries.  Localhost callers (operator's desktop CP) see
+    every row; bearer-token callers (paired clients) see only the libraries
+    their group memberships expose — per the v2 content-spaces visibility
+    model (M2 of `docs/10_planning/13_groups_v2_content_spaces.md`).
+    """
     rows = await library_service.list_libraries(db)
+    if _client is not None:
+        visible = await group_service.get_visible_libraries(db, _client["id"])
+        rows = [r for r in rows if r["id"] in visible.library_ids]
     return [_parse_library(r) for r in rows]
 
 

@@ -21,7 +21,7 @@ from models.client import (
 )
 from models.media_file import MediaFileResponse
 from routers.deps import require_local_caller, validate_token
-from services import activity_service, auth_service, library_service
+from services import activity_service, auth_service, group_service, library_service
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -84,6 +84,68 @@ async def list_clients(
             )
         )
     return ClientListResponse(clients=items, total=len(items))
+
+
+@router.get(
+    "/clients/{client_id}/visible-libraries",
+    response_model=dict,
+)
+async def view_as_visible_libraries(
+    client_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+    _local: None = Depends(require_local_caller),
+) -> dict:
+    """Operator "View as" debug surface — returns the `VisibleLibraries`
+    snapshot for a target client right now (M5 of
+    `docs/10_planning/14_groups_management_page.md`, §M7 Tier-2 of
+    `13_groups_v2_content_spaces.md`).
+
+    Localhost only — the endpoint reveals access-control state across the
+    operator's whole client base, which is operator-only data.  Not a
+    privacy leak per se (the operator already sees everything via the
+    list endpoints), but exposing it off-loopback would let a paired
+    client enumerate other clients' visibility — out of scope.
+
+    Returns the JSON-encoded `VisibleLibraries` shape:
+      * `library_ids`: list of library ids visible to the client now
+      * `groups_contributing`: map of group_id → library ids that group
+        granted (provenance for the desktop UI)
+      * `pin_locked_groups`: groups requiring PIN unlock
+      * `enrollment_required_groups`: M8 — per-client groups awaiting
+        enrollment
+      * `time_locked_groups`: groups outside their time window now
+    """
+    async with db.execute(
+        "SELECT id FROM clients WHERE id = ?", (client_id,)
+    ) as cur:
+        if await cur.fetchone() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Client not found"
+            )
+    return _serialize_visible(
+        await group_service.get_visible_libraries(db, client_id),
+        client_id,
+    )
+
+
+def _serialize_visible(visible, client_id: str) -> dict:
+    """Shared serializer for the two `visible-libraries` routes
+    (`/clients/{id}/...` localhost view-as + `/clients/me/...` mobile).
+    Keeps the response shape consistent across both surfaces."""
+    return {
+        "client_id": client_id,
+        "library_ids": sorted(visible.library_ids),
+        "groups_contributing": {
+            gid: sorted(libs)
+            for gid, libs in visible.groups_contributing.items()
+        },
+        "pin_locked_groups": sorted(visible.pin_locked_groups),
+        "enrollment_required_groups": sorted(
+            visible.enrollment_required_groups
+        ),
+        "time_locked_groups": sorted(visible.time_locked_groups),
+        "groups": list(visible.groups),
+    }
 
 
 @router.post("/request-pair", response_model=PairResponse)
@@ -222,6 +284,25 @@ async def get_me(
     )
 
 
+@router.get("/clients/me/visible-libraries", response_model=dict)
+async def get_my_visible_libraries(
+    me: aiosqlite.Row = Depends(validate_token),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> dict:
+    """Mobile-side "what does my client see right now" — same shape the
+    desktop View As tab returns, scoped to the bearer-identified client.
+
+    Powers the M6 Profile-screen "My Libraries" + "Locked Groups" +
+    "Unlocked Groups" cards.  Bearer-token only — the response is the
+    calling client's own state, not the operator-only view-across-everyone
+    that the localhost `/clients/{id}/visible-libraries` route exposes.
+    """
+    return _serialize_visible(
+        await group_service.get_visible_libraries(db, me["id"]),
+        me["id"],
+    )
+
+
 @router.get(
     "/clients/me/continue-watching",
     response_model=list[MediaFileResponse],
@@ -242,6 +323,16 @@ async def list_continue_watching(
     """
     bounded = max(1, min(50, limit))
     rows = await library_service.list_continue_watching(db, limit=bounded)
+    # v2 visibility filter (M2 of 13_groups_v2_content_spaces.md): a file
+    # the client was watching yesterday but whose library was since
+    # removed from their group's exposure shouldn't appear in the rail.
+    # Operator changed access → history follows.
+    visible = await group_service.get_visible_libraries(db, me["id"])
+    rows = [
+        r for r in rows
+        if r["library_id"] is None
+        or r["library_id"] in visible.library_ids
+    ]
     return [MediaFileResponse(**row) for row in rows]
 
 

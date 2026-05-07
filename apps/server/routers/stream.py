@@ -97,11 +97,16 @@ async def start_stream(
             status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
         )
 
-    # Enforce group restrictions (allowed libraries / time window).
-    # Bandwidth cap and max-rating are advisory in v1.
-    restrictions = await group_service.get_effective_restrictions(db, client["id"])
-    deny_reason = group_service.reason_to_deny(
-        restrictions, library_id=file_row.get("library_id")
+    # v2 stream gate (M2 of `docs/10_planning/13_groups_v2_content_spaces.md`):
+    # consult `reason_to_deny_stream` which uses the additive content-spaces
+    # model + PIN grants.  Returns the most-specific deny reason — time-
+    # window message takes priority over the generic library-not-allowed
+    # so mobile M5 routes the kid to "Outside playback hours" rather than
+    # the generic gate copy.  PIN-locked content denies with the generic
+    # message (doesn't leak existence — operator who set up the gate
+    # doesn't want a kid probing file ids to discover Adults content).
+    deny_reason = await group_service.reason_to_deny_stream(
+        db, client["id"], library_id=file_row.get("library_id")
     )
     if deny_reason:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=deny_reason)
