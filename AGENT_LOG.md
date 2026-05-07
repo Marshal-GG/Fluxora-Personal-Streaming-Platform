@@ -910,3 +910,132 @@ All four analyzers clean.
 - **Trust this audit through 2026-05-07.**  The 14 touched docs were verified consistent with what's actually in code as of this date.  After a future change run a similar audit — the recipe is: (1) `grep` for the symbol or feature you changed, (2) read each match in context, (3) update the date stamp on docs you touched.
 - **`AGENT_LOG_archive_07.md`** carries historical narrative referencing v1 stream-gate semantics ("intersection," "most restrictive").  Do NOT rewrite archive logs — they're append-only.  The narrative is correct *as a record of what was true at the time*, even if v2 has since flipped the semantic.  Future agents should rely on the active docs (system_overview, data_flows, component_architecture) for current behavior, not the archives.
 ---
+
+## [2026-05-08] — Mobile redesign audit · trending rip-out · streaming §4 leftovers · Groups M6 UX revision · DetailCubit emit-after-close
+
+**Phase:** Phase 5 — mobile-side polish round; field-feedback follow-through  
+**Status:** Complete
+
+### What was done
+
+Five interleaved threads, all on `apps/mobile` + the planning docs that own them.  Sequenced so each landed self-consistently with code + tests + canonical docs in lockstep.
+
+#### 1. `mobile_redesign_plan.md` audit + trending dropped from scope (doc-only)
+
+Re-read the plan end-to-end against the codebase.  Status banner refreshed: test count `27 → 64`, post-M9 work acknowledged (Phase A+B real-data backfill 05-04, QR scanner 05-04, player polish 05-04, seek-restart 05-05, Groups v2 mobile UX 05-07).  New "Trending dropped from scope" callout — single-tenant Fluxora has no popularity signal worth surfacing; curator-managed alternative is feature-creep.
+
+`§7 M3` row + `§14 Home / Discover` + `§14 Search` rewritten to drop the Trending rail / Trending searches chip group; replacement strategies recorded in a new **§17 "Audit findings + improvised suggestions"** at the bottom (4 subsections: 17.1 plan-vs-reality table, 17.2 trending removal + replacement strategy, 17.3 nine sharp edges with suggested fixes, 17.4 next-mobile-session priority order).
+
+#### 2. Trending rip-out (code + docs)
+
+§17.4 priority #1.  Five files, ~180 LoC delta net:
+
+- [`apps/mobile/lib/shared/data/mock_data.dart`](apps/mobile/lib/shared/data/mock_data.dart): `MockData.trending` (5 entries) + `MockData.trendingSearches` (5 entries) deleted; doc-comment header updated.
+- [`apps/mobile/lib/features/home/presentation/screens/home_screen.dart`](apps/mobile/lib/features/home/presentation/screens/home_screen.dart): `_MockRail` deleted; new `_BrowseStrip` + `_BrowseTile` + `_BrowseTileSpec` widgets render a 4-up content-type strip (Movies / Shows / Music / Documents) using `LucideIcons.{clapperboard,tv,music,fileText}` over the existing `AppGradientPlaceholders`; "Documents" maps to `?filter=files` since v1 collapsed Documents into Files.
+- [`apps/mobile/lib/features/search/presentation/screens/search_screen.dart`](apps/mobile/lib/features/search/presentation/screens/search_screen.dart): "Trending searches" eyebrow + `Wrap` chip group dropped; new "Browse — Jump into a category" header + `_browseFilters` chip group routes via `context.push(Routes.libraryWithFilter(slug))`.
+- [`apps/mobile/lib/core/router/app_router.dart`](apps/mobile/lib/core/router/app_router.dart): new `Routes.libraryWithFilter(String slug)` helper; library route builder reads `state.uri.queryParameters['filter']` and forwards to `LibraryScreen.initialFilter`.
+- [`apps/mobile/lib/features/library/presentation/screens/library_screen.dart`](apps/mobile/lib/features/library/presentation/screens/library_screen.dart): `LibraryScreen` accepts `initialFilter: String?`; new top-level `_filterFromSlug(String?)` maps slug → `_LibraryFilter` (`movies` / `shows` / `music` / `files`; anything else → `all`); `_LibraryBodyState._filter` seeds from the slug.
+
+64 mobile tests still pass.  No new mobile tests added (the shape change is a swap-out — the existing mock data wasn't covered by tests, and the chip/strip render is a thin wrapper over `FluxSectionHeader` + `ListView`).
+
+#### 3. Streaming pipeline §4 leftovers (code + docs + tests)
+
+User-pick out of three options.  Closed §4.3 + §4.10; explicitly deferred §4.5 (needs spawn-loop refactor) + §4.7 (low priority); §4.8 closed as a no-op (existence check at line 633-635 of [`ffmpeg_service.py`](apps/server/services/ffmpeg_service.py) already short-circuits the regen — original triage's "redundant ffprobe + ffmpeg subprocess" claim was a misread).
+
+§4.3 worker-pinning: [`apps/server/routers/stream.py`](apps/server/routers/stream.py) `serve_hls` segment-wait loop tightened from 50 iterations × 100 ms (5 s) → 20 iterations × 100 ms (2 s).  Doc-comment expanded with the seek-restart-changes-the-budget rationale.  Three concurrent seekers used to chew 15 worker-seconds; now ≤6.  Response stays 404 (compatible with media_kit's existing retry path; 503+Retry-After deferred).
+
+§4.10 "Start over": end-to-end.
+
+- New server route `POST /api/v1/files/{file_id}/reset-progress` in [`apps/server/routers/files.py`](apps/server/routers/files.py).  Same visibility check `get_file` uses (404 — not 403 — when caller's groups don't expose the file's library, to prevent id-enumeration of gated content).  Localhost callers skip the visibility filter.  Returns 204; updates `last_progress_sec = 0` + bumps `updated_at`.
+- New `Endpoints.fileResetProgress(fileId)` in [`packages/fluxora_core/lib/network/endpoints.dart`](packages/fluxora_core/lib/network/endpoints.dart).
+- `LibraryRepository.resetProgress(String)` interface method + impl ([`apps/mobile/lib/features/library/{domain,data}/...`](apps/mobile/lib/features/library)).
+- Mobile [`detail_screen.dart`](apps/mobile/lib/features/detail/presentation/screens/detail_screen.dart) `_PrimaryActions` row: when `file.resumeSec > 0`, renders a secondary "Start over" `FluxButton` next to "Resume".  Tap → `AlertDialog` confirm ("Start over?", quotes the file title) → `resetProgress` → cubit reload → "Progress reset." `SnackBar`.  Failure path shows "Could not reset progress." `SnackBar`; cubit state stays as-is.  Build-context refs (cubit + messenger) captured pre-await for `use_build_context_synchronously` cleanliness.
+- 4 new server tests in [`tests/test_files.py`](apps/server/tests/test_files.py): zero-out happy path, 404 on unknown file, localhost skips visibility, 404 when library not visible (mocks `services.group_service.get_visible_libraries` empty + sets `CF-Connecting-IP: 203.0.113.1` to bypass the loopback dep shortcut so the bearer token path actually fires).  Server suite **637 → 641 passing**.
+
+[`docs/04_api/01_api_contracts.md`](docs/04_api/01_api_contracts.md) gained the new endpoint section + status-banner stamp.  [`docs/10_planning/11_streaming_pipeline_issues.md`](docs/10_planning/11_streaming_pipeline_issues.md) §4.3 / §4.5 / §4.7 / §4.8 / §4.10 statuses all flipped (✅ shipped / ⏸ deferred / ✅ no-op); new **§10 Close-out** summary block at the bottom.
+
+#### 4. Groups M6 UX revision — field report response
+
+User on Android device: *"there is no way to see how many groups i am part of and where to enter pin?"*  Investigated.
+
+Root cause: the original M6 layout (shipped 2026-05-07) rendered three filtered cards (Locked / Unlocked / Visible Libraries) and **self-hid the entire section** when all three filtered lists were empty.  The "Locked" card only contained groups in state `requires_pin && !is_unlocked`.  A client only in Public (the typical fresh-pair state) → section completely hidden, no path to PIN entry, no membership indicator.  The server side was already returning every membership in `groups_meta` (line 1135-1154 of [`group_service.py`](apps/server/services/group_service.py)), but the mobile UI was filtering most of them out before render.
+
+Fix: rewrite [`apps/mobile/lib/features/groups/presentation/widgets/groups_section.dart`](apps/mobile/lib/features/groups/presentation/widgets/groups_section.dart) to consolidate the Locked + Unlocked cards into a single **"My groups (N)"** card that always renders when the client is in any group.  Each row carries a state badge (`LOCKED` / `UNLOCKED` / `OPEN`); rows sort `Locked → Unlocked → Open`; tapping a Locked row opens the existing PIN entry / enrollment sheet; Unlocked rows keep the "Lock" text-button; Open rows are informational only.  "Lock all" still surfaces in the trailing slot when 2+ unlocked.  Visible Libraries card unchanged.  Section now self-hides only when groups + libraryIds are both empty.
+
+New helpers introduced inside the widget file: `_MembershipKind` enum + extension on `MobileGroupRow`; `_MembershipsCard`, `_MembershipRow`, `_StateBadge`, `_RowAction` widgets.  Old `_LockedGroupsCard`, `_UnlockedGroupsCard`, `_LockedGroupRow`, `_UnlockedGroupRow` deleted.  `_GroupAvatar`, `_LoadingShell`, `_FailureShell`, `_VisibleLibrariesCard`, `_LibraryRow`, `_SectionCard`, `_formatExpires` preserved unchanged.
+
+[`docs/10_planning/13_groups_v2_content_spaces.md`](docs/10_planning/13_groups_v2_content_spaces.md) §M6 gained a "UX revision 2026-05-08" subsection capturing the field report quote and the redesign rationale.
+
+#### 5. `DetailCubit` emit-after-close — same field log
+
+The Android log paste also showed `Bad state: Cannot emit new states after calling close` from `DetailCubit.load`.  Cubit closed when user navigated back from a Detail screen; in-flight `getFile()` resolved afterwards; `emit` raised.  Same lifecycle hazard already documented in the gotcha at line 421 of [`docs/12_guidelines/03_gotchas.md`](docs/12_guidelines/03_gotchas.md).
+
+Fix: added the same `if (isClosed) return;` `emit` override `MobileGroupsCubit` already had ([`apps/mobile/lib/features/detail/presentation/cubit/detail_cubit.dart`](apps/mobile/lib/features/detail/presentation/cubit/detail_cubit.dart)).  Gotcha entry's "cubits with the override" list extended to mention `DetailCubit`; remaining mobile cubits (`ProfileCubit`, `ProfileStatsCubit`, `RecentCubit`, `ContinueWatchingCubit`, `NotificationsCubit`, `SearchCubit`, `LibraryBloc`, `PlayerCubit`) flagged for the same one-line treatment when next touched.
+
+### Files modified
+
+#### Code
+| File | Why |
+|---|---|
+| `apps/server/routers/stream.py` | §4.3 wait-loop tightened 5 s → 2 s |
+| `apps/server/routers/files.py` | §4.10 new `POST /{file_id}/reset-progress` route |
+| `apps/server/tests/test_files.py` | +4 reset-progress tests |
+| `packages/fluxora_core/lib/network/endpoints.dart` | new `Endpoints.fileResetProgress(fileId)` |
+| `apps/mobile/lib/features/library/domain/repositories/library_repository.dart` | new `resetProgress(String)` method |
+| `apps/mobile/lib/features/library/data/repositories/library_repository_impl.dart` | impl |
+| `apps/mobile/lib/features/detail/presentation/screens/detail_screen.dart` | "Start over" secondary button + AlertDialog + SnackBar paths |
+| `apps/mobile/lib/features/detail/presentation/cubit/detail_cubit.dart` | `emit` override against post-close |
+| `apps/mobile/lib/shared/data/mock_data.dart` | dropped `MockData.trending` + `MockData.trendingSearches`; doc-header updated |
+| `apps/mobile/lib/features/home/presentation/screens/home_screen.dart` | `_MockRail` → `_BrowseStrip` + `_BrowseTile` + `_BrowseTileSpec` |
+| `apps/mobile/lib/features/search/presentation/screens/search_screen.dart` | "Trending searches" → "Browse" chip group |
+| `apps/mobile/lib/core/router/app_router.dart` | new `Routes.libraryWithFilter(slug)` + library-route reads `?filter=` |
+| `apps/mobile/lib/features/library/presentation/screens/library_screen.dart` | `initialFilter` String? param + `_filterFromSlug` helper |
+| `apps/mobile/lib/features/groups/presentation/widgets/groups_section.dart` | Locked + Unlocked cards collapsed into "My groups (N)" card with state badges |
+
+#### Docs
+| File | Why |
+|---|---|
+| `docs/00_overview/current_status.md` | mobile + server lines refreshed; server count 637 → 641 |
+| `docs/04_api/01_api_contracts.md` | new reset-progress endpoint section + status-banner stamp |
+| `docs/08_frontend/01_frontend_architecture.md` | mobile features tree updated (home / search / library / detail / groups); status-banner stamp |
+| `docs/10_planning/08_real_data_backfill_plan.md` | Phase F status flipped to ✅ ripped 2026-05-08; status-banner refreshed |
+| `docs/10_planning/11_streaming_pipeline_issues.md` | §4.3 / §4.5 / §4.7 / §4.8 / §4.10 statuses + new §10 close-out |
+| `docs/10_planning/13_groups_v2_content_spaces.md` | §M6 "UX revision 2026-05-08" subsection |
+| `docs/11_design/mobile_redesign_plan.md` | status banner; §7 M3 row; §14 Home + Search per-screen specs; new §17 audit + improvised suggestions; changelog |
+| `docs/12_guidelines/03_gotchas.md` | "Cubits with the override" list extended (`DetailCubit` added) |
+| `AGENT_LOG.md` | this entry |
+
+### Files NOT modified (deliberately)
+
+- `01_product/*`, `02_architecture/*`, `06_security/*`, `09_backend/*`, `05_infrastructure/*` — none reference the touched surfaces (trending rail / start-over / groups card layout / segment-wait timeout).
+- Prototype source under `docs/11_design/prototype/*` — frozen reference snapshots, not living docs.
+- `AGENT_LOG_archive_*.md` — append-only.
+
+### Test counts (re-baselined)
+
+- **Server: 641 passing** (+4 from §4.10 reset-progress)
+- **Mobile: 64 passing** (no churn — UI changes weren't covered by tests, existing cubit tests still pass)
+- **Desktop: 90 passing** (untouched)
+- **Core: 8 passing** (untouched)
+
+`flutter analyze` clean × `apps/mobile` + `apps/desktop` + `packages/fluxora_core`.
+
+### Discoveries / sharp edges flagged
+
+Recorded in [`docs/11_design/mobile_redesign_plan.md`](docs/11_design/mobile_redesign_plan.md) §17.3 (9 items, 2 of which were fixed in this session — items 10 and 11 added during the field-report follow-through).  Highlights for next agents:
+
+1. **iOS PIP missing** — `media_kit` MPV doesn't bridge to `AVPictureInPictureController`.  Two paths (swap backend on iOS / custom AVPlayerLayer surface).
+2. **Profile data is hardcoded** — `/api/v1/profile` is the operator profile, not per-paired-client.  Suggested fix: new `GET /auth/clients/me/profile` endpoint.
+3. **Sign-out doesn't revoke server-side** — clears local state only.  Add `POST /auth/sessions/me/revoke` call before clearing.
+4. **Continue-watching has no empty state** — falls back to mock when endpoint returns `[]`.  Fix: render a CTA card.
+5. **`background_gradient.dart` repaints unnecessarily** — wrap in `RepaintBoundary`.
+6. **§17.3 #11 follow-up** — sweep `ProfileCubit`, `ProfileStatsCubit`, `RecentCubit`, `ContinueWatchingCubit`, `NotificationsCubit`, `SearchCubit`, `LibraryBloc`, `PlayerCubit` for the same emit-after-close pattern.  One line each.
+
+### Next agent should
+
+1. **Smoke-test the "My groups" card on the user's Android device.** Hot-restart should now show every group membership with state badges; tap on any LOCKED row should open the PIN entry sheet.  If the card still doesn't appear, the first thing to check is whether `MobileGroupsCubit.load()` is succeeding — check device logs for `Mobile groups load failed`.
+2. **Pick from §17.4 priority list:** #2 is M10 (X-Ray panel + Group Watch shell + Offline state) — 1–2 sessions, three new mobile screens.  #3 is the Profile real-data endpoint (§17.3 #2) — single session, narrow surface.  #4 is iOS PIP — separate ticket scope.
+3. **Streaming §4.5 fix when scope opens up** — needs an FFmpeg-natural-exit hook in the spawn loop that finalises the static VOD playlist with the actually-observed segment count.  Doc note in §4.5 sketches the fix shape (`_finalize_vod_playlist(session_dir)` scanning seg files + rewriting playlist).  Touches the just-shipped seek-restart code, so worth doing alongside any other ffmpeg_service refactor.
+4. **Mobile cubit emit-after-close sweep** — gotchas.md §"Cubits in this codebase that have the override" lists the remaining mobile cubits.  One-line override on each.  Test impact zero (the guard is invisible to existing tests).
+5. **Log rotation:** `AGENT_LOG.md` is at ~1100 lines after this entry — close to the rotation policy threshold.  Next non-trivial session should consider archiving to `docs/logs/AGENT_LOG_archive_09.md`.
+---
