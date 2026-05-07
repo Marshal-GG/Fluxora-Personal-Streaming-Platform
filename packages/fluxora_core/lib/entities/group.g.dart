@@ -52,6 +52,17 @@ _Group _$GroupFromJson(Map<String, dynamic> json) => _Group(
       : GroupRestrictions.fromJson(
           json['restrictions'] as Map<String, dynamic>,
         ),
+  isPublic: json['is_public'] as bool? ?? false,
+  requiresPin: json['requires_pin'] as bool? ?? false,
+  pinMode:
+      $enumDecodeNullable(_$PinModeEnumMap, json['pin_mode']) ??
+      PinMode.session,
+  pinModel:
+      $enumDecodeNullable(_$PinModelEnumMap, json['pin_model']) ??
+      PinModel.shared,
+  icon: json['icon'] as String?,
+  color: json['color'] as String?,
+  maxConcurrentStreams: (json['max_concurrent_streams'] as num?)?.toInt(),
 );
 
 Map<String, dynamic> _$GroupToJson(_Group instance) => <String, dynamic>{
@@ -63,11 +74,28 @@ Map<String, dynamic> _$GroupToJson(_Group instance) => <String, dynamic>{
   'updated_at': instance.updatedAt,
   'member_count': instance.memberCount,
   'restrictions': instance.restrictions?.toJson(),
+  'is_public': instance.isPublic,
+  'requires_pin': instance.requiresPin,
+  'pin_mode': _$PinModeEnumMap[instance.pinMode]!,
+  'pin_model': _$PinModelEnumMap[instance.pinModel]!,
+  'icon': instance.icon,
+  'color': instance.color,
+  'max_concurrent_streams': instance.maxConcurrentStreams,
 };
 
 const _$GroupStatusEnumMap = {
   GroupStatus.active: 'active',
   GroupStatus.inactive: 'inactive',
+};
+
+const _$PinModeEnumMap = {
+  PinMode.session: 'session',
+  PinMode.perEntry: 'per-entry',
+};
+
+const _$PinModelEnumMap = {
+  PinModel.shared: 'shared',
+  PinModel.perClient: 'per-client',
 };
 
 _GroupSummary _$GroupSummaryFromJson(Map<String, dynamic> json) =>

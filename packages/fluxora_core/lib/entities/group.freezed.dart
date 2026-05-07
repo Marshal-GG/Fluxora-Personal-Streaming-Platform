@@ -594,7 +594,11 @@ $TimeWindowCopyWith<$Res>? get timeWindow {
 /// @nodoc
 mixin _$Group {
 
- String get id; String get name; String? get description; GroupStatus get status; String get createdAt; String get updatedAt; int get memberCount; GroupRestrictions? get restrictions;
+ String get id; String get name; String? get description; GroupStatus get status; String get createdAt; String get updatedAt; int get memberCount; GroupRestrictions? get restrictions;/// v2 content-spaces fields (server migration 025).  All defaulted
+/// so a desktop binary built against an older server still parses
+/// the response shape.  See
+/// `docs/10_planning/13_groups_v2_content_spaces.md`.
+@JsonKey(name: 'is_public') bool get isPublic;@JsonKey(name: 'requires_pin') bool get requiresPin;@JsonKey(name: 'pin_mode') PinMode get pinMode;@JsonKey(name: 'pin_model') PinModel get pinModel; String? get icon; String? get color;@JsonKey(name: 'max_concurrent_streams') int? get maxConcurrentStreams;
 /// Create a copy of Group
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -607,16 +611,16 @@ $GroupCopyWith<Group> get copyWith => _$GroupCopyWithImpl<Group>(this as Group, 
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is Group&&(identical(other.id, id) || other.id == id)&&(identical(other.name, name) || other.name == name)&&(identical(other.description, description) || other.description == description)&&(identical(other.status, status) || other.status == status)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt)&&(identical(other.memberCount, memberCount) || other.memberCount == memberCount)&&(identical(other.restrictions, restrictions) || other.restrictions == restrictions));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is Group&&(identical(other.id, id) || other.id == id)&&(identical(other.name, name) || other.name == name)&&(identical(other.description, description) || other.description == description)&&(identical(other.status, status) || other.status == status)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt)&&(identical(other.memberCount, memberCount) || other.memberCount == memberCount)&&(identical(other.restrictions, restrictions) || other.restrictions == restrictions)&&(identical(other.isPublic, isPublic) || other.isPublic == isPublic)&&(identical(other.requiresPin, requiresPin) || other.requiresPin == requiresPin)&&(identical(other.pinMode, pinMode) || other.pinMode == pinMode)&&(identical(other.pinModel, pinModel) || other.pinModel == pinModel)&&(identical(other.icon, icon) || other.icon == icon)&&(identical(other.color, color) || other.color == color)&&(identical(other.maxConcurrentStreams, maxConcurrentStreams) || other.maxConcurrentStreams == maxConcurrentStreams));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,name,description,status,createdAt,updatedAt,memberCount,restrictions);
+int get hashCode => Object.hash(runtimeType,id,name,description,status,createdAt,updatedAt,memberCount,restrictions,isPublic,requiresPin,pinMode,pinModel,icon,color,maxConcurrentStreams);
 
 @override
 String toString() {
-  return 'Group(id: $id, name: $name, description: $description, status: $status, createdAt: $createdAt, updatedAt: $updatedAt, memberCount: $memberCount, restrictions: $restrictions)';
+  return 'Group(id: $id, name: $name, description: $description, status: $status, createdAt: $createdAt, updatedAt: $updatedAt, memberCount: $memberCount, restrictions: $restrictions, isPublic: $isPublic, requiresPin: $requiresPin, pinMode: $pinMode, pinModel: $pinModel, icon: $icon, color: $color, maxConcurrentStreams: $maxConcurrentStreams)';
 }
 
 
@@ -627,7 +631,7 @@ abstract mixin class $GroupCopyWith<$Res>  {
   factory $GroupCopyWith(Group value, $Res Function(Group) _then) = _$GroupCopyWithImpl;
 @useResult
 $Res call({
- String id, String name, String? description, GroupStatus status, String createdAt, String updatedAt, int memberCount, GroupRestrictions? restrictions
+ String id, String name, String? description, GroupStatus status, String createdAt, String updatedAt, int memberCount, GroupRestrictions? restrictions,@JsonKey(name: 'is_public') bool isPublic,@JsonKey(name: 'requires_pin') bool requiresPin,@JsonKey(name: 'pin_mode') PinMode pinMode,@JsonKey(name: 'pin_model') PinModel pinModel, String? icon, String? color,@JsonKey(name: 'max_concurrent_streams') int? maxConcurrentStreams
 });
 
 
@@ -644,7 +648,7 @@ class _$GroupCopyWithImpl<$Res>
 
 /// Create a copy of Group
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? name = null,Object? description = freezed,Object? status = null,Object? createdAt = null,Object? updatedAt = null,Object? memberCount = null,Object? restrictions = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? name = null,Object? description = freezed,Object? status = null,Object? createdAt = null,Object? updatedAt = null,Object? memberCount = null,Object? restrictions = freezed,Object? isPublic = null,Object? requiresPin = null,Object? pinMode = null,Object? pinModel = null,Object? icon = freezed,Object? color = freezed,Object? maxConcurrentStreams = freezed,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
@@ -654,7 +658,14 @@ as GroupStatus,createdAt: null == createdAt ? _self.createdAt : createdAt // ign
 as String,updatedAt: null == updatedAt ? _self.updatedAt : updatedAt // ignore: cast_nullable_to_non_nullable
 as String,memberCount: null == memberCount ? _self.memberCount : memberCount // ignore: cast_nullable_to_non_nullable
 as int,restrictions: freezed == restrictions ? _self.restrictions : restrictions // ignore: cast_nullable_to_non_nullable
-as GroupRestrictions?,
+as GroupRestrictions?,isPublic: null == isPublic ? _self.isPublic : isPublic // ignore: cast_nullable_to_non_nullable
+as bool,requiresPin: null == requiresPin ? _self.requiresPin : requiresPin // ignore: cast_nullable_to_non_nullable
+as bool,pinMode: null == pinMode ? _self.pinMode : pinMode // ignore: cast_nullable_to_non_nullable
+as PinMode,pinModel: null == pinModel ? _self.pinModel : pinModel // ignore: cast_nullable_to_non_nullable
+as PinModel,icon: freezed == icon ? _self.icon : icon // ignore: cast_nullable_to_non_nullable
+as String?,color: freezed == color ? _self.color : color // ignore: cast_nullable_to_non_nullable
+as String?,maxConcurrentStreams: freezed == maxConcurrentStreams ? _self.maxConcurrentStreams : maxConcurrentStreams // ignore: cast_nullable_to_non_nullable
+as int?,
   ));
 }
 /// Create a copy of Group
@@ -751,10 +762,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String name,  String? description,  GroupStatus status,  String createdAt,  String updatedAt,  int memberCount,  GroupRestrictions? restrictions)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String id,  String name,  String? description,  GroupStatus status,  String createdAt,  String updatedAt,  int memberCount,  GroupRestrictions? restrictions, @JsonKey(name: 'is_public')  bool isPublic, @JsonKey(name: 'requires_pin')  bool requiresPin, @JsonKey(name: 'pin_mode')  PinMode pinMode, @JsonKey(name: 'pin_model')  PinModel pinModel,  String? icon,  String? color, @JsonKey(name: 'max_concurrent_streams')  int? maxConcurrentStreams)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _Group() when $default != null:
-return $default(_that.id,_that.name,_that.description,_that.status,_that.createdAt,_that.updatedAt,_that.memberCount,_that.restrictions);case _:
+return $default(_that.id,_that.name,_that.description,_that.status,_that.createdAt,_that.updatedAt,_that.memberCount,_that.restrictions,_that.isPublic,_that.requiresPin,_that.pinMode,_that.pinModel,_that.icon,_that.color,_that.maxConcurrentStreams);case _:
   return orElse();
 
 }
@@ -772,10 +783,10 @@ return $default(_that.id,_that.name,_that.description,_that.status,_that.created
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String name,  String? description,  GroupStatus status,  String createdAt,  String updatedAt,  int memberCount,  GroupRestrictions? restrictions)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String id,  String name,  String? description,  GroupStatus status,  String createdAt,  String updatedAt,  int memberCount,  GroupRestrictions? restrictions, @JsonKey(name: 'is_public')  bool isPublic, @JsonKey(name: 'requires_pin')  bool requiresPin, @JsonKey(name: 'pin_mode')  PinMode pinMode, @JsonKey(name: 'pin_model')  PinModel pinModel,  String? icon,  String? color, @JsonKey(name: 'max_concurrent_streams')  int? maxConcurrentStreams)  $default,) {final _that = this;
 switch (_that) {
 case _Group():
-return $default(_that.id,_that.name,_that.description,_that.status,_that.createdAt,_that.updatedAt,_that.memberCount,_that.restrictions);case _:
+return $default(_that.id,_that.name,_that.description,_that.status,_that.createdAt,_that.updatedAt,_that.memberCount,_that.restrictions,_that.isPublic,_that.requiresPin,_that.pinMode,_that.pinModel,_that.icon,_that.color,_that.maxConcurrentStreams);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -792,10 +803,10 @@ return $default(_that.id,_that.name,_that.description,_that.status,_that.created
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String name,  String? description,  GroupStatus status,  String createdAt,  String updatedAt,  int memberCount,  GroupRestrictions? restrictions)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String id,  String name,  String? description,  GroupStatus status,  String createdAt,  String updatedAt,  int memberCount,  GroupRestrictions? restrictions, @JsonKey(name: 'is_public')  bool isPublic, @JsonKey(name: 'requires_pin')  bool requiresPin, @JsonKey(name: 'pin_mode')  PinMode pinMode, @JsonKey(name: 'pin_model')  PinModel pinModel,  String? icon,  String? color, @JsonKey(name: 'max_concurrent_streams')  int? maxConcurrentStreams)?  $default,) {final _that = this;
 switch (_that) {
 case _Group() when $default != null:
-return $default(_that.id,_that.name,_that.description,_that.status,_that.createdAt,_that.updatedAt,_that.memberCount,_that.restrictions);case _:
+return $default(_that.id,_that.name,_that.description,_that.status,_that.createdAt,_that.updatedAt,_that.memberCount,_that.restrictions,_that.isPublic,_that.requiresPin,_that.pinMode,_that.pinModel,_that.icon,_that.color,_that.maxConcurrentStreams);case _:
   return null;
 
 }
@@ -807,7 +818,7 @@ return $default(_that.id,_that.name,_that.description,_that.status,_that.created
 @JsonSerializable()
 
 class _Group implements Group {
-  const _Group({required this.id, required this.name, this.description, required this.status, required this.createdAt, required this.updatedAt, this.memberCount = 0, this.restrictions});
+  const _Group({required this.id, required this.name, this.description, required this.status, required this.createdAt, required this.updatedAt, this.memberCount = 0, this.restrictions, @JsonKey(name: 'is_public') this.isPublic = false, @JsonKey(name: 'requires_pin') this.requiresPin = false, @JsonKey(name: 'pin_mode') this.pinMode = PinMode.session, @JsonKey(name: 'pin_model') this.pinModel = PinModel.shared, this.icon, this.color, @JsonKey(name: 'max_concurrent_streams') this.maxConcurrentStreams});
   factory _Group.fromJson(Map<String, dynamic> json) => _$GroupFromJson(json);
 
 @override final  String id;
@@ -818,6 +829,17 @@ class _Group implements Group {
 @override final  String updatedAt;
 @override@JsonKey() final  int memberCount;
 @override final  GroupRestrictions? restrictions;
+/// v2 content-spaces fields (server migration 025).  All defaulted
+/// so a desktop binary built against an older server still parses
+/// the response shape.  See
+/// `docs/10_planning/13_groups_v2_content_spaces.md`.
+@override@JsonKey(name: 'is_public') final  bool isPublic;
+@override@JsonKey(name: 'requires_pin') final  bool requiresPin;
+@override@JsonKey(name: 'pin_mode') final  PinMode pinMode;
+@override@JsonKey(name: 'pin_model') final  PinModel pinModel;
+@override final  String? icon;
+@override final  String? color;
+@override@JsonKey(name: 'max_concurrent_streams') final  int? maxConcurrentStreams;
 
 /// Create a copy of Group
 /// with the given fields replaced by the non-null parameter values.
@@ -832,16 +854,16 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Group&&(identical(other.id, id) || other.id == id)&&(identical(other.name, name) || other.name == name)&&(identical(other.description, description) || other.description == description)&&(identical(other.status, status) || other.status == status)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt)&&(identical(other.memberCount, memberCount) || other.memberCount == memberCount)&&(identical(other.restrictions, restrictions) || other.restrictions == restrictions));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is _Group&&(identical(other.id, id) || other.id == id)&&(identical(other.name, name) || other.name == name)&&(identical(other.description, description) || other.description == description)&&(identical(other.status, status) || other.status == status)&&(identical(other.createdAt, createdAt) || other.createdAt == createdAt)&&(identical(other.updatedAt, updatedAt) || other.updatedAt == updatedAt)&&(identical(other.memberCount, memberCount) || other.memberCount == memberCount)&&(identical(other.restrictions, restrictions) || other.restrictions == restrictions)&&(identical(other.isPublic, isPublic) || other.isPublic == isPublic)&&(identical(other.requiresPin, requiresPin) || other.requiresPin == requiresPin)&&(identical(other.pinMode, pinMode) || other.pinMode == pinMode)&&(identical(other.pinModel, pinModel) || other.pinModel == pinModel)&&(identical(other.icon, icon) || other.icon == icon)&&(identical(other.color, color) || other.color == color)&&(identical(other.maxConcurrentStreams, maxConcurrentStreams) || other.maxConcurrentStreams == maxConcurrentStreams));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
-int get hashCode => Object.hash(runtimeType,id,name,description,status,createdAt,updatedAt,memberCount,restrictions);
+int get hashCode => Object.hash(runtimeType,id,name,description,status,createdAt,updatedAt,memberCount,restrictions,isPublic,requiresPin,pinMode,pinModel,icon,color,maxConcurrentStreams);
 
 @override
 String toString() {
-  return 'Group(id: $id, name: $name, description: $description, status: $status, createdAt: $createdAt, updatedAt: $updatedAt, memberCount: $memberCount, restrictions: $restrictions)';
+  return 'Group(id: $id, name: $name, description: $description, status: $status, createdAt: $createdAt, updatedAt: $updatedAt, memberCount: $memberCount, restrictions: $restrictions, isPublic: $isPublic, requiresPin: $requiresPin, pinMode: $pinMode, pinModel: $pinModel, icon: $icon, color: $color, maxConcurrentStreams: $maxConcurrentStreams)';
 }
 
 
@@ -852,7 +874,7 @@ abstract mixin class _$GroupCopyWith<$Res> implements $GroupCopyWith<$Res> {
   factory _$GroupCopyWith(_Group value, $Res Function(_Group) _then) = __$GroupCopyWithImpl;
 @override @useResult
 $Res call({
- String id, String name, String? description, GroupStatus status, String createdAt, String updatedAt, int memberCount, GroupRestrictions? restrictions
+ String id, String name, String? description, GroupStatus status, String createdAt, String updatedAt, int memberCount, GroupRestrictions? restrictions,@JsonKey(name: 'is_public') bool isPublic,@JsonKey(name: 'requires_pin') bool requiresPin,@JsonKey(name: 'pin_mode') PinMode pinMode,@JsonKey(name: 'pin_model') PinModel pinModel, String? icon, String? color,@JsonKey(name: 'max_concurrent_streams') int? maxConcurrentStreams
 });
 
 
@@ -869,7 +891,7 @@ class __$GroupCopyWithImpl<$Res>
 
 /// Create a copy of Group
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? name = null,Object? description = freezed,Object? status = null,Object? createdAt = null,Object? updatedAt = null,Object? memberCount = null,Object? restrictions = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? name = null,Object? description = freezed,Object? status = null,Object? createdAt = null,Object? updatedAt = null,Object? memberCount = null,Object? restrictions = freezed,Object? isPublic = null,Object? requiresPin = null,Object? pinMode = null,Object? pinModel = null,Object? icon = freezed,Object? color = freezed,Object? maxConcurrentStreams = freezed,}) {
   return _then(_Group(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
@@ -879,7 +901,14 @@ as GroupStatus,createdAt: null == createdAt ? _self.createdAt : createdAt // ign
 as String,updatedAt: null == updatedAt ? _self.updatedAt : updatedAt // ignore: cast_nullable_to_non_nullable
 as String,memberCount: null == memberCount ? _self.memberCount : memberCount // ignore: cast_nullable_to_non_nullable
 as int,restrictions: freezed == restrictions ? _self.restrictions : restrictions // ignore: cast_nullable_to_non_nullable
-as GroupRestrictions?,
+as GroupRestrictions?,isPublic: null == isPublic ? _self.isPublic : isPublic // ignore: cast_nullable_to_non_nullable
+as bool,requiresPin: null == requiresPin ? _self.requiresPin : requiresPin // ignore: cast_nullable_to_non_nullable
+as bool,pinMode: null == pinMode ? _self.pinMode : pinMode // ignore: cast_nullable_to_non_nullable
+as PinMode,pinModel: null == pinModel ? _self.pinModel : pinModel // ignore: cast_nullable_to_non_nullable
+as PinModel,icon: freezed == icon ? _self.icon : icon // ignore: cast_nullable_to_non_nullable
+as String?,color: freezed == color ? _self.color : color // ignore: cast_nullable_to_non_nullable
+as String?,maxConcurrentStreams: freezed == maxConcurrentStreams ? _self.maxConcurrentStreams : maxConcurrentStreams // ignore: cast_nullable_to_non_nullable
+as int?,
   ));
 }
 

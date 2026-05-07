@@ -10,6 +10,29 @@ enum GroupStatus {
   inactive,
 }
 
+/// PIN-mode on a gated group — `session` issues 12 h grants on unlock,
+/// `perEntry` issues 5 min grants for adult / sensitive content where
+/// every navigation should re-PIN.  Wire format mirrors the server enum
+/// (`'session'` / `'per-entry'`).
+enum PinMode {
+  @JsonValue('session')
+  session,
+  @JsonValue('per-entry')
+  perEntry,
+}
+
+/// Hybrid-PIN model on a gated group (M8).  `shared` is one PIN per
+/// group, every member uses the same secret (M4 default behavior).
+/// `perClient` is per-member device enrollment — each client sets and
+/// remembers its own PIN; compromise blast radius is one device.  Wire
+/// format mirrors the server enum (`'shared'` / `'per-client'`).
+enum PinModel {
+  @JsonValue('shared')
+  shared,
+  @JsonValue('per-client')
+  perClient,
+}
+
 @freezed
 abstract class TimeWindow with _$TimeWindow {
   const factory TimeWindow({
@@ -46,6 +69,18 @@ abstract class Group with _$Group {
     required String updatedAt,
     @Default(0) int memberCount,
     GroupRestrictions? restrictions,
+
+    /// v2 content-spaces fields (server migration 025).  All defaulted
+    /// so a desktop binary built against an older server still parses
+    /// the response shape.  See
+    /// `docs/10_planning/13_groups_v2_content_spaces.md`.
+    @Default(false) @JsonKey(name: 'is_public') bool isPublic,
+    @Default(false) @JsonKey(name: 'requires_pin') bool requiresPin,
+    @Default(PinMode.session) @JsonKey(name: 'pin_mode') PinMode pinMode,
+    @Default(PinModel.shared) @JsonKey(name: 'pin_model') PinModel pinModel,
+    String? icon,
+    String? color,
+    @JsonKey(name: 'max_concurrent_streams') int? maxConcurrentStreams,
   }) = _Group;
 
   factory Group.fromJson(Map<String, dynamic> json) => _$GroupFromJson(json);

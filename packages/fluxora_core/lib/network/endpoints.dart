@@ -70,6 +70,39 @@ class Endpoints {
   static String groupMembers(String id) => '$_base/groups/$id/members';
   static String groupMember(String groupId, String clientId) =>
       '$_base/groups/$groupId/members/$clientId';
+  // M8 — clear a member's per-client PIN enrollment (operator action,
+  // localhost-only on the server).  Forces re-enrollment on next access.
+  static String groupMemberPin(String groupId, String clientId) =>
+      '$_base/groups/$groupId/members/$clientId/pin';
+  // M5 of `14_groups_management_page.md` — operator "View as" debug.
+  // Localhost-only on the server.
+  static String authClientVisibleLibraries(String clientId) =>
+      '$_base/auth/clients/$clientId/visible-libraries';
+  // M7 follow-up — bulk drop every active PIN grant for a group
+  // (shared-mode "Reset all PINs" Danger Zone action).  Localhost-only.
+  static String groupGrantsReset(String groupId) =>
+      '$_base/groups/$groupId/grants/reset';
+
+  // Mobile PIN-flow endpoints (M4 + M8 of
+  // `13_groups_v2_content_spaces.md`).  Bearer-token only — the calling
+  // client is the grant subject; operator-side master-override is a
+  // separate localhost route.
+  static String groupEnter(String groupId) =>
+      '$_base/groups/$groupId/enter';
+  static String groupEnroll(String groupId) =>
+      '$_base/groups/$groupId/enroll';
+  static String groupEnrollChange(String groupId) =>
+      '$_base/groups/$groupId/enroll/change';
+  static String groupGrant(String groupId) =>
+      '$_base/groups/$groupId/grant';
+  static String groupGrantStatus(String groupId) =>
+      '$_base/groups/$groupId/grant-status';
+  // Mobile-side "what does my client see right now" — same VisibleLibraries
+  // shape the desktop View As tab uses, but scoped to the calling
+  // client (no `client_id` path segment, the bearer identity drives it).
+  // M6 of `13_groups_v2_content_spaces.md` Profile-screen polish.
+  static const String authClientsMeVisibleLibraries =
+      '$_base/auth/clients/me/visible-libraries';
 
   // Transcoding status
   static const String transcodingStatus = '$_base/transcoding/status';
