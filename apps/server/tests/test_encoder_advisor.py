@@ -8,10 +8,9 @@ from unittest.mock import patch
 import pytest
 from httpx import AsyncClient
 
-from services import encoder_advisor, transcoding_service
+from services import transcoding_service
 from services.encoder_advisor import recommend
 from services.transcoding_service import EncoderTestResult
-
 
 _NOW = datetime(2026, 5, 4, 12, 0, 0, tzinfo=UTC)
 
@@ -202,7 +201,12 @@ async def test_advisor_endpoint_localhost_only(client: AsyncClient):
         resp = await client.get("/api/v1/transcoding/advisor")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body) >= {"recommended_encoder", "reason_code", "reason_text", "severity"}
+    assert set(body) >= {
+        "recommended_encoder",
+        "reason_code",
+        "reason_text",
+        "severity",
+    }
 
 
 @pytest.mark.asyncio

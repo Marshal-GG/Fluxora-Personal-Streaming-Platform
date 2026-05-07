@@ -38,7 +38,6 @@ import pytest
 
 from config import settings
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 

@@ -9,7 +9,6 @@ import pytest
 
 from services.transcoding_service import classify_encoder_failure
 
-
 # ── QSV: oneVPL / MSDK runtime mismatch (old Intel driver) ─────────────────────
 
 
@@ -70,7 +69,9 @@ def test_hevc_qsv_unsupported_encoder_params_returns_hardware_suggestion() -> No
     encode block and FFmpeg surfaces this as `Error querying encoder
     params: unsupported (-3)`.  Driver updates can't fix it; the
     suggestion must NOT point the user at the Intel driver page."""
-    error = "[hevc_qsv @ 0000020d7fddae80] Error querying encoder params: unsupported (-3)"
+    error = (
+        "[hevc_qsv @ 0000020d7fddae80] Error querying encoder params: unsupported (-3)"
+    )
     suggestion = classify_encoder_failure("hevc_qsv", error)
     assert suggestion is not None
     assert "HEVC" in suggestion
@@ -124,9 +125,9 @@ def test_passing_encoder_returns_none() -> None:
 
 # ── emit_encoder_failure_notifications: dedupe + actionable surfacing ─────────
 
-import pytest_asyncio  # noqa: E402
-
 from datetime import UTC, datetime  # noqa: E402
+
+import pytest_asyncio  # noqa: E402
 
 from services import transcoding_service  # noqa: E402
 

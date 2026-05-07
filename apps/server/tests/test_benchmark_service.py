@@ -21,7 +21,6 @@ import pytest
 
 from services import benchmark_service
 
-
 # ── clamp_duration: pure helper ───────────────────────────────────────────────
 
 
@@ -514,7 +513,9 @@ async def test_probe_concurrent_cap_counts_succeeding_attempts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_probe_concurrent_cap_returns_higher_than_registry_when_unlocked() -> None:
+async def test_probe_concurrent_cap_returns_higher_than_registry_when_unlocked() -> (
+    None
+):
     """A patched / RTX-40 / driver-530+ box can run more than the
     documented cap.  When all 9 attempts succeed, the verified value
     should exceed the registry default — that's the empirical evidence

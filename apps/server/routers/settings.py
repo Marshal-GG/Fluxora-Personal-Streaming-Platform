@@ -96,6 +96,7 @@ async def update_settings(
     # new choice is validated immediately and _TEST_RESULTS stays current.
     if _ENCODER_CHANGE_FIELDS & changed.keys():
         import asyncio as _asyncio
+
         from services import transcoding_service as _ts
 
         async def _retest() -> None:
@@ -112,7 +113,10 @@ async def update_settings(
                 _db = await _get_db()
                 await _ts.emit_encoder_failure_notifications(_db)
             except Exception:
-                logger.warning("Encoder re-test after settings change failed", exc_info=True)
+                logger.warning(
+                    "Encoder re-test after settings change failed",
+                    exc_info=True,
+                )
 
         _asyncio.create_task(_retest())
 

@@ -147,7 +147,13 @@ async def _probe_cpu_windows() -> list[dict[str, Any]]:
         timeout=5.0,
     )
     if not out:
-        return [{"vendor": "Unknown", "model": "Unknown CPU", "threads": os.cpu_count() or 0}]
+        return [
+            {
+                "vendor": "Unknown",
+                "model": "Unknown CPU",
+                "threads": os.cpu_count() or 0,
+            }
+        ]
     cpus: list[dict[str, Any]] = []
     # CSV header: Node,Name,NumberOfLogicalProcessors
     for line in out.splitlines():
@@ -169,7 +175,11 @@ async def _probe_cpu_windows() -> list[dict[str, Any]]:
         cpus.append({"vendor": vendor, "model": model, "threads": threads})
     if not cpus:
         cpus.append(
-            {"vendor": "Unknown", "model": "Unknown CPU", "threads": os.cpu_count() or 0}
+            {
+                "vendor": "Unknown",
+                "model": "Unknown CPU",
+                "threads": os.cpu_count() or 0,
+            }
         )
     return cpus
 
@@ -245,7 +255,9 @@ async def _probe_gpus_linux() -> list[dict[str, Any]]:
             if vendor == "nvidia" and nvidia_seen:
                 continue
             # Strip the trailing "[vendor:device]" annotation if present.
-            model = re.sub(r"\s*\[[0-9a-fA-F]{4}:[0-9a-fA-F]{4}\]\s*$", "", after_class).strip()
+            model = re.sub(
+                r"\s*\[[0-9a-fA-F]{4}:[0-9a-fA-F]{4}\]\s*$", "", after_class
+            ).strip()
             gpus.append(
                 {
                     "vendor": vendor,
@@ -316,8 +328,16 @@ async def _probe_gpus_windows() -> list[dict[str, Any]]:
             continue
         try:
             model = parts[header_indices["Name"]]
-            ram_raw = parts[header_indices.get("AdapterRAM", -1)] if "AdapterRAM" in header_indices else ""
-            driver = parts[header_indices.get("DriverVersion", -1)] if "DriverVersion" in header_indices else ""
+            ram_raw = (
+                parts[header_indices.get("AdapterRAM", -1)]
+                if "AdapterRAM" in header_indices
+                else ""
+            )
+            driver = (
+                parts[header_indices.get("DriverVersion", -1)]
+                if "DriverVersion" in header_indices
+                else ""
+            )
         except (IndexError, KeyError):
             continue
         if not model:

@@ -229,6 +229,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 8b. Run encoder self-tests in the background — non-blocking.
     import asyncio as _asyncio
+
     from services import transcoding_service as _ts
 
     async def _self_test_task() -> None:

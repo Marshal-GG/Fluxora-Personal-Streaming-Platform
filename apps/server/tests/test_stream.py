@@ -786,7 +786,7 @@ def _fake_subprocess_proc(*, returncode_seq: list[int | None], pid: int = 4321):
     process that's alive for the first N polls and then exits.
     Using a list lets us simulate "exited mid-poll-loop" cleanly.
     """
-    from unittest.mock import AsyncMock, PropertyMock, MagicMock
+    from unittest.mock import AsyncMock, MagicMock
 
     proc = MagicMock()
     proc.pid = pid
@@ -826,7 +826,12 @@ async def test_spawn_attempt_succeeds_when_playlist_appears(tmp_path):
         "asyncio.create_subprocess_exec",
         new=AsyncMock(return_value=fake_proc),
     ):
-        succeeded, tail, returncode, killed = await ffmpeg_service._spawn_ffmpeg_attempt(
+        (
+            succeeded,
+            tail,
+            returncode,
+            killed,
+        ) = await ffmpeg_service._spawn_ffmpeg_attempt(
             ["ffmpeg", "-i", "x.mp4"],
             session_id="success-sid",
             playlist=playlist,
@@ -844,7 +849,9 @@ async def test_spawn_attempt_succeeds_when_playlist_appears(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_spawn_attempt_returns_killed_after_timeout_when_playlist_never_appears(tmp_path):
+async def test_spawn_attempt_returns_killed_after_timeout_when_playlist_never_appears(
+    tmp_path,
+):
     """The HDR-tonemap regression case: process is healthy, never
     voluntarily exits, but the playlist budget runs out.  We must
     return killed_after_timeout=True so the error path can surface
@@ -861,7 +868,12 @@ async def test_spawn_attempt_returns_killed_after_timeout_when_playlist_never_ap
         "asyncio.create_subprocess_exec",
         new=AsyncMock(return_value=fake_proc),
     ):
-        succeeded, tail, returncode, killed = await ffmpeg_service._spawn_ffmpeg_attempt(
+        (
+            succeeded,
+            tail,
+            returncode,
+            killed,
+        ) = await ffmpeg_service._spawn_ffmpeg_attempt(
             ["ffmpeg", "-i", "x.mp4"],
             session_id="timeout-sid",
             playlist=playlist,
@@ -876,7 +888,9 @@ async def test_spawn_attempt_returns_killed_after_timeout_when_playlist_never_ap
 
 
 @pytest.mark.asyncio
-async def test_spawn_attempt_returns_not_killed_when_process_exits_prematurely(tmp_path):
+async def test_spawn_attempt_returns_not_killed_when_process_exits_prematurely(
+    tmp_path,
+):
     """Process voluntarily exits before the playlist appears — that's a
     real FFmpeg failure (bad codec, missing input, etc.) and the
     caller should see killed_after_timeout=False so the operator gets
@@ -895,7 +909,12 @@ async def test_spawn_attempt_returns_not_killed_when_process_exits_prematurely(t
         "asyncio.create_subprocess_exec",
         new=AsyncMock(return_value=fake_proc),
     ):
-        succeeded, tail, returncode, killed = await ffmpeg_service._spawn_ffmpeg_attempt(
+        (
+            succeeded,
+            tail,
+            returncode,
+            killed,
+        ) = await ffmpeg_service._spawn_ffmpeg_attempt(
             ["ffmpeg", "-i", "x.mp4"],
             session_id="exit-sid",
             playlist=playlist,
@@ -1262,7 +1281,6 @@ async def test_restart_stream_serializes_concurrent_calls(tmp_path):
     ends up dead.  The asyncio Lock is what guarantees serialisation;
     this test verifies the lock is actually being held."""
     import asyncio
-
     from unittest.mock import patch
 
     from services import ffmpeg_service

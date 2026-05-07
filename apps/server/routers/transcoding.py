@@ -79,7 +79,9 @@ class FallbackEventEntry(BaseModel):
     session_id: str
     requested_encoder: str
     actual_encoder: str
-    reason: str  # 'configured' | 'gpu_session_cap_hit' | 'all_encoders_saturated' | 'encoder_unknown'
+    # One of: 'configured', 'gpu_session_cap_hit',
+    # 'all_encoders_saturated', 'encoder_unknown'.
+    reason: str
 
 
 class FallbackHistoryResponse(BaseModel):

@@ -16,7 +16,6 @@ import pytest
 
 from utils import dns_override
 
-
 # ── Patched socket.getaddrinfo behaviour ─────────────────────────────────────
 
 

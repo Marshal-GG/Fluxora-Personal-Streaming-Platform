@@ -437,7 +437,9 @@ async def get_status(db: aiosqlite.Connection) -> dict[str, Any]:
     }
 
 
-async def run_encoder_self_tests(available: list[str], hwaccel_device: str | None) -> None:
+async def run_encoder_self_tests(
+    available: list[str], hwaccel_device: str | None
+) -> None:
     """Run self-tests for all detected encoders; populate ``_TEST_RESULTS``.
 
     Called once at server startup (non-blocking background task) and

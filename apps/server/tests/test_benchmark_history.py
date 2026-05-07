@@ -125,9 +125,13 @@ async def test_delete_benchmark_run_removes_row(test_db) -> None:
         verify_caps=False,
         results=[_result("libx264")],
     )
-    assert await benchmark_history_service.delete_benchmark_run(test_db, run_id) is True
+    assert (
+        await benchmark_history_service.delete_benchmark_run(test_db, run_id) is True
+    )
     # Second delete on the same id is a no-op (row already gone).
-    assert await benchmark_history_service.delete_benchmark_run(test_db, run_id) is False
+    assert (
+        await benchmark_history_service.delete_benchmark_run(test_db, run_id) is False
+    )
     assert await benchmark_history_service.get_benchmark_run(test_db, run_id) is None
 
 

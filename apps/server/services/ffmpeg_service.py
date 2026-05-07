@@ -686,7 +686,9 @@ async def _spawn_ffmpeg_attempt(
     *,
     playlist_timeout_sec: float = 10.0,
 ) -> tuple[bool, str, int | None, bool]:
-    """Run one FFmpeg attempt; return (succeeded, stderr_tail, returncode, killed_after_timeout).
+    """Run one FFmpeg attempt.
+
+    Returns ``(succeeded, stderr_tail, returncode, killed_after_timeout)``.
 
     On success the playlist appeared within ``playlist_timeout_sec`` and
     the process is still running.  On failure the process either exited

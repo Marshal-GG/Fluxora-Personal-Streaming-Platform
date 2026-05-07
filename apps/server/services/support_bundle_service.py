@@ -202,7 +202,10 @@ async def generate_support_bundle(db: aiosqlite.Connection) -> tuple[str, bytes]
                 tar, "metadata.json", json.dumps(metadata, indent=2), mtime
             )
             _add_text_member(
-                tar, "system/stats.json", json.dumps(stats, indent=2, default=str), mtime
+                tar,
+                "system/stats.json",
+                json.dumps(stats, indent=2, default=str),
+                mtime,
             )
             _add_text_member(
                 tar,
