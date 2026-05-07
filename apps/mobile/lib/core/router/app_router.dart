@@ -56,6 +56,13 @@ abstract class Routes {
   static const String search = '/search';
   static const String profile = '/profile';
 
+  /// Library tab pre-filtered by content-type.  Consumed by the Home
+  /// browse strip and the Search empty-state chip group (mobile redesign
+  /// plan §17.2 trending replacement).  Valid filter values match the
+  /// library screen's `_LibraryFilter` enum: `movies`, `shows`, `music`,
+  /// `files`.  Anything else falls back to the unfiltered tab.
+  static String libraryWithFilter(String filter) => '/library?filter=$filter';
+
   static String libraryFiles(String id) => '/library-files/$id';
   static const String player = '/player';
 
@@ -133,7 +140,9 @@ final GoRouter appRouter = GoRouter(
           routes: [
             GoRoute(
               path: Routes.library,
-              builder: (context, state) => const LibraryScreen(),
+              builder: (context, state) => LibraryScreen(
+                initialFilter: state.uri.queryParameters['filter'],
+              ),
             ),
           ],
         ),

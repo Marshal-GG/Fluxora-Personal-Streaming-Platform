@@ -8,6 +8,12 @@
 ///
 /// `MockMediaItem` references are gone — the screen renders zero mock
 /// data per Phase A scope.
+///
+/// 2026-05-08 (mobile redesign plan §17.2): accepts an optional
+/// `initialFilter` string from the route's `?filter=` query param so the
+/// Home browse strip + Search "Browse" chip group can pre-filter the
+/// tab.  Valid values: `movies` / `shows` / `music` / `files`; anything
+/// else (or null) falls back to All.
 library;
 
 import 'package:flutter/material.dart';
@@ -24,14 +30,18 @@ import 'package:fluxora_mobile/features/library/presentation/bloc/library_state.
 import 'package:fluxora_mobile/shared/widgets/gradients.dart';
 
 class LibraryScreen extends StatelessWidget {
-  const LibraryScreen({super.key});
+  const LibraryScreen({super.key, this.initialFilter});
+
+  /// Optional filter slug from the route's `?filter=` query parameter.
+  /// See the file-level doc for accepted values.
+  final String? initialFilter;
 
   @override
   Widget build(BuildContext context) {
     return BlocProvider<LibraryBloc>(
       create: (_) => LibraryBloc(repository: GetIt.I<LibraryRepository>())
         ..add(const LibraryStarted()),
-      child: const _LibraryBody(),
+      child: _LibraryBody(initialFilter: initialFilter),
     );
   }
 }
@@ -58,15 +68,27 @@ extension on _LibraryFilter {
       };
 }
 
+_LibraryFilter _filterFromSlug(String? slug) {
+  return switch (slug) {
+    'movies' => _LibraryFilter.movies,
+    'shows' => _LibraryFilter.shows,
+    'music' => _LibraryFilter.music,
+    'files' => _LibraryFilter.files,
+    _ => _LibraryFilter.all,
+  };
+}
+
 class _LibraryBody extends StatefulWidget {
-  const _LibraryBody();
+  const _LibraryBody({this.initialFilter});
+
+  final String? initialFilter;
 
   @override
   State<_LibraryBody> createState() => _LibraryBodyState();
 }
 
 class _LibraryBodyState extends State<_LibraryBody> {
-  _LibraryFilter _filter = _LibraryFilter.all;
+  late _LibraryFilter _filter = _filterFromSlug(widget.initialFilter);
   _ViewMode _view = _ViewMode.grid;
 
   Future<void> _refresh() async {

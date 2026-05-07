@@ -5,14 +5,13 @@
 /// Phase B backfill removed `MockData.continueWatching` (now backed by
 /// `GET /auth/clients/me/continue-watching`) and the `MockData` filter
 /// inside `search_screen.dart` (now backed by `GET /files/search`).
+/// 2026-05-08 trending rip-out (mobile redesign plan §17.2) removed
+/// `MockData.trending` (Home "Trending now" rail) and
+/// `MockData.trendingSearches` (Search empty-state chip group).
 ///
 /// What's still here:
-/// - `MockData.trending` — Home "Trending now" rail.  Phase C either
-///   deletes the rail (decision §5 row 3) or rewires it against a
-///   future popularity / TMDB-trending endpoint.
-/// - `MockData.recentSearches` / `MockData.trendingSearches` — search
-///   chrome.  Will be replaced by a real search-history persistence
-///   feature; no plan-anchored phase yet.
+/// - `MockData.recentSearches` — search chrome.  Will be replaced by a
+///   real search-history persistence feature; no plan-anchored phase yet.
 /// - `MockData.downloads` + `storage{Used,Total}Gb` — downloads screen.
 ///   Hidden in v1 (decision §5 row 4); the screen + fixtures stay so
 ///   Phase E (or v1.1) can re-enable in one line.
@@ -98,55 +97,11 @@ class MockDownload {
 class MockData {
   MockData._();
 
-  static List<MockMediaItem> trending = const [
-    MockMediaItem(
-      id: 'tr-1',
-      title: 'Velvet Horizon',
-      subtitle: '2025',
-      gradient: AppGradientPlaceholders.violetDeep,
-      qualityBadge: '4K',
-    ),
-    MockMediaItem(
-      id: 'tr-2',
-      title: 'Quantum Drift',
-      subtitle: '2024',
-      gradient: AppGradientPlaceholders.emeraldBlue,
-      qualityBadge: 'HDR',
-    ),
-    MockMediaItem(
-      id: 'tr-3',
-      title: 'Memory Vault',
-      subtitle: '2025',
-      gradient: AppGradientPlaceholders.pinkAmber,
-    ),
-    MockMediaItem(
-      id: 'tr-4',
-      title: 'Solar Tides',
-      subtitle: '2024',
-      gradient: AppGradientPlaceholders.amberRose,
-      qualityBadge: '4K',
-    ),
-    MockMediaItem(
-      id: 'tr-5',
-      title: 'Glass Skies',
-      subtitle: '2025',
-      gradient: AppGradientPlaceholders.indigoCyan,
-    ),
-  ];
-
   static List<String> recentSearches = const [
     'velvet horizon',
     'memory vault',
     'aurora drift',
     'concrete sea',
-  ];
-
-  static List<String> trendingSearches = const [
-    'sci-fi',
-    '4K HDR',
-    '2025 releases',
-    'documentaries',
-    'kids',
   ];
 
   // ── Downloads (mock) ──────────────────────────────────────────────────

@@ -2,11 +2,16 @@
 ///
 /// Phase B backfill (`docs/10_planning/08_real_data_backfill_plan.md`
 /// §3 row 2): consumes [SearchCubit] over `GET /files/search` (server
-/// uses SQL `LIKE` for v1).  Empty state still shows the recent /
-/// trending search chrome backed by `MockData.recentSearches` +
-/// `MockData.trendingSearches` — those are persistence-target lists
-/// (not actual media), so they survive Phase B and live on until the
-/// search-history feature ships.
+/// uses SQL `LIKE` for v1).
+///
+/// Empty state shows:
+///   - "Recent searches" — `MockData.recentSearches`, a persistence
+///     target (not actual media); lives on until a real search-history
+///     feature ships.
+///   - "Browse" chip group — content-type shortcuts that push the
+///     Library tab pre-filtered via `Routes.libraryWithFilter(...)`.
+///     Replaces the old "Trending searches" chip group per mobile
+///     redesign plan §17.2 (2026-05-08 trending rip-out).
 library;
 
 import 'package:flutter/material.dart';
@@ -169,16 +174,17 @@ class _EmptyState extends StatelessWidget {
             onTap: () => onChipTap(term),
           ),
         const SizedBox(height: 16),
-        const FluxSectionHeader(eyebrow: 'Try', title: 'Trending searches'),
+        const FluxSectionHeader(eyebrow: 'Browse', title: 'Jump into a category'),
         const SizedBox(height: 12),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            for (final term in MockData.trendingSearches)
+            for (final spec in _browseFilters)
               GestureDetector(
-                onTap: () => onChipTap(term),
-                child: FluxChip(term, color: FluxChipColor.purple),
+                onTap: () =>
+                    context.push(Routes.libraryWithFilter(spec.filter)),
+                child: FluxChip(spec.label, color: FluxChipColor.purple),
               ),
           ],
         ),
@@ -186,6 +192,20 @@ class _EmptyState extends StatelessWidget {
     );
   }
 }
+
+class _BrowseFilterSpec {
+  const _BrowseFilterSpec({required this.label, required this.filter});
+
+  final String label;
+  final String filter;
+}
+
+const List<_BrowseFilterSpec> _browseFilters = [
+  _BrowseFilterSpec(label: 'Movies', filter: 'movies'),
+  _BrowseFilterSpec(label: 'Shows', filter: 'shows'),
+  _BrowseFilterSpec(label: 'Music', filter: 'music'),
+  _BrowseFilterSpec(label: 'Documents', filter: 'files'),
+];
 
 class _LoadingState extends StatelessWidget {
   const _LoadingState();

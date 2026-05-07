@@ -1,14 +1,19 @@
 /// Home tab — discover landing.
 ///
-/// Three rails: Continue watching (hero size 150×220 with progress bar),
-/// Trending now (rail 116×174), Recently added (rail 116×174). App bar:
-/// avatar (left) + Fluxora wordmark (center) + bell + cast (right).
+/// Two rails + a browse strip:
+///   1. Continue watching (hero size 150×220 with progress bar)
+///   2. Browse — 4-up content-type quick-jump strip (Movies / Shows /
+///      Music / Documents) routing to the Library tab pre-filtered by
+///      `?filter=`.  Replaces the old "Trending now" rail per mobile
+///      redesign plan §17.2 (2026-05-08 trending rip-out).
+///   3. Recently added (rail 116×174)
+///
+/// App bar: avatar (left) + Fluxora wordmark (center) + bell + cast
+/// (right).
 ///
 /// Phase A: Recently-added consumes [RecentCubit] (`GET /files/recent`).
 /// Phase B: Continue-watching consumes [ContinueWatchingCubit]
-/// (`GET /auth/clients/me/continue-watching`).  Trending stays mock;
-/// Phase C either deletes the rail (decision §5 row 3) or rewires it
-/// against a future popularity endpoint.
+/// (`GET /auth/clients/me/continue-watching`).
 library;
 
 import 'package:flutter/material.dart';
@@ -16,11 +21,11 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/fluxora_core.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import 'package:fluxora_mobile/core/router/app_router.dart';
 import 'package:fluxora_mobile/features/home/presentation/cubit/continue_watching_cubit.dart';
 import 'package:fluxora_mobile/features/home/presentation/cubit/recent_cubit.dart';
-import 'package:fluxora_mobile/shared/data/mock_data.dart';
 import 'package:fluxora_mobile/shared/widgets/gradients.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -93,11 +98,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: const [
               SizedBox(height: 12),
               _ContinueWatchingRail(),
-              _MockRail(
-                title: 'Trending now',
-                eyebrow: 'This week',
-                size: FluxPosterSize.rail,
-              ),
+              _BrowseStrip(),
               _RecentRail(),
             ],
           ),
@@ -134,40 +135,110 @@ class _AvatarChip extends StatelessWidget {
   }
 }
 
-/// Trending-now rail (still mock-backed — Phase C is the deletion or
-/// rewire target depending on whether a popularity endpoint lands).
-class _MockRail extends StatelessWidget {
-  const _MockRail({
-    required this.title,
-    required this.eyebrow,
-    required this.size,
-  });
+/// Browse strip — 4-up content-type quick-jump tiles.  Replaces the old
+/// "Trending now" rail (mobile redesign plan §17.2).  Each tile pushes
+/// the Library tab pre-filtered via `?filter=`.  Documents map to the
+/// `files` filter since v1 collapsed Documents into the Files type.
+class _BrowseStrip extends StatelessWidget {
+  const _BrowseStrip();
 
-  final String title;
-  final String eyebrow;
-  final FluxPosterSize size;
+  static const _tiles = <_BrowseTileSpec>[
+    _BrowseTileSpec(
+      label: 'Movies',
+      filter: 'movies',
+      icon: LucideIcons.clapperboard,
+      gradient: AppGradientPlaceholders.violetDeep,
+    ),
+    _BrowseTileSpec(
+      label: 'Shows',
+      filter: 'shows',
+      icon: LucideIcons.tv,
+      gradient: AppGradientPlaceholders.indigoCyan,
+    ),
+    _BrowseTileSpec(
+      label: 'Music',
+      filter: 'music',
+      icon: LucideIcons.music,
+      gradient: AppGradientPlaceholders.pinkAmber,
+    ),
+    _BrowseTileSpec(
+      label: 'Documents',
+      filter: 'files',
+      icon: LucideIcons.fileText,
+      gradient: AppGradientPlaceholders.emeraldBlue,
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    final items = MockData.trending;
-    return _RailFrame(
-      title: title,
-      eyebrow: eyebrow,
-      size: size,
-      itemCount: items.length,
-      itemBuilder: (context, i) {
-        final item = items[i];
-        return FluxPoster(
-          title: item.title,
-          subtitle: item.subtitle,
-          imageUrl: item.imageUrl,
-          gradient: item.gradient,
-          size: size,
-          qualityBadge: item.qualityBadge,
-          progress: item.progress,
-          onTap: () => context.push(Routes.detail(item.id)),
-        );
-      },
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const FluxSectionHeader(eyebrow: 'Browse', title: 'Your library'),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              for (var i = 0; i < _tiles.length; i++) ...[
+                if (i > 0) const SizedBox(width: 10),
+                Expanded(child: _BrowseTile(spec: _tiles[i])),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BrowseTileSpec {
+  const _BrowseTileSpec({
+    required this.label,
+    required this.filter,
+    required this.icon,
+    required this.gradient,
+  });
+
+  final String label;
+  final String filter;
+  final IconData icon;
+  final Gradient gradient;
+}
+
+class _BrowseTile extends StatelessWidget {
+  const _BrowseTile({required this.spec});
+
+  final _BrowseTileSpec spec;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => context.push(Routes.libraryWithFilter(spec.filter)),
+      child: Container(
+        height: 84,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          gradient: spec.gradient,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.borderSubtle),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(spec.icon, size: 20, color: AppColors.textBright),
+            Text(
+              spec.label,
+              style: AppTypography.captionV2.copyWith(
+                color: AppColors.textBright,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
