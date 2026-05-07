@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-06 (migrations 001-023; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device, encoder sanitiser, license-key sanitiser, encoder priority chain (Slice C), per-session encoder_used, corrupt-path data cleanup, **`clients.last_ip` + per-request heartbeat**)
+> **Status:** Active - Updated 2026-05-07 (migrations 001-024; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device, encoder sanitiser, license-key sanitiser, encoder priority chain (Slice C), per-session encoder_used, corrupt-path data cleanup, `clients.last_ip` + per-request heartbeat, **`benchmark_runs` history table**)
 
 ---
 
@@ -205,6 +205,30 @@ CREATE INDEX IF NOT EXISTS idx_activity_type_created
     ON activity_events(type, created_at DESC);
 ```
 
+### `benchmark_runs` (Migration 024)
+
+```sql
+-- One row per encoder-benchmark run.  Metadata columns describe the
+-- workload + the run window; the per-encoder results live inside the
+-- JSON blob (always fetched together with the parent — no relational
+-- query benefit at this scale).
+CREATE TABLE IF NOT EXISTS benchmark_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at    TEXT NOT NULL,                       -- ISO-8601 UTC
+    finished_at   TEXT NOT NULL,                       -- ISO-8601 UTC
+    duration_sec  INTEGER NOT NULL,                    -- source clip length
+    fps           INTEGER NOT NULL,                    -- source frame rate
+    width         INTEGER NOT NULL,                    -- source width
+    height        INTEGER NOT NULL,                    -- source height
+    verify_caps   INTEGER NOT NULL DEFAULT 0,          -- bool 0/1
+    encoder_count INTEGER NOT NULL,                    -- denormalized for list rendering
+    results_json  TEXT NOT NULL                        -- JSON array of EncoderBenchmarkResult
+);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at
+    ON benchmark_runs(started_at DESC);
+```
+
 ---
 
 ## Indexes
@@ -222,6 +246,7 @@ CREATE INDEX IF NOT EXISTS idx_activity_type_created
 | `notifications` | `(read_at, dismissed_at, created_at DESC)` | B-Tree (`idx_notifications_unread`) | Fast unread / visible notification queries |
 | `activity_events` | `created_at DESC` | B-Tree (`idx_activity_created`) | Default most-recent-first list query |
 | `activity_events` | `(type, created_at DESC)` | B-Tree (`idx_activity_type_created`) | Type-prefix filter + ordering |
+| `benchmark_runs` | `started_at DESC` | B-Tree (`idx_benchmark_runs_started_at`) | Newest-first list for the desktop benchmark history sidebar |
 
 ---
 
@@ -259,3 +284,4 @@ CREATE INDEX IF NOT EXISTS idx_activity_type_created
 | `021_session_encoder.sql` | Adds `encoder_used TEXT DEFAULT NULL` to `stream_sessions`. Populated by the stream router from `session_router.get_session_encoder(session_id)` on INSERT — null on stream-copy sessions. Drives the desktop's per-session encoder pill + supports historical "why did N+1 fall back yesterday?" diagnostics across server restarts (the in-memory ring buffer in `session_router` only covers the current process lifetime). |
 | `022_remove_corrupt_media_paths.sql` | One-shot data migration. Deletes `media_files` rows whose `path` is non-absolute or starts with `[\` / `[/` — the residue of a prior buggy upload path that consumed `Library.root_paths` JSON character-wise so `root_paths[0]` returned `'['`. Deletes their dependent `stream_sessions` first to satisfy the `file_id REFERENCES media_files(id)` foreign key. Idempotent: a future run finds no matching rows once `library_service._is_valid_absolute_media_path` blocks new bad rows from landing. |
 | `023_clients_last_ip.sql` | Adds nullable `last_ip TEXT` to `clients`. Populated by `auth_service.create_pair_request` (initial pair, captures `request.client.host`) and `auth_service.update_client_heartbeat` (called from the `validate_token` dependency on every authenticated request). Drives the desktop Clients screen's IP column (table + detail panel). Two semantics changes piggyback on this migration: (a) `last_seen` was previously frozen at pair / approval — the heartbeat write now refreshes it on every authenticated request too; (b) the heartbeat path is wrapped in try/except + WARNING log so a transient SQLite write failure can't 401 a valid request. **Known limitation:** when the request arrives via the Cloudflare Tunnel, `request.client.host` is the cloudflared loopback (`127.0.0.1`), not the real public IP — the `CF-Connecting-IP` header isn't currently consumed in the heartbeat path. Acceptable in v1: the field's primary use case is LAN device identification for pair-debug. |
+| `024_benchmark_history.sql` | Creates the `benchmark_runs` table for encoder-benchmark history persistence. Top-level metadata columns (`started_at`, `finished_at`, `duration_sec`, `fps`, `width`, `height`, `verify_caps`, `encoder_count`) + a `results_json TEXT` blob holding the per-encoder array as JSON (always fetched together with the parent run; relational split would add a join + order-preservation hassle for no query benefit at this scale). Indexed on `started_at DESC` to support the desktop sidebar's newest-first list. Auto-pruned to 50 entries by `benchmark_history_service.prune_history` after every save — runs are cheap to recreate and the operator only ever cares about recent comparisons. New endpoints: `GET /api/v1/transcoding/benchmark/history`, `GET /api/v1/transcoding/benchmark/history/{id}`, `DELETE /api/v1/transcoding/benchmark/history/{id}` (all localhost-only). `POST /transcoding/benchmark` persists every run before responding and returns the new `id` so the desktop's history sidebar can keep the visible result aligned with the highlighted row. |

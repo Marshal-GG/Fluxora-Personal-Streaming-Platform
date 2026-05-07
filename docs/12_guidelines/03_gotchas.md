@@ -537,3 +537,143 @@ icacls "C:\ProgramData\Fluxora" ^
 The SIDs are language-independent: `S-1-5-19` is `LocalService`, `S-1-5-32-545` is `BUILTIN\Users`. `(OI)(CI)` makes the ACEs inherit to descendants. `/T` recurses to existing children. `/Q` suppresses success messages.
 
 The same pattern applies to any Windows service that needs to share data with a user-mode process: don't rely on default inheritance; set ACLs explicitly during install.
+
+---
+
+## `-f null -` makes FFmpeg report `bitrate=N/A` — use `-f mpegts -` for benchmarks
+
+**Symptom.** Every progress line in stderr lands with `bitrate=N/A`, so any benchmark that parses bitrate from FFmpeg's progress output (`services/benchmark_service.py` until 2026-05-07) shows blank for that column even on successful encodes.
+
+**Root cause.** `-f null -` tells FFmpeg "discard output before muxing" — bytes never reach a muxer, so there's nothing to measure rate against. The encoded video data is still produced + counted for fps/speed, but the bitrate counter is muxer-side.
+
+**Fix.** Switch the output to `-f mpegts -` and pipe stdout to DEVNULL. The mpegts muxer measures bytes through it and reports a real bitrate; the bytes never touch disk. mpegts is the lightest mux that keeps the counter live (`-f matroska -` also works but adds container header overhead that pollutes the measurement).
+
+```python
+cmd.extend(["-an", "-f", "mpegts", "-"])
+proc = await asyncio.create_subprocess_exec(
+    *cmd,
+    stdout=asyncio.subprocess.DEVNULL,  # bytes go nowhere
+    stderr=asyncio.subprocess.PIPE,     # but progress lines do
+)
+```
+
+If you ever see `bitrate=N/A` on every row of FFmpeg progress, check the output flag first.
+
+---
+
+## "First non-empty FFmpeg stderr line" is the input header, not the error
+
+**Symptom.** Failed encoder benchmark surfaces the message `Input #0, lavfi, from 'testsrc=duration=8:size=1280x720:rate=30':` as the error reason — informational, not the actual failure.
+
+**Root cause.** FFmpeg writes its input-file metadata before any error.  Picking "the first non-empty stderr line" (a tempting shortcut for one-line summaries) grabs that header; the real error is somewhere lower in the buffer with markers like `Error querying encoder params: unsupported (-3)`.
+
+**Fix.** Walk stderr looking for substrings that mark a line as a real error: `error`, `failed`, `could not`, `unable to`, `invalid`, `unsupported`, `no such`, `not found` (case-insensitive). Fall back to the *last* non-empty line (typically `Conversion failed!`) before resorting to the first.
+
+The pattern is implemented in `services/benchmark_service._pick_error_line` — reuse it in any service that needs a one-line error summary from FFmpeg stderr.
+
+---
+
+## `AnimatedContainer(width:)` is silently overridden by tight parent constraints
+
+**Symptom.** A custom progress bar / sized box / animated stripe is built with `AnimatedContainer(width: someFraction * parentWidth, ...)` but renders as if the width is always 100% of parent. Setting different fraction values has no visual effect.
+
+**Root cause.** When the AnimatedContainer is inside a tight-constrained parent (`SizedBox(width: double.infinity, height: 4) → ColoredBox → ...`), the layout engine forces the child to fill the parent. `Container`/`AnimatedContainer`'s `width` is a *request*, not a *constraint*; under tight constraints from above it gets clamped to the parent's exact width.
+
+**Fix.** Use `Stack(fit: StackFit.expand)` + `Positioned(left: 0, top: 0, bottom: 0, width: ...)` (or `AnimatedPositioned` for animated transitions). `Positioned` sets the child's geometry directly via Stack's parent-data layout pass — independent of the Stack's tight constraints from above.
+
+```dart
+Stack(
+  fit: StackFit.expand,
+  children: [
+    const ColoredBox(color: trackColor),                  // track
+    AnimatedPositioned(
+      duration: const Duration(milliseconds: 240),
+      left: 0, top: 0, bottom: 0,
+      width: fraction * parentWidth,                      // honoured!
+      child: const DecoratedBox(decoration: BoxDecoration(gradient: ...)),
+    ),
+  ],
+)
+```
+
+Same trap applies to `AnimatedContainer(height:)` inside a tight horizontal box. `Align` works as an escape hatch too (gives the child loose constraints) but Stack+Positioned is the cleanest pattern for "fill from one edge to a fraction of the parent."
+
+---
+
+## `MouseRegion.onExit` can fire after widget dispose during route transitions
+
+**Symptom.** Tapping a button that triggers a route pop crashes with `setState() called after dispose()`. The button itself disposed cleanly; the crash comes from a hover-state setter.
+
+**Root cause.** `MouseRegion.onExit` fires when the cursor leaves the region — including the synthetic exit that happens because the widget itself moved out from under the cursor (e.g. the page popped). That exit fires asynchronously, after the State has been disposed, and any `setState` in the handler throws.
+
+**Fix.** Always guard hover-state setters with a `mounted` check:
+
+```dart
+void _setHover(bool value) {
+  if (!mounted) return;
+  setState(() => _hover = value);
+}
+// ...
+MouseRegion(
+  onEnter: (_) => _setHover(true),
+  onExit: (_) => _setHover(false),
+  ...
+)
+```
+
+Same pattern applies to any async callback that calls `setState` after the widget might have been disposed (network responses, animation listeners, etc.). The 16-cubit emit-after-close audit from May 6 is the same class of bug at the BLoC layer.
+
+---
+
+## `go_router`'s `context.pop()` crashes on an empty navigation stack
+
+**Symptom.** A Cancel / Back button on a sub-page works fine when the operator navigates from the parent screen, but crashes when they hot-restart on the sub-page directly or land via a deep link.
+
+**Root cause.** `context.pop()` requires a previous route to pop *to*. Hot-restart + deep-link entries can land directly on a sub-route with no parent on the stack; `pop()` throws "There is nothing to pop." Same bug existed in the old Cancel button on Encoder Settings — never triggered because operators only ever reached the page via the Transcoding screen's button.
+
+**Fix.** Guard with `canPop`, fall back to `context.go(parentRoute)`:
+
+```dart
+onBack: () {
+  if (context.canPop()) {
+    context.pop();
+  } else {
+    context.go(Routes.transcoding); // explicit parent
+  }
+}
+```
+
+Apply this pattern anywhere the user can hit a Back affordance — Encoder Settings, future detail pages, anywhere reachable both from a parent route and via a deep link.
+
+---
+
+## Mocking async helpers: `patch.object(..., return_value=X)` returns a sync MagicMock
+
+**Symptom.** Test mocks an async helper like `_probe_nvidia` with `patch.object(transcoding_service, "_probe_nvidia", return_value=(34.0, 580))`. The call site `await`s the helper. Test assertion against the captured value fails — the mock returned without ever being awaited; the call site sees `None` (or a coroutine warning).
+
+**Root cause.** `patch.object` defaults to `MagicMock` (sync). Awaiting a sync MagicMock at runtime doesn't error in Python 3.11+ but doesn't return the configured value either — the side-effect is silently broken.
+
+**Fix.** Pass `new=AsyncMock(return_value=...)` instead of `return_value=...`:
+
+```python
+with patch.object(
+    transcoding_service,
+    "_probe_nvidia",
+    new=AsyncMock(return_value=(34.0, 580)),
+):
+    ...
+```
+
+The same trap applies to `patch(...)` (without `.object`) and to any test-side mocking of an async function. Default to AsyncMock for any helper that's `await`-ed at the call site.
+
+---
+
+## `FluxTabBar`'s `mainAxisSize.min` collapsed the bottom-border divider
+
+**Symptom.** A page using `FluxTabBar` shows a short divider line under the tabs that ends right where the rightmost tab's text ends — the rest of the content area's width has no divider.  Looks broken next to `Settings`'s custom tab row whose divider extends across the full content area.
+
+**Root cause.** `FluxTabBar`'s inner `Row(mainAxisSize: MainAxisSize.min)` sized the row to the tabs' combined width.  The Container's bottom border (the divider) only paints across the Container's width, which equalled the inner row's width.
+
+**Fix (shipped 2026-05-07).** Drop `mainAxisSize.min` so the Row defaults to `MainAxisSize.max`.  Tabs themselves stay left-aligned via the default `mainAxisAlignment` (start).  Container then fills the parent's width and the border extends across.
+
+The `bottom: 16` padding on the same Container is also worth removing so the active tab's 2 px violet underline overlaps the 1 px divider — the prototype's `marginBottom: -1` design intent.  Both fixed in `flux_tab_bar.dart` together.

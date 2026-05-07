@@ -232,12 +232,16 @@ class ApiClient {
     dynamic data,
     Map<String, dynamic>? queryParameters,
     T Function(dynamic)? fromJson,
+    Duration? receiveTimeout,
   }) async {
     try {
       final response = await _dio.post<dynamic>(
         path,
         data: data,
         queryParameters: queryParameters,
+        options: receiveTimeout == null
+            ? null
+            : Options(receiveTimeout: receiveTimeout),
       );
       if (fromJson != null) return fromJson(response.data);
       return response.data as T;

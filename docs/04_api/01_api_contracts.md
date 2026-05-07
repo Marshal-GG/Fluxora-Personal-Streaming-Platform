@@ -35,7 +35,7 @@ Authorization: Bearer {auth_token}
 |------|-----------|---------|
 | Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints, `GET /auth/clients/me` |
 | Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /info/stats`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity`, `GET /logs` — desktop control panel needs no token |
-| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /info/restart`, `POST /info/stop`, `POST /info/support-bundle`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
+| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /transcoding/benchmark`, `GET /transcoding/benchmark/progress`, `GET /transcoding/benchmark/history`, `GET /transcoding/benchmark/history/{id}`, `DELETE /transcoding/benchmark/history/{id}`, `POST /info/restart`, `POST /info/stop`, `POST /info/support-bundle`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
 | No auth | — | `/info`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
 
 **Heartbeat side effect (migration 023, 2026-05-06):** every successful `validate_token` resolution writes `clients.last_seen = NOW()` and `clients.last_ip = request.client.host` for the resolving client. This is best-effort — wrapped in try/except + WARNING log so a transient SQLite write failure can't 401 a valid request — but it changes the semantics of `last_seen` from "frozen at pair / approval" to "live within one poll cycle." Tunneled requests (cloudflared) record the loopback IP because `CF-Connecting-IP` isn't consumed in this path; documented limitation. See [`docs/03_data/02_database_schema.md`](../03_data/02_database_schema.md) migration 023 row.
@@ -1578,6 +1578,218 @@ All producer call-sites are wrapped in `try/except` with logging — an activity
 - The desktop panel only renders the last 5 entries — the buffer is sized for ~30 minutes of typical fallback churn.
 
 **Errors:** `403` not from localhost
+
+---
+
+### `POST /api/v1/transcoding/benchmark`
+**Description:** Run a synthetic FFmpeg encode through every detected encoder and return per-encoder fps / speed / bitrate / realtime-multiplier. Backs the desktop Encoder Settings → "Run Benchmark" button. Long-running by design (sequential per-encoder × ~5–10 s wall-clock each on hardware encoders, materially longer if libx264/libx265 is in the chain on a slow CPU). The endpoint enforces a 35 s ceiling per encoder so the call has a hard upper bound regardless of how slow the hardware is. Clients should set a receive timeout of at least 90 s (the desktop uses 3 min).
+**Auth:** Localhost only — `require_local_caller`.
+**Status:** ✅ Implemented (2026-05-07)
+
+**Request body** (optional — empty body uses the defaults):
+```json
+{
+  "duration_sec": 8,
+  "fps": 30
+}
+```
+
+| Field | Type | Range | Description |
+|-------|------|-------|-------------|
+| `duration_sec` | int? | 2–20 (Pydantic-validated; 422 outside) | Source clip length per encoder. Server-side `clamp_duration` also applies the [2, 20] floor/ceiling defensively. Defaults to 8 s. |
+| `fps` | int? | 24–60 (Pydantic-validated; 422 outside) | Source frame rate. Higher fps roughly halves each encoder's realtime multiplier — useful for gauging 60 fps capability (sports, gaming captures, smartphone footage). 60 is the cap because the player doesn't render high-refresh material specially, so 120 fps would tell the operator nothing actionable about a media-streaming workload. Defaults to 30. |
+| `verify_caps` | bool | true / false | When true, hw encoders that carry a registry session cap get an extra concurrent-stress probe — spawns up to `max(8, registry_cap*3)` short parallel encodes per such encoder and counts survivors. The empirical answer to "what's my actual NVENC cap" because the registry value (3) is just a vendor default; driver 530+, RTX 40-series, and patched drivers may exceed it. Briefly saturates the GPU (~2 s wall-clock per hw encoder) so it's opt-in. Defaults to false. (The desktop client always sends `true` so the chip is honest by default.) |
+| `width` | int? | 320–3840 (Pydantic-validated; 422 outside) | Source frame width. Server-side `clamp_resolution` snaps the (`width`, `height`) pair to the nearest documented tier (720p / 1080p / 4K) so the benchmark history doesn't accumulate one-off resolutions. Defaults to 1280. |
+| `height` | int? | 240–2160 (Pydantic-validated; 422 outside) | Source frame height. Paired with `width`; same snap behaviour. Defaults to 720. |
+
+**Response:**
+```json
+{
+  "started_at": "2026-05-07T15:30:12.123456+00:00",
+  "finished_at": "2026-05-07T15:30:35.987654+00:00",
+  "duration_sec": 8,
+  "fps": 30,
+  "results": [
+    {
+      "encoder": "h264_nvenc",
+      "vendor": "nvidia",
+      "codec": "h264",
+      "passed": true,
+      "error": null,
+      "fps": 174.0,
+      "speed_x": 5.72,
+      "bitrate_kbps": 1100.0,
+      "encoded_frames": 240,
+      "elapsed_sec": 1.40,
+      "realtime_multiplier": 5.71,
+      "init_ms": 480,
+      "gpu_utilization_percent": 34.0,
+      "vram_used_mb": 580,
+      "concurrent_session_cap": 3,
+      "recommended_concurrent": 3
+    },
+    {
+      "encoder": "libx264",
+      "vendor": "software",
+      "codec": "h264",
+      "passed": true,
+      "error": null,
+      "fps": 28.0,
+      "speed_x": 0.93,
+      "bitrate_kbps": 980.0,
+      "encoded_frames": 240,
+      "elapsed_sec": 8.6,
+      "realtime_multiplier": 0.93,
+      "init_ms": 45,
+      "gpu_utilization_percent": null,
+      "vram_used_mb": null,
+      "concurrent_session_cap": null,
+      "recommended_concurrent": 1
+    },
+    {
+      "encoder": "hevc_qsv",
+      "vendor": "intel",
+      "codec": "hevc",
+      "passed": false,
+      "error": "[hevc_qsv @ 0x1] Error querying encoder params: unsupported (-3)",
+      "fps": null,
+      "speed_x": null,
+      "bitrate_kbps": null,
+      "encoded_frames": null,
+      "elapsed_sec": 1.2,
+      "realtime_multiplier": null,
+      "init_ms": null,
+      "gpu_utilization_percent": null,
+      "vram_used_mb": null,
+      "concurrent_session_cap": null,
+      "recommended_concurrent": null
+    }
+  ]
+}
+```
+
+**Per-result fields (Tier 1 surfaced 2026-05-07):**
+| Field | Source | Notes |
+|-------|--------|-------|
+| `vendor` | Registry | `software` / `nvidia` / `intel` / `amd` / `apple`. Drives desktop vendor-section grouping. |
+| `codec` | Registry | `h264` / `hevc` (future: `av1`). |
+| `init_ms` | Streamed stderr | Wall-clock from spawn → first `frame=N≥1` line. Stream-start latency budget. |
+| `gpu_utilization_percent` | Per-vendor probe at midpoint | nvidia-smi / intel_gpu_top / radeontop / system_profiler. Null on software / probe-missing / probe-fail. |
+| `vram_used_mb` | Same | Same caveats. |
+| `concurrent_session_cap` | Registry | NVENC consumer cards = 3; software/QSV/VAAPI/VideoToolbox = null. **This is a vendor-documented default**, not a measured ceiling — driver 530+ removed the consumer cap on RTX 40-series and community patches lift it on older cards. |
+| `verified_concurrent` | Cap probe | Empirical session cap from `probe_concurrent_cap`. Only populated when `verify_caps=true` AND the encoder has a registry cap. May exceed `concurrent_session_cap` on patched / driver-530+ / RTX-40 setups — that's the actionable signal the operator needs. Re-derives `recommended_concurrent` against this value when present. |
+| `recommended_concurrent` | Derived | `min(effective_cap, floor(speed_x))` where effective_cap is the verified value when present, else the registry default. The "how many streams can I sustain at realtime" answer the desktop chip surfaces. |
+
+**Notes:**
+- `realtime_multiplier` = `duration_sec / elapsed_sec`. Values > 1 mean the encoder runs faster than realtime (could drive a live stream); values < 1 mean it would underrun. Desktop UI colours the speed cell emerald (≥1×) vs amber (<1×).
+- `recommended_concurrent` is computed from `speed_x` (FFmpeg's encoder-side measurement, less startup-polluted than wall-clock) — falls back to `realtime_multiplier` when speed_x is missing. Floor-clamped to ≥1 if the encoder finished at all (sub-realtime encoders can still drive a single laggy stream).
+- The midpoint GPU probe sleeps `max(0.25, duration_sec/2)` seconds, then runs the same probe the live status panel uses. Failures are silent (gpu/vram fields stay null) so a missing `nvidia-smi` doesn't fail the whole benchmark.
+- Failed rows are NOT dropped — they round-trip with `passed=false` + `error` so the operator sees *why* an encoder couldn't be benchmarked. The error line is picked via a marker-aware walker (`error`/`failed`/`unsupported`/...) rather than blindly grabbing the first stderr line, which is FFmpeg's input-header chatter.
+- Encoders are walked sequentially. Concurrent runs would contend for GPU + CPU and produce noise that defeats the comparison.
+- Source is `lavfi testsrc` at 1280×720@30, encoded with `medium` preset + CRF 23, muxed as `mpegts` to stdout DEVNULL (`-f null -` would discard bytes before the muxer measured them, leaving every progress line with `bitrate=N/A`).
+
+**Errors:** `403` not from localhost; `422` `duration_sec` outside [2, 20]
+
+---
+
+### `GET /api/v1/transcoding/benchmark/progress`
+**Description:** Live progress snapshot for an in-flight benchmark run.  Polled by the desktop ~every 500 ms while its own `POST /benchmark` is in flight so the operator sees per-encoder status (current encoder + `encoding` vs `verifying_cap` step) instead of a featureless spinner.  Returns `{"running": false, ...nulls}` when no benchmark is in flight; module-level read on the server, no DB hit.
+**Auth:** Localhost only — `require_local_caller`.
+**Status:** ✅ Implemented (2026-05-07)
+
+**Response (running):**
+```json
+{
+  "running": true,
+  "started_at": "2026-05-07T15:30:12.123456+00:00",
+  "total_encoders": 6,
+  "completed": 2,
+  "current_encoder": "h264_nvenc",
+  "current_step": "encoding",
+  "current_index": 3
+}
+```
+
+**Response (idle):**
+```json
+{
+  "running": false,
+  "started_at": null,
+  "total_encoders": null,
+  "completed": null,
+  "current_encoder": null,
+  "current_step": null,
+  "current_index": null
+}
+```
+
+**`current_step` values:**
+| Value | Meaning |
+|-------|---------|
+| `starting` | Between trigger and first encoder spawn (only visible for the first ~50 ms). |
+| `encoding` | Running the main per-encoder benchmark (`benchmark_encoder`). |
+| `verifying_cap` | Running the concurrent-stress probe (`probe_concurrent_cap`) for an hw encoder that carries a registry session cap. |
+
+**Notes:**
+- The desktop computes a determinate progress fraction as `(completed + (current_index > completed ? 0.5 : 0)) / total_encoders` — half-credit for the in-flight encoder so the bar moves smoothly between completion ticks.
+- Backed by a module-level `_progress: dict | None` in `services/benchmark_service.py` that's cleared in a `finally` block, so a crash mid-run doesn't leave a phantom-running state.
+
+**Errors:** `403` not from localhost
+
+---
+
+### `GET /api/v1/transcoding/benchmark/history`
+**Description:** List recent benchmark-run summaries (no per-encoder results) for the desktop's Benchmark history sidebar.  Newest first.  Backed by the `benchmark_runs` table (migration 024); auto-pruned to 50 entries by `benchmark_history_service.prune_history` on every save.
+**Auth:** Localhost only — `require_local_caller`.
+**Status:** ✅ Implemented (2026-05-07)
+
+**Query params:**
+| Param | Type | Range | Description |
+|-------|------|-------|-------------|
+| `limit` | int | 1–50 | Cap on returned entries.  Defaults to 20. |
+
+**Response:**
+```json
+{
+  "entries": [
+    {
+      "id": 17,
+      "started_at": "2026-05-07T15:30:12.123456+00:00",
+      "finished_at": "2026-05-07T15:30:35.987654+00:00",
+      "duration_sec": 8,
+      "fps": 60,
+      "width": 1920,
+      "height": 1080,
+      "verify_caps": true,
+      "encoder_count": 6
+    }
+  ]
+}
+```
+
+**Errors:** `403` not from localhost
+
+---
+
+### `GET /api/v1/transcoding/benchmark/history/{run_id}`
+**Description:** Fetch one stored run's full body — same shape as the live `POST /benchmark` response.  The desktop calls this when the operator clicks an entry in the history sidebar.
+**Auth:** Localhost only — `require_local_caller`.
+**Status:** ✅ Implemented (2026-05-07)
+
+**Response:** identical to `POST /benchmark` (carries the same `id`, workload metadata, and per-encoder `results` array).
+
+**Errors:** `403` not from localhost; `404` unknown id
+
+---
+
+### `DELETE /api/v1/transcoding/benchmark/history/{run_id}`
+**Description:** Delete one stored run.  No body returned.
+**Auth:** Localhost only — `require_local_caller`.
+**Status:** ✅ Implemented (2026-05-07)
+
+**Response:** `204 No Content` on success.
+
+**Errors:** `403` not from localhost; `404` unknown id
 
 ---
 

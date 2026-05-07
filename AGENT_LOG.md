@@ -993,3 +993,464 @@ Plus encountered (not new gotchas, but worth flagging):
 - **Set up Cloudflare Email Routing** for `*@fluxora.marshalx.dev`.
 - **Smoke-test the .iss** on a clean Win 10 + Win 11 VM once the build pipeline produces a real installer (per AUDIT.md test matrix).
 ---
+
+## [2026-05-07] — F10 shipped: Encoder Settings → Run Benchmark wired end-to-end
+**Phase:** Phase 5 desktop redesign — final §11.1 follow-up
+**Status:** Complete (F10 ✅; only F4 (defer — no consumer) and F9 (defer — compliance scope decision) remain in §11.1)
+
+### What Was Done
+
+User picked F10 from the §11.1 menu. Server-side benchmark service + endpoint + desktop wire-up + 18 new tests + plan reconciliation. With this batch every actionable §11.1 follow-up is shipped.
+
+#### Server side
+
+New [`apps/server/services/benchmark_service.py`](apps/server/services/benchmark_service.py):
+
+- **`benchmark_encoder(encoder, *, duration_sec, size, fps, hwaccel_device, timeout)`** runs a synthetic `lavfi testsrc` encode through one encoder via `_ffmpeg_bin()`, drains stderr from a tempfile, and parses the last meaningful progress line via four regexes (`_FPS_RE`, `_SPEED_RE`, `_BITRATE_RE`, `_FRAME_RE`). Returns frozen dataclass `EncoderBenchmarkResult(encoder, passed, error, fps, speed_x, bitrate_kbps, encoded_frames, elapsed_sec, realtime_multiplier)`. Loglevel is `info` (NOT `error` like `test_encoder` uses) so FFmpeg's periodic `frame= ... fps= ... speed= ...` lines actually emit to stderr — at `error` they're suppressed and the parser would have nothing to read.
+- **Workload defaults:** 8 s of `testsrc` at 1280×720 @ 30 fps, `medium` preset + CRF 23. Picked to amortise GPU init cost (~500 ms on NVENC) without dragging total wall-time on a 4-encoder system past ~30–60 s. `medium`+CRF 23 mirrors typical desktop defaults so the numbers reflect real-world streaming, not an artificial `ultrafast` pass.
+- **`_PER_ENCODER_TIMEOUT = 35.0`** is the hard ceiling per encoder. Software libx265 on a slow CPU can be 4× slower than realtime (8 s of source = 32 s wall) — 35 s lets the slow case complete; if it doesn't, we kill and report a timeout failure (still useful information — operator learns the encoder is too slow for their hardware).
+- **`run_benchmark(encoders, *, duration_sec, hwaccel_device)`** sequentially runs `benchmark_encoder` per entry. Sequential, not parallel, by design — concurrent encodes share GPU/CPU and produce noise that defeats the comparison. Each encoder's perf line in the desktop UI must reflect what that encoder can do alone.
+- **`clamp_duration(value)`** clamps the operator-supplied duration to [2, 20]. Pulled out as a public helper so the test suite can assert it directly.
+- **Realtime multiplier semantics:** `duration_sec / elapsed_sec`. Values > 1 → encoder runs faster than realtime (could drive a live stream). Values < 1 → underruns. Surfaced verbatim as the desktop UI's emerald-vs-amber speed cue.
+- Failed encodes return `passed=False` with the first non-empty stderr line in `error` (matching the `test_encoder` convention so the desktop's failed-row format matches existing surfaces).
+- Each `benchmark_encoder` call cleans up its tempfile in `finally`; orphan files from killed-mid-run processes get unlinked too.
+
+New endpoint in [`apps/server/routers/transcoding.py`](apps/server/routers/transcoding.py):
+
+- **`POST /api/v1/transcoding/benchmark`** (localhost-only via `require_local_caller`).
+- Optional `BenchmarkRequest { duration_sec: int? in [2, 20] }`. Pydantic field validator returns 422 for values outside the range; `clamp_duration` is the inner defense. Empty body / no body works (defaults to 8).
+- Runs `transcoding_service._detect_available_encoders()` (cached), reads `transcoding_hwaccel_device` from settings, calls `benchmark_service.run_benchmark`, wraps results in `BenchmarkResponse(started_at, finished_at, duration_sec, results: [BenchmarkEncoderResult])`.
+- Response includes failed rows with `passed=False` + `error` rather than dropping them — operator needs to see *why* an encoder couldn't be benchmarked, not just that it's missing.
+
+#### Desktop side
+
+New entity [`packages/fluxora_core/lib/entities/encoder_benchmark.dart`](packages/fluxora_core/lib/entities/encoder_benchmark.dart) (freezed + json_serializable):
+
+- `EncoderBenchmarkResult { encoder, passed, error?, fps?, speedX?, bitrateKbps?, encodedFrames?, elapsedSec?, realtimeMultiplier? }`
+- `EncoderBenchmarkRun { startedAt, finishedAt, durationSec, results }`
+- Build runner regenerated `.freezed.dart` + `.g.dart` cleanly.
+
+`Endpoints.transcodingBenchmark` constant added.
+
+`ApiClient.post` gained an optional `receiveTimeout: Duration?` param. The default desktop ApiClient is registered with a 10 s receive timeout for fast-fail on dead localhost (per the 2026-05-06 reachability hardening) — but the benchmark call genuinely takes 30–90 s, so the repo overrides per-call to 3 minutes. Cleaner than carving out a global longer timeout that would mask real problems on other endpoints.
+
+`TranscodingRepository.benchmark({int? durationSec})` interface + `TranscodingRepositoryImpl.benchmark` implementation. The impl sends an empty body when `durationSec == null` (server applies its 8 s default).
+
+Encoder Settings screen ([`encoder_settings_screen.dart`](apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart)):
+
+- Removed the disabled `_SettingRow(label: 'Test Encode', sub: 'Benchmark hardware acceleration', control: FluxButton(onPressed: null, ...))` placeholder + its TODO comment.
+- New `_BenchmarkBlock` (StatefulWidget) sits as its own `_SettingsBlock(title: 'Benchmark', children: [...])` after the Quality card. Owns `_running`, `_lastRun`, `_error` via `setState` — no cubit because the operation is one-shot and the result has no consumers outside this widget. Pulls `TranscodingRepository` from `GetIt.I` directly.
+- Button shows `Run Benchmark` + play icon when idle, `Running…` (no icon) when in flight, disabled while running.
+- On success → renders `_BenchmarkResultsTable(run: _lastRun!)` below the row. On failure → red "Benchmark failed: <exception>" line. `mounted` checked before each `setState` to dodge the close-after-emit class of Flutter bug.
+- `_BenchmarkResultsTable` → 4-column header (Encoder / FPS / Speed / Bitrate) + per-encoder rows.
+- `_BenchmarkResultRow`:
+  - check icon (emerald/amber by realtime multiplier) when passed; error icon (red) when failed.
+  - `_fmtFps` / `_fmtSpeed` / `_fmtBitrate` keep the cells terse — fps trims to integer when ≥ 10, speed always shows 2dp + `x` suffix, bitrate flips to Mbps when ≥ 1000 kbps.
+  - Speed cell colour mirrors the row icon: emerald for ≥1× realtime, amber for <1×, red for failed.
+  - Failed rows render the truncated stderr line (max 2 lines, ellipsised) below the perf cells in red so the operator sees the same diagnostic the existing failed-encoder modal shows.
+- Logger is wired (the `Logger` package the rest of the codebase uses) with full stack trace on the catch path so `flutter logs` captures benchmark failures even when the user hasn't opened the Logs screen.
+
+#### Tests
+
+New [`apps/server/tests/test_benchmark_service.py`](apps/server/tests/test_benchmark_service.py) — 13 cases:
+
+- `test_clamp_duration_bounds` parametrised across 7 values (None / below floor / floor / mid / ceiling / above ceiling).
+- Parser regex tests against realistic FFmpeg progress lines (one mainstream, one sub-realtime to make sure software encoders don't break the `speed=` parse).
+- `test_benchmark_unknown_encoder_returns_failure_without_running` — fast-fail path before subprocess is touched.
+- `test_benchmark_returns_failure_when_ffmpeg_binary_missing` — `_ffmpeg_bin()` raising FileNotFoundError surfaces as a normal failed row.
+- `test_benchmark_happy_path_parses_perf_numbers` — mocks `tempfile.mkstemp` so the test knows the stderr path, and mocks `asyncio.create_subprocess_exec` to actually write a realistic FFmpeg stderr text to that path before returning. End-to-end happy path: parser pulls fps/speed/bitrate/frames/elapsed.
+- `test_benchmark_failure_surfaces_first_stderr_line` — same pattern but exit code 1; first non-empty stderr line lands in `error`.
+- `test_benchmark_timeout_returns_killed_marker` — `proc.wait` mock blocks until `proc.kill()` is called (mirrors real OS behaviour where wait returns immediately post-SIGKILL); 200 ms timeout fires; result is `passed=False, error~="timed out"`. Wall-clock asserted < 1.5 s so a CI hang is loud.
+- `test_run_benchmark_runs_encoders_sequentially_and_collects_results` — orchestrator preserves order, no dedup, no parallel.
+
+5 router cases appended to [`test_transcoding.py`](apps/server/tests/test_transcoding.py):
+
+- `test_benchmark_empty_body_uses_default_duration` — POST with no body → server uses 8 s default; service called with the right encoder list.
+- `test_benchmark_explicit_duration_is_clamped` — 20 s passes through (boundary case).
+- `test_benchmark_rejects_out_of_range_duration` — Pydantic validator returns 422 for 99.
+- `test_benchmark_passes_failures_through_to_response` — failed rows round-trip with `passed=False` + `error`.
+- `test_benchmark_requires_localhost` — non-loopback caller gets 403.
+
+**Server suite 488 → 508 passing** (full suite ran clean in 114 s).
+**`flutter analyze` clean** across desktop + core (170 s desktop, 14 s core).
+
+#### Doc updates
+
+- [`docs/11_design/desktop_redesign_plan.md`](docs/11_design/desktop_redesign_plan.md) — §11.1 F10 row flipped to ✅ Done with concrete shipped-files list. New change-log entry at top of §12. Status banner left intact (already says "every milestone shipped"; F10 was a §11.1 follow-up, not a milestone).
+- [`docs/00_overview/current_status.md`](docs/00_overview/current_status.md) — new "As of 2026-05-07" paragraph describing F10. Test count 488 → 508. `Routers` row gained `POST /benchmark`. `Services` row gained `benchmark_service` entry.
+- [`docs/04_api/01_api_contracts.md`](docs/04_api/01_api_contracts.md) — full endpoint spec for `POST /api/v1/transcoding/benchmark` (request/response shape, semantics, notes on realtime_multiplier, sequential walk, source defaults). Localhost-only endpoint table updated.
+- `AGENT_LOG.md` — this entry.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `apps/server/services/benchmark_service.py` (~250 lines — `EncoderBenchmarkResult` dataclass, `benchmark_encoder`, `run_benchmark`, `clamp_duration`, four regex parsers) |
+| Created | `apps/server/tests/test_benchmark_service.py` (13 cases — clamp + parser + fast-fail + happy-path + failure + timeout + orchestrator) |
+| Created | `packages/fluxora_core/lib/entities/encoder_benchmark.dart` (`EncoderBenchmarkResult` + `EncoderBenchmarkRun` freezed entities) |
+| Created | `packages/fluxora_core/lib/entities/encoder_benchmark.freezed.dart` (build_runner generated) |
+| Created | `packages/fluxora_core/lib/entities/encoder_benchmark.g.dart` (build_runner generated) |
+| Modified | `apps/server/routers/transcoding.py` (new `BenchmarkRequest` / `BenchmarkEncoderResult` / `BenchmarkResponse` Pydantic models; new `POST /benchmark` endpoint; module docstring + table updated) |
+| Modified | `apps/server/tests/test_transcoding.py` (+5 router cases for the new endpoint) |
+| Modified | `packages/fluxora_core/lib/network/api_client.dart` (`post` gained optional `receiveTimeout: Duration?` param) |
+| Modified | `packages/fluxora_core/lib/network/endpoints.dart` (`transcodingBenchmark` constant) |
+| Modified | `apps/desktop/lib/features/transcoding/domain/repositories/transcoding_repository.dart` (`benchmark({int? durationSec})` interface method) |
+| Modified | `apps/desktop/lib/features/transcoding/data/repositories/transcoding_repository_impl.dart` (`benchmark` impl with 3 min `receiveTimeout`) |
+| Modified | `apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart` (removed disabled `_SettingRow`; new `_BenchmarkBlock` + `_BenchmarkResultsTable` + `_BenchmarkHeaderRow` + `_BenchmarkResultRow` widgets; `Logger` import; `EncoderBenchmarkResult` / `EncoderBenchmarkRun` imports) |
+| Modified | `docs/11_design/desktop_redesign_plan.md` (§11.1 F10 row → ✅ Done; new §12 change-log entry) |
+| Modified | `docs/00_overview/current_status.md` (new 2026-05-07 paragraph; test count 488 → 508; routers + services rows updated) |
+| Modified | `docs/04_api/01_api_contracts.md` (full `POST /transcoding/benchmark` spec; localhost-only endpoint table) |
+| Modified | `.claude/settings.json` (per user request — added `python -m pytest *`, `flutter pub *`, `dart run build_runner *` so test/build commands stop prompting; user later pruned the `PowerShell` rule) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Decisions Made
+
+- **`-loglevel info` for benchmark, NOT `-loglevel error`.** The encoder self-test uses `error` because it just needs the exit code + first stderr line. Benchmark needs the periodic `frame= ... fps= ... speed= ...` progress lines, which are emitted at `info` only. Switching the level back to `error` for benchmark would silently make the parser return all-None results.
+- **`medium` preset + CRF 23, not `ultrafast` + CRF 28.** `ultrafast` would inflate the perf numbers across the board (especially on software encoders) and not reflect what the operator's real streams will look like. Real streams use the desktop's saved preset (default `medium`) — the benchmark must use the same so a "this encoder runs at 1.5× realtime" claim is actually predictive.
+- **Sequential per-encoder, not parallel.** Concurrent encodes contend for GPU + CPU and produce noise that defeats the comparison. The whole point of the benchmark is "what can each encoder do alone." Sequential adds wall-clock cost (3 encoders × 10 s vs 10 s parallel) but the user is staring at a "Running…" button anyway and the data is the priority.
+- **Failed rows surface in the response, not dropped.** Encoder selectors that just say "h264_qsv was missing from the benchmark" leave the operator wondering whether it was a server bug or a real failure. Returning the row with `passed=false` + `error: "MFX session: -9"` lets the desktop render the same failure UX the encoder self-test card already shows for self-test failures (visual consistency).
+- **`receiveTimeout` override on the repo, not a global timeout bump.** The default 10 s desktop receive timeout is the 2026-05-06 reachability-hardening fix — making it longer would re-introduce the "every desktop request hangs for 30 s when the server is dead" symptom. Per-call overrides keep the benchmark slow without breaking the fast-fail guarantee on every other endpoint.
+- **`_BenchmarkBlock` owns its state via `setState`, not via a cubit.** One-shot operation, no cross-screen consumers, no need for an emit-after-close guard since `mounted` is checked before each `setState`. Adding a cubit would have meant a new feature directory, DI registration, golden mock, and an emit guard — for state that exists only inside this one widget.
+- **`emerald (≥1×) / amber (<1×) / red (failed)` colour cue, not a single status pill.** The realtime multiplier is the single most actionable number on the table — "is this encoder fast enough for live streaming?" The colour cue answers that question instantly without the operator doing the divide-then-compare math.
+- **Bitrate flips to Mbps at ≥ 1000 kbps.** Keeps the column readable at a glance for both software (often ~800–2000 kbps) and high-bitrate NVENC sessions. Mixing units is OK because the column has a clear unit suffix per row.
+
+### Issues / Sharp Edges Discovered
+
+- **The mocked `proc.wait` in the timeout test needs to honour `proc.kill()`.** First version of the test had `proc.wait = AsyncMock(side_effect=_never_returns)` which made the kill path itself await another 60 s. Real OSes return immediately from `proc.wait()` post-SIGKILL — the mock has to flip behaviour when `kill()` was called. Documented inline in the test for future agents.
+- **`proc.returncode` on the mock has to be a settable property OR set inline.** The benchmark service reads `proc.returncode != 0` after `wait()` returns. If the mock keeps `returncode = None` after `kill()`, the post-wait branch sees no returncode and does the wrong thing. Mirrored the convention from `test_stream.py::_fake_subprocess_proc` — kill() side-effect bumps `returncode` to `-9`.
+- **`tempfile.mkstemp` returns an OS-level FD** — not a file handle. The service does `os.close(stderr_fd)` immediately after `create_subprocess_exec`. The mocked `_patch_tempfile` helper has to use `os.open(path, O_WRONLY|O_CREAT)` so the close call doesn't choke on a Python file object that's already been closed.
+- **Two `realtime_multiplier == None` cases exist.** When elapsed_sec is essentially 0 (mocked subprocess returns instantly), `duration / elapsed` would divide by zero — code guards via `if elapsed > 0 else None`. The happy-path test doesn't strictly assert the multiplier is non-None for that reason; it only asserts the value is positive when present.
+- **`flutter test` shows the pre-existing `m3_dashboard_golden_test.dart` failure** (62.77 % pixel diff) — first noted in the 2026-05-06 F2/F3 session log. Dashboard wasn't touched in this batch; baseline still needs regenerating per the existing follow-up. 84/85 desktop tests pass.
+
+### Hard Rules Checklist
+
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced. All Dart logging via `Logger`; all Python via `logger`.
+- [x] No silent exceptions. `_BenchmarkBlock._runBenchmark` catches `Exception`, logs with stack trace, surfaces in UI. Service's failure paths each carry a meaningful error line.
+- [x] No hardcoded secrets, ports, paths. Tempfile prefixes are constants; FFmpeg path resolved via `_ffmpeg_bin()`.
+- [x] No new pip / pub deps.
+- [x] No layer-boundary violations. Pure service → router → entity → repo → cubit-less widget chain.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+- [x] No raw SQL string concatenation (no SQL touched).
+- [x] No bearer tokens / PII logged.
+
+### Proactive Suggestions for Next Work
+
+- **Regenerate `m3_dashboard_golden_test.dart` baseline.** The pre-existing 62.77 % pixel diff is now the only failing desktop test. Quick win — `flutter test --update-goldens test/goldens/m3_dashboard_golden_test.dart` after a manual visual check, then commit.
+- **F9 scope decision.** With F10 done, only F4 (defer — no consumer) and F9 (defer — compliance) remain in §11.1. F9's "sign out everywhere" + "revoke session" are both trivial server-side (existing token-row delete via `auth_service.revoke_client`); "delete account" + "export data" are the GDPR/CPRA-shaped ones. Splitting F9 into a 2-endpoint quick win + a deferred compliance pair would close the menu cleanly.
+- **Hardware-accel benchmarks across vendors.** The current benchmark uses `medium` + CRF 23 across all encoders. NVENC's `p4` and QSV's `medium` and libx264's `medium` aren't equally-quality-comparable (different RC algorithms, different loose-vs-strict bitrate behavior). A future refinement: per-vendor preset normalisation + a fixed-bitrate VBR pass to make cross-encoder *quality* comparisons (not just throughput).
+- **3 hard server code blockers in `installer/SHIP.md` §3** (config.py / ffmpeg_service.py / main.py) still gate Nuitka build. Roughly 10–15 minutes of focused work; unblocks the entire installer pipeline.
+
+### Next Agent Should
+
+- **Verify the benchmark on the user's box** — start the server, restart the desktop, navigate to Settings → Streaming → "Configure encoder", click the new "Run Benchmark" button. Expected: spinner ~10–60 s, then a results table with libx264 (sub-realtime amber row likely on i7-9750H), and h264_qsv as a red failed row carrying the existing `MFX session: -9` error. NVENC won't appear (no NVIDIA card on this box).
+- **Regenerate the dashboard golden baseline** if the user signs off on the visual.
+- **Pick up F9 (subset)** if the user wants to close the §11.1 menu — the trivial half (revoke session + sign-out-everywhere) is ~1 hr.
+---
+
+## [2026-05-07] — Benchmark Tier 1 enrichment: init_ms + GPU sample + concurrent capacity + UI redesign
+**Phase:** Phase 5 desktop redesign — F10 follow-up (same-day)
+**Status:** Complete
+
+### What Was Done
+
+User ran the F10 benchmark and shared a screenshot revealing two real bugs (every Bitrate cell showed `—`; hevc_qsv error read "Input #0, lavfi, from 'testsrc=...'" instead of the actual encoder error) and asked what additional metrics the benchmark should surface. After a Tier 1 / Tier 2 / Tier 3 menu, user picked Tier 1 + bug fixes — all four (`init_ms`, GPU/VRAM midpoint sample, concurrent capacity, codec-pair grouping) shipped same-day along with a redesigned vendor-sectioned UI.
+
+#### Bug fixes (root-caused from screenshot)
+
+- **Bitrate column empty.** `-f null -` discards bytes before the muxer measures them, so every progress line lands with `bitrate=N/A`. Switched to `-f mpegts -` piped to stdout DEVNULL — the mpegts muxer keeps the bitrate counter live without touching disk. Module docstring updated with the rationale.
+- **Wrong error line surfaced.** "First non-empty stderr line" picker grabbed FFmpeg's input header (`Input #0, lavfi, from 'testsrc=...'`). New `_pick_error_line(text)` walks stderr looking for any of `error` / `failed` / `could not` / `unable to` / `invalid` / `unsupported` / `no such` / `not found` (case-insensitive substrings); falls back to the *last* non-empty line (typically `Conversion failed!`) before finally giving up and returning the first line. 4 dedicated unit tests cover the picker including the exact hevc_qsv stderr the user saw.
+
+#### Tier 1 fields shipped
+
+`EncoderBenchmarkResult` extended with five new fields (one of which is derived):
+
+- **`vendor: str`** — mirrors `EncoderMeta.vendor` (`software` / `nvidia` / `intel` / `amd` / `apple`). Populated even on `passed=False` so the UI can still group failed rows under the right vendor.
+- **`codec: str`** — `h264` / `hevc` (future: `av1`).
+- **`init_ms: int | None`** — wall-clock from FFmpeg spawn to first `frame=N≥1` progress line. The operator's "stream-start latency" budget. Includes CUDA context init / encoder session creation / hwaccel device probe etc. Required moving stderr from a tempfile to a streamed PIPE (see implementation notes).
+- **`gpu_utilization_percent: float | None`** + **`vram_used_mb: int | None`** — sampled once at `max(0.25, duration_sec/2)` via the same per-vendor probes the live status panel uses (`_probe_nvidia` / `_probe_intel_qsv` / `_probe_amd_vaapi` / `_probe_videotoolbox` on `transcoding_service`). Resolved via `getattr` so test monkeypatches are honoured. Probe failure stays silent (gpu/vram fields = None) so a missing `nvidia-smi` doesn't fail the benchmark.
+- **`concurrent_session_cap: int | None`** — mirrors `EncoderMeta.concurrent_session_cap` (NVENC consumer cards = 3; software/QSV/VAAPI/VideoToolbox = None).
+- **`recommended_concurrent: int | None`** — derived: `min(cap, max(1, floor(speed_x)))`. Falls back to `realtime_multiplier` when `speed_x` is missing. Floor-clamped to ≥1 because sub-realtime encoders can still drive a single (laggy) stream. Returns None only when both speed metrics are unavailable or zero — i.e. the encoder didn't finish.
+
+`_recommended_concurrent` is a pure helper exposed for unit testing (parametrised across 7 cases: cap-bound NVENC, sub-realtime cap-bound, no-cap software at multi-stream throughput, sub-realtime software, fallback to realtime when speed_x null, both-null returns None, zero-speed returns None).
+
+#### Implementation notes — streamed stderr
+
+Init_ms requires per-line wall-clock timestamps. The previous tempfile approach reads stderr only after the process has exited, so we lose all timing information. Refactored `benchmark_encoder` to:
+
+1. Spawn FFmpeg with `stderr=PIPE` (was `stderr=tempfile_fd`).
+2. Launch a background `_read_stderr` task that reads chunks from `proc.stderr.read(4096)`, accumulates them into `stderr_chunks: list[bytes]`, AND scans each chunk for `frame=N≥1`. First match captures `int((time.monotonic() - started) * 1000)` as `init_ms`.
+3. Concurrently launch `_midpoint_probe` for hw encoders (sleeps `max(0.25, duration_sec/2)` then runs the vendor probe; failure suppressed).
+4. Wait for FFmpeg with the existing 35 s ceiling.
+5. Drain reader (it sees EOF after process exit; bounded by `_READER_DRAIN_TIMEOUT = 2.0` s for Windows pipe pathology).
+6. Cancel the probe task if still pending; await it to surface its result if it completed.
+7. Decode `b"".join(stderr_chunks)` for the rest of the parsing.
+
+The reader's chunk-by-chunk decode-and-scan pattern means the first `frame=` line is captured the moment it arrives, even though we don't process the buffer line-by-line until the end. Tempfile path is gone entirely — cleaner.
+
+#### Desktop UI redesign
+
+The previous 4-column table (Encoder / FPS / Speed / Bitrate) didn't have room for 8 metrics + a concurrent chip + a vendor label. Replaced with a vendor-sectioned card list:
+
+- **Section header** per vendor — small-caps label (`SOFTWARE` / `NVIDIA NVENC` / `INTEL QUICK SYNC` / `AMD VAAPI` / `APPLE VIDEOTOOLBOX`) with a hairline divider extending right. Order is fixed (software → nvidia → intel → amd → apple); unknown vendors render at the end so a future encoder we haven't catalogued doesn't get dropped.
+- **Per-encoder row** — 2 lines:
+  - **Top line:** status icon (✓/✗ in vendor pass-colour: emerald ≥1× realtime, amber <1×, red on fail) + encoder name + codec pill (FluxChip neutral with `H264`/`HEVC`) + right-aligned concurrent chip (success colour for multi-stream, warning + "· cap" suffix when cap-bound, neutral when single-stream). Concurrent chip shows pluralised `N stream` / `N streams` and includes a layers icon.
+  - **Bottom line:** dot-separated mono-spaced metrics strip — `init · fps · speed · bitrate · gpu · vram`. Each metric is omitted entirely when null (so software rows have no `gpu`/`vram` clutter; rows where init wasn't captured drop `init`). Speed cell takes the row's pass-colour. Bitrate auto-flips to Mb/s at ≥1000 kb/s. Wrapped in a `Wrap` so narrow viewports break gracefully.
+- **Failed rows** — replace the metrics line with the picked error in red (3-line cap, ellipsised). Concurrent chip is omitted for failed rows.
+
+Used `FluxChip` (existing `fluxora_core` primitive) for both the codec pill and the concurrent chip; chip variants map to the same colour grades as the row icon.
+
+#### Tests
+
+Server-side `test_benchmark_service.py` rewritten for the streaming-stderr flow:
+
+- New `_make_proc_with_stderr(text, returncode, chunks)` helper — mock proc with `stderr.read` returning the payload across N chunks (default 1) then EOF.
+- `test_clamp_duration_bounds` — 7 parametrised cases, unchanged.
+- 4 `_pick_error_line` unit tests (skip-input-header, recognise-failed-marker, fall-back-to-last, empty-returns-none).
+- 7 parametrised `_recommended_concurrent` cases.
+- `test_benchmark_unknown_encoder_returns_failure_without_running` + `test_benchmark_returns_failure_when_ffmpeg_binary_missing` — fast-fail paths populate `vendor`/`codec` even on failure.
+- `test_benchmark_happy_path_parses_perf_numbers` — end-to-end with realistic FFmpeg stderr; asserts vendor + codec round-trip + recommended_concurrent = floor(2.05) = 2 + init_ms is populated because the stderr contains `frame=    1 ...`.
+- `test_benchmark_init_ms_populated_when_first_frame_seen` — minimal payload with single-line init.
+- `test_benchmark_failure_surfaces_actual_error_line` — uses the exact hevc_qsv stderr the user saw; asserts the picker grabs `Error querying encoder params: unsupported (-3)` and NOT the input header.
+- `test_benchmark_timeout_returns_killed_marker` — proc.wait blocks until kill flips the flag; asserts wall-clock stays under 3.5 s (reader drain budget).
+- `test_benchmark_skips_gpu_probe_for_software_encoders` — `probe_gpu=True` is a no-op for software vendor; gpu/vram fields stay None.
+- `test_benchmark_runs_midpoint_probe_for_nvidia_encoders` — proc.wait sleeps 1.5 s so the 1.0 s probe coroutine fires before cleanup cancels it; asserts `_probe_nvidia` mock was honoured + concurrent_session_cap = 3 + recommended_concurrent = 3 (cap-bound).
+- `test_run_benchmark_runs_encoders_sequentially_and_collects_results` — orchestrator preserves order, populates new vendor/codec/cap fields from registry.
+
+5 router cases in `test_transcoding.py` updated to construct `EncoderBenchmarkResult` with the new required fields.
+
+**Server suite 508 → 522 passing.** `flutter analyze` clean (desktop 125 s, core 64 s).
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Modified | `apps/server/services/benchmark_service.py` (~5 new fields on dataclass, streamed stderr reader, midpoint GPU probe, `_recommended_concurrent` helper, `_pick_error_line` helper, mpegts mux, `_failed_result` factory consolidating constructor calls) |
+| Modified | `apps/server/routers/transcoding.py` (`BenchmarkEncoderResult` Pydantic model gains 7 new fields; response builder threads them through) |
+| Modified | `apps/server/tests/test_benchmark_service.py` (rewrote mocks for streaming reader; +14 new cases — pick_error_line, recommended_concurrent table, init_ms, GPU probe wiring) |
+| Modified | `apps/server/tests/test_transcoding.py` (4 router cases updated for new required fields on `EncoderBenchmarkResult`) |
+| Modified | `packages/fluxora_core/lib/entities/encoder_benchmark.dart` (`vendor`/`codec` required fields; `initMs`/`gpuUtilizationPercent`/`vramUsedMb`/`concurrentSessionCap`/`recommendedConcurrent` optional fields; doc comments per field) |
+| Regenerated | `packages/fluxora_core/lib/entities/encoder_benchmark.freezed.dart` + `.g.dart` |
+| Modified | `apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart` (rewrote `_BenchmarkResultsTable` with vendor sections; new `_VendorSectionHeader`, `_BenchmarkResultRow` redesigned as 2-line card, `_MetricsLine` dot-separated metrics strip, `_MetricTile` value-with-label component; concurrent chip via `FluxChip`) |
+| Modified | `docs/04_api/01_api_contracts.md` (full new response shape with 5 new fields per result; per-field source/notes table; mux switch + error-line-picker rationale) |
+| Modified | `docs/00_overview/current_status.md` (Tier 1 enrichment paragraph appended; test count 508 → 522) |
+| Modified | `docs/11_design/desktop_redesign_plan.md` (new §12 change-log entry for Tier 1) |
+| Modified | `AGENT_LOG.md` (this entry) |
+
+### Decisions Made
+
+- **`-f mpegts -` over `-f matroska -y NUL`** for the bitrate fix. Both keep the muxer alive; mpegts is lighter (no header complexity) and cross-platform via stdout DEVNULL without filesystem-namespace differences (`NUL` vs `/dev/null`). matroska would have worked but adds container overhead that pollutes the bitrate measurement.
+- **Marker-aware error picker, not "first ERROR line"**. FFmpeg's component-tag prefix (`[hevc_qsv @ 0x...]`) is an OK signal but matches plenty of informational messages too. Substring-matching specific error markers (`error`/`failed`/`unsupported`/etc.) is more precise. Ordered fallback (markers → last line → first line) means we never lose a line, just prefer better ones.
+- **Streamed stderr instead of polling tempfile size or running a pre-flight 0.1 s warmup**. Polling tempfile size measures time-to-first-stderr-byte which includes the `ffmpeg version ...` banner (useless). Pre-flight warmup doubles wall-clock per encoder. Streaming is more code but the data is exact.
+- **Midpoint probe at `max(0.25, duration_sec/2)`, not at fixed offset.** A `duration_sec=2` benchmark sleeping 4 s for the probe would fire after the encoder already exited. The 0.25 s floor handles the short-duration edge case while halfway-through is the right place for steady-state hw encoders on longer runs.
+- **`recommended_concurrent` uses `speed_x`, not `realtime_multiplier`.** speed_x is FFmpeg's encoder-side measurement which excludes our process startup; realtime_multiplier is wall-clock-based and includes init. For "how many concurrent streams can I sustain at steady state," speed_x is the better predictor. Falls back to realtime_multiplier when speed_x is missing (parser miss on the final progress line).
+- **Floor-clamped to ≥1 if the encoder finished at all.** A sub-realtime encoder (libx265 at 0.4×) can still drive a single stream — just laggy. Returning 0 would imply "this encoder is unusable" which is wrong; users with no other option will accept the lag. Returning None is reserved for "didn't finish so we can't measure."
+- **GPU probe failure is silent (gpu/vram = None), not surfaced as a row error.** The probe is a *measurement* not a *correctness* signal — a missing `nvidia-smi` doesn't mean the encoder is broken, just that we can't tell you the GPU stats. Letting the benchmark complete with — for those columns is the right answer.
+- **Vendor-sectioned card list over a denser table.** The 8-metric grid would have pushed every column to its minimum width and made the encoder names truncate. The card layout uses 2 lines per encoder but each line is readable at a glance, the metrics strip wraps gracefully on narrow viewports, and vendor grouping helps the operator spot "all my NVIDIA encoders are good" without reading every row.
+- **Concurrent chip uses success/warning/neutral, not a full traffic-light scale.** Operators don't need 5 grades; they need to know "can I run multiple at once" (success), "you'll hit the cap" (warning), or "single-stream only" (neutral). Red is reserved for the row-level fail icon so the chip and icon don't fight.
+- **`probe_gpu=True` is a parameter on `benchmark_encoder` even though tests are the only callers that flip it to False.** Tests need to skip the probe to dodge the `asyncio.sleep` and keep the suite fast. Wiring it as a named param is cleaner than monkeypatching the function or tracking a module-level flag. Production callers always use the default.
+
+### Issues / Sharp Edges Discovered
+
+- **`patch.object(transcoding_service, "_probe_nvidia", return_value=...)` returns a sync MagicMock**, but the probe is awaited. First test attempt left the probe call un-awaited and `gpu_box[0]` stayed `(None, None)`. Fix: `new=AsyncMock(return_value=(34.0, 580))`. Worth flagging — `patch.object` defaults trip async tests silently.
+- **Event-loop ordering matters for the midpoint probe test.** With `proc.wait` returning instantly via vanilla AsyncMock, the probe coroutine gets scheduled but never gets event-loop time before `cleanup` cancels it. Had to make `proc.wait` actually sleep 1.5 s so the probe (which sleeps `max(0.25, 1.0) = 1.0` s) finishes first. Future agents writing similar tests should pay attention to the relative timing of `proc.wait` vs any midpoint coroutines.
+- **Pythonic AsyncMock side_effect returning `b""` vs returning EOF.** The reader loop terminates on `not chunk`. Returning `b""` from the AsyncMock side_effect is the right way to signal EOF. Returning a single chunk and letting the queue empty also works (next call returns None which becomes `b""` — actually it raises a `StopAsyncIteration`). Used the explicit-EOF pattern for clarity.
+- **Windows `proactor_events.py` resource warnings on the closed-pipe path.** `522 passed, 3 warnings` — the warnings are from `__repr__` during garbage collection of subprocess pipes, not actual errors. Cosmetic-only; no fix needed but worth noting if a future agent sees the warning count grow.
+- **`-loglevel info` is mandatory for the parser.** The encoder self-test uses `-loglevel error` which suppresses the periodic `frame= ... fps= ... speed= ...` lines. Switching benchmark to `error` would make all perf fields land as None silently. Documented in the module docstring + the test asserts the regexes against realistic stderr.
+- **Concurrent chip text includes `· cap` suffix** instead of the FluxChip's optional icon slot. Considered an icon (e.g. anchor / lock), but text suffix is more discoverable for operators who don't know what an anchor icon means in this context.
+
+### Hard Rules Checklist
+
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced. All Dart logging via `Logger`; all Python via `logger`.
+- [x] No silent exceptions. GPU probe and reader failures fold into None/cleanup paths with deliberate `except` clauses commented as such.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps.
+- [x] No layer-boundary violations. Service → router → entity → repo → widget chain unchanged.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.
+- [x] No raw SQL string concatenation (no SQL touched).
+- [x] No bearer tokens / PII logged.
+
+### Proactive Suggestions for Next Work
+
+- **Tier 2 features when more signal is needed.** Resolution-tier matrix (720p/1080p/2160p), bitrate-target CBR mode, concurrent-stress test (spawn N copies, watch them share the GPU). All adders to the existing benchmark; same UI shell. Gate behind a "Full benchmark (slow)" checkbox.
+- **Encoder advisor integration.** `services/encoder_advisor.py` already recommends an active encoder. With Tier 1 perf data persisted somewhere, the advisor could surface a concrete chain: "Based on your hardware, the recommended chain is `[hevc_nvenc → h264_nvenc → libx264]` with up to 3 concurrent 1080p streams." Low effort once the benchmark result lives somewhere persistent.
+- **Persist the latest benchmark to `user_settings`.** Currently the result is in-widget state only — leaving the screen drops it. A `last_benchmark_results: TEXT` JSON column (migration 024) + repo wire-up + a "last run: 5 min ago" timestamp would let the advisor consume it and let the operator see "yesterday's numbers" without re-running.
+
+### Next Agent Should
+
+- **Verify on the user's i7-9750H + UHD 630 box** — restart the server, reopen Encoder Settings, click Run Benchmark. Expected: SOFTWARE section with libx264 (likely amber sub-realtime row) + libx265 (likely red on this CPU at medium); INTEL QUICK SYNC section with h264_qsv (likely failed with the existing `MFX session: -9` error — though this user's last QSV diagnostic showed it eventually working via cuvid retry, so check the current state). Bitrate column should now populate. Init_ms should populate for any encoder that produced a frame.
+- **If Tier 2 is wanted**, the resolution-tier matrix is the highest-value follow-up (operators want to know "can my hardware do 4K?").
+- **Pick up F9 (subset)** if the user wants to close the §11.1 menu — the trivial half (revoke session + sign-out-everywhere) is ~1 hr and uses existing `auth_service.revoke_client`.
+- **Archive AGENT_LOG.md** — at this point the file is over 1300 lines, well past the 1000-line rotation threshold. Move to `docs/logs/AGENT_LOG_archive_08.md` and start fresh with a summary at the top.
+---
+
+## [2026-05-07] — Benchmark UX maturation: bug fixes, fps + resolution selectors, history persistence + sidebar, live progress + bug fixes
+**Phase:** Phase 5 desktop redesign — F10 follow-up (same-day continuation)
+**Status:** Complete — every operator-actionable benchmark workflow shipped
+
+### What Was Done
+
+User ran the just-shipped benchmark, surfaced two bugs from the screenshot, then asked for progressively more capability across the rest of the day.  Eight discrete changes shipped; all share the F10 codepath.
+
+#### 1. Bitrate column always `—` (root cause: `-f null -` discards bytes before muxer)
+
+The screenshot showed every Bitrate cell as `—`.  FFmpeg's `bitrate=N/A` when output is `-f null -` because the muxer doesn't see bytes to measure.  Switched the encode output to `-f mpegts -` piped to stdout DEVNULL — the mpegts muxer keeps the bitrate counter live without touching disk.
+
+#### 2. Wrong error line surfaced (root cause: "first non-empty stderr line" picker)
+
+`hevc_qsv` failure showed `Input #0, lavfi, from 'testsrc=...'` — FFmpeg's input header, not the actual error.  New `_pick_error_line(text)` walks stderr looking for `error` / `failed` / `could not` / `unable to` / `invalid` / `unsupported` / `no such` / `not found` (case-insensitive); falls back to the *last* non-empty line (typically `Conversion failed!`); finally returns the first line.  The hevc_qsv row now reads `[hevc_qsv @ ...] Error querying encoder params: unsupported (-3)`.
+
+#### 3. fps selector + clarified "concurrent · cap" chip
+
+User asked: should there be a 60 fps option, and what does "3 streams · cap" actually mean?
+
+- `BenchmarkRequest.fps` field added (24–60 range, Pydantic 422 outside) + `clamp_fps`.  `BenchmarkResponse.fps` echoes the value used.
+- Desktop `_FpsSelector` chip row (24 / 30 / 60) below the Test Encode action with caption "24 = cinema · 30 = TV · 60 = sports / games".
+- Concurrent chip: dropped misleading "· cap" suffix; added `Tooltip` differentiating verified-vs-documented; for nvidia tooltip names the "driver 530+ removed it on RTX 40-series; community patches lift it on older cards" caveat directly.
+
+#### 4. Cap-verification probe (was opt-in, then made always-on)
+
+User question: "if drivers above [the cap] support higher streams, are we testing it?"  Honest answer: no — the chip just trusted `concurrent_session_cap=3` from the registry.
+
+- New `probe_concurrent_cap(encoder, registry_cap, fps, size)` spawns `max(8, registry_cap*3)` short concurrent encodes (1 s 1280×720, `-f null -`, stderr DEVNULL) and counts survivors — the empirical answer.
+- Added `verified_concurrent: int | None` field to dataclass + Pydantic + Dart entity.
+- New `_with_verified_cap` helper re-derives `recommended_concurrent` against the verified ceiling.
+- Probe uses the **same fps + resolution** as the main run (was hardcoded 30 fps × 360p) so the verified count actually reflects the operator's measured workload — VRAM exhaustion is workload-sensitive even if NVENC's session-count rejection isn't.
+- Initially shipped as opt-in `verify_caps: bool` on the request; in a later round (per user) made always-on by hardcoding `verify_caps: true` in the desktop repo and removing the toggle widget.  Still validated server-side so a non-desktop caller could opt out.
+- Concurrent chip swaps icon `layers_outlined` → `verified_outlined` when the value is verified; tooltip text differentiates the three outcomes (verified > registry / verified < registry / verified == registry).
+
+#### 5. Confusing metric labels ("89 fps" with 60 fps source)
+
+User: "what does fps mean here, and that ms?  user will be too confused".
+
+- Renamed labels: `init` → `startup`, `fps` → `out fps`, `speed` → `realtime`.
+- Tooltip on every metric tile explaining what it measures + the unit; `out fps` tooltip reads "The source clip ran at $sourceFps fps; values above $sourceFps mean the encoder ran faster than realtime."
+- Source caption above the results table: `🎞 Source: 1280×720 · 60 fps · 8 s synthetic clip` — anchors what was tested.
+
+#### 6. Resolution selector + Encoder Settings tabs split
+
+User: "give option to select resolution"; separately "in encoder settings page create new tab for benchmark".
+
+- `BenchmarkRequest.width` (320–3840) + `height` (240–2160) Pydantic-validated; `clamp_resolution` snaps off-tier inputs to the nearest of `(1280×720) / (1920×1080) / (3840×2160)` so the history doesn't accumulate one-off resolutions.
+- `BenchmarkResponse.width / height` echo the snapped values.
+- Desktop `_ResolutionSelector` chip row (720p / 1080p / 4K) sits above fps with caption "720p = library content · 1080p = live capture · 4K = HDR sources".
+- Encoder Settings restructured with `FluxTabBar` (existing primitive used by Subscription) — `Configuration` tab (default; tune icon, retains 2-column settings + live-stats sidebar layout) and `Benchmark` tab (speed icon, full-page width).  Page header subtitle switches per tab.  Save button only renders on Configuration (Benchmark has no persisted state).
+
+#### 7. Benchmark history persistence + sidebar UI
+
+User: "save benchmark history with proper details, build proper UI for it, maybe on the right side panel".
+
+- Migration `024_benchmark_history.sql` adds `benchmark_runs` table — top-level workload metadata + denormalized `encoder_count` + JSON `results_json` blob; indexed on `started_at DESC`.
+- New `services/benchmark_history_service.py`: `save_benchmark_run` (auto-prunes via `prune_history` to 50 entries on every save), `list_benchmark_runs(limit)`, `get_benchmark_run(id)`, `delete_benchmark_run(id)`.
+- 3 new endpoints: `GET /transcoding/benchmark/history`, `GET /transcoding/benchmark/history/{id}`, `DELETE /transcoding/benchmark/history/{id}` — all localhost-only.
+- `POST /transcoding/benchmark` persists every run before responding and returns the new `id` so the desktop can keep the visible result aligned with the sidebar's highlighted row.
+- New `BenchmarkHistoryEntry` + `BenchmarkHistory` freezed entities; `TranscodingRepository` gains `benchmarkHistory({limit})`, `benchmarkHistoryEntry(id)`, `deleteBenchmarkHistoryEntry(id)`.
+- Benchmark tab restructured from full-width to 2-column layout: left expanded `_BenchmarkBlock` (now stateless wrt the rendered run; parent owns it), right 280-px `_BenchmarkHistorySidebar` (FluxCard with refresh icon header; "Recent Runs" list with active-dot indicator, "Today HH:MM" / "Yesterday HH:MM" / "MMM d HH:MM" formatter, resolution + fps + encoder-count caption, hover-revealed delete affordance, 520-px max-height with internal scroll, busy spinner per entry during load/delete; empty/loading/error states).
+- Parent `_BenchmarkTab` is stateful — owns `_currentRun` + `_historyVersion` (bumped after fresh runs to force sidebar refetch; sidebar-driven selections don't bump).
+- Deleting the currently-rendered run from the sidebar drops it from the pane (parent's `_onRunDeleted` clears `_currentRun` if its id matches).
+
+#### 8. Live progress tracking + gradient progress bar
+
+User: "when running benchmark, i need to see something in ui how much the progress has been done and what is going on".
+
+- Server module-level `benchmark_service._progress: dict | None` updated on every encoder/step transition; cleared in a `finally` block so a crash mid-run doesn't leave stale state.
+- New `GET /api/v1/transcoding/benchmark/progress` localhost-only endpoint returns either `{running: false}` or a snapshot with `total_encoders`, `completed`, `current_encoder`, `current_step` (`starting` / `encoding` / `verifying_cap`), `current_index`.
+- `BenchmarkProgress` freezed entity + `TranscodingRepository.benchmarkProgress()`.
+- Desktop polls `/benchmark/progress` every 500 ms while its own POST is in flight (first poll fires immediately so the card appears within one frame).
+- New `_BenchmarkProgressCard` shows a violet-tinted card with: status line ("Encoding h264_nvenc" / "Verifying NVENC session cap" / "Starting benchmark…"), determinate gradient progress bar, "Encoder N of M" caption.  Halfway-credit for the in-flight encoder so the bar moves smoothly between completion ticks.
+- Initial implementation used Flutter's `LinearProgressIndicator` with `valueColor` (single colour only).  User asked for a gradient.  Rewrote as `_GradientProgressBar` (custom widget): paints `AppGradients.progress` (#8B5CF6 → #A855F7) over the track via `Stack(fit: StackFit.expand)` + `AnimatedPositioned(width: fraction × parentWidth)` for determinate fills with 240 ms ease-out; AnimatedBuilder + Positioned strip for the indeterminate sweep.  First version inside a tight-constrained `SizedBox + ColoredBox` had the determinate `AnimatedContainer(width: fillWidth)` clamped to fill the parent (always-100 % bug); fix was switching to `AnimatedPositioned` inside `Stack(fit: StackFit.expand)` so the fill controls its own width independent of the tight parent constraints.
+
+#### 9. UI cleanup pass
+
+User flagged five things in addition: tab UI bugged, back button instead of Cancel, divider gap too wide, back button crashing.
+
+- **`FluxTabBar` divider full-width** — `mainAxisSize: MainAxisSize.min` removed from the inner Row; the Container's bottom border now extends across the full parent width.  Fixes Library / Logs / Subscription / Encoder Settings simultaneously.
+- **`PageHeader.onBack`** — new optional slot; renders a 36×36 violet-tinted back arrow with hover state + tooltip + Semantics(button) + AnimatedContainer hover transition.  Wrapped in mounted-guarded `_setHover` helper to dodge "setState after dispose" when `MouseRegion.onExit` fires after the route transition starts.
+- **Cancel → back arrow** — Encoder Settings drops Cancel; replaces with `onBack: () => context.canPop() ? context.pop() : context.go(Routes.transcoding)`.  The `canPop` guard handles deep-link / state-restoration entries that would otherwise crash on an empty pop.  Save button only renders on Configuration tab.
+- **Tab divider gap** — `FluxTabBar`'s `bottom: 16` padding was creating a visible vertical gap between the tab text and the container's bottom-border divider.  Removed (now `bottom: 0`) so the active tab's 2 px violet underline overlaps the 1 px container divider — matches the prototype's "marginBottom: -1 to overlap" intent.
+- **Settings page untouched** — user clarified mid-task: "no, dont do anything to settings screen ui now, back button, in config tab in encoder settings".  Scoped the back button work to Encoder Settings only.
+
+### Files Created / Modified
+
+| Action | Path |
+|--------|------|
+| Created | `apps/server/database/migrations/024_benchmark_history.sql` (`benchmark_runs` table + `started_at DESC` index) |
+| Created | `apps/server/services/benchmark_history_service.py` (save / list / get / delete + auto-prune at 50 entries) |
+| Created | `apps/server/tests/test_benchmark_history.py` (~14 cases — round-trip, list newest-first, 404 paths, prune, all 3 endpoints + localhost guards) |
+| Modified | `apps/server/services/benchmark_service.py` (mpegts mux replacing `null`; streamed stderr reader for `init_ms`; `_pick_error_line` marker-aware walker; midpoint GPU probe; `vendor` / `codec` / `concurrent_session_cap` / `recommended_concurrent` / `verified_concurrent` fields on dataclass; `clamp_fps` + `clamp_resolution`; `width` / `height` / `fps` params threaded into `run_benchmark` + `benchmark_encoder` + `probe_concurrent_cap`; module-level `_progress` global + `get_progress()` + `verify_caps` orchestration) |
+| Modified | `apps/server/routers/transcoding.py` (Pydantic models for `BenchmarkRequest` / `BenchmarkEncoderResult` / `BenchmarkResponse` / `BenchmarkHistoryEntry` / `BenchmarkHistoryResponse` / `BenchmarkProgress`; 4 new endpoints — `POST /benchmark` returns `id` after persist; `GET /benchmark/progress`; `GET /benchmark/history`; `GET /benchmark/history/{id}`; `DELETE /benchmark/history/{id}`; module docstring + table updated) |
+| Modified | `apps/server/tests/test_benchmark_service.py` (rewrote streamed-stderr mocks; +N parametric cases for `clamp_fps`, `clamp_resolution`, `_recommended_concurrent`, init_ms, GPU probe wiring, cap probe success counting, progress publish/clear/exception-clear/step-flip) |
+| Modified | `apps/server/tests/test_transcoding.py` (`_fake_run` mock signatures updated for `width` / `height` / `verify_caps`; +cases for fps acceptance / resolution snap / verify_caps default / progress idle / progress running / progress 403) |
+| Modified | `packages/fluxora_core/lib/entities/encoder_benchmark.dart` (`EncoderBenchmarkResult` gains `vendor` / `codec` / `initMs` / `gpuUtilizationPercent` / `vramUsedMb` / `concurrentSessionCap` / `recommendedConcurrent` / `verifiedConcurrent`; `EncoderBenchmarkRun` gains `id` / `width` / `height` / `verifyCaps`; new `BenchmarkHistoryEntry`, `BenchmarkHistory`, `BenchmarkProgress` entities) |
+| Regenerated | `packages/fluxora_core/lib/entities/encoder_benchmark.freezed.dart` + `.g.dart` (multiple times across the day) |
+| Modified | `packages/fluxora_core/lib/network/endpoints.dart` (`transcodingBenchmarkProgress`, `transcodingBenchmarkHistory`, `transcodingBenchmarkHistoryEntry(id)` constants) |
+| Modified | `packages/fluxora_core/lib/network/api_client.dart` (`post` gained optional `receiveTimeout` param so per-call timeouts don't fight the global 10 s desktop default) |
+| Modified | `apps/desktop/lib/features/transcoding/domain/repositories/transcoding_repository.dart` (added `benchmark`, `benchmarkProgress`, `benchmarkHistory`, `benchmarkHistoryEntry`, `deleteBenchmarkHistoryEntry`) |
+| Modified | `apps/desktop/lib/features/transcoding/data/repositories/transcoding_repository_impl.dart` (impls for above; receive timeout 6 min for benchmark; always sends `verify_caps: true`) |
+| Modified | `apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart` (page restructure with `FluxTabBar`; `_BenchmarkTab` stateful parent; `_BenchmarkBlock` consumes `run` + `onRunComplete` from parent; `_FpsSelector`, `_ResolutionSelector`, `_BenchmarkProgressCard`, `_GradientProgressBar`, `_BenchmarkHistorySidebar`, `_HistoryEntryRow`, `_SidebarStateText` widgets; tooltip-wrapped metric tiles with renamed labels; source-workload caption; `onBack` with `canPop` guard) |
+| Modified | `apps/desktop/lib/shared/widgets/page_header.dart` (`onBack` slot + `_BackButton` stateful widget with mounted-guarded hover state) |
+| Modified | `apps/desktop/lib/shared/widgets/flux_tab_bar.dart` (dropped `mainAxisSize.min` so the divider extends full-width; dropped `bottom: 16` padding so the active underline overlaps the divider) |
+| Modified | `docs/04_api/01_api_contracts.md` (full request/response specs for `POST /benchmark` with all new fields + `GET /benchmark/progress` + `GET /benchmark/history` + `GET /benchmark/history/{id}` + `DELETE /benchmark/history/{id}`; localhost-only endpoint table updated) |
+| Modified | `docs/00_overview/current_status.md` (multiple paragraphs across the day; test count 488 → 565; migrations 023 → 024) |
+| Modified | `docs/11_design/desktop_redesign_plan.md` (multiple change-log entries through the day for F10 ship + Tier 1 + fps/resolution + history) |
+| Modified | `.claude/settings.json` (per user: added `python -m pytest *`, `flutter pub *`, `dart run build_runner *` allowlist entries) |
+| Modified | `AGENT_LOG.md` (this entry — and the earlier same-day entries above) |
+
+### Decisions Made
+
+- **Always-on cap probe over opt-in**.  Initially shipped as `verify_caps: bool` on the request (default false) with a UI toggle.  User then asked to remove the toggle.  The chip would otherwise lie about capacity for any operator who didn't know to flip the toggle on; defaulting to the truth is worth ~2 s extra wall-clock per hw encoder and a brief GPU spike.  Server still validates the flag so a non-desktop caller could opt out.
+- **Resolution snap to known tiers, not free-form**.  `clamp_resolution` maps any (width, height) to the nearest of 720p / 1080p / 2160p by total-pixel proximity.  An operator submitting `(1366, 768)` lands on 720p.  Keeps the history sidebar comparable across runs — otherwise a fat-fingered `(1281, 720)` would create a row indistinguishable-but-not-equal to the canonical 720p result.
+- **Single JSON-blob results column over a relational split**.  `benchmark_runs.results_json` holds the full per-encoder array.  We always fetch full runs together (the sidebar shows the same data the live results pane does); a relational split would add a join + an order-preservation hassle for no query benefit at this scale.
+- **Auto-prune to 50 entries on every save**, not via a separate background task.  The save path is the only writer; piggy-backing pruning there avoids a periodic task that could fight the save in race conditions.  50 covers ~weeks of comparisons at typical operator usage without unbounded growth.
+- **`AnimatedPositioned` inside `Stack(fit: StackFit.expand)` for the determinate progress bar**, not `AnimatedContainer(width:)` inside a tight-constrained box.  The latter is what I shipped first — looked always-100 % because tight parent constraints forced the AnimatedContainer to fill regardless of the explicit width request.  Stack + Positioned lets the fill set its own width independent of the parent's tight constraints.
+- **Module-level progress global, not a thread-local or per-request slot**.  `run_benchmark` is invoked one-at-a-time per worker process (concurrent benchmarks would contend for the GPU + invalidate each other's numbers; the upstream router doesn't allow them).  A simple `dict | None` is sufficient + makes the progress endpoint a free read.
+- **500 ms progress poll interval**.  Fast enough for "current encoder" updates to feel live (most encoders take 5–15 s) without flooding the localhost loopback.  The first poll fires immediately on benchmark trigger so the card appears within one frame.
+- **Separate `_GradientProgressBar` widget** instead of inlining the Stack/AnimatedPositioned in `_BenchmarkProgressCard`.  Keeps the card's build method readable + makes the gradient bar reusable if a future agent needs one elsewhere.
+- **Source caption above results table** (`🎞 Source: 1280×720 · 60 fps · 8 s synthetic clip`) instead of just hovering for the workload context.  The "89 fps" against a 60 fps source confusion needed pre-emptive context, not just a tooltip behind a hover.
+- **Drop "· cap" suffix from the concurrent chip**, keep colour as the cue.  The text suffix read as a hard-measured limit; the warning amber colour + tooltip explain the actual semantics.
+- **Back button `canPop` fallback to `context.go(Routes.transcoding)`** rather than no-op.  Deep-link / state-restoration entries that land on `/transcoding/encoder` directly would crash on an empty `context.pop()`; falling back to the parent route makes the navigation always meaningful.
+
+### Issues / Sharp Edges Discovered
+
+- **`-f null -` discards bytes before the muxer measures them**.  Every progress line lands with `bitrate=N/A`.  Fix is `-f mpegts -` piped to stdout DEVNULL — bytes never touch disk but the mpegts muxer keeps the bitrate counter live.  Documented in the module docstring + a regression test in `test_benchmark_service.py`.
+- **FFmpeg's first stderr line on failure is the input-header banner, not the error**.  `Input #0, lavfi, from 'testsrc=...':` reads as a useful error to a casual eye but it's just informational.  Marker-aware walker + tests cover this.  Future agents writing other FFmpeg-driven services should avoid the "first line" pattern in error paths.
+- **`patch.object(transcoding_service, "_probe_nvidia", return_value=...)` returns a sync MagicMock** — silently un-awaited when the call site `await`s the probe.  Fix is `new=AsyncMock(return_value=...)`.  Worth flagging in a gotchas entry — this gotcha exists everywhere we mock async helpers in tests.
+- **Event-loop ordering matters for the midpoint GPU probe test**.  With `proc.wait` returning instantly via vanilla AsyncMock, the probe coroutine gets scheduled but never gets event-loop time before `cleanup` cancels it.  Had to make `proc.wait` actually sleep 1.5 s so the probe (which sleeps 1.0 s) finishes first.
+- **`AnimatedContainer(width:)` is silently overridden by tight parent constraints**.  Looks like the width is being respected (the widget rebuilds with the new value), but visual output is always-fill.  Stack + Positioned + `AnimatedPositioned` is the correct pattern for "size a child explicitly inside a tight-constrained parent".  Documented in a new gotcha.
+- **`MouseRegion.onExit` can fire after widget dispose during route transitions**.  The button click that triggers a route pop disposes the button, but the mouse-leave event fires asynchronously after dispose.  Without a `mounted` check, `setState` throws.  Pattern documented in the existing gotchas catalogue (similar emit-after-close issue from May 6).
+- **`FluxTabBar`'s `mainAxisSize.min` made the bottom-border divider collapse to the tabs' combined width**.  Looked broken next to `_SettingsTabRow` which doesn't constrain.  Fix is dropping the min size — tabs themselves stay left-aligned via the default mainAxisAlignment.
+- **`go_router` `context.pop()` crashes on an empty navigation stack**.  Cancel button had this problem too — never triggered because operators only ever reached the page via the Transcoding screen's button.  Back button made it more discoverable.  `canPop` guard + `context.go` fallback.
+
+### Hard Rules Checklist
+
+- [x] No `git commit` / `git push` / `git add` performed.
+- [x] No agent / AI branding.
+- [x] No `print()` / `debugPrint()` introduced.
+- [x] No silent exceptions.  Progress poll catch is intentionally silent (per-tick noise) but documented.
+- [x] No hardcoded secrets, ports, paths.
+- [x] No new pip / pub deps.
+- [x] No layer-boundary violations.
+- [x] No git-history rewrites.
+- [x] No edits to past migrations.  Migration 024 is a new file.
+- [x] No raw SQL string concatenation.
+- [x] No bearer tokens / PII logged.
+
+### Proactive Suggestions for Next Work
+
+- **Tier 2 features** — resolution-tier matrix (run benchmark at 720p AND 1080p AND 4K in one click), bitrate-target CBR mode (operator picks "can I sustain 4 Mb/s?"), concurrent-stress test (spawn N copies, watch them share the GPU). All adders to the existing benchmark; same UI shell.
+- **Encoder advisor integration** — `services/encoder_advisor.py` already recommends an active encoder.  With the persisted history from migration 024, the advisor could surface "based on your hardware history, the recommended chain is `[hevc_nvenc → h264_nvenc → libx264]` with up to 3 concurrent 1080p streams".  Low effort.
+- **Compare two history entries side-by-side** — given the sidebar's already there, a click-shift-click selection gating + a diff view that highlights speed deltas would be powerful for "did the driver update help?" workflows.  Adds a stateful selection model + a new diff widget.
+- **Pick up F9 (subset)** if the user wants to close the §11.1 menu — the trivial half (revoke session + sign-out-everywhere) is ~1 hr and uses existing `auth_service.revoke_client`.
+- **Archive AGENT_LOG.md** — the file is now ~1500 lines, well past the 1000-line rotation threshold.  Move to `docs/logs/AGENT_LOG_archive_08.md` with a summary at the top + start fresh.
+
+### Next Agent Should
+
+- **Smoke-test on the user's box** — restart the server, reopen Encoder Settings → Benchmark.  Click Run Benchmark.  Expected: progress card appears immediately with violet gradient bar; status line cycles through encoders + ticks "Encoder N of 6"; bar grows smoothly between ticks; results render after ~60 s; sidebar shows the new run highlighted with the violet active-dot; back arrow at the top-left navigates to Transcoding.
+- **If the back button still crashes**, the next likely culprit is the `_BenchmarkHistorySidebar`'s `Logger`-instance survives across rebuilds (it's a static field) but the `Timer.periodic` in `_BenchmarkBlock` if not cancelled on dispose would fire after teardown.  Verify `_progressTimer?.cancel()` is hit in `dispose()` (it should be — already wired).
+- **Tier 2** if the operator wants more axes of measurement.
+---

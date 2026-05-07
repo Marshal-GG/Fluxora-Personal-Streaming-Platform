@@ -77,6 +77,13 @@ class Endpoints {
   static const String transcodingDevices = '$_base/transcoding/devices';
   static const String transcodingFallbackHistory =
       '$_base/transcoding/fallback-history';
+  static const String transcodingBenchmark = '$_base/transcoding/benchmark';
+  static const String transcodingBenchmarkProgress =
+      '$_base/transcoding/benchmark/progress';
+  static const String transcodingBenchmarkHistory =
+      '$_base/transcoding/benchmark/history';
+  static String transcodingBenchmarkHistoryEntry(int id) =>
+      '$_base/transcoding/benchmark/history/$id';
 
   // Profile
   static const String profile = '$_base/profile';

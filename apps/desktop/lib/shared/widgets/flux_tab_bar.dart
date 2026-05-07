@@ -51,9 +51,18 @@ class FluxTabBar extends StatelessWidget {
           ),
         ),
       ),
-      padding: const EdgeInsets.only(left: 4, right: 4, bottom: 16),
+      // ``bottom: 0`` so the active tab's 2 px violet underline sits
+      // directly on the container's 1 px bottom border — matches the
+      // "marginBottom: -1 to overlap" intent from the prototype, and
+      // closes the visible gap between the tab items and the divider
+      // that the previous ``bottom: 16`` was creating.
+      padding: const EdgeInsets.only(left: 4, right: 4),
+      // ``mainAxisSize.max`` so the Container's bottom border extends the
+      // full width of the parent.  The previous ``min`` made the divider
+      // collapse to the tabs' combined width — looked broken next to
+      // Settings' custom tab row whose divider extends across.  Tabs
+      // themselves stay left-aligned via the default ``mainAxisAlignment``.
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
           for (int i = 0; i < tabs.length; i++) ...[
             if (i > 0) const SizedBox(width: 18),
