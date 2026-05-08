@@ -22,13 +22,18 @@ import 'package:fluxora_mobile/features/library/presentation/screens/library_scr
 import 'package:fluxora_mobile/features/group_watch/presentation/screens/group_watch_screen.dart';
 import 'package:fluxora_mobile/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:fluxora_mobile/features/offline/presentation/screens/offline_screen.dart';
+import 'package:fluxora_mobile/features/onboarding/presentation/screens/splash_screen.dart';
 import 'package:fluxora_mobile/features/player/presentation/screens/player_screen.dart';
 import 'package:fluxora_mobile/features/viewer/presentation/screens/doc_viewer_screen.dart';
 import 'package:fluxora_mobile/features/viewer/presentation/screens/music_player_screen.dart';
 import 'package:fluxora_mobile/features/viewer/presentation/screens/photo_viewer_screen.dart';
 import 'package:fluxora_mobile/features/xray/presentation/screens/xray_screen.dart';
+import 'package:fluxora_mobile/features/profile/presentation/screens/account_screen.dart';
+import 'package:fluxora_mobile/features/profile/presentation/screens/playback_prefs_screen.dart';
+import 'package:fluxora_mobile/features/profile/presentation/screens/privacy_screen.dart';
 import 'package:fluxora_mobile/features/profile/presentation/screens/profile_screen.dart';
 import 'package:fluxora_mobile/features/search/presentation/screens/search_screen.dart';
+import 'package:fluxora_mobile/features/upgrade/presentation/screens/upgrade_screen.dart';
 import 'package:fluxora_mobile/shared/widgets/mobile_shell.dart';
 
 /// Named route paths.
@@ -41,6 +46,11 @@ import 'package:fluxora_mobile/shared/widgets/mobile_shell.dart';
 /// Auth-gate paths (`connect`, `pairing`, `reconnect`) and full-screen
 /// deep-link paths (`player`, `libraryFiles`) bypass the shell.
 abstract class Routes {
+  /// First surface on a fresh install. Auth-gate redirects authenticated
+  /// users straight to [home], so the screen is only ever the entry
+  /// point when no token is in secure storage. Mobile redesign plan §M12.
+  static const String splash = '/splash';
+
   static const String connect = '/connect';
   static const String pairing = '/pairing';
 
@@ -105,6 +115,25 @@ abstract class Routes {
   static const String photoViewer = '/photo-viewer';
   static const String musicPlayer = '/music-player';
 
+  /// Subscription / upgrade screen.  Reached from Profile → Subscription
+  /// row (settings remediation plan §M1) and from the player tier-limit
+  /// state.  Outside the shell so the chrome is full-screen.
+  static const String upgrade = '/upgrade';
+
+  /// Account detail screen — display name editor + read-only device
+  /// info (settings remediation plan §M2).  Outside the shell.
+  static const String account = '/account';
+
+  /// Privacy & security screen — device-info readout + cache /
+  /// temp-download maintenance (settings remediation plan §M4).
+  /// Outside the shell.
+  static const String privacy = '/privacy';
+
+  /// Playback prefs screen — bg-playback / Wi-Fi-only / max quality /
+  /// autoplay-next / subtitles-default (settings remediation plan §M3).
+  /// Outside the shell.
+  static const String playbackPrefs = '/playback-prefs';
+
   static String detail(String id) => '/detail/$id';
   static String episodes(String id) => '/episodes/$id';
 }
@@ -125,6 +154,7 @@ void setupRouterUnauthorizedBridge() {
     // five tab routes (and any deep-link route) are the surfaces where
     // a dead token surprises the user mid-action; redirect those.
     const pairingFlows = {
+      Routes.splash,
       Routes.connect,
       Routes.pairing,
       Routes.reconnect,
@@ -135,9 +165,13 @@ void setupRouterUnauthorizedBridge() {
 }
 
 final GoRouter appRouter = GoRouter(
-  initialLocation: Routes.connect,
+  initialLocation: Routes.splash,
   redirect: _guardRedirect,
   routes: [
+    GoRoute(
+      path: Routes.splash,
+      builder: (context, state) => const SplashScreen(),
+    ),
     GoRoute(
       path: Routes.connect,
       builder: (context, state) => const ConnectScreen(),
@@ -271,6 +305,22 @@ final GoRouter appRouter = GoRouter(
           MusicPlayerScreen(file: state.extra as MediaFile),
     ),
     GoRoute(
+      path: Routes.upgrade,
+      builder: (context, state) => const UpgradeScreen(),
+    ),
+    GoRoute(
+      path: Routes.account,
+      builder: (context, state) => const AccountScreen(),
+    ),
+    GoRoute(
+      path: Routes.privacy,
+      builder: (context, state) => const PrivacyScreen(),
+    ),
+    GoRoute(
+      path: Routes.playbackPrefs,
+      builder: (context, state) => const PlaybackPrefsScreen(),
+    ),
+    GoRoute(
       path: '/detail/:id',
       builder: (context, state) => DetailScreen(id: state.pathParameters['id']!),
     ),
@@ -289,21 +339,23 @@ Future<String?> _guardRedirect(
   final token = await storage.getAuthToken();
   final serverUrl = await storage.getServerUrl();
 
-  final onPublicRoute = state.matchedLocation == Routes.connect ||
+  final onPublicRoute = state.matchedLocation == Routes.splash ||
+      state.matchedLocation == Routes.connect ||
       state.matchedLocation == Routes.pairing ||
       state.matchedLocation == Routes.reconnect ||
       state.matchedLocation == Routes.scanQr;
   final isAuthenticated = token != null && serverUrl != null;
 
-  // Authenticated users hitting /connect or /pairing get bounced to /home.
-  // /reconnect is exempt — an authenticated user opting to re-pair (after
-  // an explicit "Reconnect to server" tap, say) shouldn't be reflected
-  // back to /home before the screen can re-fire the request.
+  // Authenticated users hitting /splash, /connect or /pairing get bounced
+  // to /home. /reconnect is exempt — an authenticated user opting to
+  // re-pair (after an explicit "Reconnect to server" tap, say) shouldn't
+  // be reflected back to /home before the screen can re-fire the request.
   if (isAuthenticated &&
-      (state.matchedLocation == Routes.connect ||
+      (state.matchedLocation == Routes.splash ||
+          state.matchedLocation == Routes.connect ||
           state.matchedLocation == Routes.pairing)) {
     return Routes.home;
   }
-  if (!isAuthenticated && !onPublicRoute) return Routes.connect;
+  if (!isAuthenticated && !onPublicRoute) return Routes.splash;
   return null;
 }

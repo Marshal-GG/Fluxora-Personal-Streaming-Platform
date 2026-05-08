@@ -9,10 +9,12 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/fluxora_core.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'package:fluxora_mobile/core/router/app_router.dart';
 import 'package:fluxora_mobile/features/auth/domain/repositories/auth_repository.dart';
@@ -199,11 +201,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
     getIt<ApiClient>().clearBearerToken();
     await getIt<SecureStorage>().deleteAll();
     if (!context.mounted) return;
-    context.go(Routes.connect);
+    context.go(Routes.splash);
   }
 }
 
-// ── Header (title + settings icon button) ───────────────────────────────────
+// ── Header (title only) ────────────────────────────────────────────────────
+//
+// The prototype ships a 38-px gear icon next to the title.  Removed at M1
+// of the settings remediation plan (`docs/10_planning/archive/15_*.md`) — the
+// Profile tab IS the settings surface, so a gear that opens another
+// nesting was misleading visual debt.
 
 class _Header extends StatelessWidget {
   const _Header();
@@ -212,39 +219,14 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              'Profile',
-              style: AppTypography.displayV2.copyWith(
-                fontSize: 26,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.6,
-                color: AppColors.textBright,
-              ),
-            ),
-          ),
-          GestureDetector(
-            onTap: () {},
-            behavior: HitTestBehavior.opaque,
-            child: Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: const Color(0x0AFFFFFF),
-                shape: BoxShape.circle,
-                border: Border.all(color: AppColors.borderSubtle),
-              ),
-              alignment: Alignment.center,
-              child: const Icon(
-                Icons.settings_outlined,
-                size: 17,
-                color: AppColors.textBright,
-              ),
-            ),
-          ),
-        ],
+      child: Text(
+        'Profile',
+        style: AppTypography.displayV2.copyWith(
+          fontSize: 26,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -0.6,
+          color: AppColors.textBright,
+        ),
       ),
     );
   }
@@ -528,6 +510,7 @@ class _SettingsList extends StatelessWidget {
         icon: Icons.person_outline,
         label: 'Account',
         sub: accountSub,
+        onTap: () => context.push(Routes.account),
       ),
       _SettingsRow(
         icon: Icons.credit_card_outlined,
@@ -536,28 +519,33 @@ class _SettingsList extends StatelessWidget {
         trailing: planPillLabel == null
             ? null
             : _PlanPill(label: planPillLabel),
+        onTap: () => context.push(Routes.upgrade),
       ),
-      const _SettingsRow(
-        icon: Icons.download_outlined,
-        label: 'Downloads',
-        sub: 'Quality · auto-delete',
+      _SettingsRow(
+        icon: Icons.podcasts_rounded,
+        label: 'Playback',
+        sub: 'Bg playback · Wi-Fi only · quality · autoplay · subtitles',
+        onTap: () => context.push(Routes.playbackPrefs),
       ),
-      const _BackgroundPlaybackToggleRow(),
-      const _SettingsRow(
-        icon: Icons.public_outlined,
-        label: 'Language & region',
-      ),
-      const _SettingsRow(
+      const _StubRow(
         icon: Icons.notifications_outlined,
         label: 'Notifications',
+        sub: 'Push opt-in + per-category preferences',
       ),
-      const _SettingsRow(
+      const _StubRow(
+        icon: Icons.public_outlined,
+        label: 'Language & region',
+        sub: 'Localization not enabled in v1',
+      ),
+      _SettingsRow(
         icon: Icons.shield_outlined,
         label: 'Privacy & security',
+        onTap: () => context.push(Routes.privacy),
       ),
-      const _SettingsRow(
+      _SettingsRow(
         icon: Icons.help_outline,
         label: 'Help & support',
+        onTap: () => _showHelpSheet(context),
       ),
       _SettingsRow(
         icon: Icons.refresh_rounded,
@@ -565,10 +553,10 @@ class _SettingsList extends StatelessWidget {
         sub: 'Use if your token was revoked',
         onTap: () => context.go(Routes.reconnect),
       ),
-      const _SettingsRow(
+      _SettingsRow(
         icon: Icons.info_outline,
         label: 'About Fluxora',
-        sub: 'v1.0.0 · build 482',
+        onTap: () => _showAboutSheet(context),
       ),
     ];
 
@@ -652,71 +640,56 @@ class _SettingsRow extends StatelessWidget {
   }
 }
 
-/// Inline toggle row for the "Continue playing in background" pref
-/// (Phase 3 — Player polish round, 2026-05-04).  Tapping the row OR
-/// the [Switch] flips the value.  Reads on first build via
-/// [SecureStorage]; subsequent rebuilds keep the in-memory copy so the
-/// switch animates smoothly.
-class _BackgroundPlaybackToggleRow extends StatefulWidget {
-  const _BackgroundPlaybackToggleRow();
+/// Stubbed-disabled row — renders at 50 % opacity with a violet "v1.1"
+/// pill in place of the chevron, no `onTap`.  Used for surfaces the
+/// prototype reserves a slot for but v1 doesn't ship (Notifications
+/// preferences pending push opt-in; Language & region pending i18n).
+/// Mobile-settings remediation plan §M5.
+class _StubRow extends StatelessWidget {
+  const _StubRow({required this.icon, required this.label, this.sub});
 
-  @override
-  State<_BackgroundPlaybackToggleRow> createState() =>
-      _BackgroundPlaybackToggleRowState();
-}
-
-class _BackgroundPlaybackToggleRowState
-    extends State<_BackgroundPlaybackToggleRow> {
-  /// Null while the initial read is in flight; the toggle stays
-  /// non-interactive until the saved value is known so we don't flip
-  /// twice in quick succession.
-  bool? _enabled;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    final v = await GetIt.I<SecureStorage>().getBackgroundPlaybackEnabled();
-    if (mounted) setState(() => _enabled = v);
-  }
-
-  Future<void> _toggle(bool next) async {
-    setState(() => _enabled = next);
-    try {
-      final storage = GetIt.I<SecureStorage>();
-      await storage.setBackgroundPlaybackEnabled(next);
-      // Toggling explicitly counts as having seen the prompt — no need
-      // to ask again on next backgrounding.
-      await storage.setBackgroundPlaybackPromptShown(true);
-    } catch (_) {
-      // Revert UI on persistence failure so the displayed state stays
-      // honest about what's saved.
-      if (mounted) setState(() => _enabled = !next);
-    }
-  }
+  final IconData icon;
+  final String label;
+  final String? sub;
 
   @override
   Widget build(BuildContext context) {
-    final value = _enabled ?? false;
-    final ready = _enabled != null;
-    return FluxRow(
-      icon: Icons.podcasts_rounded,
-      label: 'Background playback',
-      sub: value
-          ? 'Audio keeps playing when you minimize the app'
-          : 'Pauses when you minimize the app',
-      onTap: ready ? () => _toggle(!value) : () {},
-      trailing: Switch.adaptive(
-        value: value,
-        onChanged: ready ? _toggle : null,
-        activeThumbColor: AppColors.violet,
+    return Opacity(
+      opacity: 0.55,
+      child: FluxRow(
+        icon: icon,
+        label: label,
+        sub: sub,
+        onTap: () {},
+        trailing: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: AppColors.violet.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: AppColors.violet.withValues(alpha: 0.32),
+            ),
+          ),
+          child: Text(
+            'v1.1',
+            style: AppTypography.captionV2.copyWith(
+              color: AppColors.violetTint,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ),
       ),
     );
   }
 }
+
+// Note: the inline `_BackgroundPlaybackToggleRow` widget that lived here
+// (Phase 3 / Player polish, 2026-05-04) was lifted into the dedicated
+// PlaybackPrefsScreen at M3 of the settings remediation plan
+// (`docs/10_planning/archive/15_*.md`).  The toggle now lives at the new
+// `Routes.playbackPrefs` surface alongside the four other player prefs.
 
 class _PlanPill extends StatelessWidget {
   const _PlanPill({required this.label});
@@ -773,6 +746,211 @@ class _SignOutButton extends StatelessWidget {
             color: const Color(0xFFF87171),
           ),
         ),
+      ),
+    );
+  }
+}
+
+// ── About + Help & support sheets (M1 settings remediation) ────────────────
+
+/// Read app version + build from `package_info_plus`.  Returned as a single
+/// preformatted "vX.Y.Z · build N" string so the sheets don't each
+/// duplicate the formatting logic.
+Future<String> _readAppVersion() async {
+  final info = await PackageInfo.fromPlatform();
+  return 'v${info.version} · build ${info.buildNumber}';
+}
+
+/// About Fluxora — version + tagline + credit.  Static otherwise.
+Future<void> _showAboutSheet(BuildContext context) async {
+  await showFluxBottomSheet<void>(
+    context: context,
+    builder: (sheetCtx) => FluxBottomSheet(
+      title: 'About Fluxora',
+      trailing: IconButton(
+        icon: const Icon(Icons.close_rounded, color: AppColors.textMutedV2),
+        onPressed: () => Navigator.of(sheetCtx).maybePop(),
+        splashRadius: 18,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 4),
+          const Center(child: FluxoraMark(size: 56, glow: true)),
+          const SizedBox(height: 14),
+          Center(
+            child: Text(
+              'Fluxora Mobile',
+              style: AppTypography.h1
+                  .copyWith(color: AppColors.textBright, fontSize: 17),
+            ),
+          ),
+          const SizedBox(height: 4),
+          FutureBuilder<String>(
+            future: _readAppVersion(),
+            builder: (_, snap) => Center(
+              child: Text(
+                snap.data ?? '—',
+                style: AppTypography.captionV2
+                    .copyWith(color: AppColors.textMutedV2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: Text(
+              'Stream. Sync. Anywhere.',
+              style: AppTypography.body.copyWith(
+                color: AppColors.textBody,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          const Divider(height: 1, color: AppColors.borderSubtle),
+          const SizedBox(height: 14),
+          Text(
+            'Self-hosted media streaming for movies, TV, music and '
+            'documents — your library, on any device, with zero cloud '
+            'lock-in.',
+            style: AppTypography.body.copyWith(color: AppColors.textBody),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Made by Marshal · 2026',
+            style: AppTypography.captionV2
+                .copyWith(color: AppColors.textDim),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Help & support — exposes diagnostic info the user can hand to whoever
+/// runs their Fluxora server (operator).  Self-hosted means no central
+/// support channel; the operator IS the support channel.
+Future<void> _showHelpSheet(BuildContext context) async {
+  final secureStorage = GetIt.I<SecureStorage>();
+  final serverUrl = await secureStorage.getServerUrl() ?? 'Unknown';
+  final clientId = await secureStorage.getClientId() ?? 'Unknown';
+  final appVersion = await _readAppVersion();
+  if (!context.mounted) return;
+  await showFluxBottomSheet<void>(
+    context: context,
+    builder: (sheetCtx) => FluxBottomSheet(
+      title: 'Help & support',
+      trailing: IconButton(
+        icon: const Icon(Icons.close_rounded, color: AppColors.textMutedV2),
+        onPressed: () => Navigator.of(sheetCtx).maybePop(),
+        splashRadius: 18,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Fluxora is self-hosted. For account questions, server '
+            'outages, or feature requests, contact the operator who '
+            'paired this device.',
+            style: AppTypography.body.copyWith(color: AppColors.textBody),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Diagnostic info',
+            style: AppTypography.eyebrow
+                .copyWith(color: AppColors.textMutedV2, letterSpacing: 0.4),
+          ),
+          const SizedBox(height: 8),
+          _DiagnosticRow(label: 'App version', value: appVersion),
+          const SizedBox(height: 6),
+          _DiagnosticRow(
+            label: 'Server URL',
+            value: serverUrl,
+            copyable: true,
+          ),
+          const SizedBox(height: 6),
+          _DiagnosticRow(
+            label: 'Device ID',
+            value: clientId,
+            copyable: true,
+          ),
+          const SizedBox(height: 18),
+          FluxButton(
+            fullWidth: true,
+            variant: FluxButtonVariant.secondary,
+            icon: Icons.refresh_rounded,
+            onPressed: () {
+              Navigator.of(sheetCtx).pop();
+              context.go(Routes.reconnect);
+            },
+            child: const Text('Reconnect to server'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _DiagnosticRow extends StatelessWidget {
+  const _DiagnosticRow({
+    required this.label,
+    required this.value,
+    this.copyable = false,
+  });
+
+  final String label;
+  final String value;
+  final bool copyable;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: const Color(0x08FFFFFF),
+        border: Border.all(color: AppColors.borderSubtle),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              label,
+              style: AppTypography.captionV2
+                  .copyWith(color: AppColors.textMutedV2),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: AppTypography.body.copyWith(
+                color: AppColors.textBright,
+                fontFamily: 'monospace',
+                fontSize: 12.5,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (copyable)
+            IconButton(
+              icon: const Icon(
+                Icons.copy_rounded,
+                size: 16,
+                color: AppColors.textMutedV2,
+              ),
+              splashRadius: 18,
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                await Clipboard.setData(ClipboardData(text: value));
+                messenger.showSnackBar(
+                  SnackBar(content: Text('Copied $label')),
+                );
+              },
+            ),
+        ],
       ),
     );
   }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
@@ -12,6 +13,13 @@ import 'package:fluxora_mobile/features/player/data/services/fluxora_audio_handl
 import 'package:fluxora_mobile/features/player/data/services/webrtc_signaling_service.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.dart';
+
+/// Function-typed connectivity probe — defaults to
+/// `Connectivity().checkConnectivity()` in production but can be
+/// substituted in tests so the cubit doesn't depend on a real network
+/// interface.  Mobile-settings remediation plan §M3 follow-up
+/// (Wi-Fi-only enforcement).
+typedef ConnectivityChecker = Future<List<ConnectivityResult>> Function();
 
 /// How often (in seconds) the cubit reports playback progress to the server.
 const _kProgressIntervalSec = 10;
@@ -42,9 +50,12 @@ class PlayerCubit extends Cubit<PlayerState> {
     required PlayerRepository repository,
     required SecureStorage secureStorage,
     FluxoraAudioHandler? audioHandler,
+    ConnectivityChecker? connectivityChecker,
   })  : _repository = repository,
         _secureStorage = secureStorage,
         _audioHandler = audioHandler,
+        _checkConnectivity =
+            connectivityChecker ?? Connectivity().checkConnectivity,
         super(const PlayerInitial()) {
     _lifecycleObserver = _PlayerLifecycleObserver(this);
     WidgetsBinding.instance.addObserver(_lifecycleObserver);
@@ -52,6 +63,7 @@ class PlayerCubit extends Cubit<PlayerState> {
 
   final PlayerRepository _repository;
   final SecureStorage _secureStorage;
+  final ConnectivityChecker _checkConnectivity;
 
   /// Optional — null in unit tests where the OS audio_service hasn't
   /// been initialised.  Production wires it via the injector.
@@ -98,6 +110,26 @@ class PlayerCubit extends Cubit<PlayerState> {
   // Public
   // ---------------------------------------------------------------------------
 
+  /// Wi-Fi-only-mode gate (settings remediation plan §M3).  Returns
+  /// `true` when the user has Wi-Fi-only on AND the device is currently
+  /// on cellular without a Wi-Fi link.  Connectivity-probe failures
+  /// fail-open (return `false`) — a permission glitch on the
+  /// connectivity API shouldn't trap the user with no playback.
+  Future<bool> _shouldRefuseOverCellular() async {
+    try {
+      final wifiOnly = await _secureStorage.getWifiOnlyStreaming();
+      if (!wifiOnly) return false;
+      final results = await _checkConnectivity();
+      final hasWifi = results.contains(ConnectivityResult.wifi);
+      final hasMobile = results.contains(ConnectivityResult.mobile);
+      return hasMobile && !hasWifi;
+    } catch (e, st) {
+      _log.w('[Player] Wi-Fi-only check failed — allowing stream',
+          error: e, stackTrace: st);
+      return false;
+    }
+  }
+
   Future<void> startStream(
     String fileId,
     String fileName,
@@ -116,6 +148,20 @@ class PlayerCubit extends Cubit<PlayerState> {
     _lastFileId = fileId;
     _lastFileName = fileName;
     _lastPosterUrl = posterUrl;
+
+    // Wi-Fi-only enforcement (settings remediation plan §M3 follow-up).
+    // The pref is set in Profile → Playback → Wi-Fi only streaming and
+    // persisted in SecureStorage.  When on, refuse to start a stream
+    // over cellular.  Failure is non-fatal in the sense that the user
+    // can flip the toggle off and try again — the gate is intentional,
+    // not a hard error.
+    if (await _shouldRefuseOverCellular()) {
+      emit(const PlayerFailure(
+        'Wi-Fi only mode is on. Connect to Wi-Fi to start streaming, or '
+        'turn it off in Profile → Playback.',
+      ));
+      return;
+    }
 
     emit(const PlayerLoading());
     try {

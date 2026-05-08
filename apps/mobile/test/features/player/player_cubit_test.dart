@@ -1,4 +1,5 @@
 import 'package:bloc_test/bloc_test.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:fluxora_core/network/api_exception.dart';
@@ -41,14 +42,22 @@ void main() {
     repository = MockPlayerRepository();
     secureStorage = MockSecureStorage();
     when(() => secureStorage.getAuthToken()).thenAnswer((_) async => tToken);
+    // Default off so existing startStream tests don't trip the Wi-Fi-only
+    // gate (settings remediation §M3 follow-up).
+    when(() => secureStorage.getWifiOnlyStreaming())
+        .thenAnswer((_) async => false);
     // Default stubs — must never throw during cubit.close()
     when(() => repository.stopStream(any())).thenAnswer((_) async {});
     when(() => repository.updateProgress(any(), any())).thenAnswer((_) async {});
   });
 
-  PlayerCubit buildCubit() => PlayerCubit(
+  PlayerCubit buildCubit({
+    Future<List<ConnectivityResult>> Function()? connectivityChecker,
+  }) =>
+      PlayerCubit(
         repository: repository,
         secureStorage: secureStorage,
+        connectivityChecker: connectivityChecker,
       );
 
   group('PlayerCubit', () {
@@ -276,6 +285,80 @@ void main() {
       expect(cubit.state, isA<PlayerInitial>());
       verifyNever(() => repository.seekStream(any(), any(),
           tonemap: any(named: 'tonemap')));
+      await cubit.close();
+    });
+
+    // ── Wi-Fi-only enforcement (settings remediation §M3 follow-up) ──
+
+    test(
+        'startStream emits PlayerFailure when wifiOnly is on and connectivity '
+        'is cellular-only', () async {
+      when(() => secureStorage.getWifiOnlyStreaming())
+          .thenAnswer((_) async => true);
+      final cubit = buildCubit(
+        connectivityChecker: () async => [ConnectivityResult.mobile],
+      );
+
+      await cubit.startStream(tFileId, tFileName, 0.0);
+
+      expect(cubit.state, isA<PlayerFailure>());
+      expect((cubit.state as PlayerFailure).message,
+          contains('Wi-Fi only mode'));
+      // Repository must NOT have been called — the gate fires before
+      // the HTTP startStream.
+      verifyNever(() => repository.startStream(any()));
+      await cubit.close();
+    });
+
+    test(
+        'startStream proceeds when wifiOnly is on and connectivity includes '
+        'wifi alongside mobile (dual-stack)', () async {
+      when(() => secureStorage.getWifiOnlyStreaming())
+          .thenAnswer((_) async => true);
+      when(() => repository.startStream(tFileId))
+          .thenAnswer((_) async => tResponse);
+      final cubit = buildCubit(
+        connectivityChecker: () async =>
+            [ConnectivityResult.wifi, ConnectivityResult.mobile],
+      );
+
+      await cubit.startStream(tFileId, tFileName, 0.0);
+
+      verify(() => repository.startStream(tFileId)).called(1);
+      await cubit.close();
+    });
+
+    test(
+        'startStream proceeds when wifiOnly is off even on cellular',
+        () async {
+      // wifiOnly defaults to false in setUp — cellular-only connectivity
+      // should still pass through to the HTTP startStream.
+      when(() => repository.startStream(tFileId))
+          .thenAnswer((_) async => tResponse);
+      final cubit = buildCubit(
+        connectivityChecker: () async => [ConnectivityResult.mobile],
+      );
+
+      await cubit.startStream(tFileId, tFileName, 0.0);
+
+      verify(() => repository.startStream(tFileId)).called(1);
+      await cubit.close();
+    });
+
+    test('Wi-Fi-only check fail-opens when connectivity probe throws',
+        () async {
+      when(() => secureStorage.getWifiOnlyStreaming())
+          .thenAnswer((_) async => true);
+      when(() => repository.startStream(tFileId))
+          .thenAnswer((_) async => tResponse);
+      final cubit = buildCubit(
+        connectivityChecker: () async => throw Exception('probe failed'),
+      );
+
+      await cubit.startStream(tFileId, tFileName, 0.0);
+
+      // A connectivity-probe permission glitch must not trap the user.
+      verify(() => repository.startStream(tFileId)).called(1);
       await cubit.close();
     });
   });

@@ -61,15 +61,24 @@ class NotificationsRepositoryImpl implements NotificationsRepository {
 
   /// Polls [Endpoints.notifications] every 5 s, emitting new notifications as
   /// they arrive. Duplicates (same `id`) are filtered client-side.
+  ///
+  /// `seen` is capped at [_seenCap] entries (FIFO eviction) so a long-running
+  /// session doesn't accumulate IDs without bound. Each poll pulls at most
+  /// [_pollLimit] rows, so the cap is generous enough that we never evict an
+  /// ID we'd see again on the very next tick.  Mirrors the desktop client's
+  /// `notifications_repository_impl` (mobile redesign audit §17.3 #8).
   @override
   Stream<AppNotification> liveStream() async* {
     final seen = <String>{};
     while (true) {
       await Future<void>.delayed(const Duration(seconds: 5));
       try {
-        final items = await list(limit: 20);
+        final items = await list(limit: _pollLimit);
         for (final n in items) {
           if (seen.add(n.id)) {
+            if (seen.length > _seenCap) {
+              seen.remove(seen.first);
+            }
             yield n;
           }
         }
@@ -80,4 +89,7 @@ class NotificationsRepositoryImpl implements NotificationsRepository {
       }
     }
   }
+
+  static const int _pollLimit = 20;
+  static const int _seenCap = 500;
 }

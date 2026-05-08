@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 class PairRequestBody(BaseModel):
@@ -94,6 +94,36 @@ class ClientMeResponse(BaseModel):
     paired_at: str | None = None
     last_seen: str
     tier: str
+
+
+class UpdateClientMeRequest(BaseModel):
+    """PATCH body for `/auth/clients/me` (mobile settings remediation plan
+    M2.5).  Lets the calling client rename its own display device name.
+
+    Validation rules:
+      * `display_name` is trimmed before length checks — pure-whitespace
+        input is rejected as 422 rather than silently turning into an
+        empty string in the DB.
+      * Length bound `[1, 50]` matches the desktop "Edit device name"
+        affordance (operator-side rename uses the same cap).
+      * Control characters (`\\x00`-`\\x1f`) are forbidden — they would
+        render as garbage on the operator's Clients screen and are a
+        common source of log-injection / display corruption mischief.
+    """
+
+    display_name: str = Field(min_length=1, max_length=50)
+
+    @field_validator("display_name")
+    @classmethod
+    def _validate_display_name(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("display_name must not be blank")
+        if len(trimmed) > 50:
+            raise ValueError("display_name must be at most 50 characters")
+        if any(ord(ch) < 0x20 for ch in trimmed):
+            raise ValueError("display_name must not contain control characters")
+        return trimmed
 
 
 class ClientMeStatsResponse(BaseModel):

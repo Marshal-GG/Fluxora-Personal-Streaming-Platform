@@ -18,6 +18,7 @@ from models.client import (
     GroupSummary,
     PairRequestBody,
     PairResponse,
+    UpdateClientMeRequest,
 )
 from models.media_file import MediaFileResponse
 from routers.deps import require_local_caller, validate_token
@@ -317,6 +318,82 @@ async def get_me(
         platform=me["platform"],
         paired_at=me["paired_at"] if "paired_at" in me.keys() else None,
         last_seen=me["last_seen"],
+        tier=tier,
+    )
+
+
+@router.patch("/clients/me", response_model=ClientMeResponse)
+async def update_me(
+    body: UpdateClientMeRequest,
+    me: aiosqlite.Row = Depends(validate_token),
+    db: aiosqlite.Connection = Depends(get_db),
+) -> ClientMeResponse:
+    """Self-rename — caller updates its own `display_name` (mobile settings
+    remediation plan M2.5, Open Question #1 follow-up).
+
+    Backs the Account screen's "Edit device name" affordance.  Bearer-only
+    by design: the `client_id` is resolved from the token, so the request
+    cannot be spoofed to rename a different client's row.  The operator-
+    driven rename path is a separate concern handled (when implemented)
+    via a localhost-gated route — this endpoint deliberately does NOT
+    accept a `client_id` parameter.
+
+    Validation lives in `UpdateClientMeRequest`: trim + reject blank,
+    cap at 50 chars, forbid control characters.  FastAPI surfaces 422
+    automatically on validator failure.
+
+    Records a `client.profile_updated` activity event so the operator's
+    Activity feed shows self-renames.  Mirrors the `client.revoke`
+    pattern in `revoke_me` — the audit row is best-effort and never
+    blocks the underlying flow.
+    """
+    client_id = me["id"]
+    new_name = body.display_name
+    await auth_service.update_client_display_name(db, client_id, new_name)
+
+    try:
+        await activity_service.record(
+            db,
+            type="client.profile_updated",
+            summary=f"Client {client_id} renamed device to {new_name}",
+            actor_kind="client",
+            actor_id=client_id,
+            target_kind="client",
+            target_id=client_id,
+            payload={"display_name": new_name},
+        )
+    except Exception:
+        logger.warning(
+            "Failed to record client.profile_updated activity event",
+            exc_info=True,
+        )
+
+    # Re-fetch the row so the response carries fresh values (notably the
+    # bumped `last_seen` from the UPDATE) without trusting the in-flight
+    # `me` snapshot, which was captured at request entry.
+    fresh = await auth_service.get_client(db, client_id)
+    if fresh is None:
+        # Should be unreachable — `me` resolved seconds ago via the same
+        # primary key, and clients aren't deleted out from under their
+        # own request.  Surface a 500 rather than a misleading 404 if
+        # the impossible happens.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Client row vanished mid-request",
+        )
+
+    async with db.execute(
+        "SELECT subscription_tier FROM user_settings WHERE id = 1"
+    ) as cur:
+        settings_row = await cur.fetchone()
+    tier = settings_row["subscription_tier"] if settings_row else "free"
+    return ClientMeResponse(
+        id=fresh["id"],
+        display_name=fresh["name"],
+        email=fresh["email"] if "email" in fresh.keys() else None,
+        platform=fresh["platform"],
+        paired_at=fresh["paired_at"] if "paired_at" in fresh.keys() else None,
+        last_seen=fresh["last_seen"],
         tier=tier,
     )
 

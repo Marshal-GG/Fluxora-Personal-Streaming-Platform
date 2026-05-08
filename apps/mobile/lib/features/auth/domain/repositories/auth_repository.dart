@@ -38,6 +38,15 @@ abstract class AuthRepository {
   /// a stolen-and-not-yet-cleared token can't outlive the user's tap.
   /// Mobile redesign audit §17.3 #3.
   Future<void> revokeMe();
+
+  /// `PATCH /api/v1/auth/clients/me` — self-rename.  Body
+  /// `{display_name}`; server validates length 1–50 + rejects
+  /// blank-after-trim + control characters.  Returns the fresh
+  /// [ClientProfile] (same shape as [getMe]) so the Account screen
+  /// can refresh without a follow-up GET.  Throws [ApiException] on
+  /// 422 (invalid body) or 401 (missing/invalid bearer).  Mobile
+  /// settings remediation plan §M2 (M2.5 server endpoint).
+  Future<ClientProfile> updateMe({required String displayName});
 }
 
 class PairRejectedException implements Exception {

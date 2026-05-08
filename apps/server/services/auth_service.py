@@ -220,6 +220,28 @@ async def revoke_client(db: aiosqlite.Connection, client_id: str) -> None:
     logger.info("Client revoked: %s", client_id)
 
 
+async def update_client_display_name(
+    db: aiosqlite.Connection, client_id: str, display_name: str
+) -> None:
+    """Update a single client's `name` (a.k.a. display name) column.
+
+    Backs the mobile self-rename flow (`PATCH /auth/clients/me`, mobile
+    settings remediation plan M2.5).  The caller has already validated
+    + trimmed `display_name` via the `UpdateClientMeRequest` model, so
+    this layer just performs the parameterized UPDATE and bumps the
+    `last_seen` timestamp.  `clients` has no `updated_at` column in v1,
+    so `last_seen` doubles as the freshness signal — same convention
+    every other authenticated route follows via `update_client_heartbeat`.
+    """
+    now = datetime.now(UTC).isoformat()
+    await db.execute(
+        "UPDATE clients SET name = ?, last_seen = ? WHERE id = ?",
+        (display_name, now, client_id),
+    )
+    await db.commit()
+    logger.info("Client %s renamed display_name", client_id)
+
+
 async def list_clients(db: aiosqlite.Connection) -> list[aiosqlite.Row]:
     """Return all clients with `last_ip`, active session, and group memberships.
 

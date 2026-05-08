@@ -66,6 +66,17 @@ class AuthRepositoryImpl implements AuthRepository {
   }
 
   @override
+  Future<ClientProfile> updateMe({required String displayName}) async {
+    _log.d('PATCH /clients/me — rename to "$displayName"');
+    return _apiClient.patch<ClientProfile>(
+      Endpoints.authClientsMe,
+      body: {'display_name': displayName},
+      fromJson: (data) =>
+          ClientProfile.fromJson(data as Map<String, dynamic>),
+    );
+  }
+
+  @override
   Future<String?> pollStatus(String clientId) async {
     final data = await _apiClient.get<Map<String, dynamic>>(
       Endpoints.authStatus(clientId),

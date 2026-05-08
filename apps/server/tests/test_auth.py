@@ -572,6 +572,189 @@ async def test_clients_me_self_revoke_records_activity_event(
     assert "self-revoke" in row["summary"]
 
 
+# ── PATCH /clients/me (mobile settings remediation plan M2.5 — self-rename)─
+
+
+@pytest.mark.asyncio
+async def test_patch_client_me_updates_display_name_happy_path(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """Happy path: a paired client renames itself; response carries the
+    new value and the DB row reflects it."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    body = dict(PAIR_BODY, device_name="Old Name")
+    await client.post("/api/v1/auth/request-pair", json=body)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    resp = await client.patch(
+        "/api/v1/auth/clients/me",
+        json={"display_name": "New Name"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == PAIR_BODY["client_id"]
+    assert data["display_name"] == "New Name"
+
+    async with test_db.execute(
+        "SELECT name FROM clients WHERE id = ?", (PAIR_BODY["client_id"],)
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["name"] == "New Name"
+
+
+@pytest.mark.asyncio
+async def test_patch_client_me_trims_whitespace(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """Leading/trailing whitespace is stripped before persisting; the DB
+    stores the trimmed value and the response echoes it."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    resp = await client.patch(
+        "/api/v1/auth/clients/me",
+        json={"display_name": "   Spacey   "},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["display_name"] == "Spacey"
+
+
+@pytest.mark.asyncio
+async def test_patch_client_me_401_without_bearer(client: AsyncClient):
+    """No bearer + non-loopback origin → 401.  Matches the rest of the
+    `/clients/me/...` family."""
+    resp = await client.patch(
+        "/api/v1/auth/clients/me",
+        json={"display_name": "Anything"},
+        headers={"CF-Connecting-IP": "1.2.3.4"},
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_patch_client_me_422_when_empty(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """Empty string is rejected with 422 by the Pydantic validator."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    resp = await client.patch(
+        "/api/v1/auth/clients/me",
+        json={"display_name": ""},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_client_me_422_when_whitespace_only(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """Whitespace-only input is rejected — the trim would otherwise leave
+    the DB with an empty `name` column."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    resp = await client.patch(
+        "/api/v1/auth/clients/me",
+        json={"display_name": "    "},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_client_me_422_when_too_long(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """51-character string is rejected (cap is 50)."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    resp = await client.patch(
+        "/api/v1/auth/clients/me",
+        json={"display_name": "a" * 51},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_client_me_422_when_control_characters(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """Control characters are forbidden — they'd render as garbage on
+    the desktop Clients screen and are a log-injection vector."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    resp = await client.patch(
+        "/api/v1/auth/clients/me",
+        json={"display_name": "Bad\x00Name"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_client_me_records_activity_event(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """The self-rename path emits a `client.profile_updated` activity
+    event so the operator's Activity feed surfaces device renames."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+    await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
+    await client.post(f"/api/v1/auth/approve/{PAIR_BODY['client_id']}")
+    token = (await client.get(f"/api/v1/auth/status/{PAIR_BODY['client_id']}")).json()[
+        "auth_token"
+    ]
+
+    await client.patch(
+        "/api/v1/auth/clients/me",
+        json={"display_name": "Renamed Device"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    async with test_db.execute(
+        "SELECT type, actor_kind, actor_id, target_id, summary"
+        " FROM activity_events"
+        " WHERE type = 'client.profile_updated'"
+        " ORDER BY created_at DESC LIMIT 1"
+    ) as cur:
+        row = await cur.fetchone()
+    assert row is not None
+    assert row["actor_kind"] == "client"
+    assert row["actor_id"] == PAIR_BODY["client_id"]
+    assert row["target_id"] == PAIR_BODY["client_id"]
+    assert "Renamed Device" in row["summary"]
+
+
 # ── /clients/me/stats (Phase B backfill plan §3 row 3) ──────────────────────
 
 
