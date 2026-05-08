@@ -81,6 +81,7 @@ Components:
 | Client Groups UI gap audit + 5-milestone remediation plan (decorative create/edit dialogs, raw-UUID add member, mobile 403 UX) | `docs/10_planning/12_groups_remediation_plan.md` |
 | Client Groups v2 redesign — content-spaces model + Public group + PIN-gated groups + per-group caps + view-as debug | `docs/10_planning/13_groups_v2_content_spaces.md` |
 | Client Groups dedicated management page — replaces Create/Edit modal with a 6-tab page (Overview / Members / Access / PIN / Activity / View As) | `docs/10_planning/14_groups_management_page.md` |
+| Mobile settings (Profile-as-settings) — completed 6-milestone remediation plan, archived 2026-05-08 | `docs/10_planning/archive/15_mobile_settings_remediation_plan.md` |
 | URL inventory (every endpoint, WS, hosted, third-party, future TBD) | `docs/05_infrastructure/02_url_inventory.md` |
 | Design system | `DESIGN.md` |
 
