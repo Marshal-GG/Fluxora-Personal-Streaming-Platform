@@ -152,6 +152,22 @@ Per-call import cost is ~µs after the first call (Python caches modules); the s
 
 ---
 
+## `Slider.onChanged` calling `player.seek(value)` per-tick rubber-bands the scrubber to max during forward drag
+
+**Symptom:** dragging the scrubber forward in `FluxPlayerControls` causes the thumb to visually jump to the right edge mid-drag, then snap back to the actual release point once the seek-restart completes.
+
+**Root cause:** `_ProgressBar` was a `StatelessWidget` whose Material `Slider.onChanged` callback fired `player.seek(clampedPlayerMs)` on every drag-tick.  For a forward drag, the requested player-time often exceeded the current playlist's apparent end-time → libmpv clamped the seek to the playlist end → the slider redrew using the player's clamped position → user saw the thumb rubber-band to the right edge.  The actual server-side seek-restart on `onChangeEnd` was already correct; the bug was purely a preview-rendering issue.
+
+**Fix:** convert any seek-controlling slider to a `StatefulWidget` with a nullable `_dragValue: double?` local state.  During drag (`onChangeStart` + `onChanged`), only `setState(() => _dragValue = v)` — never call `player.seek` per-tick.  Render the `Slider.value` as `_dragValue ?? liveValue`.  On release (`onChangeEnd`), clear `_dragValue` and fire the parent's `onSeekCommit(target)`.  Pattern in `apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart::_ProgressBar`; future M14 polish should audit the desktop + offline UIs for the same shape.
+
+## `-readrate 1.5` on stream-copy delays the post-restart first segment past the segment-serve timeout → 404 storm
+
+**Symptom:** after a forward seek-restart on a stream-copy session (h264/mpegts or hevc/fmp4), the next segment 404s repeatedly (`seg00195.ts not found`) until media_kit gives up after a handful of retries.
+
+**Root cause:** the §17 M3 retry of `-readrate 1.5` was being applied to stream-copy too.  Stream-copy is already CPU-cheap (~real-time disk-read + remux); the throttle delays the post-restart first segment past the 2 s segment-serve wait timeout.  Router returns 404 → media_kit retries a few times, then surrenders.
+
+**Fix (§17 same-day follow-on):** gate `-readrate` (and the burst flag) to **transcode-only**: `if not direct_remux and not apply_hdr_tonemap:`.  Stream-copy paths get neither flag.  The timeout-floor bump in `_spawn_ffmpeg_attempt` was tightened to match the same gate.  Pinned by the new `test_build_ffmpeg_cmd_omits_readrate_for_stream_copy` regression guard.
+
 ## "FFmpeg failed: exit code 1" with `<no stderr captured>` actually means we killed it ourselves
 
 **Symptom:** server logs `FFmpeg exited prematurely with code 1: session=<sid>\nFFmpeg stderr (last 4 KB):\n<no stderr captured>`. Operator notification says "FFmpeg failed: exit code 1". No clue what went wrong.
@@ -161,6 +177,8 @@ Per-call import cost is ~µs after the first call (Python caches modules); the s
 **Why this is misleading:** the diagnostic looks like a real FFmpeg crash. Operators chase nonexistent codec / driver / source-file bugs. The actual answer is "FFmpeg was working fine; we didn't wait long enough".
 
 **Fix (shipped 2026-05-05, Commit 1 of [`docs/10_planning/11_streaming_pipeline_issues.md`](../10_planning/11_streaming_pipeline_issues.md)):** `_spawn_ffmpeg_attempt` now accepts `playlist_timeout_sec`. `start_stream` selects 60 s for tonemap, 30 s for software transcode, 10 s for stream-copy + hardware transcode (cuvid retry bumps to ≥30 s). The function returns `killed_after_timeout: bool` in its tuple so the error path can distinguish "we killed it" from a real FFmpeg crash and emit "FFmpeg killed after Ns timeout — likely slow tonemap or software transcode on this CPU" instead of "exit code 1". `_build_ffmpeg_cmd` switches transcode sessions to `-loglevel warning` so suppressed-under-error stderr finally reaches the captured tempfile; stream-copy stays `error`.
+
+**Follow-on fix (shipped 2026-05-08, [`docs/10_planning/17_ffmpeg_diagnostics_and_m2_retry_plan.md`](../10_planning/17_ffmpeg_diagnostics_and_m2_retry_plan.md) M1):** the conditional `warning`/`error` split was the original sin — two M2 `-readrate` retries failed with `<no stderr captured>` because FFmpeg's init messages were below the warning threshold, AND the HDR-audio diagnostic blind-spot recurred because `error` on stream-copy hid the AAC mux warnings.  `_build_ffmpeg_cmd` now uses `-loglevel info` for **every** session.  Init-time errors, decoder-rejection messages, and slow-source-disk read complaints all reach the captured stderr.  The 4 KB `_drain_stderr` cap means in-memory cost is unchanged.  Plan §17 §1.3 has the full incident.
 
 ---
 

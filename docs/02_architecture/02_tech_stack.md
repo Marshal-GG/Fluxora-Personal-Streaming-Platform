@@ -67,7 +67,7 @@ Versions pinned exactly in `apps/server/pyproject.toml` (no `^` / `~`).
 ### Dev dependencies
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `pytest` | 8.2.0 | Test runner — **669 passing tests** as of 2026-05-08 (Groups v2 + streaming §4.5 + audit §17.3 #3 + M11 `/content` + M2.5 `PATCH /clients/me`) |
+| `pytest` | 8.2.0 | Test runner — **695 passing tests** as of 2026-05-08 (Groups v2 + streaming §4.5 + audit §17.3 #3 + M11 `/content` + M2.5 `PATCH /clients/me` + streaming §16 resume seek / audio diagnostics / scrubber-offset + streaming §17 `info` loglevel / `ffmpeg_capabilities` probe / transcode-only `-readrate` + same-day follow-on stream-copy regression guard) |
 | `pytest-asyncio` | 0.23.7 | Async test support; `asyncio_mode = "auto"` |
 | `httpx` | 0.27.0 | `AsyncClient` for endpoint tests |
 | `black` | 24.4.0 | Code formatter (88-col, py311 target) |

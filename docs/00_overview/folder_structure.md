@@ -81,6 +81,7 @@ apps/server/
 ├── services/
 │   ├── activity_service.py     # record() + list_events(limit, since, type_prefix)
 │   ├── ffmpeg_service.py
+│   ├── ffmpeg_capabilities.py  # version probe + capability flags (§17 M2)
 │   ├── group_service.py
 │   ├── library_service.py
 │   ├── discovery_service.py

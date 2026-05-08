@@ -78,6 +78,8 @@ Components:
 | Ship readiness — what blocks v1 launch | `docs/10_planning/05_ship_readiness.md` |
 | Installer & distribution plan (proposed, awaiting decision) | `docs/10_planning/06_installer_plan.md` |
 | Streaming pipeline issue audit + remediation plan (seek-restart, tonemap timeout, zombie cleanup) | `docs/10_planning/11_streaming_pipeline_issues.md` |
+| Streaming resume + throttle remediation plan (server-side resume seek + `-readrate 1.5` + mobile buffer tuning + audio diagnostics; sliding-window deferred to v1.1) | `docs/10_planning/16_streaming_resume_and_throttle_plan.md` |
+| FFmpeg diagnostics + M2 retry plan (uniform `info` loglevel + `services/ffmpeg_capabilities.py` version probe + capability-gated transcode-only `-readrate` + same-day real-device follow-on patches) | `docs/10_planning/17_ffmpeg_diagnostics_and_m2_retry_plan.md` |
 | Client Groups UI gap audit + 5-milestone remediation plan (decorative create/edit dialogs, raw-UUID add member, mobile 403 UX) | `docs/10_planning/12_groups_remediation_plan.md` |
 | Client Groups v2 redesign — content-spaces model + Public group + PIN-gated groups + per-group caps + view-as debug | `docs/10_planning/13_groups_v2_content_spaces.md` |
 | Client Groups dedicated management page — replaces Create/Edit modal with a 6-tab page (Overview / Members / Access / PIN / Activity / View As) | `docs/10_planning/14_groups_management_page.md` |

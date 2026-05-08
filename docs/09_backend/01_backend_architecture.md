@@ -79,7 +79,8 @@ server/
 │
 │
 │   ├── services/
-│   │   ├── ffmpeg_service.py   # FFmpeg subprocess management, HLS output ✅
+│   │   ├── ffmpeg_service.py   # FFmpeg subprocess management, HLS output ✅ — uniform `-loglevel info` (was conditional warning/error; §17 M1); transcode-only `-readrate 1.5` + capability-gated `-readrate_initial_burst 30` (§17 M3 + same-day follow-on transcode-only refinement); 30 s playlist-timeout floor when readrate is active (§17 M4); three-path audio branch (copy / re-encode-no-resample under tonemap / re-encode-resample fallback — §16 M4); per-session `_applied_seek_sec[session_id]` dict surfaces segment-snapped seek source-time to routers for `applied_seek_sec` response field
+│   │   ├── ffmpeg_capabilities.py # FFmpeg version probe at server startup; `FfmpegCapabilities` frozen dataclass with `is_known` + `supports_readrate_initial_burst` properties; lazy import of `_ffmpeg_bin` at call-time so test monkey-patches propagate.  Streaming pipeline plan §17 M2 ✅
 │   │   ├── library_service.py  # Library + file CRUD + scan_library + update_library + total_size_bytes SUM aggregate; `_is_valid_absolute_media_path` rejects relative + `[`-prefixed + null-byte paths in scan and upload; `_persist_probe` writes `duration_sec`; `backfill_missing_durations(db, batch_size, max_rows)` startup task fills duration on rows that pre-date the probe-writes-duration fix ✅
 │   │   ├── discovery_service.py # mDNS/Zeroconf broadcasting ✅
 │   │   ├── auth_service.py     # HMAC-SHA256 tokens, pairing state machine; `revoke_client(db, client_id)` shared between operator-driven `DELETE /auth/revoke/{id}` and mobile self-revoke `DELETE /clients/me`; `update_client_display_name(db, client_id, display_name)` parameterised UPDATE — backs `PATCH /clients/me` (settings remediation M2.5, 2026-05-08) ✅

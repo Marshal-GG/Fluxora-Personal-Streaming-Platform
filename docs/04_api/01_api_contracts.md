@@ -715,6 +715,7 @@ The decision is invisible to the client — the response shape is identical for 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `tonemap` | `bool` | `false` | When `true` and the source has an HDR format (HDR10 / HLG / DolbyVision per `media_files.hdr_format`), the server forces transcode mode and applies a zscale + Hable tonemap filter chain to convert BT.2020 PQ → BT.709 SDR.  No-op for SDR sources — the flag is accepted but `tonemapped` in the response will be `false`.  Tonemap forces CPU-side decode (drops the GPU input pipeline) because the `zscale` and `tonemap` filters cannot consume CUDA frames. |
+| `seek_sec` | `float` | `null` | Optional starting source-time in seconds.  When omitted, the server falls back to the file's `last_progress_sec` (resume-point).  Validated `≥ 0` and `< file duration` server-side.  The server snaps the requested seek to the previous segment boundary (`floor(seek_sec / hls_time) * hls_time`) so segment numbering aligns with the encoded output; the snapped value is echoed back as `applied_seek_sec` so the mobile client can render source-time on the scrubber.  Streaming pipeline plan §16 M1. |
 
 **Auth:** Bearer token required.  
 **Status:** ✅ Implemented
@@ -727,7 +728,8 @@ The decision is invisible to the client — the response shape is identical for 
   "playlist_url": "http://192.168.1.10:8000/api/v1/hls/uuid/playlist.m3u8",
   "resume_sec": 0.0,
   "hdr_format": "HDR10",
-  "tonemapped": false
+  "tonemapped": false,
+  "applied_seek_sec": 0.0
 }
 ```
 
@@ -739,6 +741,7 @@ The decision is invisible to the client — the response shape is identical for 
 | `resume_sec` | `float` | Playback position to seek to on open (0.0 = start) |
 | `hdr_format` | `string \| null` | Source HDR format: `"HDR10"`, `"HLG"`, `"DolbyVision"`, or `null` for SDR.  Drives the player's HDR badge and tonemap toggle visibility. |
 | `tonemapped` | `bool` | `true` when the server is actively tonemapping HDR → SDR for this session.  Echoes `tonemap && hdr_format != null`. |
+| `applied_seek_sec` | `float` | Segment-snapped source-time the encoder actually started at (= `floor((seek_sec or last_progress_sec) / hls_time) * hls_time`).  The client adds this to libmpv's playlist-local position to render source-time on the scrubber after a seek-restart.  `0.0` for fresh-start sessions.  Streaming pipeline plan §16 scrubber-offset patch. |
 
 **Errors:** `404` file not found · `429` concurrency limit reached · `503` FFmpeg failed (the response body now carries the first FFmpeg stderr line so the operator notification can surface the real reason — e.g. `"No NVENC capable devices found"`, not a generic "FFmpeg failed")
 
@@ -790,7 +793,14 @@ The decision is invisible to the client — the response shape is identical for 
 - `seek_sec` (float, required, ≥ 0) — the wall-clock second within the source to seek to. Aligned to a segment boundary internally so the segment numbering stays consistent with the rewritten playlist.
 - `tonemap` (bool, default `false`) — preserves session tonemap state across seeks. The client must forward whatever `tonemapped` value it received from `/start` (or the most-recently toggled value via the mobile overflow menu) so a seek doesn't silently revert tonemap to off.
 
-**Response:** `204 No Content`  
+**Response:** `200 OK`
+```json
+{ "applied_seek_sec": 287.0 }
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `applied_seek_sec` | `float` | Segment-snapped source-time the encoder actually re-spawned at (= `floor(seek_sec / hls_time) * hls_time`).  Mobile cubit stores this as `_playlistOffsetSec` so the scrubber renders source-time after the seek-restart, not playlist-local-time which would reset to 0 on each restart.  Streaming pipeline plan §16 scrubber-offset patch (was 204 No Content prior to 2026-05-08). |
 
 The playlist URL itself is unchanged — only the *contents* of `playlist.m3u8` change.  Clients that have already loaded the playlist must re-open it on the same URL (for `media_kit` / `libmpv`, that means calling `Player.open(Media(url))` again).  The server cannot push a playlist refresh; this is by HLS-spec design.
 
