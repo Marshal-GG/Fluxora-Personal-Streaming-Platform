@@ -67,4 +67,10 @@ class ContinueWatchingCubit extends Cubit<ContinueWatchingState> {
       ));
     }
   }
+
+  @override
+  void emit(ContinueWatchingState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

@@ -23,6 +23,9 @@ import 'package:fluxora_mobile/features/group_watch/presentation/screens/group_w
 import 'package:fluxora_mobile/features/notifications/presentation/screens/notifications_screen.dart';
 import 'package:fluxora_mobile/features/offline/presentation/screens/offline_screen.dart';
 import 'package:fluxora_mobile/features/player/presentation/screens/player_screen.dart';
+import 'package:fluxora_mobile/features/viewer/presentation/screens/doc_viewer_screen.dart';
+import 'package:fluxora_mobile/features/viewer/presentation/screens/music_player_screen.dart';
+import 'package:fluxora_mobile/features/viewer/presentation/screens/photo_viewer_screen.dart';
 import 'package:fluxora_mobile/features/xray/presentation/screens/xray_screen.dart';
 import 'package:fluxora_mobile/features/profile/presentation/screens/profile_screen.dart';
 import 'package:fluxora_mobile/features/search/presentation/screens/search_screen.dart';
@@ -96,6 +99,11 @@ abstract class Routes {
   /// confused with "Client Groups" / Groups v2.  Pushed with `extra:
   /// String` (the source title) so the hero card can render it.
   static const String groupWatch = '/group-watch';
+
+  /// M11 beyond-video viewers.  Each accepts a [MediaFile] via `extra`.
+  static const String docViewer = '/doc-viewer';
+  static const String photoViewer = '/photo-viewer';
+  static const String musicPlayer = '/music-player';
 
   static String detail(String id) => '/detail/$id';
   static String episodes(String id) => '/episodes/$id';
@@ -246,6 +254,21 @@ final GoRouter appRouter = GoRouter(
           title: extra is String ? extra : null,
         );
       },
+    ),
+    GoRoute(
+      path: Routes.docViewer,
+      builder: (context, state) =>
+          DocViewerScreen(file: state.extra as MediaFile),
+    ),
+    GoRoute(
+      path: Routes.photoViewer,
+      builder: (context, state) =>
+          PhotoViewerScreen(file: state.extra as MediaFile),
+    ),
+    GoRoute(
+      path: Routes.musicPlayer,
+      builder: (context, state) =>
+          MusicPlayerScreen(file: state.extra as MediaFile),
     ),
     GoRoute(
       path: '/detail/:id',

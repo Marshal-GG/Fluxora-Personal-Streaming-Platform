@@ -15,10 +15,10 @@
 > Follow `docs/12_guidelines/02_documentation_update_protocol.md`. Never stop after updating just the obvious file.
 >
 > **Before ending your session:**
-> 1. Append a new entry to `AGENT_LOG.md` using the template at the top of that file.
-> 2. List every file you created or modified (code **and** docs) in the entry's table.
-> 3. List every `docs/` file you updated in the "Docs Updated" section of the log entry.
-> 4. Write a clear "Next Agent Should" section so the next agent can resume without reading chat history.
+> 1. Append a new entry to `AGENT_LOG.md` following the canonical entry format spec in `docs/12_guidelines/04_agent_log_format.md`.
+> 2. List every file you created or modified (code **and** docs) in the entry's `### Files Created / Modified` table (3-column: Action / Path / Why).
+> 3. List every `docs/` file you updated in the `### Docs Updated` section of the log entry.
+> 4. Write a clear `### Next Agent Should` section so the next agent can resume without reading chat history.
 > 5. **Report Issues:** if you discover security errors, sharp edges, or improvement opportunities during your work, you MUST explicitly report them to the user.
 > 6. **Proactive Suggestions:** offer 2–3 prioritised suggestions for what to work on next based on `AGENT_LOG.md` + the roadmap + your findings.
 >
@@ -71,6 +71,7 @@ Components:
 | Tech stack, code conventions, architecture rules, security rules, dev commands, dep policy, secrets handling | `docs/12_guidelines/01_development_guidelines.md` |
 | Documentation update protocol | `docs/12_guidelines/02_documentation_update_protocol.md` |
 | Known risks & gotchas | `docs/12_guidelines/03_gotchas.md` |
+| AGENT_LOG.md entry format (canonical structure for log entries) | `docs/12_guidelines/04_agent_log_format.md` |
 | Roadmap / phase status | `docs/10_planning/01_roadmap.md` |
 | Locked architectural decisions (ADRs) | `docs/10_planning/02_decisions.md` |
 | Manual / external tasks tracker | `docs/10_planning/04_manual_tasks.md` |

@@ -561,6 +561,12 @@ class PlayerCubit extends Cubit<PlayerState> {
   }
 
   @override
+  void emit(PlayerState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
+
+  @override
   Future<void> close() async {
     WidgetsBinding.instance.removeObserver(_lifecycleObserver);
     await _disposeCurrentSession();

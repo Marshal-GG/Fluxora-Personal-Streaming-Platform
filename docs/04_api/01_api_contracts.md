@@ -448,6 +448,16 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
 
 ---
 
+### `GET /api/v1/files/{file_id}/content`
+**Description:** Serve the raw bytes of a media file. Backs the M11 beyond-video viewers (PDF, photo, music) that load the file as a network source, and the "Open in..." action that downloads the file to a temp path on the device before handing it off to the OS share sheet. Group visibility applies — bearer-token callers receive 404 (not 403) when the file's library is outside their content space, matching the existing `GET /{file_id}` enumeration-prevention pattern.  
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
+**Status:** ✅ Implemented (2026-05-08)
+
+**Response:** Raw file bytes with `Content-Type` MIME-detected from extension via `mimetypes.guess_type` (falls back to `application/octet-stream`); `Content-Disposition: attachment; filename={name}`.  
+**Errors:** `404` file not found in DB · `404` file's library not visible to client · `404` file not found on disk
+
+---
+
 ### `POST /api/v1/files/upload`
 **Description:** Upload a file directly to a library. Multipart form — file saved to the library's first `root_path`. TMDB enrichment runs automatically if a TMDB key is configured.  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  

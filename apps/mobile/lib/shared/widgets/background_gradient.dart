@@ -43,7 +43,7 @@ class BackgroundGradient extends StatelessWidget {
             ),
           ),
         ),
-        Positioned.fill(child: child),
+        Positioned.fill(child: RepaintBoundary(child: child)),
       ],
     );
   }

@@ -81,3 +81,192 @@ ba74742 feat(groups): v2 content-spaces redesign + M8 hybrid PIN + M7 polish
 ---
 
 <!-- New session entries go below this line. -->
+
+---
+
+## Session 2026-05-08 (continuation) — §17.3 audit close-out + M11 Beyond-video
+
+### What was done
+
+**§17.3 audit items closed:**
+- **#11 cubit emit-after-close sweep** — Added `@override void emit(...) { if (isClosed) return; super.emit(...); }` to 7 remaining cubits: `ProfileCubit`, `ProfileStatsCubit`, `RecentCubit`, `ContinueWatchingCubit`, `NotificationsCubit`, `SearchCubit`, `PlayerCubit`. `LibraryBloc` skipped (Bloc framework's `Emitter<S>` already handles this). `FilesCubit` also guarded as part of M11 work.
+- **#4 Continue-watching empty state** — `_CwRailEmpty` in `home_screen.dart` enhanced from plain-text container to a proper empty state: icon + title + subtitle + "Browse library" CTA routing to `/library?filter=movies`.
+- **#5 `background_gradient.dart` RepaintBoundary** — Wrapped the routed `child` in `RepaintBoundary` so child repaints don't propagate to the static gradient layers.
+
+**M11 Beyond-video shipped:**
+- **Deps added to `apps/mobile/pubspec.yaml`:** `pdfx ^2.9.2`, `photo_view ^0.15.0`, `just_audio ^0.10.5` (was transitive via audio_service), `share_plus ^12.0.2`, `path_provider ^2.1.5` (was transitive; promoted to direct). `audio_service` was already a direct dep.
+- **`MediaKind` enum + `MediaFile.kind` extension** added to `packages/fluxora_core/lib/entities/media_file.dart` — pure extension, no code-gen needed; routes video / photo / pdf / music / other from the file's `extension` field.
+- **`GET /api/v1/files/{file_id}/content` server endpoint** added to `apps/server/routers/files.py` — serves raw file bytes with correct MIME type; same group-visibility guard as `GET /{file_id}`; registered before `/{file_id}` to avoid path-parameter shadowing.
+- **`files_screen.dart` rebuilt** — categorized grid by `MediaKind`; horizontal scroll strips per category (Videos / Photos / Documents / Music / Other); each chip taps to the appropriate viewer. "Other" files trigger "Open in..." directly via `SharePlus`.
+- **`doc_viewer_screen.dart`** (new) — downloads the file to a temp path via `dart:io` `HttpClient` + bearer token, then opens with `PdfControllerPinch` / `PdfViewPinch`. Caches the temp path so "Open in..." (top-bar icon) reuses the download without a second request. Uses `SharePlus.instance.share(ShareParams(...))`.
+- **`photo_viewer_screen.dart`** (new) — loads the image URL directly as `NetworkImage` with bearer header into `PhotoView` (no download needed). "Open in..." downloads to temp and shares.
+- **`music_player_cubit.dart`** (new) — wraps `just_audio` `AudioPlayer`; streams position / duration / playing / processing-state into `MusicPlayerReady` state; `isClosed` guard on emit; `close()` cancels all subscriptions and disposes player. Audio_service lockscreen integration deferred to v1.1 (separate `MusicHandler` needed to avoid conflict with `FluxoraAudioHandler`).
+- **`music_player_screen.dart`** (new) — prototype-spec layout: vertical gradient #1a0820→#08061A, 280×280 album-art gradient placeholder, scrubber with `Slider`, play/pause button (64 px gradient circle), stub prev/next/shuffle/queue controls.
+- **Router wired:** `Routes.docViewer` / `Routes.photoViewer` / `Routes.musicPlayer` constants + three new `GoRoute` entries in `app_router.dart`; all accept `MediaFile` via `extra`.
+- **"Open in external app" feature** — integrated into all three viewers and the files browser "Other" category; downloads to `getTemporaryDirectory()` then calls `SharePlus.instance.share(ShareParams(files: [XFile(path)]))`.
+
+`flutter analyze` clean (0 issues). Mobile test suite unchanged at **64 passing** (no new unit tests this session — widget tests for the three new screens are M14 work).
+
+### Files created / modified
+
+| File | Change |
+|---|---|
+| `apps/server/routers/files.py` | Add `GET /{file_id}/content` endpoint + `import os`, `import mimetypes`, `from fastapi.responses import FileResponse` |
+| `packages/fluxora_core/lib/entities/media_file.dart` | Add `MediaKind` enum + `MediaFileKind` extension |
+| `apps/mobile/pubspec.yaml` | Add `pdfx ^2.9.2`, `photo_view ^0.15.0`, `just_audio ^0.10.5`, `share_plus ^12.0.2`, `path_provider ^2.1.5` |
+| `apps/mobile/lib/features/library/presentation/screens/files_screen.dart` | M11 rebuild — categorized grid by MediaKind |
+| `apps/mobile/lib/features/library/presentation/cubit/files_cubit.dart` | Add `isClosed` guard |
+| `apps/mobile/lib/features/viewer/presentation/screens/doc_viewer_screen.dart` | New — pdfx PDF viewer + "Open in..." |
+| `apps/mobile/lib/features/viewer/presentation/screens/photo_viewer_screen.dart` | New — photo_view image viewer + "Open in..." |
+| `apps/mobile/lib/features/viewer/presentation/cubit/music_player_cubit.dart` | New — just_audio cubit |
+| `apps/mobile/lib/features/viewer/presentation/screens/music_player_screen.dart` | New — music player UI |
+| `apps/mobile/lib/core/router/app_router.dart` | Add Routes.docViewer/photoViewer/musicPlayer + 3 GoRoutes |
+| `apps/mobile/lib/features/home/presentation/screens/home_screen.dart` | §17.3 #4 — enhanced _CwRailEmpty with icon + CTA |
+| `apps/mobile/lib/shared/widgets/background_gradient.dart` | §17.3 #5 — RepaintBoundary on child |
+| `apps/mobile/lib/features/profile/presentation/cubit/profile_cubit.dart` | §17.3 #11 — isClosed guard |
+| `apps/mobile/lib/features/profile/presentation/cubit/profile_stats_cubit.dart` | §17.3 #11 — isClosed guard |
+| `apps/mobile/lib/features/home/presentation/cubit/recent_cubit.dart` | §17.3 #11 — isClosed guard |
+| `apps/mobile/lib/features/home/presentation/cubit/continue_watching_cubit.dart` | §17.3 #11 — isClosed guard |
+| `apps/mobile/lib/features/notifications/presentation/cubit/notifications_cubit.dart` | §17.3 #11 — isClosed guard |
+| `apps/mobile/lib/features/search/presentation/cubit/search_cubit.dart` | §17.3 #11 — isClosed guard |
+| `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart` | §17.3 #11 — isClosed guard |
+
+### Docs updated
+
+_(No doc files updated this session — current_status, mobile_redesign_plan, and API contracts need updating next session.)_
+
+### Next agent should
+
+1. **Update `docs/11_design/mobile_redesign_plan.md`** — mark M11 ✅ in the milestone table (§7); add the 5 new deps to the §6 dep table rows; mark §17.3 #4 / #5 / #11 as ✅.
+2. **Update `docs/00_overview/current_status.md`** — mobile test count stays 64; note M11 shipped; refresh dep list.
+3. **Update `docs/04_api/01_api_contracts.md`** — add `GET /api/v1/files/{id}/content` endpoint entry.
+4. **Add server tests** for the `/content` endpoint (happy path + 404 not-in-DB + 404-not-on-disk + group-visibility deny).
+5. **Continue with M12 Onboarding revamp** or pick remaining small items: §17.3 #6 (dep version sweep — now partially done), #7 (player-overlay goldens — M14), #8 (Notifications FIFO cap parity), #9 (Sleep-timer "Custom" + "End of episode").
+6. **Smoke-test M11**: browse to a PDF in the library browser → tap → loading indicator → PDF renders. Tap photo → PhotoView renders with pinch-zoom. Tap music → gradient screen + play button → audio starts. Tap "Open in..." → system share sheet appears.
+7. **Note on music `audio_service` lockscreen:** `MusicPlayerCubit` uses a bare `AudioPlayer` with no lockscreen wiring. If the user reports missing lockscreen controls for music, the fix is a dedicated `MusicAudioHandler extends BaseAudioHandler` bound after `start()` — kept separate from `FluxoraAudioHandler` (video). Deferred to v1.1.
+
+---
+
+## [2026-05-08] [m11] [audit] [fix] [tests] [docs] — M11 audit + files_screen resource-leak fix + /content server tests + docs sync + AGENT_LOG format spec
+
+**Phase:** Phase 5 — mobile-redesign cutover; M11 close-out audit + the doc work the prior continuation deferred + a format-canonicalisation pass on AGENT_LOG itself
+**Status:** Complete; uncommitted (working tree carries the files_screen fix + 5 new server tests + 4 doc files + memory + this log entry — awaiting commit round)
+**Commits:** uncommitted (last shipped: `4d96fb0`; prior continuation: `cfc859a`)
+
+### What Was Done
+
+Four threads, all picked up after a deep cross-check of the prior continuation's M11 + §17.3 audit-cleanup work.
+
+#### 1. Deep audit of the prior continuation's M11 + §17.3 deliverables
+
+Verified every claimed change exists and is wired correctly:
+
+- **9 `isClosed` `emit` guards** — all present (`grep` over `apps/mobile/lib` returns 11 matches: 7 from §17.3 #11 sweep + `FilesCubit` + `MusicPlayerCubit` born with the guard at M11 + `DetailCubit` and `MobileGroupsCubit` from earlier sessions). The four cubits with pre-existing `close()` overrides (`NotificationsCubit`, `SearchCubit`, `PlayerCubit`, `MusicPlayerCubit`) have the new `emit` override placed correctly **before** the existing `close()` so both coexist.
+- **`_CwRailEmpty`** at `home_screen.dart:323` — full empty-state card with eyebrow + title + icon + headline + subcopy + violet "Browse library" CTA routing to `Routes.libraryWithFilter('movies')`.
+- **`RepaintBoundary`** at `background_gradient.dart:46` — `Positioned.fill(child: RepaintBoundary(child: child))` so the static two-radial backdrop never repaints when the routed child invalidates.
+- **`pubspec.yaml`** — all 5 deps present (`just_audio ^0.10.5`, `pdfx ^2.9.2`, `photo_view ^0.15.0`, `path_provider ^2.1.5`, `share_plus ^12.0.2`).
+- **Server `/content` endpoint** at `files.py:162` — placed BEFORE `/{file_id}` (line 204) so FastAPI doesn't match `"content"` as a path-param value. Returns 404 (not 403) on group-visibility deny, mirroring `get_file`'s enumeration-prevention semantics. MIME-detected via `mimetypes.guess_type` with `application/octet-stream` fallback.
+- **`MediaKind` enum + `MediaFileKind` extension** at `media_file.dart:51` — pure extension, no codegen, all extensions braced.
+- **3 viewer screens** (`doc_viewer_screen.dart`, `photo_viewer_screen.dart`, `music_player_screen.dart`) + **3 routes** (`/doc-viewer`, `/photo-viewer`, `/music-player`) — all wired via `state.extra as MediaFile`.
+- **`flutter analyze` × `apps/mobile`** — clean (10.3 s).
+- **`flutter test` × `apps/mobile`** — 64/64 passing.
+
+#### 2. Bug surfaced during audit + fixed: files_screen `_openInExternal` resource leak + silent failure
+
+`files_screen.dart`'s `_FileChip._openInExternal` had two issues that the doc/photo viewers got right but this code path didn't:
+
+- **`HttpClient` was leaked** if `getTemporaryDirectory()` or `pipe()` threw — there was no `try/finally`, so the client never reached `.close()` on the error path.
+- **Failures were silently swallowed** — only logged via `Logger().e(...)`; the user got no feedback when "Open in..." couldn't reach the file.
+
+Fixed by capturing `ScaffoldMessenger.of(context)` before any async gap (so a navigate-away-mid-download still surfaces the SnackBar), wrapping the `HttpClient` work in `try/finally`, surfacing a "Could not open in external app." SnackBar on failure, and promoting the per-call `Logger()` to a `static final _log = Logger();` field. Pattern now mirrors the doc/photo viewer behaviour.
+
+#### 3. Server tests for `GET /{file_id}/content`
+
+Added 5 new tests in `tests/test_files.py` — happy path + 3 failure shapes + 1 localhost-bypass case. Mirrors the existing `reset-progress` visibility-deny pattern (uses `unittest.mock.patch` on `services.group_service.get_visible_libraries` + the `CF-Connecting-IP` trick to push `validate_token_or_local` off the loopback bypass).
+
+- `test_get_file_content_streams_bytes_with_correct_mime` — 200; bytes match payload; `content-type` is `application/pdf`; `content-disposition` carries `filename=doc.pdf`.
+- `test_get_file_content_404s_when_file_not_in_db` — unknown `file_id` → 404.
+- `test_get_file_content_404s_when_path_missing_on_disk` — DB row exists but on-disk path missing → 404 (not 500 / FileNotFoundError).
+- `test_get_file_content_404s_when_library_not_visible` — bearer caller whose groups don't expose the file's library → 404; bytes never streamed.
+- `test_get_file_content_local_caller_skips_visibility` — localhost (no bearer) bypasses the visibility filter, same as `get_file` / `reset-progress`.
+
+Server suite **656 → 661 passing**. `flutter analyze` × `apps/mobile` still clean (8.8 s) after the files_screen fix; mobile suite still 64/64.
+
+#### 4. Three-doc sync + AGENT_LOG format spec
+
+Three files updated end-to-end so docs match shipped code (this was the prior continuation's "next agent should" #1–#3):
+
+- **`docs/04_api/01_api_contracts.md`** — added `GET /api/v1/files/{file_id}/content` entry between `GET /{file_id}` and `POST /upload`. Documents the 404-not-403 group-visibility behaviour and the `mimetypes.guess_type` MIME detection.
+- **`docs/00_overview/current_status.md`** — mobile section banner extended with the §17.3 #4/#5/#11 audit cleanup facts and the M11 closure (deps, viewer screens, route additions, deferred lockscreen integration). Test count stays 64.
+- **`docs/11_design/mobile_redesign_plan.md`** — §6 dep table rows for `just_audio` / `pdfx` / `photo_view` flipped from "check pub.dev at MX" placeholders to ✅-locked entries with shipped versions; 2 new rows for `share_plus ^12.0.2` and `path_provider ^2.1.5`. M11 row in §7 milestone table flipped to ✅ done with full landed scope. §17.3 entries #4 / #5 / #6 / #11 marked ✅. §17.4 next-priorities refreshed (iOS PIP / M12 / Notifications FIFO cap parity / sleep-timer wiring). 2 new §16 changelog rows (M11 landed, audit cleanup landed). Plan-vs-reality table flipped M11 from "pending" to "✅ landed 2026-05-08".
+
+Plus: a format audit on AGENT_LOG.md itself — the prior continuation's entry (and my first version of this entry) drifted from the canonical archive 01–08 shape (lowercase headers, `#### Code` / `#### Docs` split, performative `### Hard Rules Checklist`). New canonical spec written to **`docs/12_guidelines/04_agent_log_format.md`** with the new shape: Title Case headers, single combined `| Action | Path | Why |` 3-column Files table, `[tag]`'d header for grep-filtering, **`Commits:`** field after Status, `### Hard Rules Checklist` and `### Verification` dropped. CLAUDE.md "Where the detail lives" table + "Before ending your session" rule both updated to point at the new spec. This entry is the first written under the new spec.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Modified | `apps/mobile/lib/features/library/presentation/screens/files_screen.dart` | `_openInExternal` HttpClient leak fix + SnackBar on failure + static `_log` field |
+| Modified | `apps/server/tests/test_files.py` | +5 tests for `GET /{file_id}/content` (happy path / 3 failure shapes / localhost bypass) |
+| Created | `docs/12_guidelines/04_agent_log_format.md` | Canonical AGENT_LOG entry-format spec (resolves archive 09 drift) |
+| Modified | `CLAUDE.md` | Reference the new format spec from "Where the detail lives" + "Before ending your session" rules |
+| Modified | `docs/04_api/01_api_contracts.md` | New `GET /api/v1/files/{file_id}/content` endpoint entry inserted before `POST /upload` |
+| Modified | `docs/00_overview/current_status.md` | Mobile banner extended with §17.3 #4/#5/#11 cleanup + M11 closure facts |
+| Modified | `docs/11_design/mobile_redesign_plan.md` | M11 row ✅ in §7; §6 dep table 3 rows locked + 2 new rows; §17.3 #4/#5/#6/#11 ✅; §17.4 priorities refreshed; §16 +2 changelog rows; plan-vs-reality table M11 ✅ |
+| Created | `~/.claude/projects/.../memory/reference_agent_log_format.md` | Memory entry pointing at the new format spec |
+| Modified | `~/.claude/projects/.../memory/MEMORY.md` | Index row for the new memory |
+| Modified | `AGENT_LOG.md` | This entry — first one written under the new format |
+
+### Docs Updated
+
+- `docs/12_guidelines/04_agent_log_format.md` — new file; canonical AGENT_LOG entry-format spec.
+- `CLAUDE.md` — "Where the detail lives" gained a row pointing at the new spec; "Before ending your session" rules now reference it.
+- `docs/04_api/01_api_contracts.md` — new `GET /api/v1/files/{file_id}/content` section.
+- `docs/00_overview/current_status.md` — mobile banner extended with §17.3 #4/#5/#11 cleanup + M11 closure facts.
+- `docs/11_design/mobile_redesign_plan.md` — M11 milestone row + §6 dep table + §17.3 audit items + §17.4 next-priorities + §16 changelog + plan-vs-reality table.
+
+### Decisions Made
+
+- **Reuse the doc/photo viewer error-handling pattern in files_screen, don't extract a shared helper yet.** The `_openInExternal` HttpClient flow is now duplicated 3×. Per CLAUDE.md ("three similar lines is better than premature abstraction") each call site stays separate — each has slightly different UX (different SnackBar copy, different button-state handling). Revisit at M14 polish.
+- **Adopted format improvements 1–4 from the audit recommendation; skipped 5–8.** Tag suffix on header (`[m11] [fix] …`), `**Commits:**` field, 3-column Files table with `Why`, drop `### Hard Rules Checklist` + `### Verification` blocks. Skipped: diff-stat lines (duplicates `git diff --stat`), Risk/Reversibility tag (would always say "low" — useless gradient), and time-tracking (no reliable wall-clock).
+- **Added a localhost-bypass test for `/content` even though it wasn't on the next-agent-should list.** The four required tests cover bearer-token paths but not localhost. Without it, a regression on the localhost dep would slip through CI silently. Mirrors the test coverage shape `reset-progress` already has.
+- **Did NOT add `package:http`** despite the temp-download flow needing an HTTP client — used `dart:io.HttpClient` instead, honoring CLAUDE.md hard prohibition #6 (no new deps without justification). Same rationale as the prior continuation's doc/photo viewer choice.
+
+### Issues / Sharp Edges Discovered
+
+- **`_openInExternal` HttpClient pattern duplicated 3× across `files_screen.dart`, `doc_viewer_screen.dart`, `photo_viewer_screen.dart`.** Each instance has slightly different UX, so we kept them separate. Revisit at M14 polish.
+- **Music player has no "Open in..." action.** By design (music plays in-app), but worth confirming in real-device QA that users don't expect to AirDrop / share the source MP3 from the player chrome.
+- **Music player `audio_service` lockscreen integration is genuinely missing.** The deferral is documented inline in `music_player_cubit.dart`, but if a v1 user pairs the app and tries to control music from the lockscreen, they'll get nothing. The video `PlayerCubit` owns the singleton `FluxoraAudioHandler` and a second handler can't be attached without a refactor. v1.1 work — flag in release notes if the v1 ship date is close.
+- **AGENT_LOG format drift in archive 09 is now permanent in the historical record.** The prior continuation's entry (in the live log, just above this one) and a couple of archive 09 entries use the lowercase + `#### Code/Docs` shape. Logs are append-only so we don't rewrite them — but the new format spec at `docs/12_guidelines/04_agent_log_format.md` documents the canonical shape so all *future* entries land in the right place.
+
+### Test Counts (re-baselined)
+
+- **Server: 661 passing** (+5 from `/content` tests; 656 → 661)
+- **Mobile: 64 passing** (unchanged — `files_screen` fix is a pure error-path correction; not exercised in unit tests, would need a widget test to cover the SnackBar)
+- **Desktop: 90 passing** (untouched)
+- **Core: 8 passing** (untouched)
+
+`flutter analyze` clean × all 3 packages.
+
+### Working-Tree Status
+
+Single uncommitted batch on top of `4d96fb0`:
+
+- `files_screen.dart` resource-leak fix (1 code file)
+- `test_files.py` +5 cases (1 test file)
+- `docs/12_guidelines/04_agent_log_format.md` (new)
+- `CLAUDE.md` (2 small edits — table row + rule reference)
+- 3 sync'd doc files (`api_contracts.md`, `current_status.md`, `mobile_redesign_plan.md`)
+- `AGENT_LOG.md` (this entry)
+- 2 memory files outside the repo (`reference_agent_log_format.md` + `MEMORY.md` index — these don't ship)
+
+Awaiting commit round. Suggested split: (a) server fix + tests + api docs, (b) format spec + CLAUDE.md, (c) status / plan doc sync + AGENT_LOG.
+
+### Next Agent Should
+
+1. **Smoke-test M11 on a real device** — M11 has only been compile-tested + unit-tested; no live-server walk-through. Take a PDF / photo / MP3 through the files browser → viewer → "Open in..." flow on Android (and iOS if the dev cert is current). Verify the `Content-Type`-based "Open in..." picker shows the expected app list (Adobe Reader / Gallery / Apple Music / etc.).
+2. **§17.3 #8 — Notifications FIFO cap parity.** Desktop's `NotificationsCubit.liveStream` caps the `seen` set at 500 entries; verify mobile mirrors this. Mechanical, one-line if it doesn't.
+3. **§17.3 #9 — Sleep-timer "Custom…" + "End of episode" stubs.** "Custom" is one `showTimePicker(...)` returning a `Duration`; "End of episode" needs the next-episode handoff that already exists for Group Watch wiring. Cheap follow-up to M6.
+4. **M12 Onboarding revamp** — the next major milestone. Splash screen + signin (email + 2FA TOTP + QR + invite-code paths — TOTP placeholder if backend isn't ready) + server-picker rebuild. M2 dependency only.
+5. **iOS PIP (§17.3 #1)** — its own ticket; out of redesign-cutover scope. `media_kit` uses MPV which doesn't bridge to `AVPictureInPictureController`; either swap player backend to AVKit on iOS only, or build a custom `AVPlayerLayer` for iOS PIP and keep `media_kit` for Android + desktop.
+6. **Future log entries: follow `docs/12_guidelines/04_agent_log_format.md`.** This entry is the worked example. Use the `[tag]` vocabulary on the header so `grep -E '^## .* \[m12\]'` etc. just works.

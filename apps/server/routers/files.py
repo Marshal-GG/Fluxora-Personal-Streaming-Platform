@@ -1,4 +1,6 @@
 import logging
+import mimetypes
+import os
 
 import aiosqlite
 from fastapi import (
@@ -11,6 +13,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.responses import FileResponse
 
 from config import settings
 from database.db import get_db
@@ -154,6 +157,48 @@ async def search_files(
             or r["library_id"] in visible.library_ids
         ]
     return [MediaFileResponse(**row) for row in rows]
+
+
+@router.get("/{file_id}/content")
+async def get_file_content(
+    file_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> FileResponse:
+    """Serve the raw bytes of a media file.
+
+    Backs the M11 beyond-video viewers (PDF, photo, music) that load the
+    file as a network source, and the "Open in..." action that downloads
+    it to a temp path on the device before handing it off to the OS.
+
+    Group visibility applies: bearer-token callers receive 404 (not 403)
+    when the file's library is outside their content space — matching
+    the existing get_file behaviour to prevent enumeration of gated content.
+    Localhost skips the filter.
+    """
+    row = await library_service.get_file(db, file_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
+        )
+    if _client is not None and row["library_id"] is not None:
+        visible = await group_service.get_visible_libraries(db, _client["id"])
+        if row["library_id"] not in visible.library_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
+            )
+    path: str = row["path"]
+    if not os.path.isfile(path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on disk",
+        )
+    media_type, _ = mimetypes.guess_type(path)
+    return FileResponse(
+        path=path,
+        media_type=media_type or "application/octet-stream",
+        filename=row["name"],
+    )
 
 
 @router.get("/{file_id}", response_model=MediaFileResponse)

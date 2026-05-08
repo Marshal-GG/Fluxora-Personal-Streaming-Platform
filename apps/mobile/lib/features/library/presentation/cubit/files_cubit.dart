@@ -12,6 +12,12 @@ class FilesCubit extends Cubit<FilesState> {
   final LibraryRepository _repository;
   static final _log = Logger();
 
+  @override
+  void emit(FilesState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
+
   Future<void> loadFiles(String libraryId) async {
     emit(const FilesLoading());
     try {

@@ -63,4 +63,10 @@ class ProfileCubit extends Cubit<ProfileState> {
       emit(const ProfileFailure('Could not load your profile.'));
     }
   }
+
+  @override
+  void emit(ProfileState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

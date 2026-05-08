@@ -45,6 +45,39 @@ abstract class MediaFile with _$MediaFile {
       _$MediaFileFromJson(json);
 }
 
+/// Classifies a [MediaFile] into a broad viewer category derived from the
+/// file extension stored in [MediaFile.extension].  Kept as a pure extension
+/// so no code-gen is needed when the set of known extensions grows.
+enum MediaKind { video, photo, pdf, music, other }
+
+extension MediaFileKind on MediaFile {
+  MediaKind get kind {
+    final ext = extension.toLowerCase().replaceAll('.', '');
+    if (const {
+      'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'ts',
+      'mpg', 'mpeg', 'rm', 'rmvb', '3gp', 'divx',
+    }.contains(ext)) {
+      return MediaKind.video;
+    }
+    if (const {
+      'jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp',
+      'tiff', 'tif', 'avif',
+    }.contains(ext)) {
+      return MediaKind.photo;
+    }
+    if (ext == 'pdf') {
+      return MediaKind.pdf;
+    }
+    if (const {
+      'mp3', 'aac', 'flac', 'wav', 'ogg', 'm4a', 'opus', 'wma',
+      'aiff', 'alac', 'ape', 'dsf',
+    }.contains(ext)) {
+      return MediaKind.music;
+    }
+    return MediaKind.other;
+  }
+}
+
 /// Composes a "4K HDR" / "1080p" / "720p" / null badge from FFprobe-derived
 /// metadata.  Returns null when no resolution is known (legacy rows / audio
 /// files) so callers can fall through to a no-badge layout.

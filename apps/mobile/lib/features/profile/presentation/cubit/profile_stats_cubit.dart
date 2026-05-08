@@ -65,4 +65,10 @@ class ProfileStatsCubit extends Cubit<ProfileStatsState> {
       emit(const ProfileStatsFailure('Could not load watch stats.'));
     }
   }
+
+  @override
+  void emit(ProfileStatsState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

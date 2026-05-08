@@ -463,3 +463,181 @@ async def test_reset_progress_404s_when_library_not_visible(
     assert resp.status_code == 404
     # Progress untouched.
     assert await _read_progress(test_db, file_id) == 30.0
+
+
+# ── GET /api/v1/files/{id}/content ───────────────────────────────────────────
+# Backs M11 beyond-video viewers (PDF / photo / music) and the "Open in..."
+# share-sheet flow.  Group visibility mirrors get_file: 404 (not 403) on
+# bearer callers whose groups don't expose the file's library, to prevent
+# id-enumeration of gated content.
+
+
+async def _insert_file_with_path(
+    test_db, *, path: str, name: str, library_id: str | None = None
+) -> str:
+    """Insert a media_files row with a caller-controlled on-disk path."""
+    file_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    await test_db.execute(
+        """
+        INSERT INTO media_files
+            (id, path, name, extension, size_bytes, duration_sec,
+             library_id, tmdb_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_id,
+            path,
+            name,
+            ".pdf",
+            32,
+            None,
+            library_id,
+            None,
+            now,
+            now,
+        ),
+    )
+    await test_db.commit()
+    return file_id
+
+
+@pytest.mark.asyncio
+async def test_get_file_content_streams_bytes_with_correct_mime(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    token = await _get_token(client, monkeypatch)
+    payload = b"%PDF-1.4 fake-pdf-bytes-for-test"
+    on_disk = tmp_path / "doc.pdf"
+    on_disk.write_bytes(payload)
+    file_id = await _insert_file_with_path(
+        test_db, path=str(on_disk), name="doc.pdf"
+    )
+
+    resp = await client.get(
+        f"/api/v1/files/{file_id}/content",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.content == payload
+    # mimetypes.guess_type maps .pdf → application/pdf on every supported OS.
+    assert resp.headers["content-type"].startswith("application/pdf")
+    # The route sets filename so the OS share sheet has a sensible default.
+    assert "doc.pdf" in resp.headers.get("content-disposition", "")
+
+
+@pytest.mark.asyncio
+async def test_get_file_content_404s_when_file_not_in_db(
+    client: AsyncClient, monkeypatch
+):
+    token = await _get_token(client, monkeypatch)
+    resp = await client.get(
+        "/api/v1/files/nonexistent-id/content",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_file_content_404s_when_path_missing_on_disk(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """DB row exists but the file was moved/deleted out of band — the
+    route reports 404 rather than blowing up with a FileNotFoundError."""
+    token = await _get_token(client, monkeypatch)
+    missing = tmp_path / "ghost.pdf"
+    # Deliberately do NOT create the file on disk.
+    file_id = await _insert_file_with_path(
+        test_db, path=str(missing), name="ghost.pdf"
+    )
+
+    resp = await client.get(
+        f"/api/v1/files/{file_id}/content",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_file_content_404s_when_library_not_visible(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """A bearer caller whose groups don't expose the file's library must
+    receive 404 — matching get_file's enumeration-prevention semantics.
+    Even with a valid file on disk, the route never streams the bytes."""
+    from unittest.mock import AsyncMock, patch
+    from services.group_service import VisibleLibraries
+
+    token = await _get_token(client, monkeypatch)
+
+    library_id = str(uuid.uuid4())
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths, created_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (
+            library_id,
+            "Hidden",
+            "movies",
+            '["/hidden"]',
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+    await test_db.commit()
+
+    on_disk = tmp_path / "secret.pdf"
+    on_disk.write_bytes(b"top secret bytes")
+    file_id = await _insert_file_with_path(
+        test_db,
+        path=str(on_disk),
+        name="secret.pdf",
+        library_id=library_id,
+    )
+
+    empty_visible = VisibleLibraries(library_ids=frozenset(), groups=())
+    with patch(
+        "services.group_service.get_visible_libraries",
+        new=AsyncMock(return_value=empty_visible),
+    ):
+        # CF-Connecting-IP shifts validate_token_or_local off the loopback
+        # bypass so the bearer token actually fires the visibility check.
+        resp = await client.get(
+            f"/api/v1/files/{file_id}/content",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "CF-Connecting-IP": "203.0.113.1",
+            },
+        )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_file_content_local_caller_skips_visibility(
+    client: AsyncClient, test_db, tmp_path
+):
+    """Localhost (no bearer) bypasses the group filter — same semantics
+    as get_file / reset-progress.  Even a library that no client group
+    exposes is still streamable from loopback."""
+    library_id = str(uuid.uuid4())
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths, created_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (
+            library_id,
+            "OperatorOnly",
+            "movies",
+            '["/op"]',
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+    await test_db.commit()
+
+    payload = b"local-only-bytes"
+    on_disk = tmp_path / "local.pdf"
+    on_disk.write_bytes(payload)
+    file_id = await _insert_file_with_path(
+        test_db, path=str(on_disk), name="local.pdf", library_id=library_id
+    )
+
+    resp = await client.get(f"/api/v1/files/{file_id}/content")
+    assert resp.status_code == 200
+    assert resp.content == payload

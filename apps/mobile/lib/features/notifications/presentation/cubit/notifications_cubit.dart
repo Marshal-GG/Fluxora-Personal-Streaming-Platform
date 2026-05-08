@@ -96,6 +96,12 @@ class NotificationsCubit extends Cubit<NotificationsState> {
   }
 
   @override
+  void emit(NotificationsState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
+
+  @override
   Future<void> close() {
     _liveSub?.cancel();
     return super.close();

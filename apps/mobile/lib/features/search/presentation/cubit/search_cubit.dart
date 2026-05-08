@@ -88,6 +88,12 @@ class SearchCubit extends Cubit<SearchState> {
   }
 
   @override
+  void emit(SearchState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
+
+  @override
   Future<void> close() {
     _debounceTimer?.cancel();
     return super.close();

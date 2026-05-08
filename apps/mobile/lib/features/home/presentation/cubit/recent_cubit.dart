@@ -64,4 +64,10 @@ class RecentCubit extends Cubit<RecentState> {
       emit(const RecentFailure('Could not load recent additions.'));
     }
   }
+
+  @override
+  void emit(RecentState state) {
+    if (isClosed) return;
+    super.emit(state);
+  }
 }

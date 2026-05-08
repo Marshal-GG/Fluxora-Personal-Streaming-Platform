@@ -337,16 +337,55 @@ class _CwRailEmpty extends StatelessWidget {
           const SizedBox(height: 12),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
             decoration: BoxDecoration(
               color: const Color(0x08FFFFFF),
               border: Border.all(color: AppColors.borderSubtle),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Text(
-              'Nothing in progress yet — start a title and it\'ll show up here.',
-              style: AppTypography.captionV2
-                  .copyWith(color: AppColors.textMutedV2),
+            child: Column(
+              children: [
+                const Icon(
+                  Icons.play_circle_outline,
+                  size: 40,
+                  color: AppColors.textDim,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Nothing in progress yet',
+                  style: AppTypography.body.copyWith(
+                    color: AppColors.textMutedV2,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Start a title and it\'ll show up here.',
+                  style: AppTypography.captionV2
+                      .copyWith(color: AppColors.textDim),
+                ),
+                const SizedBox(height: 16),
+                TextButton(
+                  onPressed: () =>
+                      context.push(Routes.libraryWithFilter('movies')),
+                  style: TextButton.styleFrom(
+                    backgroundColor: AppColors.violetTint.withValues(alpha: 0.12),
+                    foregroundColor: AppColors.violetTint,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 8),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: Text(
+                    'Browse library',
+                    style: AppTypography.captionV2.copyWith(
+                      color: AppColors.violetTint,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
