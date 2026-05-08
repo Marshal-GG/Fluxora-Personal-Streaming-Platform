@@ -1,7 +1,7 @@
 # FFmpeg Diagnostics + M2 (`-readrate`) Retry Plan
 
 > **Category:** Planning
-> **Status:** Drafted 2026-05-08; **M1 + M2 + M3 + M4 ✅ all landed 2026-05-08; real-device follow-on patches landed same day.** Server suite 681 → 695 (+14). Pending operator's real-device re-retest.
+> **Status:** Drafted 2026-05-08; **M1 + M2 + M3 + M4 ✅ all landed 2026-05-08; first real-device follow-on patches landed same day; second-round follow-on (§10) closed 2026-05-09.** Server suite 681 → 695 (+14). Operator-confirmed fixed 2026-05-09.
 > **Scope:** Close the diagnostic blind-spot that caused two M2 (`-readrate` throttle) attempts to fail with `<no stderr captured>` and surface the same opacity for the HDR audio bug. Re-attempt M2 with the diagnostics in place. Carries forward the four pre-conditions originally listed in [`16_streaming_resume_and_throttle_plan.md`](./16_streaming_resume_and_throttle_plan.md) §M2.
 > **Triggered by:** operator question 2026-05-08 — *"create a proper plan to fix prob issue and implement it fully, upgrade the versions if that can fix it"*. Investigation revealed the system's FFmpeg is **8.0**, well above the 5.1 minimum for `-readrate_initial_burst` — no upgrade needed. The actual blocker is diagnostic: `-loglevel error` was hiding whatever FFmpeg complained about.
 
@@ -184,3 +184,37 @@ Operator retested with M1–M4 in place and surfaced two new symptoms.  Both are
 ## 9 · TL;DR
 
 Operator's system FFmpeg is 8.0 — no upgrade needed. The two M2 failures were diagnostically blind, not version-gated. Plan: ship `info` loglevel + version probe so future failures are visible, then re-attempt M2 with the diagnostics in place. ~1.5 hours end-to-end + two same-day real-device follow-on fixes (transcode-only readrate gating, scrubber-drag local state). Sliding-window encoder stays v1.1.
+
+---
+
+## 10 · 2026-05-09 second-round follow-on (operator real-device retest)
+
+The §8 follow-on `_dragValue` patch closed the rubber-band-during-drag, but real-device retest the next day surfaced **two further regressions** at the source-time / player-time boundary. Both fixed and field-confirmed same day.
+
+### 10.1 `seekTo` cannot seek backward beyond a previously-restarted playlist
+
+**Symptom:** after a forward server-restart shifted the playlist origin to source-time `K > 0`, dragging the scrubber back to a target *before* `K` left the player at the playlist's start instead of triggering a fresh restart.
+
+**Cause:** `seekTo`'s threshold check was `deltaMs < _kSeekRestartThresholdSec * 1000`. Backward deltas always satisfy this (negative < positive), so all backward seeks took the in-player path. `playerTargetMs = (targetSourceMs - offsetMs).clamp(0, …)` then clamped negatives to `0` — silent stranding.
+
+**Fix:** rewrote the branching in `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart::seekTo` to also check playlist-local bounds. Backward seeks within the loaded playlist still go in-player; backward seeks before the playlist origin (`playerTargetMs < 0`) route to the server-restart path.
+
+### 10.2 Scrubber paints at end of track for one frame after a forward server-restart
+
+**Symptom:** drag forward >5 s, release, seeking overlay shows, the seek completes — slider thumb visibly slams to the right edge for a single paint, then settles at the actual target.
+
+**Cause:** `_commitServerSeek`'s final `emit(isSeeking: false, playlistOffsetSec: K_new)` is a single state emission, but the new `offsetMs = K_new × 1000` lands a paint or two before `player.stream.position` catches up. For one frame `sourcePos = oldPlayerPos + K_new` against `sourceDur = newPlayerDur + K_new`, ratio > 1.0, `clamp(0, 1)` clamps to 1.0 → scrubber paints at end.
+
+**Fix iteration history (worth knowing if this regresses again):** first attempt cleared a `_pendingValue` release-pin in `didUpdateWidget` on the `isSeeking: true → false` transition. Looked clean, was wrong — preempted the exact transient it was meant to mask. Removed; the durable signal is *streams have settled*, not the cubit's flag.
+
+**Final fix in `flux_player_controls.dart::_ProgressBar`:** `_pendingValue: double?` set in `Slider.onChangeEnd`, cleared by either:
+1. Post-frame check in `build` — when `!widget.isSeeking` AND the player's `sourcePos` lands within ~750 ms of the pinned target.
+2. 5 s fallback `Timer` armed in `onChangeEnd`, so a stalled seek can never strand the pin.
+
+`Slider.value = _dragValue ?? _pendingValue ?? liveValue`. Pin holds across the bad-ratio frame; clears cleanly once libmpv catches up.
+
+**Cubit-side complement:** `seekTo` now flips `isSeeking=true` *eagerly* on entering the server-restart branch (before the 300 ms debounce) so the pin's `!widget.isSeeking` gate is 1:1 with the cubit's flag through the whole restart window. Side-effect: existing `_SeekingOverlay` now appears immediately on release rather than after debounce — minor UX improvement, not a regression.
+
+**Tests:** comment in `apps/mobile/test/features/player/player_cubit_test.dart` updated to flag the new playlist-bounds branch as field-validated only (real `Player` required; not headless-testable). `flutter analyze` clean. 78/78 mobile tests pass.
+
+**Operator confirmation:** "fixed" (2026-05-09). New gotcha in `docs/12_guidelines/03_gotchas.md` documents the seductive-wrong-fix pattern so future agents don't re-introduce the `didUpdateWidget` clear.

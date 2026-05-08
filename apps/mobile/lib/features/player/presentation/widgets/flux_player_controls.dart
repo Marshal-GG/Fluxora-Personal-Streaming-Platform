@@ -37,6 +37,7 @@ class FluxPlayerControls extends StatefulWidget {
     this.onXRay,
     this.onGroupWatch,
     this.playlistOffsetSec = 0.0,
+    this.isSeeking = false,
     super.key,
   });
 
@@ -89,6 +90,14 @@ class FluxPlayerControls extends StatefulWidget {
   /// sees source-time after a server-side seek-restart has shifted
   /// the playlist's media-sequence.
   final double playlistOffsetSec;
+
+  /// True while a server-side seek-restart is in flight.  Threaded
+  /// down to the scrubber so it pins to the user's just-released
+  /// target while libmpv pauses + reloads the playlist instead of
+  /// chasing the position/duration streams (which briefly emit
+  /// stale-old-position-against-new-duration ratios > 1.0 — the
+  /// "scrubber jumps to end then comes back" regression).
+  final bool isSeeking;
 
   @override
   State<FluxPlayerControls> createState() => _FluxPlayerControlsState();
@@ -592,6 +601,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                         player: widget.player,
                         onSeekCommit: _emitSeek,
                         playlistOffsetSec: widget.playlistOffsetSec,
+                        isSeeking: widget.isSeeking,
                       ),
                       const SizedBox(height: 8),
                       _QuickActions(
@@ -864,6 +874,7 @@ class _ProgressBar extends StatefulWidget {
     required this.player,
     this.onSeekCommit,
     this.playlistOffsetSec = 0.0,
+    this.isSeeking = false,
   });
 
   final Player player;
@@ -878,6 +889,14 @@ class _ProgressBar extends StatefulWidget {
   /// so the user sees source-time, not playlist-time, after a server-
   /// side seek-restart has shifted the playlist.
   final double playlistOffsetSec;
+
+  /// True while the cubit is mid-server-restart.  When set, the
+  /// scrubber pins to the user's just-released target instead of
+  /// reading the player's position/duration streams — those briefly
+  /// emit a stale-old-position against a newer-shorter duration during
+  /// `Player.open()`, which clamps to ratio 1.0 and visually jumps the
+  /// thumb to the end of the track before settling.
+  final bool isSeeking;
 
   @override
   State<_ProgressBar> createState() => _ProgressBarState();
@@ -902,11 +921,54 @@ class _ProgressBarState extends State<_ProgressBar> {
   /// in-player-vs-server-restart with the source-time target.
   double? _dragValue;
 
+  /// Holds the released drag value across the seek-commit window so
+  /// the scrubber doesn't snap back to liveValue (current position) or
+  /// chase the position/duration streams while libmpv is mid-reload.
+  /// Cleared when:
+  ///   1. the player's reported source-time settles within tolerance
+  ///      of the pending target while not seeking — covers both the
+  ///      in-player path (where `widget.isSeeking` never flips) and
+  ///      the post-restart path once libmpv catches up to its new
+  ///      coordinates.  See the post-frame callback in `build`.
+  ///   2. the fallback timer fires after [_kPinMaxHoldSec] without
+  ///      streams settling — guards against pathological seeks where
+  ///      the player never converges on the target (paused, stalled,
+  ///      or restart failure paths).
+  ///
+  /// Crucially we DO NOT clear the pin on the bare `isSeeking`
+  /// true → false transition.  After server-restart's final emit, the
+  /// new `playlistOffsetSec` lands a frame or two before the position
+  /// stream catches up — clearing the pin then renders a transient
+  /// `oldPlayerPos + newOffset` over `newPlayerDur + newOffset` ratio
+  /// that exceeds 1.0 and clamps the scrubber to the end of the track
+  /// for one paint, then settles.  Operator-reported "scrubber jumps
+  /// to end then comes back" after the §17 follow-on patch.
+  double? _pendingValue;
+  Timer? _pinFallbackTimer;
+
+  /// Tolerance for "player has caught up to the pending target", in ms.
+  /// 750 ms covers a single segment-grain mismatch on stream-copy
+  /// without making the hold linger after a clean in-player seek.
+  static const _kPendingSettleToleranceMs = 750;
+
+  /// Hard upper bound on how long the post-release pin can stay set.
+  /// Server-restart with cold-cache seeks complete in ~1–2 s; 5 s
+  /// covers slow networks and gives the streams time to converge.
+  /// Past this point we drop the pin even if streams haven't settled,
+  /// so a seek that fails or stalls doesn't strand the scrubber.
+  static const _kPinMaxHoldSec = 5;
+
   String _format(Duration d) {
     final h = d.inHours;
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return h > 0 ? '$h:$m:$s' : '$m:$s';
+  }
+
+  @override
+  void dispose() {
+    _pinFallbackTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -941,14 +1003,42 @@ class _ProgressBarState extends State<_ProgressBar> {
                 ? 0.0
                 : (sourcePos.inMilliseconds / sourceDur.inMilliseconds)
                     .clamp(0.0, 1.0);
-            final value = _dragValue ?? liveValue;
-            // Display position: while dragging show the drag target
-            // in source-time so the timestamp tracks the thumb.
-            final displayPos = _dragValue == null
+            // Precedence: live drag (touch) > post-release pin > live
+            // player position.  The pin holds while the cubit drives a
+            // seek (debounce window + server-restart open/seek) so the
+            // thumb doesn't snap back to the playhead and doesn't chase
+            // libmpv's transient stale-position-against-new-duration
+            // emissions.
+            final value = _dragValue ?? _pendingValue ?? liveValue;
+            // While the pin is active and we're not in a server-
+            // restart, schedule a one-shot clear once the player's
+            // reported source-time settles within tolerance of the
+            // pinned target — this catches the in-player seek path
+            // where `widget.isSeeking` never transitions.
+            if (_dragValue == null &&
+                _pendingValue != null &&
+                !widget.isSeeking &&
+                sourceDur.inMilliseconds > 0) {
+              final pendingMs =
+                  (sourceDur.inMilliseconds * _pendingValue!).round();
+              if ((sourcePos.inMilliseconds - pendingMs).abs() <
+                  _kPendingSettleToleranceMs) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted && _pendingValue != null) {
+                    setState(() => _pendingValue = null);
+                  }
+                });
+              }
+            }
+            // Display position: while pinned (drag or post-release)
+            // show the pinned target in source-time so the timestamp
+            // tracks the thumb instead of the live playhead.
+            final pinned = _dragValue ?? _pendingValue;
+            final displayPos = pinned == null
                 ? sourcePos
                 : Duration(
                     milliseconds:
-                        (sourceDur.inMilliseconds * _dragValue!).round(),
+                        (sourceDur.inMilliseconds * pinned).round(),
                   );
 
             return Padding(
@@ -997,10 +1087,30 @@ class _ProgressBarState extends State<_ProgressBar> {
                           // cubit decides server-restart vs in-player
                           // and converts to player-time itself.
                           final target = Duration(milliseconds: sourceMs);
-                          // Clear drag state; the cubit's seekTo will
-                          // drive the player and the StreamBuilder
-                          // will pick up the new position.
-                          setState(() => _dragValue = null);
+                          // Pin the released value so the slider stays
+                          // there across the cubit's seek-commit
+                          // window (300 ms debounce + pause + open +
+                          // seek for the server-restart path) and the
+                          // post-emit settle-out where libmpv's
+                          // position stream catches up to the new
+                          // playlist coordinates.  Pin is dropped by
+                          // the post-frame settle check in `build`
+                          // once the player's source-time converges
+                          // on the target, or by the fallback timer
+                          // armed below if convergence never happens.
+                          setState(() {
+                            _dragValue = null;
+                            _pendingValue = v;
+                          });
+                          _pinFallbackTimer?.cancel();
+                          _pinFallbackTimer = Timer(
+                            const Duration(seconds: _kPinMaxHoldSec),
+                            () {
+                              if (mounted && _pendingValue != null) {
+                                setState(() => _pendingValue = null);
+                              }
+                            },
+                          );
                           if (widget.onSeekCommit != null) {
                             widget.onSeekCommit!(target);
                           } else {

@@ -160,6 +160,20 @@ Per-call import cost is ~µs after the first call (Python caches modules); the s
 
 **Fix:** convert any seek-controlling slider to a `StatefulWidget` with a nullable `_dragValue: double?` local state.  During drag (`onChangeStart` + `onChanged`), only `setState(() => _dragValue = v)` — never call `player.seek` per-tick.  Render the `Slider.value` as `_dragValue ?? liveValue`.  On release (`onChangeEnd`), clear `_dragValue` and fire the parent's `onSeekCommit(target)`.  Pattern in `apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart::_ProgressBar`; future M14 polish should audit the desktop + offline UIs for the same shape.
 
+## Scrubber paints at end of track for one frame after a forward server-restart finishes
+
+**Symptom:** drag the scrubber forward >5 s, release, the seeking overlay shows, the seek completes — and just as playback resumes, the slider thumb visibly slams to the right edge of the track for a single paint, then settles at the actual seek target.
+
+**Root cause:** `_commitServerSeek` ends with `emit(isSeeking: false, playlistOffsetSec: K_new)` — a single state update. In the widget tree the new `offsetMs = K_new × 1000` lands a paint or two **before** libmpv's `player.stream.position` catches up to the new playlist coordinates (the position emission lags the state emission). For one frame: `sourcePos = oldPlayerPos + K_new` against `sourceDur = newPlayerDur + K_new`, ratio explodes past 1.0, `clamp(0, 1)` drops it to 1.0, slider paints at the right edge.
+
+**The seductive wrong fix:** clear the post-release pin in `didUpdateWidget` on the `isSeeking: true → false` transition. It looks clean. It preempts the very transient it's meant to mask.
+
+**Fix:** keep a `_pendingValue: double?` "release pin" set in `Slider.onChangeEnd` and clear it via two paths only:
+1. **Streams-have-settled** — post-frame check in `build`: when `!widget.isSeeking` AND the player's reported `sourcePos` lands within ~750 ms of the pinned target, schedule a clear via `WidgetsBinding.instance.addPostFrameCallback`. Handles both the in-player path (`isSeeking` never flips) and the post-restart path once libmpv catches up.
+2. **5 s fallback `Timer`** armed in `onChangeEnd`, so a stalled seek can never strand the pin permanently.
+
+Render `Slider.value = _dragValue ?? _pendingValue ?? liveValue`. The pin holds the slider at the user-released fraction across the whole seek-commit window, including the bad-ratio frame after the final emit. Pattern in `apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart::_ProgressBar`. Cubit complement: emit `isSeeking=true` *immediately* on entering the server-restart branch in `seekTo` (before the 300 ms debounce), so the pin's gate is 1:1 with the cubit's flag through the whole window.
+
 ## `-readrate 1.5` on stream-copy delays the post-restart first segment past the segment-serve timeout → 404 storm
 
 **Symptom:** after a forward seek-restart on a stream-copy session (h264/mpegts or hevc/fmp4), the next segment 404s repeatedly (`seg00195.ts not found`) until media_kit gives up after a handful of retries.

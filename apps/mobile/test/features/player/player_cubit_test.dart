@@ -225,13 +225,15 @@ void main() {
     // ── seekTo safety tests ──────────────────────────────────────────────
     //
     // Full seekTo behaviour (threshold-based dispatch, debounce, server-
-    // restart path) requires a real `Player` to read position and pause /
-    // open / seek / play through, which native media_kit libs make
-    // unavailable in headless unit tests.  These tests verify the
-    // **safety invariants** of the public method: it must never crash
-    // and must never invoke ``repository.seekStream`` when there is no
-    // session to seek.  Field validation of the in-flight server restart
-    // path is by manual integration test.
+    // restart path, playlist-bounds check for backward seeks) requires a
+    // real `Player` to read position/duration and pause / open / seek /
+    // play through, which native media_kit libs make unavailable in
+    // headless unit tests.  These tests verify the **safety invariants**
+    // of the public method: it must never crash and must never invoke
+    // ``repository.seekStream`` when there is no session to seek.  Field
+    // validation of the in-flight server restart path — including the
+    // backward-out-of-playlist routing fix — is by manual integration
+    // test on real device.
     test('seekTo no-ops when state is PlayerInitial', () async {
       final cubit = buildCubit();
 

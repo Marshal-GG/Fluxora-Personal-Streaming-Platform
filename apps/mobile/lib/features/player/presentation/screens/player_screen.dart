@@ -401,6 +401,7 @@ class _VideoView extends StatelessWidget {
           onXRay: onXRay,
           onGroupWatch: onGroupWatch,
           playlistOffsetSec: playlistOffsetSec,
+          isSeeking: isSeeking,
         ),
         if (isSeeking) const _SeekingOverlay(),
       ],

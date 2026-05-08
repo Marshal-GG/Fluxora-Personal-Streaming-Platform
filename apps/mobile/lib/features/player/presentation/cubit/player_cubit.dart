@@ -355,13 +355,15 @@ class PlayerCubit extends Cubit<PlayerState> {
 
   /// Seek the active stream to [position].
   ///
-  /// Two paths, picked by the size of the seek delta:
+  /// Two paths, picked by the size of the seek delta and the playlist's
+  /// currently-loaded source-time range:
   ///
-  /// - **Backward seek**, or **forward seek under [_kSeekRestartThresholdSec]**:
-  ///   handled in the player.  Backward is always safe — segments are
-  ///   already on disk and libmpv seeks within its loaded data.  Small
-  ///   forward seeks fit inside the player's prefetch buffer plus the
-  ///   server's 5 s segment-wait absorbing a brief miss.
+  /// - **Small forward seek**, or **backward seek that still lands inside
+  ///   the currently-loaded playlist**: handled in the player.  Backward
+  ///   within the playlist is safe — segments are already on disk and
+  ///   libmpv seeks within its loaded data.  Small forward seeks fit
+  ///   inside the player's prefetch buffer plus the server's 5 s
+  ///   segment-wait absorbing a brief miss.
   /// - **Forward seek at or above the threshold**: server-side restart.
   ///   The current FFmpeg only ever encodes from t=0 (or wherever the
   ///   last restart left it), so a far-ahead seek lands in territory it
@@ -394,25 +396,35 @@ class PlayerCubit extends Cubit<PlayerState> {
     final targetSourceMs = position.inMilliseconds;
     final deltaMs = targetSourceMs - currentSourceMs;
 
-    // Backward seek + small forward seek → in-player; cancel any
-    // in-flight server-restart debounce so we don't double-act.
-    if (deltaMs < _kSeekRestartThresholdSec * 1000) {
+    // Map source-time target → player-time, then check against the
+    // currently-loaded playlist's bounds.  A backward seek to a
+    // source-time BEFORE the current playlist's origin (which is
+    // non-zero whenever a prior forward seek triggered a server-
+    // restart) cannot be served in-player — libmpv's earliest
+    // addressable position is the playlist's t=0, and clamping to it
+    // would silently strand the user at the playlist start instead of
+    // honouring their drag.  Route those out-of-bounds backward seeks
+    // through the server-restart path so FFmpeg re-encodes from a
+    // segment boundary at-or-before the requested source-time.
+    final playerTargetMs = targetSourceMs - offsetMs;
+    final playerDurMs = p.state.duration.inMilliseconds;
+    final inBounds = playerTargetMs >= 0 &&
+        (playerDurMs <= 0 || playerTargetMs <= playerDurMs);
+
+    final smallForward =
+        deltaMs >= 0 && deltaMs < _kSeekRestartThresholdSec * 1000;
+    final backwardInPlaylist = deltaMs < 0 && inBounds;
+
+    // In-player path; cancel any in-flight server-restart debounce so
+    // we don't double-act.
+    if (smallForward || backwardInPlaylist) {
       _seekDebounceTimer?.cancel();
       _seekDebounceTimer = null;
       _pendingSeekTarget = null;
       try {
-        // Convert source-time target back to player-time before passing
-        // to libmpv.  Clamp at zero — small backward seeks below the
-        // current playlist's t=0 would wrap; clamp to the playlist start
-        // so libmpv doesn't error.  (For seeks outside the loaded
-        // playlist's range, the seek-restart path above handles it.)
-        final playerTargetMs = (targetSourceMs - offsetMs).clamp(
-          0,
-          // Cap at a very large value; libmpv will clamp to actual
-          // playlist length itself.
-          1 << 30,
-        );
-        await p.seek(Duration(milliseconds: playerTargetMs));
+        // `playerTargetMs` is already non-negative under both branches;
+        // libmpv will clamp the upper bound to actual playlist length.
+        await p.seek(Duration(milliseconds: playerTargetMs.clamp(0, 1 << 30)));
       } catch (e, st) {
         _log.w('In-player seek failed', error: e, stackTrace: st);
       }
@@ -423,6 +435,19 @@ class PlayerCubit extends Cubit<PlayerState> {
     // target.  When the timer fires we read whatever the most-recent
     // target was, so a slow drag from 0:30 → 5:00 ends up calling
     // _commitServerSeek(5:00) once instead of N times.
+    //
+    // Flip `isSeeking` true *now* — before the debounce — so the
+    // scrubber's release-pin (see _ProgressBar in flux_player_controls)
+    // is tied 1:1 to the cubit's seeking flag for the entire restart
+    // window (debounce + pause + open + seek + play).  Without this,
+    // there's a 300 ms gap where isSeeking is still false but the
+    // player is still emitting position/duration updates, and any
+    // transient stale-old-position-against-new-duration ratio > 1.0
+    // can clear the pin's settle guard and snap the thumb to the
+    // playlist end before _commitServerSeek even starts.
+    if (!currentState.isSeeking) {
+      emit(currentState.copyWith(isSeeking: true));
+    }
     _pendingSeekTarget = position;
     _seekDebounceTimer?.cancel();
     _seekDebounceTimer = Timer(
