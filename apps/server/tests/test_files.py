@@ -425,6 +425,7 @@ async def test_reset_progress_404s_when_library_not_visible(
     the assertion holds independent of the test client's actual group
     state."""
     from unittest.mock import AsyncMock, patch
+
     from services.group_service import VisibleLibraries
 
     token = await _get_token(client, monkeypatch)
@@ -566,6 +567,7 @@ async def test_get_file_content_404s_when_library_not_visible(
     receive 404 — matching get_file's enumeration-prevention semantics.
     Even with a valid file on disk, the route never streams the bytes."""
     from unittest.mock import AsyncMock, patch
+
     from services.group_service import VisibleLibraries
 
     token = await _get_token(client, monkeypatch)

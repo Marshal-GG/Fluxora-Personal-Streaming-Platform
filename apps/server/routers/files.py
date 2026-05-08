@@ -1,6 +1,7 @@
 import logging
 import mimetypes
 import os
+from datetime import UTC
 
 import aiosqlite
 from fastapi import (
@@ -264,8 +265,8 @@ async def reset_progress(
                 detail="File not found",
             )
 
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
+    from datetime import datetime
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         "UPDATE media_files SET last_progress_sec = 0, updated_at = ?"
         " WHERE id = ?",

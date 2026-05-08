@@ -213,6 +213,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 8. Warn if FFmpeg is missing
     _check_ffmpeg()
 
+    # 8.1. Probe FFmpeg capabilities (streaming pipeline plan §17 M2).
+    # Logs the version + parses major.minor + caches the supported-flag
+    # set so version-dependent cmd builders (`-readrate_initial_burst`
+    # in particular) don't have to re-probe per-session.  Best-effort:
+    # failure logs WARNING + falls back to the conservative "unknown"
+    # capability set so the server still starts.
+    try:
+        from services.ffmpeg_capabilities import probe_ffmpeg_capabilities
+
+        await probe_ffmpeg_capabilities()
+    except Exception:
+        logger.warning(
+            "FFmpeg capabilities probe raised — proceeding without",
+            exc_info=True,
+        )
+
     # 8a. Emit license expiry warning if the stored key is near/past expiry
     try:
         from database.db import get_db as _get_db

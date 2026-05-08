@@ -45,6 +45,18 @@ _discontinuity_seq: dict[str, int] = {}
 # session-dir cleanup; cancelling cuts that out cleanly.
 _finalize_watchers: dict[str, asyncio.Task[None]] = {}
 
+# Per-session segment-aligned seek position (streaming pipeline plan §16
+# scrubber-offset patch 2026-05-08).  When ``start_stream`` /
+# ``restart_stream`` snap the requested seek to a segment boundary
+# (``floor(seek / hls_time) * hls_time``), the playlist's t=0 corresponds
+# to that snapped source-time — but libmpv's reported playback position
+# starts at 0 regardless.  The router reads this dict to surface
+# ``applied_seek_sec`` in the /start + /seek responses; the mobile cubit
+# stores it as ``_playlistOffsetSec`` and adds it to libmpv's position
+# when rendering the scrubber so the user sees source-time, not playlist-
+# time.  Cleared on stop_stream alongside the other per-session dicts.
+_applied_seek_sec: dict[str, float] = {}
+
 
 def _get_seek_lock(session_id: str) -> asyncio.Lock:
     """Return the per-session restart lock, creating it on first access."""
@@ -209,6 +221,58 @@ async def probe_video(file_path: str) -> dict | None:
         "codec_name": stream.get("codec_name"),
         "hdr_format": _detect_hdr_format(stream),
         "duration_sec": duration_sec,
+    }
+
+
+async def _probe_audio_params(file_path: str) -> dict | None:
+    """Run ffprobe on the first audio stream.  Returns
+    ``{codec_name, sample_rate, channels, bit_rate}`` or ``None`` when
+    ffprobe is unavailable / the file has no audio / the probe fails.
+
+    Streaming pipeline plan §16 M4 — instrumentation only.  Caller logs
+    the result at session start so AV-sync issues surface a paper
+    trail (codec, sample rate, channel count) before the encoder runs.
+    Diagnostics-only; failures must not block playback.
+    """
+    ffprobe = _ffprobe_bin()
+    if ffprobe is None:
+        return None
+    cmd = [
+        ffprobe,
+        "-v",
+        "error",
+        "-print_format",
+        "json",
+        "-show_streams",
+        "-select_streams",
+        "a:0",
+        file_path,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+    except (OSError, FileNotFoundError):
+        logger.debug("audio ffprobe failed for %s", file_path, exc_info=True)
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(stdout.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    streams = data.get("streams") or []
+    if not streams:
+        return None
+    s = streams[0]
+    return {
+        "codec_name": s.get("codec_name"),
+        "sample_rate": s.get("sample_rate"),
+        "channels": s.get("channels"),
+        "bit_rate": s.get("bit_rate"),
     }
 
 
@@ -396,6 +460,8 @@ def _build_ffmpeg_cmd(
     apply_hdr_tonemap: bool = False,
     seek_sec: float = 0.0,
     start_segment_index: int = 0,
+    source_audio_codec: str | None = None,
+    source_audio_sample_rate: int | None = None,
 ) -> list[str]:
     """Compose the FFmpeg command line.
 
@@ -407,16 +473,55 @@ def _build_ffmpeg_cmd(
     automatic upload.  Slower than the all-GPU path but works on any
     GPU + FFmpeg combination, which is what makes it a sensible retry.
 
-    Loglevel is ``warning`` for transcode sessions and ``error`` for
-    stream-copy.  Transcode failures (unsupported pixel format, missing
-    decoder, hwaccel rejection) frequently surface as warnings that
-    FFmpeg suppresses under ``error`` — leaving the operator with
-    ``<no stderr captured>`` when the process is killed.  Stream-copy
-    is verbose enough at ``warning`` to be noisy in production, and
-    its failure modes already surface as errors.
+    Loglevel is ``info`` for every session — the conditional warning /
+    error split was the original sin behind the M2 ``-readrate`` retry
+    failures (`<no stderr captured>` because FFmpeg's startup messages
+    were below the threshold) and the HDR-audio diagnostic blind-spot
+    (`error`-level suppressed the AAC-mux warnings on the stream-copy
+    audio path).  Streaming pipeline plan §17 — diagnostics first so
+    every future "FFmpeg killed for unknown reason" failure produces
+    actionable stderr.  In-memory cost is unchanged because
+    ``_drain_stderr`` caps the read at 4 KB; per-session tempfile cost
+    is unlinked at session end either way.
     """
-    loglevel = "warning" if not direct_remux else "error"
+    loglevel = "info"
     cmd: list[str] = [_ffmpeg_bin(), "-hide_banner", "-loglevel", loglevel]
+
+    # Throttle FFmpeg's input reader to ~1.5× source rate, but ONLY for
+    # transcode sessions (streaming pipeline plan §17 M3 +
+    # post-real-device-test refinement 2026-05-08 evening).
+    #
+    # Why transcode-only:
+    #   • Stream-copy is already CPU-cheap (~5 % of one core).  It
+    #     produces segments faster than the player consumes them
+    #     naturally; throttling it doesn't save meaningful CPU and
+    #     introduces a real failure mode where the first post-restart
+    #     segment can take longer than the segment-serve wait timeout
+    #     (2 s) to appear → 404 storm → media_kit gives up after a
+    #     handful of retries.  Operator hit this on a real-device test
+    #     of the M3 retry: `seg00195.ts` 404'd repeatedly because
+    #     stream-copy + `-readrate 1.5` made the first post-seek segment
+    #     too slow for the 2 s wait.
+    #   • Transcode (NVENC at 3-6× realtime, software libx264 at
+    #     0.5-2×) is where the home server actually heats up.  The
+    #     fan-noise / power-draw concern that motivated this throttle
+    #     in the first place is a transcode-pipeline concern.  Apply
+    #     it there.
+    #
+    # Tonemap is also skipped: tonemap on CPU is at 0.4-0.8× realtime
+    # already; `-readrate 1.5` either silently no-ops or starves the
+    # buffer.
+    #
+    # `-readrate_initial_burst 30` (FFmpeg 5.1+) lets FFmpeg consume
+    # the first 30 s of source at full speed before throttle kicks in.
+    # Capability-gated via the version probe; older builds get the
+    # plain throttle.
+    if not direct_remux and not apply_hdr_tonemap:
+        from services.ffmpeg_capabilities import get_capabilities
+
+        cmd.extend(["-readrate", "1.5"])
+        if get_capabilities().supports_readrate_initial_burst:
+            cmd.extend(["-readrate_initial_burst", "30"])
 
     if not direct_remux and use_gpu_input:
         # Pre-input hardware acceleration flags (empty list for software).
@@ -458,7 +563,53 @@ def _build_ffmpeg_cmd(
         if chains:
             cmd.extend(["-vf", ",".join(chains)])
 
-    cmd.extend(["-c:a", "aac", "-b:a", "128k"])
+    # Audio pipeline (streaming pipeline plan §16 M4 fix; tonemap-audio
+    # interaction patch 2026-05-08).
+    #
+    # Three paths:
+    #
+    # 1. Source is AAC at 48 kHz AND tonemap is OFF → `-c:a copy`.  Skips
+    #    re-encode entirely.  HLS clients all support AAC + 48 kHz
+    #    directly, and skipping the re-encode eliminates the timestamp
+    #    drift that was the most likely cause of the operator-reported
+    #    "audio is very delayed" symptom.
+    #
+    # 2. Source is AAC at 48 kHz BUT tonemap is ON → `-c:a aac -b:a 128k`
+    #    (resample omitted since source is already 48 kHz).  Operator-
+    #    reported regression 2026-05-08: HDR-with-tonemap sessions showed
+    #    NO AUDIO when the audio path was `-c:a copy`.  Most likely
+    #    cause is mux-timestamp drift from heavy video transcode +
+    #    tonemap filter chain interacting with copied audio packets — the
+    #    audio container's frame timing drifts off the video's re-encoded
+    #    PTS budget and the HLS muxer drops audio rather than emit a
+    #    broken segment.  Forcing audio re-encode regenerates clean PTS
+    #    that aligns with the transcoded video.  CPU cost is negligible
+    #    (audio encode is <3 % vs the tonemap chain's CPU bill).
+    #
+    # 3. Source is anything else (DTS, AC3, FLAC, AAC at 44.1/96 kHz, etc.)
+    #    → `-c:a aac -b:a 128k -ar 48000`.  Forces resample to 48 kHz so
+    #    the AAC encoder doesn't introduce sample-rate drift on
+    #    non-48 kHz sources, AND remaps non-AAC sources to AAC for HLS
+    #    client compatibility.
+    #
+    # Defaults (when audio params aren't known) fall through to path 3 —
+    # the safer of the three, since it always produces valid HLS audio.
+    audio_is_aac_48khz = (
+        source_audio_codec == "aac"
+        and source_audio_sample_rate == 48000
+    )
+    if audio_is_aac_48khz and not apply_hdr_tonemap:
+        # Path 1 — copy.  Safe only when video is also stream-copy or
+        # transcoded WITHOUT the tonemap filter chain (which is what
+        # caused the audio-drop regression on HDR sessions).
+        cmd.extend(["-c:a", "copy"])
+    elif audio_is_aac_48khz and apply_hdr_tonemap:
+        # Path 2 — re-encode but skip the resample (source already at
+        # 48 kHz; no drift to worry about, just clean PTS regeneration).
+        cmd.extend(["-c:a", "aac", "-b:a", "128k"])
+    else:
+        # Path 3 — full re-encode + resample to 48 kHz.
+        cmd.extend(["-c:a", "aac", "-b:a", "128k", "-ar", "48000"])
 
     # fmp4 segments for HEVC sources (Apple HLS spec compliance) and for
     # transcode-mode encoders whose registry says fmp4.  The bundled
@@ -953,6 +1104,45 @@ async def start_stream(
 
     source_codec, hdr_format = await _resolve_source_metadata(db, file_path)
 
+    # Streaming pipeline plan §16 M4 — probe the source's audio params at
+    # session start.  Two consumers:
+    #
+    #   1. INFO log (`audio_probe ...`) so the operator can grep for the
+    #      session's audio shape when diagnosing AV-sync issues.
+    #   2. `_build_ffmpeg_cmd` audio-branch — when source is AAC at 48 kHz,
+    #      the cmd uses `-c:a copy` instead of re-encoding (skipping the
+    #      re-encode eliminates the timestamp drift that was the most
+    #      likely cause of the operator-reported "audio is very delayed"
+    #      symptom).
+    #
+    # Best-effort — ffprobe failure / no-audio sources / format quirks all
+    # leave the locals at None, which the cmd builder treats as "use the
+    # safe re-encode path".  Must not break playback under any failure.
+    audio_codec_name: str | None = None
+    audio_sample_rate: int | None = None
+    try:
+        audio_info = await _probe_audio_params(file_path)
+        if audio_info is not None:
+            audio_codec_name = audio_info.get("codec_name")
+            raw_rate = audio_info.get("sample_rate")
+            if raw_rate is not None:
+                try:
+                    audio_sample_rate = int(raw_rate)
+                except (TypeError, ValueError):
+                    audio_sample_rate = None
+            logger.info(
+                "audio_probe session=%s codec=%s sample_rate=%s "
+                "channels=%s bit_rate=%s",
+                session_id,
+                audio_codec_name or "?",
+                raw_rate or "?",
+                audio_info.get("channels") or "?",
+                audio_info.get("bit_rate") or "?",
+            )
+    except Exception:
+        # Diagnostics only — must not break playback.
+        logger.debug("audio_probe raised — skipping", exc_info=True)
+
     # Tonemap is only meaningful when both: (a) the source is HDR and
     # (b) the caller asked for it.  Anything else is a no-op.
     apply_hdr_tonemap = bool(tonemap_hdr and hdr_format)
@@ -1053,18 +1243,38 @@ async def start_stream(
         start_segment_index = 0
         aligned_seek_sec = 0.0
 
+    # Stash for the router to read on its way out (streaming pipeline
+    # plan §16 scrubber-offset patch 2026-05-08).  The /start + /seek
+    # responses surface this so the mobile cubit knows the playlist's
+    # source-time origin.
+    _applied_seek_sec[session_id] = aligned_seek_sec
+
     # Pipeline-aware playlist-appearance timeout.  See the docstring on
     # ``_spawn_ffmpeg_attempt`` for the wall-time math behind these
     # choices: tonemap is CPU-only at ~0.6× realtime so the first
     # 6-second segment lands at ~10 wall-seconds — anything tighter
     # than 60 s timeout-kills a healthy tonemap session.  Software-only
     # transcodes are slower than hardware but faster than tonemap.
+    #
+    # Streaming pipeline plan §17 M4 — when `-readrate 1.5` is on (the
+    # M3 retry), a slow source-disk read or busy CPU could push the
+    # first-segment wall-time past the default 10 s budget for
+    # stream-copy.  Bump the floor to 30 s when readrate is active:
+    # the burst window covers the happy path; the extra budget catches
+    # the slow-disk edge case without silently regressing to the
+    # ``<no stderr captured>`` failure mode that motivated this plan.
     if apply_hdr_tonemap:
         playlist_timeout_sec = 60.0
     elif not direct_remux and meta.vendor == "software":
         playlist_timeout_sec = 30.0
     else:
         playlist_timeout_sec = 10.0
+    # `-readrate 1.5` is only on for transcodes (not stream-copy, not
+    # tonemap) — same gate as the cmd builder.  When it's active, give
+    # the first segment up to 30 s wall to land: the burst window covers
+    # the happy path, the extra budget absorbs slow-disk edge cases.
+    if not direct_remux and not apply_hdr_tonemap:
+        playlist_timeout_sec = max(playlist_timeout_sec, 30.0)
 
     # First attempt — full GPU input pipeline (-hwaccel cuda + cuvid hint),
     # unless tonemap is forcing CPU.
@@ -1083,6 +1293,8 @@ async def start_stream(
         apply_hdr_tonemap=apply_hdr_tonemap,
         seek_sec=aligned_seek_sec,
         start_segment_index=start_segment_index,
+        source_audio_codec=audio_codec_name,
+        source_audio_sample_rate=audio_sample_rate,
     )
     succeeded, tail, returncode, killed_after_timeout = await _spawn_ffmpeg_attempt(
         cmd, session_id, ff_playlist, playlist_timeout_sec=playlist_timeout_sec,
@@ -1211,18 +1423,35 @@ async def start_stream(
         # watcher first — restart_stream's _terminate_ffmpeg already
         # cancels, but cancellation propagation is async; we don't
         # want a stale task lingering against the new spawn's proc.
-        existing = _finalize_watchers.pop(session_id, None)
-        if existing is not None and not existing.done():
-            existing.cancel()
-        _finalize_watchers[session_id] = asyncio.create_task(
-            _finalize_vod_playlist_on_exit(
-                session_id=session_id,
-                proc=proc,
-                session_dir=session_dir,
-                discontinuity_seq=discontinuity_seq,
-            ),
-            name=f"finalize-vod-{session_id}",
-        )
+        # `_spawn_ffmpeg_attempt` stores the live process in the
+        # `_active` registry under `session_id` on success — that's the
+        # source of truth for the watcher.  Retrieve it here rather than
+        # threading the handle through `_spawn_ffmpeg_attempt`'s return
+        # tuple (which is intentionally minimal — succeeded / tail /
+        # returncode / killed_after_timeout).
+        live_proc = _active.get(session_id)
+        if live_proc is not None:
+            existing = _finalize_watchers.pop(session_id, None)
+            if existing is not None and not existing.done():
+                existing.cancel()
+            _finalize_watchers[session_id] = asyncio.create_task(
+                _finalize_vod_playlist_on_exit(
+                    session_id=session_id,
+                    proc=live_proc,
+                    session_dir=session_dir,
+                    discontinuity_seq=discontinuity_seq,
+                ),
+                name=f"finalize-vod-{session_id}",
+            )
+        else:
+            # Should not happen on the success branch — _spawn_ffmpeg_attempt
+            # populates _active before returning True.  Log if it does and
+            # skip the watcher rather than blow up the whole start_stream.
+            logger.warning(
+                "Skipping finalise-VOD watcher for session=%s — "
+                "no live proc in _active despite successful spawn",
+                session_id,
+            )
 
         return playlist
 
@@ -1347,6 +1576,7 @@ async def stop_stream(session_id: str) -> None:
     # forever in a long-running server.  Safe even if no seek ever ran.
     _seek_locks.pop(session_id, None)
     _discontinuity_seq.pop(session_id, None)
+    _applied_seek_sec.pop(session_id, None)
 
 
 async def restart_stream(

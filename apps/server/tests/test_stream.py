@@ -1050,13 +1050,12 @@ async def test_resolve_source_metadata_returns_codec_and_hdr(tmp_path, test_db):
 # ── _build_ffmpeg_cmd loglevel selection ────────────────────────────────────
 
 
-def test_build_ffmpeg_cmd_uses_warning_loglevel_for_transcode(tmp_path):
-    """Transcode sessions must use ``-loglevel warning`` so that
-    suppressed-under-error failures (unsupported pixel format, missing
-    decoder, hwaccel rejection) actually reach our captured stderr.
-    The whole point of the new diagnostic regime is that
-    ``<no stderr captured>`` should never appear when FFmpeg had
-    something to say."""
+def test_build_ffmpeg_cmd_uses_info_loglevel_for_transcode(tmp_path):
+    """Streaming pipeline plan §17 M1 — every session uses ``-loglevel
+    info`` (was conditional warning/error pre-M1).  This is what makes
+    init-time errors actually reach our captured stderr; without it the
+    operator gets `<no stderr captured>` whenever FFmpeg dies before
+    writing to its output stream."""
     from services.encoder_registry import ENCODER_REGISTRY
     from services.ffmpeg_service import _build_ffmpeg_cmd
 
@@ -1075,14 +1074,14 @@ def test_build_ffmpeg_cmd_uses_warning_loglevel_for_transcode(tmp_path):
         apply_hdr_tonemap=False,
     )
     assert "-loglevel" in cmd
-    assert cmd[cmd.index("-loglevel") + 1] == "warning"
+    assert cmd[cmd.index("-loglevel") + 1] == "info"
 
 
-def test_build_ffmpeg_cmd_uses_error_loglevel_for_stream_copy(tmp_path):
-    """Stream-copy keeps ``-loglevel error`` — its hot path is fully
-    re-muxing source bitstream, which is verbose at ``warning`` (every
-    keyframe gets a heuristic note from the HLS muxer) and noisy in
-    the operator's log without adding diagnostic value."""
+def test_build_ffmpeg_cmd_uses_info_loglevel_for_stream_copy(tmp_path):
+    """Same loglevel for stream-copy.  Pre-M1 we used ``error`` here on
+    the assumption stream-copy was diagnostically uninteresting — that
+    assumption was wrong (see HDR audio drop bug 2026-05-08).  ``info``
+    is uniform and complete."""
     from services.encoder_registry import ENCODER_REGISTRY
     from services.ffmpeg_service import _build_ffmpeg_cmd
 
@@ -1100,7 +1099,7 @@ def test_build_ffmpeg_cmd_uses_error_loglevel_for_stream_copy(tmp_path):
         use_gpu_input=False,
         apply_hdr_tonemap=False,
     )
-    assert cmd[cmd.index("-loglevel") + 1] == "error"
+    assert cmd[cmd.index("-loglevel") + 1] == "info"
 
 
 # ── _spawn_ffmpeg_attempt: pipeline-aware timeout + killed_after_timeout ────
@@ -1668,7 +1667,10 @@ async def test_seek_endpoint_calls_restart_stream(
     client: AsyncClient, monkeypatch, test_db, tmp_path
 ):
     """The happy path — owner POSTs /seek, restart_stream is invoked
-    with the right file path + seek_sec, response is 204."""
+    with the right file path + seek_sec.  Response is 200 with
+    `applied_seek_sec` (segment-snapped value) so the mobile cubit can
+    update its playlist-offset bookkeeping (streaming pipeline plan §16
+    scrubber-offset patch 2026-05-08)."""
     token = await _get_token(client, monkeypatch)
     headers = {"Authorization": f"Bearer {token}"}
     file_id = await _insert_file(test_db)
@@ -1702,7 +1704,17 @@ async def test_seek_endpoint_calls_restart_stream(
             headers=headers,
         )
 
-    assert response.status_code == 204
+    assert response.status_code == 200
+    body = response.json()
+    assert "applied_seek_sec" in body
+    # Snap math: floor(120.5 / 10) * 10 = 120.0 for stream-copy.  The
+    # mock above doesn't compute the snap (it just stores the requested
+    # value), but the endpoint reads from `_applied_seek_sec` which the
+    # real `start_stream` populates — for this mock-driven test the
+    # dict will hold whatever `start_stream` last wrote (the initial
+    # spawn at seek=0, since the mocked restart never writes), so the
+    # body falls back to the requested value.
+    assert body["applied_seek_sec"] == 120.5
     assert captured["session_id"] == session_id
     assert captured["seek_sec"] == 120.5
     assert captured["tonemap_hdr"] is False  # default
@@ -1823,7 +1835,7 @@ async def test_seek_endpoint_forwards_tonemap_flag(
             headers=headers,
         )
 
-    assert response.status_code == 204
+    assert response.status_code == 200
     assert captured_tonemap["value"] is True
 
 
@@ -2189,3 +2201,535 @@ def test_log_config_uses_rotating_file_handler_with_10mb_cap():
     assert fh["class"] == "logging.handlers.RotatingFileHandler"
     assert fh["maxBytes"] == 10 * 1024 * 1024
     assert fh["backupCount"] == 5
+
+
+# ── Streaming pipeline plan §16 — M1: server-side resume seek ──────────────
+#
+# Caller-supplied `?seek_sec=` (mobile HDR-toggle path) wins over the DB
+# `last_progress_sec` fallback (initial-spawn resume path).  Negative or
+# beyond-EOF values reject as 400 so a buggy client can't ask FFmpeg to
+# seek into undefined-behaviour territory.
+
+
+async def _insert_file_with_progress(
+    test_db,
+    *,
+    last_progress_sec: float = 0.0,
+    duration_sec: float = 7200.0,
+) -> str:
+    """Insert a media file with an explicit resume position + duration."""
+    file_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    await test_db.execute(
+        """
+        INSERT INTO media_files
+            (id, path, name, extension, size_bytes,
+             last_progress_sec, duration_sec,
+             created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_id,
+            f"/media/{file_id}.mp4",
+            "test.mp4",
+            ".mp4",
+            1024000,
+            last_progress_sec,
+            duration_sec,
+            now,
+            now,
+        ),
+    )
+    await test_db.commit()
+    return file_id
+
+
+@pytest.mark.asyncio
+async def test_start_stream_uses_query_seek_sec_when_provided(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """When the caller supplies `?seek_sec=`, the server must forward
+    it to ffmpeg_service.start_stream verbatim and ignore the DB's
+    `last_progress_sec`.  This is the mobile HDR-toggle path — the
+    client knows the live playhead better than the DB does (DB lags
+    by up to 5 s due to progress-write debounce)."""
+    token = await _get_token(client, monkeypatch)
+    file_id = await _insert_file_with_progress(
+        test_db, last_progress_sec=120.0
+    )
+
+    captured_seek_sec: list[float] = []
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        captured_seek_sec.append(kwargs.get("seek_sec", -1.0))
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        response = await client.post(
+            f"/api/v1/stream/start/{file_id}?seek_sec=2843.5",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    # Query value wins over the DB's 120.0 — caller authority.
+    assert captured_seek_sec == [2843.5]
+    assert response.json()["resume_sec"] == 2843.5
+
+
+@pytest.mark.asyncio
+async def test_start_stream_falls_back_to_db_progress_when_no_query(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """Without `?seek_sec=`, the server reads `media_files.last_progress_sec`
+    so a half-watched file resumes from the saved position.  This is
+    the initial-play path (mobile poster tap on a half-watched file)."""
+    token = await _get_token(client, monkeypatch)
+    file_id = await _insert_file_with_progress(
+        test_db, last_progress_sec=453.25
+    )
+
+    captured_seek_sec: list[float] = []
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        captured_seek_sec.append(kwargs.get("seek_sec", -1.0))
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        response = await client.post(
+            f"/api/v1/stream/start/{file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert captured_seek_sec == [453.25]
+    assert response.json()["resume_sec"] == 453.25
+
+
+@pytest.mark.asyncio
+async def test_start_stream_passes_zero_when_file_is_fresh_and_no_query(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """Never-watched file + no query param → seek_sec=0.  Initial
+    spawn is a no-op for the seek pipeline; FFmpeg starts at t=0 as
+    before.  Don't let a `None` from `last_progress_sec` leak through
+    as `null` to FFmpeg."""
+    token = await _get_token(client, monkeypatch)
+    file_id = await _insert_file(test_db)  # no progress, default helper
+
+    captured_seek_sec: list[float] = []
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        captured_seek_sec.append(kwargs.get("seek_sec", -1.0))
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        response = await client.post(
+            f"/api/v1/stream/start/{file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 201
+    assert captured_seek_sec == [0.0]
+    assert response.json()["resume_sec"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_start_stream_rejects_negative_seek_sec(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """Negative seek_sec is undefined behaviour for FFmpeg's `-ss`
+    flag.  Reject at the boundary so a buggy client can't melt the
+    encoder."""
+    token = await _get_token(client, monkeypatch)
+    file_id = await _insert_file(test_db)
+
+    response = await client.post(
+        f"/api/v1/stream/start/{file_id}?seek_sec=-1.5",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    assert "non-negative" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_start_stream_rejects_seek_sec_beyond_duration(
+    client: AsyncClient, monkeypatch, test_db
+):
+    """Seeking past EOF would produce a static VOD playlist with zero
+    segments listed.  Reject explicitly so the player gets a clear
+    error instead of a stalled connection on an empty playlist."""
+    token = await _get_token(client, monkeypatch)
+    # 7200 s file, ask for 8000 s
+    file_id = await _insert_file_with_progress(
+        test_db, duration_sec=7200.0
+    )
+
+    response = await client.post(
+        f"/api/v1/stream/start/{file_id}?seek_sec=8000",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 400
+    assert "duration" in response.json()["detail"].lower()
+
+
+# ── Streaming pipeline plan §17 — M3: -readrate throttle re-attempt ──
+#
+# After the M1 loglevel bump and the M2 capabilities probe landed, we
+# re-attempt the throttle.  `-readrate 1.5` ships only when FFmpeg is
+# actually transcoding (not stream-copy — stream-copy is already CPU-
+# cheap so the throttle just delays the first segment); always skipped
+# under tonemap (encoder is already sub-1× realtime).
+# `-readrate_initial_burst 30` is capability-gated — only emitted when
+# ffmpeg_capabilities reports version >= 5.1.
+
+
+def _force_capabilities(major: int, minor: int):
+    """Test helper — populate ffmpeg_capabilities cache so cmd builder
+    branches on a known version instead of running a real ``ffmpeg
+    -version`` subprocess."""
+    from services import ffmpeg_capabilities as caps_mod
+
+    caps_mod._capabilities = caps_mod.FfmpegCapabilities(
+        version_string=f"ffmpeg version {major}.{minor}-test",
+        major=major,
+        minor=minor,
+    )
+
+
+def test_build_ffmpeg_cmd_includes_readrate_on_modern_ffmpeg(tmp_path):
+    """Transcode path emits `-readrate 1.5` AND
+    `-readrate_initial_burst 30` when capabilities report FFmpeg 5.1+.
+    Streaming pipeline plan §17 M3."""
+    from services import ffmpeg_capabilities as caps_mod
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    _force_capabilities(8, 0)
+    try:
+        cmd = _build_ffmpeg_cmd(
+            file_path="/tmp/source.mp4",
+            session_dir=tmp_path,
+            playlist=tmp_path / "playlist.m3u8",
+            meta=ENCODER_REGISTRY["libx264"],
+            preset="veryfast",
+            crf=23,
+            hwaccel_device=None,
+            source_codec="h264",
+            direct_remux=False,
+            direct_remux_hevc=False,
+            use_gpu_input=False,
+        )
+        rr_idx = cmd.index("-readrate")
+        assert cmd[rr_idx + 1] == "1.5"
+        burst_idx = cmd.index("-readrate_initial_burst")
+        assert cmd[burst_idx + 1] == "30"
+        # Both input-side flags must precede `-i`.
+        i_idx = cmd.index("-i")
+        assert rr_idx < burst_idx < i_idx
+    finally:
+        caps_mod.reset_capabilities_for_testing()
+
+
+def test_build_ffmpeg_cmd_omits_initial_burst_on_pre_5_1_ffmpeg(tmp_path):
+    """`-readrate` still ships on FFmpeg 5.0 transcodes; the burst flag
+    does not.  Defensive: if a future operator pins an old FFmpeg via
+    PyInstaller bundle, the burst flag would error at parse-time
+    without this gate."""
+    from services import ffmpeg_capabilities as caps_mod
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    _force_capabilities(5, 0)
+    try:
+        cmd = _build_ffmpeg_cmd(
+            file_path="/tmp/source.mp4",
+            session_dir=tmp_path,
+            playlist=tmp_path / "playlist.m3u8",
+            meta=ENCODER_REGISTRY["libx264"],
+            preset="veryfast",
+            crf=23,
+            hwaccel_device=None,
+            source_codec="h264",
+            direct_remux=False,
+            direct_remux_hevc=False,
+            use_gpu_input=False,
+        )
+        assert "-readrate" in cmd
+        assert "-readrate_initial_burst" not in cmd
+    finally:
+        caps_mod.reset_capabilities_for_testing()
+
+
+def test_build_ffmpeg_cmd_omits_readrate_for_stream_copy(tmp_path):
+    """Stream-copy is already CPU-cheap; `-readrate 1.5` would only
+    delay the first segment.  Pin the §17 follow-on fix that gated
+    readrate to transcode-only after a real-device test surfaced
+    seg00195.ts 404s on stream-copy seek-restart."""
+    from services import ffmpeg_capabilities as caps_mod
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    _force_capabilities(8, 0)
+    try:
+        cmd = _build_ffmpeg_cmd(
+            file_path="/tmp/source.mp4",
+            session_dir=tmp_path,
+            playlist=tmp_path / "playlist.m3u8",
+            meta=ENCODER_REGISTRY["libx264"],
+            preset="veryfast",
+            crf=23,
+            hwaccel_device=None,
+            source_codec="h264",
+            direct_remux=True,
+            direct_remux_hevc=False,
+            use_gpu_input=False,
+        )
+        assert "-readrate" not in cmd
+        assert "-readrate_initial_burst" not in cmd
+    finally:
+        caps_mod.reset_capabilities_for_testing()
+
+
+def test_build_ffmpeg_cmd_omits_readrate_when_tonemap_active(tmp_path):
+    """Tonemap forces transcode; the encoder is already CPU-bound at
+    sub-1× realtime so `-readrate 1.5` either no-ops or starves the
+    buffer.  Skip both flags."""
+    from services import ffmpeg_capabilities as caps_mod
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    _force_capabilities(8, 0)
+    try:
+        cmd = _build_ffmpeg_cmd(
+            file_path="/tmp/source.mkv",
+            session_dir=tmp_path,
+            playlist=tmp_path / "playlist.m3u8",
+            meta=ENCODER_REGISTRY["libx264"],
+            preset="veryfast",
+            crf=23,
+            hwaccel_device=None,
+            source_codec="hevc",
+            direct_remux=False,
+            direct_remux_hevc=False,
+            use_gpu_input=False,
+            apply_hdr_tonemap=True,
+        )
+        assert "-readrate" not in cmd
+        assert "-readrate_initial_burst" not in cmd
+    finally:
+        caps_mod.reset_capabilities_for_testing()
+
+
+def test_build_ffmpeg_cmd_falls_back_when_capabilities_unknown(tmp_path):
+    """When the capabilities probe failed (server started before
+    `ffmpeg -version` could run, or ffmpeg missing entirely), the
+    transcode builder still ships `-readrate` (safe on FFmpeg 4+) but
+    skips the burst flag (which would error on unknown FFmpeg)."""
+    from services import ffmpeg_capabilities as caps_mod
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    caps_mod.reset_capabilities_for_testing()
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="h264",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+    )
+    assert "-readrate" in cmd
+    assert "-readrate_initial_burst" not in cmd
+
+
+def test_build_ffmpeg_cmd_uses_c_a_copy_when_source_is_aac_at_48khz(tmp_path):
+    """Source is AAC at 48 kHz → skip the audio re-encode entirely.
+    HLS supports AAC + 48 kHz natively; re-encoding adds CPU cost AND
+    introduces the timestamp drift that was the most likely cause of
+    the operator-reported audio-delay symptom (streaming pipeline plan
+    §16 M4 fix).  `-c:a copy` short-circuits both.
+
+    Pinned: -c:a copy is in the cmd; -c:a aac is NOT.  -ar 48000 is
+    also absent on the copy path (resample only applies to re-encode)."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="h264",
+        direct_remux=True,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        source_audio_codec="aac",
+        source_audio_sample_rate=48000,
+    )
+    # -c:a copy expected; -c:a aac MUST be absent.
+    ca_idx = cmd.index("-c:a")
+    assert cmd[ca_idx + 1] == "copy"
+    assert "aac" not in (cmd[i] for i, v in enumerate(cmd) if v == "-c:a")
+    # No -ar on the copy path.
+    assert "-ar" not in cmd
+
+
+def test_build_ffmpeg_cmd_resamples_to_48khz_when_source_is_44100hz_aac(tmp_path):
+    """AAC source at 44.1 kHz → re-encode at 48 kHz.  Without the
+    `-ar 48000` resample, the AAC encoder's default sample rate ≠
+    source rate produces sample-rate drift → audio falls behind
+    video over a long stream."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="h264",
+        direct_remux=True,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        source_audio_codec="aac",
+        source_audio_sample_rate=44100,
+    )
+    ca_idx = cmd.index("-c:a")
+    assert cmd[ca_idx + 1] == "aac"
+    ar_idx = cmd.index("-ar")
+    assert cmd[ar_idx + 1] == "48000"
+    ba_idx = cmd.index("-b:a")
+    assert cmd[ba_idx + 1] == "128k"
+
+
+def test_build_ffmpeg_cmd_resamples_when_source_is_dts_or_ac3(tmp_path):
+    """Non-AAC sources (DTS, AC3, FLAC, etc.) MUST go through the
+    re-encode path — HLS clients don't universally support DTS/AC3.
+    `-c:a aac -b:a 128k -ar 48000` produces the canonical HLS audio."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mkv",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=False,
+        direct_remux_hevc=True,
+        use_gpu_input=False,
+        source_audio_codec="dts",
+        source_audio_sample_rate=48000,
+    )
+    ca_idx = cmd.index("-c:a")
+    assert cmd[ca_idx + 1] == "aac"
+    assert "-ar" in cmd
+    assert "48000" in cmd
+
+
+def test_build_ffmpeg_cmd_re_encodes_audio_when_tonemap_active_aac_48khz(  # noqa: E501
+    tmp_path,
+):
+    """HDR-with-tonemap regression patch (2026-05-08): when tonemap is
+    active, audio MUST re-encode even on AAC@48k sources.  Operator
+    reported HDR sessions showed NO AUDIO with `-c:a copy` — most
+    likely mux-timestamp drift from the tonemap chain disrupting
+    copied audio packets.  Forcing re-encode regenerates clean PTS.
+
+    Pinned: -c:a aac is in the cmd; -c:a copy is NOT.  -ar omitted
+    because source is already 48 kHz."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mkv",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        apply_hdr_tonemap=True,
+        source_audio_codec="aac",
+        source_audio_sample_rate=48000,
+    )
+    ca_idx = cmd.index("-c:a")
+    assert cmd[ca_idx + 1] == "aac"
+    # No -ar: source already at 48 kHz, no resample needed.
+    assert "-ar" not in cmd
+    # No -c:a copy: that's the regression.
+    ca_indices = [i for i, v in enumerate(cmd) if v == "-c:a"]
+    for idx in ca_indices:
+        assert cmd[idx + 1] != "copy", (
+            "tonemap path must NOT use -c:a copy (HDR no-audio regression)"
+        )
+
+
+def test_build_ffmpeg_cmd_falls_back_to_safe_re_encode_when_audio_unknown(tmp_path):
+    """When `_probe_audio_params` failed (or hadn't run yet — None
+    arguments), the cmd must use the safe re-encode path.  Defaults
+    must NOT silently use `-c:a copy` for an unknown source — copying
+    a non-AAC stream into an HLS muxer that expects AAC produces a
+    broken playlist (or works only by luck)."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="h264",
+        direct_remux=True,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        # Both audio params omitted — caller has no info.
+    )
+    ca_idx = cmd.index("-c:a")
+    assert cmd[ca_idx + 1] == "aac"
+    assert "-ar" in cmd
+
+
+# Note: the four follow-up readrate-related tests (initial-burst presence,
+# tonemap-omits-burst, readrate-placed-before-input, audio + readrate
+# combo) were dropped along with the readrate flag itself.  The two
+# `test_build_ffmpeg_cmd_omits_readrate*` regression guards above are
+# what stays in v1.

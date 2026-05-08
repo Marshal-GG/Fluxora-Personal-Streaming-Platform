@@ -12,7 +12,11 @@ from slowapi.util import get_remote_address
 
 from config import settings
 from database.db import get_db
-from models.stream_session import StreamSessionResponse, StreamStartResponse
+from models.stream_session import (
+    StreamSeekResponse,
+    StreamSessionResponse,
+    StreamStartResponse,
+)
 from routers.deps import LOOPBACK, bearer, require_local_caller, validate_token
 from services import (
     activity_service,
@@ -78,6 +82,7 @@ async def start_stream(
     file_id: str,
     request: Request,
     tonemap: bool = False,
+    seek_sec: float | None = None,
     db: aiosqlite.Connection = Depends(get_db),
     client: aiosqlite.Row = Depends(validate_token),
 ) -> StreamStartResponse:
@@ -90,6 +95,16 @@ async def start_stream(
             convert BT.2020 PQ → BT.709 SDR.  No-op for SDR sources.
             Default ``false`` (preserves the source's HDR bitstream when
             stream-copying).
+        seek_sec: Caller-supplied resume position.  When provided, the
+            server lands FFmpeg at this offset via ``-ss`` and shifts
+            the static VOD playlist's media-sequence accordingly so the
+            player's first segment request hits encoded bytes
+            immediately.  When **omitted**, the server falls back to
+            ``media_files.last_progress_sec`` so a half-watched file
+            resumes from where the user left off.  Used by the mobile
+            HDR↔SDR toggle which knows the live playhead more precisely
+            than the DB's progress-throttled value (settings remediation
+            / streaming pipeline plan §16 M1).
     """
     file_row = await library_service.get_file(db, file_id)
     if file_row is None:
@@ -165,6 +180,32 @@ async def start_stream(
             detail="Stream concurrency limit reached",
         )
 
+    # Resolve resume position.  Caller-supplied `seek_sec` wins (mobile
+    # HDR-toggle path knows the live playhead); falls back to
+    # `last_progress_sec` so a half-watched file resumes from where the
+    # user left off.  Validate before passing to FFmpeg — negative values
+    # would trip `-ss <T>`'s undefined behaviour, and seeking past EOF
+    # would produce a static VOD playlist with zero segments listed and
+    # break the player.
+    duration_sec = float(file_row.get("duration_sec") or 0.0)
+    if seek_sec is not None:
+        if seek_sec < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="seek_sec must be non-negative",
+            )
+        if duration_sec > 0 and seek_sec >= duration_sec:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"seek_sec ({seek_sec:.2f}) must be less than the "
+                    f"file's duration ({duration_sec:.2f}s)"
+                ),
+            )
+        resolved_seek_sec = float(seek_sec)
+    else:
+        resolved_seek_sec = float(file_row.get("last_progress_sec") or 0.0)
+
     session_id = str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
 
@@ -174,6 +215,7 @@ async def start_stream(
             session_id,
             settings.hls_tmp_path,
             tonemap_hdr=tonemap,
+            seek_sec=resolved_seek_sec,
         )
     except FileNotFoundError as exc:
         raise HTTPException(
@@ -243,11 +285,21 @@ async def start_stream(
         logger.warning("Failed to record stream.start activity event", exc_info=True)
 
     hdr_format = file_row.get("hdr_format")
+    # Pull the segment-snapped seek value FFmpeg actually applied (it's
+    # `floor(resolved_seek_sec / hls_time) * hls_time`).  The mobile
+    # cubit uses this as ``_playlistOffsetSec`` to display source-time on
+    # the scrubber instead of playlist-time (streaming pipeline plan §16
+    # scrubber-offset patch 2026-05-08).  Falls back to the requested
+    # value if the dict is empty (shouldn't happen post-start but defensive).
+    applied_seek_sec = ffmpeg_service._applied_seek_sec.get(
+        session_id, resolved_seek_sec
+    )
     return StreamStartResponse(
         session_id=session_id,
         file_id=file_id,
         playlist_url=_playlist_url(request, session_id),
-        resume_sec=file_row.get("last_progress_sec") or 0.0,
+        resume_sec=resolved_seek_sec,
+        applied_seek_sec=applied_seek_sec,
         hdr_format=hdr_format,
         # `tonemapped` only true when the *source* is HDR AND the
         # operator asked for tonemap.  An SDR file with `tonemap=true`
@@ -311,7 +363,7 @@ async def update_progress(
 # ── POST /api/v1/stream/{session_id}/seek ───────────────────────────────────
 
 
-@router.post("/{session_id}/seek", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/{session_id}/seek", response_model=StreamSeekResponse)
 @limiter.limit("30/minute")
 async def seek_stream(
     session_id: str,
@@ -320,7 +372,7 @@ async def seek_stream(
     tonemap: bool = False,
     db: aiosqlite.Connection = Depends(get_db),
     client: aiosqlite.Row = Depends(validate_token),
-) -> None:
+) -> StreamSeekResponse:
     """Re-spawn FFmpeg from ``seek_sec`` for an active session.
 
     The original architecture only encodes from ``t=0``; the static VOD
@@ -400,6 +452,16 @@ async def seek_stream(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Seek restart failed: {ffmpeg_error}",
         ) from exc
+
+    # Return the segment-snapped value FFmpeg actually applied so the
+    # mobile cubit can update its playlist-offset bookkeeping (streaming
+    # pipeline plan §16 scrubber-offset patch 2026-05-08).  Falls back
+    # to the requested value if the dict is empty (defensive — shouldn't
+    # happen on the success branch).
+    applied_seek_sec = ffmpeg_service._applied_seek_sec.get(
+        session_id, seek_sec
+    )
+    return StreamSeekResponse(applied_seek_sec=applied_seek_sec)
 
 
 # ── DELETE /api/v1/stream/{session_id} ──────────────────────────────────────
