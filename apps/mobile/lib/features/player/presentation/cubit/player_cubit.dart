@@ -4,7 +4,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
-import 'package:media_kit/media_kit.dart' show Media, Player;
+import 'package:media_kit/media_kit.dart' show Media, Player, PlayerConfiguration;
 import 'package:media_kit_video/media_kit_video.dart' show VideoController;
 import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
@@ -20,6 +20,16 @@ import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.d
 /// interface.  Mobile-settings remediation plan §M3 follow-up
 /// (Wi-Fi-only enforcement).
 typedef ConnectivityChecker = Future<List<ConnectivityResult>> Function();
+
+/// libmpv demuxer cache cap (streaming pipeline plan §16 M3).  Default
+/// is 32 MB which gates first-frame latency on 3-5 segments worth of
+/// readahead — visible to the user as a "Loading…" spinner of 18-30 s
+/// on transcode sessions.  4 MB still buffers ~3 segments at typical
+/// 1080p HEVC bitrate (≈8 Mbps) but lets playback start as soon as
+/// libmpv has decoded the first segment's first GOP.  Trade-off: a
+/// >2 s network stall mid-playback will rebuffer instead of riding
+/// through; acceptable on LAN where stalls are rare.
+const int _kPlayerBufferBytes = 4 * 1024 * 1024;
 
 /// How often (in seconds) the cubit reports playback progress to the server.
 const _kProgressIntervalSec = 10;
@@ -136,6 +146,7 @@ class PlayerCubit extends Cubit<PlayerState> {
     double resumeSec, {
     String? posterUrl,
     bool tonemap = false,
+    double? serverSeekSec,
   }) async {
     // M7: when the cubit is a long-lived singleton, a second `startStream`
     // must clean up the previous session before opening the next one.
@@ -165,7 +176,15 @@ class PlayerCubit extends Cubit<PlayerState> {
 
     emit(const PlayerLoading());
     try {
-      final response = await _repository.startStream(fileId, tonemap: tonemap);
+      // Pass `serverSeekSec` through when present (HDR-toggle path knows
+      // the live playhead more precisely than the DB).  Server falls
+      // back to `media_files.last_progress_sec` when omitted (initial-
+      // play resume path) — streaming pipeline plan §16 M1.
+      final response = await _repository.startStream(
+        fileId,
+        tonemap: tonemap,
+        seekSec: serverSeekSec,
+      );
       _sessionId = response.sessionId;
 
       final token = await _secureStorage.getAuthToken();
@@ -191,16 +210,25 @@ class PlayerCubit extends Cubit<PlayerState> {
           ? <String, String>{'Authorization': 'Bearer $token'}
           : <String, String>{};
 
-      _player = Player();
+      _player = Player(
+        configuration: const PlayerConfiguration(
+          bufferSize: _kPlayerBufferBytes,
+        ),
+      );
       _controller = VideoController(_player!);
       _lastPlaylistUrl = response.playlistUrl;
       _lastPlaylistHeaders = headers;
       await _player!.open(Media(response.playlistUrl, httpHeaders: headers));
 
+      // No client-side `player.seek(...)` here.  The server now lands
+      // FFmpeg at the resume position via `-ss` (streaming pipeline
+      // plan §16 M1) and shifts the static VOD playlist's media-
+      // sequence accordingly so segment 0 of the playlist IS the
+      // segment containing the resume timestamp.  A post-open seek
+      // would race the initial buffer fill and either be a no-op or
+      // throw libmpv into a 404-retry loop on a not-yet-encoded
+      // segment.
       final seekSec = response.resumeSec > 0 ? response.resumeSec : resumeSec;
-      if (seekSec > 0) {
-        await _player!.seek(Duration(milliseconds: (seekSec * 1000).toInt()));
-      }
 
       // Hook the OS media session (lockscreen / notification card / BT
       // headset).  Best-effort — if audio_service hasn't initialised
@@ -222,10 +250,36 @@ class PlayerCubit extends Cubit<PlayerState> {
         player: _player!,
         controller: _controller!,
         resumeSec: seekSec,
+        // Server-supplied: the segment-snapped source-time at which
+        // the playlist's t=0 sits.  The scrubber adds this to the
+        // player's reported position so the user sees source-time
+        // (streaming pipeline plan §16 scrubber-offset patch).
+        playlistOffsetSec: response.appliedSeekSec,
         streamPath: path,
         hdrFormat: response.hdrFormat,
         tonemapped: response.tonemapped,
       ));
+
+      // Streaming pipeline plan §16 M4 — diagnostics only.  libmpv
+      // populates `audioParams` after the first audio frame decodes
+      // (typically a few hundred ms post-open).  Subscribe to the
+      // stream, log the FIRST non-empty value so an operator
+      // diagnosing AV-sync issues can grep for `audio_negotiated`
+      // and pair it with the server's `audio_probe` line.  Stream is
+      // torn down by `_disposeCurrentSession` so we don't bother
+      // canceling the subscription manually.
+      _player!.stream.audioParams.firstWhere(
+        (p) => p.sampleRate != null || p.channelCount != null,
+        orElse: () => _player!.state.audioParams,
+      ).then((p) {
+        _log.i(
+          '[Player] audio_negotiated session=${response.sessionId} '
+          'format=${p.format} sample_rate=${p.sampleRate} '
+          'channels=${p.channels} channel_count=${p.channelCount}',
+        );
+      }).catchError((Object e, StackTrace st) {
+        _log.d('audioParams subscription failed', error: e, stackTrace: st);
+      });
 
       _startProgressTimer();
     } on ApiException catch (e, st) {
@@ -285,12 +339,17 @@ class PlayerCubit extends Cubit<PlayerState> {
     final currentMs = _player?.state.position.inMilliseconds ?? 0;
     final fallbackSec = currentState is PlayerReady ? currentState.resumeSec : 0.0;
     final resumeSec = currentMs > 0 ? currentMs / 1000.0 : fallbackSec;
+    // Pass the live playhead as `serverSeekSec` so the new FFmpeg
+    // session lands at the toggle's actual position — not the DB's
+    // `last_progress_sec` (which lags by up to 5 s due to the
+    // progress-write throttle).  Streaming pipeline plan §16 M1.
     await startStream(
       fileId,
       fileName,
       resumeSec,
       posterUrl: _lastPosterUrl,
       tonemap: enabled,
+      serverSeekSec: resumeSec > 0 ? resumeSec : null,
     );
   }
 
@@ -321,9 +380,19 @@ class PlayerCubit extends Cubit<PlayerState> {
     if (p == null || currentState is! PlayerReady) return;
     if (position.isNegative) position = Duration.zero;
 
-    final currentMs = p.state.position.inMilliseconds;
-    final targetMs = position.inMilliseconds;
-    final deltaMs = targetMs - currentMs;
+    // Source-time vs player-time bookkeeping (streaming pipeline plan
+    // §16 scrubber-offset patch).  `position` is the user's target in
+    // SOURCE time (what the scrubber shows).  libmpv's reported
+    // position runs in PLAYER time which is offset by
+    // `playlistOffsetSec` when a seek-restart has shifted the playlist.
+    // Compute the delta in source-time for the threshold compare; pass
+    // player-time to `p.seek` since libmpv operates in playlist-local
+    // coordinates.
+    final offsetMs = (currentState.playlistOffsetSec * 1000).toInt();
+    final currentPlayerMs = p.state.position.inMilliseconds;
+    final currentSourceMs = currentPlayerMs + offsetMs;
+    final targetSourceMs = position.inMilliseconds;
+    final deltaMs = targetSourceMs - currentSourceMs;
 
     // Backward seek + small forward seek → in-player; cancel any
     // in-flight server-restart debounce so we don't double-act.
@@ -332,7 +401,18 @@ class PlayerCubit extends Cubit<PlayerState> {
       _seekDebounceTimer = null;
       _pendingSeekTarget = null;
       try {
-        await p.seek(position);
+        // Convert source-time target back to player-time before passing
+        // to libmpv.  Clamp at zero — small backward seeks below the
+        // current playlist's t=0 would wrap; clamp to the playlist start
+        // so libmpv doesn't error.  (For seeks outside the loaded
+        // playlist's range, the seek-restart path above handles it.)
+        final playerTargetMs = (targetSourceMs - offsetMs).clamp(
+          0,
+          // Cap at a very large value; libmpv will clamp to actual
+          // playlist length itself.
+          1 << 30,
+        );
+        await p.seek(Duration(milliseconds: playerTargetMs));
       } catch (e, st) {
         _log.w('In-player seek failed', error: e, stackTrace: st);
       }
@@ -378,7 +458,12 @@ class PlayerCubit extends Cubit<PlayerState> {
     emit(currentState.copyWith(isSeeking: true));
     try {
       await p.pause();
-      await _repository.seekStream(
+      // Server returns the segment-snapped value it actually applied
+      // (`applied_seek_sec` from the response body) — the cubit uses
+      // this as the new `_playlistOffsetSec` so the scrubber displays
+      // source-time after the restart instead of playlist-time
+      // (streaming pipeline plan §16 scrubber-offset patch).
+      final appliedSeekSec = await _repository.seekStream(
         sid,
         target.inMilliseconds / 1000.0,
         tonemap: currentState.tonemapped,
@@ -393,12 +478,25 @@ class PlayerCubit extends Cubit<PlayerState> {
         Media(url, httpHeaders: headers ?? const {}),
         play: false,
       );
-      // The new playlist starts at the seek-aligned segment boundary
-      // (server snaps to floor(seek/hls_time) * hls_time).  Within the
-      // new playlist, seek to the precise requested position.
-      await p.seek(target);
+      // The new playlist starts at `appliedSeekSec` of source-time
+      // (segment-snapped by the server).  Seek WITHIN the playlist to
+      // the sub-segment offset between the user's exact target and the
+      // segment boundary.  Was previously `await p.seek(target)` which
+      // tried to seek to source-time T inside a playlist whose own
+      // timeline runs 0..(N-K)*hls_time — libmpv would either clamp
+      // or reset, manifesting as "scrubber jumps back to 0".
+      final withinPlaylistSec =
+          target.inMilliseconds / 1000.0 - appliedSeekSec;
+      if (withinPlaylistSec > 0) {
+        await p.seek(
+          Duration(milliseconds: (withinPlaylistSec * 1000).toInt()),
+        );
+      }
       await p.play();
-      emit(currentState.copyWith(isSeeking: false));
+      emit(currentState.copyWith(
+        isSeeking: false,
+        playlistOffsetSec: appliedSeekSec,
+      ));
     } catch (e, st) {
       _log.w(
         'Server seek-restart failed; falling back to in-player seek',

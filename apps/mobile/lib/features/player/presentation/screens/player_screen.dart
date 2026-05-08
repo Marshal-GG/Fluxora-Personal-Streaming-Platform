@@ -252,6 +252,7 @@ class _PlayerViewState extends State<_PlayerView>
                           extra: fileName,
                         ),
                         isSeeking: state.isSeeking,
+                        playlistOffsetSec: state.playlistOffsetSec,
                       ),
                       _MinimizeHandle(
                         onUpdate: _onMinimizeUpdate,
@@ -346,6 +347,7 @@ class _VideoView extends StatelessWidget {
     this.onXRay,
     this.onGroupWatch,
     this.isSeeking = false,
+    this.playlistOffsetSec = 0.0,
   });
 
   final VideoController controller;
@@ -371,6 +373,12 @@ class _VideoView extends StatelessWidget {
   /// transcode).
   final bool isSeeking;
 
+  /// Source-time offset for the playlist's t=0 (streaming pipeline
+  /// plan §16 scrubber-offset patch).  Threaded down to the scrubber
+  /// in `FluxPlayerControls` so it displays source-time after a
+  /// server-side seek-restart instead of playlist-local time.
+  final double playlistOffsetSec;
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -392,6 +400,7 @@ class _VideoView extends StatelessWidget {
           onSeek: onSeek,
           onXRay: onXRay,
           onGroupWatch: onGroupWatch,
+          playlistOffsetSec: playlistOffsetSec,
         ),
         if (isSeeking) const _SeekingOverlay(),
       ],

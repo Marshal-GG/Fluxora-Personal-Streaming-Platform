@@ -29,6 +29,7 @@ class PlayerReady extends PlayerState {
     required this.player,
     required this.controller,
     this.resumeSec = 0.0,
+    this.playlistOffsetSec = 0.0,
     this.streamPath = StreamPath.hls,
     this.hdrFormat,
     this.tonemapped = false,
@@ -41,6 +42,20 @@ class PlayerReady extends PlayerState {
   final VideoController controller;
   /// The position the player was seeked to on open (0 = fresh start).
   final double resumeSec;
+
+  /// Server-supplied source-time offset for the playlist's t=0
+  /// (streaming pipeline plan §16 scrubber-offset patch 2026-05-08).
+  ///
+  /// When `start_stream` / `restart_stream` snap the requested seek to
+  /// a segment boundary (`floor(seek / hls_time) * hls_time`), the
+  /// player's reported playback position is relative to that snap, not
+  /// to t=0 of the source file.  Add this value to libmpv's reported
+  /// position when rendering the scrubber so the user sees source-time,
+  /// not playlist-time (otherwise: forward-seek looks like "scrubber
+  /// reset to 0" because the new playlist's t=0 is the seek target's
+  /// segment boundary).
+  final double playlistOffsetSec;
+
   /// The active streaming transport.
   final StreamPath streamPath;
 
@@ -66,12 +81,18 @@ class PlayerReady extends PlayerState {
   /// True when the source is HDR.  Convenience alias.
   bool get isHdrSource => hdrFormat != null && hdrFormat!.isNotEmpty;
 
-  PlayerReady copyWith({StreamPath? streamPath, bool? isSeeking}) => PlayerReady(
+  PlayerReady copyWith({
+    StreamPath? streamPath,
+    bool? isSeeking,
+    double? playlistOffsetSec,
+  }) =>
+      PlayerReady(
         sessionId: sessionId,
         fileName: fileName,
         player: player,
         controller: controller,
         resumeSec: resumeSec,
+        playlistOffsetSec: playlistOffsetSec ?? this.playlistOffsetSec,
         streamPath: streamPath ?? this.streamPath,
         hdrFormat: hdrFormat,
         tonemapped: tonemapped,

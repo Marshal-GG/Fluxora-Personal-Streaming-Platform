@@ -361,5 +361,86 @@ void main() {
       verify(() => repository.startStream(tFileId)).called(1);
       await cubit.close();
     });
+
+    // ── Streaming pipeline plan §16 — M1: server-side resume seek ──
+
+    test(
+        'startStream forwards serverSeekSec to repository when provided '
+        '(HDR-toggle / explicit-resume path)', () async {
+      when(() => repository.startStream(
+            tFileId,
+            tonemap: any(named: 'tonemap'),
+            seekSec: any(named: 'seekSec'),
+          )).thenAnswer((_) async => tResponse);
+
+      final cubit = buildCubit();
+      await cubit.startStream(
+        tFileId,
+        tFileName,
+        0.0,
+        serverSeekSec: 2843.5,
+      );
+
+      // Server now lands FFmpeg at the right segment via -ss; cubit
+      // forwards the live playhead via the new seekSec arg.
+      verify(() => repository.startStream(
+            tFileId,
+            tonemap: false,
+            seekSec: 2843.5,
+          )).called(1);
+      await cubit.close();
+    });
+
+    test(
+        'startStream omits seekSec when no serverSeekSec is provided '
+        '(initial-play path defers to server DB fallback)', () async {
+      when(() => repository.startStream(
+            tFileId,
+            tonemap: any(named: 'tonemap'),
+            seekSec: any(named: 'seekSec'),
+          )).thenAnswer((_) async => tResponse);
+
+      final cubit = buildCubit();
+      await cubit.startStream(tFileId, tFileName, 0.0);
+
+      // No serverSeekSec → seekSec passed as null → server reads
+      // last_progress_sec from the DB (the resume-from-progress path).
+      verify(() => repository.startStream(
+            tFileId,
+            tonemap: false,
+            seekSec: null,
+          )).called(1);
+      await cubit.close();
+    });
+
+    test(
+        'setTonemap re-invokes startStream against the same file with a '
+        'new tonemap flag (live-position capture happens at runtime)',
+        () async {
+      // Two stubs — first call is the initial startStream, second is
+      // the setTonemap-triggered restart.
+      when(() => repository.startStream(
+            tFileId,
+            tonemap: any(named: 'tonemap'),
+            seekSec: any(named: 'seekSec'),
+          )).thenAnswer((_) async => tResponse);
+
+      final cubit = buildCubit();
+      await cubit.startStream(tFileId, tFileName, 0.0);
+      await cubit.setTonemap(true);
+
+      // setTonemap captures live player position; in a headless test
+      // env the Player isn't real so position is 0 and seekSec ends
+      // up null — the SERVER falls back to DB last_progress_sec, which
+      // is the correct safe behaviour when the cubit can't read the
+      // live playhead.  Real-device path passes the live ms via the
+      // same code path (verified by reading the cubit source).
+      verify(() => repository.startStream(
+            tFileId,
+            tonemap: true,
+            seekSec: null,
+          )).called(1);
+      await cubit.close();
+    });
   });
 }

@@ -36,6 +36,7 @@ class FluxPlayerControls extends StatefulWidget {
     this.onSeek,
     this.onXRay,
     this.onGroupWatch,
+    this.playlistOffsetSec = 0.0,
     super.key,
   });
 
@@ -80,6 +81,14 @@ class FluxPlayerControls extends StatefulWidget {
   /// ``PlayerCubit.seekTo``.  Null falls back to the legacy direct
   /// ``player.seek`` path.
   final ValueChanged<Duration>? onSeek;
+
+  /// Server-supplied source-time offset for the playlist's t=0
+  /// (streaming pipeline plan §16 scrubber-offset patch).  Threaded
+  /// from `PlayerReady.playlistOffsetSec` via player_screen.  When
+  /// non-zero, the scrubber displays `position + offset` so the user
+  /// sees source-time after a server-side seek-restart has shifted
+  /// the playlist's media-sequence.
+  final double playlistOffsetSec;
 
   @override
   State<FluxPlayerControls> createState() => _FluxPlayerControlsState();
@@ -582,6 +591,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                       _ProgressBar(
                         player: widget.player,
                         onSeekCommit: _emitSeek,
+                        playlistOffsetSec: widget.playlistOffsetSec,
                       ),
                       const SizedBox(height: 8),
                       _QuickActions(
@@ -849,16 +859,48 @@ class _CircleButton extends StatelessWidget {
   }
 }
 
-class _ProgressBar extends StatelessWidget {
-  const _ProgressBar({required this.player, this.onSeekCommit});
+class _ProgressBar extends StatefulWidget {
+  const _ProgressBar({
+    required this.player,
+    this.onSeekCommit,
+    this.playlistOffsetSec = 0.0,
+  });
 
   final Player player;
 
   /// Called once on `onChangeEnd` with the final scrub target so the
   /// cubit can decide between in-player seek and server restart.
-  /// Live `onChanged` updates still go straight to the player so the
-  /// preview tracks the drag fluidly without a 300 ms-debounced hop.
   final ValueChanged<Duration>? onSeekCommit;
+
+  /// Server-supplied source-time offset for the playlist's t=0
+  /// (streaming pipeline plan §16 scrubber-offset patch 2026-05-08).
+  /// Added to libmpv's reported position when displaying the scrubber
+  /// so the user sees source-time, not playlist-time, after a server-
+  /// side seek-restart has shifted the playlist.
+  final double playlistOffsetSec;
+
+  @override
+  State<_ProgressBar> createState() => _ProgressBarState();
+}
+
+class _ProgressBarState extends State<_ProgressBar> {
+  /// While the user is actively dragging the scrubber, this holds the
+  /// in-flight slider value (0..1) so the thumb tracks their finger
+  /// without us having to call `player.seek` continuously.  Null
+  /// otherwise — the slider then renders the player's actual reported
+  /// position via the StreamBuilder.
+  ///
+  /// Pre-fix (2026-05-08 evening): the live `onChanged` callback called
+  /// `player.seek(targetPlayerMs)` continuously during drag for visual
+  /// preview.  When the user dragged forward past the current
+  /// playlist's apparent end (because the playlist starts at segment K
+  /// after a prior server-restart), the player-time clamp sent libmpv
+  /// to the playlist's end → scrubber jumped to max → reset to target
+  /// only after release fired the server-restart.  Operator-reported.
+  /// Local drag-state fixes it: during drag we only render the new
+  /// position, no player.seek; on release the cubit decides
+  /// in-player-vs-server-restart with the source-time target.
+  double? _dragValue;
 
   String _format(Duration d) {
     final h = d.inHours;
@@ -869,19 +911,45 @@ class _ProgressBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final offsetMs = (widget.playlistOffsetSec * 1000).toInt();
     return StreamBuilder<Duration>(
-      stream: player.stream.position,
-      initialData: player.state.position,
+      stream: widget.player.stream.position,
+      initialData: widget.player.state.position,
       builder: (context, posSnap) {
-        final pos = posSnap.data ?? Duration.zero;
+        final playerPos = posSnap.data ?? Duration.zero;
+        // Display position is in source-time = player-time + offset.
+        final sourcePos =
+            Duration(milliseconds: playerPos.inMilliseconds + offsetMs);
         return StreamBuilder<Duration>(
-          stream: player.stream.duration,
-          initialData: player.state.duration,
+          stream: widget.player.stream.duration,
+          initialData: widget.player.state.duration,
           builder: (context, durSnap) {
-            final dur = durSnap.data ?? Duration.zero;
-            final value = (dur.inMilliseconds == 0)
+            final playerDur = durSnap.data ?? Duration.zero;
+            // Total duration in source-time = playlist-duration + offset.
+            // (The playlist runs from t=0 to (N-K)*hls_time; total source
+            // is K*hls_time + (N-K)*hls_time = N*hls_time.)
+            final sourceDur = Duration(
+              milliseconds: playerDur.inMilliseconds + offsetMs,
+            );
+            // Slider's `value` follows the user's finger during drag
+            // (via _dragValue), else mirrors the player's reported
+            // source-time.  Avoids the "jumps to max" regression where
+            // a forward drag past the current playlist's apparent end
+            // would clamp player.seek to playerDur and the StreamBuilder
+            // would render value=1.0 mid-drag.
+            final liveValue = (sourceDur.inMilliseconds == 0)
                 ? 0.0
-                : (pos.inMilliseconds / dur.inMilliseconds).clamp(0.0, 1.0);
+                : (sourcePos.inMilliseconds / sourceDur.inMilliseconds)
+                    .clamp(0.0, 1.0);
+            final value = _dragValue ?? liveValue;
+            // Display position: while dragging show the drag target
+            // in source-time so the timestamp tracks the thumb.
+            final displayPos = _dragValue == null
+                ? sourcePos
+                : Duration(
+                    milliseconds:
+                        (sourceDur.inMilliseconds * _dragValue!).round(),
+                  );
 
             return Padding(
               padding:
@@ -889,7 +957,7 @@ class _ProgressBar extends StatelessWidget {
               child: Row(
                 children: [
                   Text(
-                    _format(pos),
+                    _format(displayPos),
                     style: AppTypography.monoMicro.copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
@@ -910,23 +978,38 @@ class _ProgressBar extends StatelessWidget {
                       ),
                       child: Slider(
                         value: value,
+                        onChangeStart: (v) {
+                          setState(() => _dragValue = v);
+                        },
                         onChanged: (v) {
-                          // While the user is actively dragging the
-                          // thumb we keep updating the in-player
-                          // position so the video preview tracks the
-                          // drag.  The expensive server-restart only
-                          // fires on `onChangeEnd` when the cubit
-                          // sees the final target (debounced 300 ms).
-                          final ms = (dur.inMilliseconds * v).round();
-                          player.seek(Duration(milliseconds: ms));
+                          // No `player.seek` here — local-state-only
+                          // preview avoids the "jumps to max" bug when
+                          // dragging past the current playlist's end.
+                          // Visual feedback is fluid because the slider
+                          // re-renders with the new `_dragValue` on
+                          // every onChanged tick.
+                          setState(() => _dragValue = v);
                         },
                         onChangeEnd: (v) {
-                          final ms = (dur.inMilliseconds * v).round();
-                          final target = Duration(milliseconds: ms);
-                          if (onSeekCommit != null) {
-                            onSeekCommit!(target);
+                          final sourceMs =
+                              (sourceDur.inMilliseconds * v).round();
+                          // Hand the cubit a SOURCE-time target — the
+                          // cubit decides server-restart vs in-player
+                          // and converts to player-time itself.
+                          final target = Duration(milliseconds: sourceMs);
+                          // Clear drag state; the cubit's seekTo will
+                          // drive the player and the StreamBuilder
+                          // will pick up the new position.
+                          setState(() => _dragValue = null);
+                          if (widget.onSeekCommit != null) {
+                            widget.onSeekCommit!(target);
                           } else {
-                            player.seek(target);
+                            // No cubit hookup → fall through to a raw
+                            // in-player seek using player-time.
+                            final playerMs = (sourceMs - offsetMs)
+                                .clamp(0, playerDur.inMilliseconds);
+                            widget.player
+                                .seek(Duration(milliseconds: playerMs));
                           }
                         },
                       ),
@@ -934,7 +1017,7 @@ class _ProgressBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 12),
                   Text(
-                    _format(dur),
+                    _format(sourceDur),
                     style: AppTypography.monoMicro.copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,

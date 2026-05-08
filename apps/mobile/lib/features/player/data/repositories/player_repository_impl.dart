@@ -13,13 +13,19 @@ class PlayerRepositoryImpl implements PlayerRepository {
   Future<StreamStartResponse> startStream(
     String fileId, {
     bool tonemap = false,
-  }) =>
-      _apiClient.post<StreamStartResponse>(
-        Endpoints.streamStart(fileId),
-        queryParameters: tonemap ? const {'tonemap': 'true'} : null,
-        fromJson: (data) =>
-            StreamStartResponse.fromJson(data as Map<String, dynamic>),
-      );
+    double? seekSec,
+  }) {
+    final qp = <String, String>{
+      if (tonemap) 'tonemap': 'true',
+      if (seekSec != null && seekSec > 0) 'seek_sec': seekSec.toStringAsFixed(3),
+    };
+    return _apiClient.post<StreamStartResponse>(
+      Endpoints.streamStart(fileId),
+      queryParameters: qp.isEmpty ? null : qp,
+      fromJson: (data) =>
+          StreamStartResponse.fromJson(data as Map<String, dynamic>),
+    );
+  }
 
   @override
   Future<void> stopStream(String sessionId) =>
@@ -33,16 +39,19 @@ class PlayerRepositoryImpl implements PlayerRepository {
       );
 
   @override
-  Future<void> seekStream(
+  Future<double> seekStream(
     String sessionId,
     double seekSec, {
     bool tonemap = false,
-  }) =>
-      _apiClient.post<void>(
-        Endpoints.streamSeek(sessionId),
-        queryParameters: {
-          'seek_sec': seekSec.toStringAsFixed(3),
-          if (tonemap) 'tonemap': 'true',
-        },
-      );
+  }) async {
+    final body = await _apiClient.post<Map<String, dynamic>>(
+      Endpoints.streamSeek(sessionId),
+      queryParameters: {
+        'seek_sec': seekSec.toStringAsFixed(3),
+        if (tonemap) 'tonemap': 'true',
+      },
+      fromJson: (data) => data as Map<String, dynamic>,
+    );
+    return (body['applied_seek_sec'] as num?)?.toDouble() ?? seekSec;
+  }
 }
