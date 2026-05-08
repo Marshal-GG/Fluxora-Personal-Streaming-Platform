@@ -92,6 +92,16 @@ The desktop's `GET /api/v1/auth/clients` (localhost-only) returns each client as
 
 `ActiveSessionInfo` is exposed both server-side (`apps/server/models/client.py`) and frontend-side (`packages/fluxora_core/lib/entities/client_list_item.dart`).
 
+#### Mobile self-mutation surface — `UpdateClientMeRequest`
+
+Settings remediation M2.5 (2026-05-08) added a single bearer-only mutation that lets a paired mobile client rename its own row. The shape is intentionally narrow — only `display_name` is mutable from the client side; everything else (tier, paired_at, last_seen, last_ip, status) is server-controlled.
+
+| Field | Type | Validation |
+|-------|------|------------|
+| display_name | str | 1–50 chars **after trim**; whitespace stripped before length check; pure-whitespace rejected; control chars `\x00`–`\x1f` rejected (a common log-injection vector + would corrupt the operator's Clients screen). |
+
+Backed by `auth_service.update_client_display_name(db, client_id, display_name)` — parameterised `UPDATE clients SET name = ?, last_seen = ? WHERE id = ?`. Records a `client.profile_updated` activity event with `actor_kind='client'` so the operator's Activity feed surfaces self-rename events. Wire shape under `PATCH /api/v1/auth/clients/me` documented in [`docs/04_api/01_api_contracts.md`](../04_api/01_api_contracts.md).
+
 ---
 
 ### Entity: `UserSettings`

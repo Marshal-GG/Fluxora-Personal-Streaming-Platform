@@ -128,42 +128,51 @@ apps/server/
 
 ```
 apps/mobile/
-├── pubspec.yaml               # depends on packages/fluxora_core; google_fonts, lucide_icons_flutter, screen_brightness, cached_network_image
+├── pubspec.yaml               # depends on packages/fluxora_core; mobile-only direct deps include google_fonts, lucide_icons_flutter, screen_brightness, cached_network_image (^3.4.1), audio_service, mobile_scanner, package_info_plus, just_audio, pdfx, photo_view, share_plus, path_provider, connectivity_plus
 ├── analysis_options.yaml
 ├── README.md
 ├── android/
 ├── ios/
-├── test/                      # 27 tests (PlayerCubit + auth + connect + library bloc + placeholder)
+├── test/                      # 75 tests as of 2026-05-08 (PlayerCubit + auth + connect + library bloc + groups cubit + storage round-trip + widget pump)
+│   ├── features/              # cubit + bloc tests
+│   └── storage/               # SecureStorage playback-prefs round-trip + PlaybackPrefsScreen widget pump (settings remediation M3)
 └── lib/
     ├── main.dart
     ├── app.dart               # MaterialApp.router — AppTheme.dark + BackgroundGradient via builder
     ├── core/
     │   ├── di/
-    │   │   └── injector.dart  # ApiClient, SecureStorage, all repos, PlayerCubit + NotificationsCubit lazy singletons
+    │   │   └── injector.dart  # ApiClient, SecureStorage, all repos, PlayerCubit + NotificationsCubit + ProfileCubit + ProfileStatsCubit + MobileGroupsCubit lazy singletons
     │   └── router/
-    │       └── app_router.dart  # StatefulShellRoute.indexedStack with 5 tab branches + outside-shell deep links
+    │       └── app_router.dart  # StatefulShellRoute.indexedStack with 4 tab branches (Home / Library / Search / Profile; Downloads tab hidden in v1) + outside-shell deep links: /splash /connect /pairing /reconnect /scan-qr /detail/:id /episodes/:id /library-files/:id /player /player/resume /notifications /offline /xray /group-watch /doc-viewer /photo-viewer /music-player /upgrade /account /privacy /playback-prefs (initial location: /splash)
     ├── features/
-    │   ├── auth/                  # pairing flow (V2-styled post-M9)
-    │   ├── connect/               # mDNS + manual IP entry (V2-styled post-M9)
-    │   ├── upgrade/               # tier comparison + activation guide; AppGradients.brand header
-    │   ├── home/                  # M3 Discover — 3 rails + bell → /notifications
-    │   ├── search/                # M3 — empty/active/no-results states
-    │   ├── library/               # M3 redesign + legacy LibraryBloc for /library-files/:id deep link
-    │   ├── notifications/         # M3 stub → M8 real-data
+    │   ├── onboarding/             # M12 (2026-05-08) — splash_screen.dart (104-px glow FluxoraMark + wordmark + tagline + 3-dot pagination + Connect-to-server / Scan-QR CTAs)
+    │   ├── auth/                   # pairing flow (V2-polished M12 — BrandLoader replaces inline spinners)
+    │   ├── connect/                # mDNS + manual IP entry (rebuilt M12 — FluxAppBar + BrandLoader + glass tiles + bottom CTAs as FluxButton + manual entry as FluxBottomSheet)
+    │   ├── upgrade/                # tier comparison + activation guide; AppGradients.brand header.  Routes.upgrade registered as a real top-level route at settings remediation M1 (was MaterialPageRoute-only via player tier-limit)
+    │   ├── home/                   # M3 Discover — Continue-watching hero rail + 4-up Browse strip + Recently-added; bell → /notifications
+    │   ├── search/                 # M3 — empty/active/no-results states; Browse chip group routes via Routes.libraryWithFilter
+    │   ├── library/                # M3 redesign + legacy LibraryBloc for /library-files/:id deep link; LibraryScreen accepts initialFilter via ?filter= query param
+    │   ├── files (legacy path "library/...screens/files_screen.dart") # M11 rebuild — categorized horizontal-rail browser routing per kind to /player /photo-viewer /doc-viewer /music-player; "other" kinds open system share sheet
+    │   ├── viewer/                 # M11 (2026-05-08) — doc_viewer_screen (pdfx PdfControllerPinch over temp-downloaded copy) + photo_viewer_screen (photo_view over NetworkImage with bearer header) + music_player_screen (just_audio AudioSource.uri with bearer header) + music_player_cubit
+    │   ├── notifications/          # M3 stub → M8 real-data
     │   │   ├── domain/repositories/notifications_repository.dart
-    │   │   ├── data/repositories/notifications_repository_impl.dart   # REST polling /api/v1/notifications every 5 s; TODO(WS) for future migration
+    │   │   ├── data/repositories/notifications_repository_impl.dart   # REST polling /api/v1/notifications every 5 s; _pollLimit = 20 + _seenCap = 500 FIFO eviction (mobile redesign audit §17.3 #8, 2026-05-08, mirrors desktop); TODO(WS) for future migration
     │   │   └── presentation/{cubit,screens}/                          # Today/Week/Earlier buckets; category→icon+color; tap-to-markRead
-    │   ├── detail/                # M4 — hero + Play/Episodes + cast/crew/similar rails
-    │   ├── episodes/              # M4 — season chips + episode rows
-    │   ├── downloads/              # M8 — storage indicator + Downloading cards + Offline rows + FluxBottomSheet actions
-    │   ├── profile/                # M8 — gradient avatar + PLUS pill + 3-stat row + 9 FluxRow sections + Sign out
+    │   ├── detail/                 # M4 — hero + Play/Episodes + cast/crew/similar rails; emit guarded against post-close
+    │   ├── episodes/               # M4 — season chips + episode rows
+    │   ├── downloads/              # M8 — storage indicator + Downloading cards + Offline rows + FluxBottomSheet actions; tab hidden in v1 per real-data backfill plan §5 row 4
+    │   ├── offline/                # M10 first slice (2026-05-08) — OfflineScreen UI shell; Routes.offline; no live connectivity detector wired in v1 (connectivity_plus only used by player Wi-Fi-only check today)
+    │   ├── xray/                   # M10 second slice (2026-05-08) — XRayScreen UI shell + static cast/trivia fixtures; Routes.xray; pushed from player top-bar science-flask chip
+    │   ├── group_watch/            # M10 third slice (2026-05-08) — GroupWatchScreen UI shell + static room/invite-link fixtures; Routes.groupWatch; pushed from player overflow menu.  NOT the same as Client Groups / Groups v2
+    │   ├── groups/                 # Groups v2 mobile UX (2026-05-07) — Profile-screen group surfaces + PIN modals; MobileGroupsCubit + MobileGroupRow state; PinEntrySheet + PinEnrollmentSheet
+    │   ├── profile/                # M8 baseline + settings remediation M1–M5 (2026-05-08).  profile_screen.dart now wires 8 live rows + 2 v1.1 stubs.  account_screen.dart (M2 — read-only fields + editable display name FluxBottomSheet → AuthRepository.updateMe → PATCH /clients/me).  privacy_screen.dart (M4 — device info readout + Clear in-app image cache + Clear temp downloads + sessions note).  playback_prefs_screen.dart (M3 — bg playback / Wi-Fi only / max quality picker / autoplay-next / subs default).  _StubRow widget renders Notifications + Language & region as honestly-stubbed (Opacity 0.55 + violet "v1.1" pill).  Sign-out target /splash (post-M12)
     │   └── player/
     │       ├── domain/, data/      # repository + WebRTC signaling + LAN-vs-WAN smart-path
     │       └── presentation/
     │           ├── controllers/player_controls_controller.dart   # M5 ChangeNotifier
-    │           ├── cubit/                                       # M7 singleton + restart-safe startStream + dismiss()
+    │           ├── cubit/                                       # M7 singleton + restart-safe startStream + dismiss().  Settings remediation M3 (2026-05-08): new ConnectivityChecker typedef + ctor param + _shouldRefuseOverCellular() Wi-Fi-only gate (fails-open on probe failure; dual-stack proceeds; cellular-only refused with PlayerFailure)
     │           ├── widgets/flux_player_controls.dart            # M5 + M6 — top bar / center transport / progress / quick-actions / gestures
-    │           ├── sheets/                                      # M6 — audio_subs / speed / sleep / quality / cast
+    │           ├── sheets/                                      # M6 — audio_subs / speed / sleep / quality / cast.  Sleep "Custom…" wired via showTimePicker 24-h mode (mobile redesign audit §17.3 #9, 2026-05-08).  End-of-episode still 🔲 (needs next-episode resolver)
     │           └── screens/player_screen.dart                   # M7 dual constructors + drag-down minimize handle
     └── shared/
         ├── data/

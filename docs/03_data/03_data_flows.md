@@ -126,7 +126,10 @@ client persists with `remoteUrl = null` and operates LAN-direct. See
     │
     ├──▶ apiClient.clearBearerToken()
     ├──▶ secureStorage.deleteAll()
-    └──▶ context.go(/connect)
+    └──▶ context.go(/splash)   ← was /connect pre-M12; auth-gate
+                                  redirects to /splash when no token,
+                                  so the explicit nav matches the
+                                  post-M12 onboarding entry point.
 ```
 
 Server-side revoke fires **first** so a stolen-and-not-yet-cleared token
@@ -134,6 +137,39 @@ on the same device can't authenticate after the user taps.  Network
 failure on the DELETE is non-fatal — the local teardown still runs so
 a dead network can't trap the user on the screen (audit §17.3 #3 of
 the mobile redesign plan).
+
+### Display-name self-rename — added 2026-05-08
+
+Mobile-settings remediation plan M2.5 added a bearer-only PATCH so
+paired clients can update their own display name from the new Account
+screen.
+
+```
+[Flutter Client] ──▶ User opens Profile → Account → Display name
+                     → FluxBottomSheet → types new name → Save
+    │
+    ├──▶ PATCH /auth/clients/me  body { display_name }
+    │       │
+    │   [FastAPI Server]
+    │       └──▶ UpdateClientMeRequest validates body
+    │             • trims whitespace; rejects blank-after-trim, >50,
+    │               control chars \x00-\x1f → 422
+    │       └──▶ auth_service.update_client_display_name(client_id, name)
+    │             • UPDATE clients SET name = ?, last_seen = ? WHERE id = ?
+    │       └──▶ activity_events INSERT (type=client.profile_updated,
+    │            actor_kind='client', actor_id=target_id=client_id)
+    │       └──▶ 200 OK + ClientMeResponse (re-fetched row)
+    │
+    └──▶ ProfileCubit.refresh()   → next Profile-tab paint reflects
+                                    the new name in the Identity card
+                                    + the settings list's Account row
+                                    sub-text (which carries email).
+```
+
+The endpoint is bearer-only by design — the target `client_id` is
+resolved from the token, so the request can't be spoofed to rename a
+different client's row. The operator-driven rename path is a separate
+concern (when added) on a localhost-gated route.
 
 ---
 

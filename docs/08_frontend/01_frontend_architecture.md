@@ -153,8 +153,12 @@ The redesign reorganised mobile around a 5-tab shell (`StatefulShellRoute.indexe
 
 | Route | Screen | State class | Branch / Outside-shell | Status |
 |-------|--------|-------------|------------------------|--------|
-| `/connect` | ConnectScreen | `ConnectCubit` | Outside shell — auth gate | ✅ Done |
-| `/pairing` | PairingScreen | `PairCubit` | Outside shell — auth gate | ✅ Done |
+| `/splash` | SplashScreen | — (stateless) | Outside shell — auth gate (initial location). Two CTAs route to `/connect` and `/scan-qr`; authenticated users are bounced straight to `/home` by `_guardRedirect`. | ✅ Done (M12, 2026-05-08) |
+| `/upgrade` | UpgradeScreen | — (stateless) | Outside shell — pushed from Profile → Subscription row + from player tier-limit `PlayerTierLimit` state. | ✅ Done (settings remediation §M1, 2026-05-08) |
+| `/account` | AccountScreen | `ProfileCubit` (singleton — preferred for the Identity card + read-only fields) | Outside shell — pushed from Profile → Account row. Display-name editor opens a `FluxBottomSheet` calling `AuthRepository.updateMe()` → `PATCH /auth/clients/me`. | ✅ Done (settings remediation §M2 + §M2.5, 2026-05-08) |
+| `/privacy` | PrivacyScreen | — (stateless; `FutureBuilder`s read SecureStorage + `package_info_plus`) | Outside shell — pushed from Profile → Privacy & security row. Device-info readout + Clear in-app image cache + Clear temp downloads + Sessions note. | ✅ Done (settings remediation §M4, 2026-05-08) |
+| `/connect` | ConnectScreen | `ConnectCubit` | Outside shell — auth gate. Rebuilt at M12 (2026-05-08) on V2 tokens — `FluxAppBar` + `BrandLoader` + glass `_ServerTile`s + bottom CTAs as `FluxButton` + manual entry as a `FluxBottomSheet`. | ✅ Done (M12 reskin) |
+| `/pairing` | PairingScreen | `PairCubit` | Outside shell — auth gate. Polished at M12 (2026-05-08) — two `CircularProgressIndicator` instances replaced with `BrandLoader`. | ✅ Done (M12 polish) |
 | `/home` | HomeScreen | `RecentCubit` + `ContinueWatchingCubit` (Phase A + B real-data; Browse strip is static layout per 2026-05-08 trending rip-out) | Tab 1 | ✅ Done (M3) |
 | `/library` | LibraryScreen({initialFilter}) | `LibraryBloc` (real-data Phase A); `?filter=` query param routes from Home Browse strip + Search Browse chips | Tab 2 | ✅ Done (M3 — V2 redesign) |
 | `/search` | SearchScreen | `SearchCubit` (Phase B real-data via `GET /files/search`); empty-state Browse chip group routes to `Routes.libraryWithFilter(slug)` | Tab 3 | ✅ Done (M3) |
@@ -172,9 +176,9 @@ The redesign reorganised mobile around a 5-tab shell (`StatefulShellRoute.indexe
 | `/notifications` | NotificationsScreen | `NotificationsCubit` (singleton) | Outside shell — pushed from Home bell icon | ✅ Done (M3 stub → M8 real-data) |
 | `/upgrade` (push) | UpgradeScreen | — (stateless) | Outside shell | ✅ Done |
 
-Auth guard: `go_router` `redirect` callback reads `SecureStorage` — unauthenticated users are redirected to `/connect`; authenticated users skip `/connect` and `/pairing` and land on `/home`.
+Auth guard: `go_router` `redirect` callback reads `SecureStorage` — unauthenticated users are redirected to `/splash` (was `/connect` pre-M12); authenticated users skip `/splash`, `/connect` and `/pairing` and land on `/home`.
 
-Sign-out (Profile tab → red-tinted button → confirm dialog → accept) calls `playerCubit.dismiss()` → `apiClient.clearBearerToken()` → `secureStorage.deleteAll()` → `context.go(Routes.connect)`; the redirect guard handles the rest on the next navigation tick.
+Sign-out (Profile tab → red-tinted button → confirm dialog → accept) calls `AuthRepository.revokeMe()` (server-side `DELETE /auth/clients/me`, audit §17.3 #3) → `playerCubit.dismiss()` → `apiClient.clearBearerToken()` → `secureStorage.deleteAll()` → `context.go(Routes.connect)`; the redirect guard handles the rest on the next navigation tick (post-clear, the user lands at `/splash`).
 
 ---
 
@@ -205,8 +209,9 @@ apps/mobile/lib/
 │       └── loading_overlay.dart      # legacy; V2 token migration landed at M9
 │
 └── features/
-    ├── connect/      # mDNS + manual IP — V2 styling post-M9
-    ├── auth/         # pairing flow — V2 styling post-M9
+    ├── onboarding/   # M12 ✅ 2026-05-08 — `splash_screen.dart`: 104-px glow `FluxoraMark` + wordmark + "Stream. Sync. Anywhere." tagline + 3-dot pagination + two CTAs (Connect to a server primary → /connect, Scan a QR code secondary → /scan-qr).  Auth-gate `initialLocation` is now `/splash`; unauthenticated users land here, authenticated users are bounced to /home
+    ├── connect/      # mDNS + manual IP — M12 rebuild ✅ 2026-05-08: `FluxAppBar` ("Find your server") + eyebrow/h1/body header block + `BrandLoader` while scanning + glass `_ServerTile`s with `LucideIcons.server` + bottom CTAs as `FluxButton` (Scan QR primary + Enter manually secondary opening a `FluxBottomSheet` with `FluxTextField` IP+port form)
+    ├── auth/         # pairing flow — M12 polish ✅ 2026-05-08: two `CircularProgressIndicator` instances replaced with `BrandLoader` (56 px / 32 px); email-collection / pending / rejected / error panels were already V2-styled.  The original M12 plan row's "email + password + 2FA TOTP" scope was honestly cut — Fluxora has no credential auth, only operator-approval pairing
     ├── upgrade/      # tier comparison + activation guide — V2 + AppGradients.brand header
     │
     ├── home/         # M3 Discover — Continue-watching hero rail + 4-up Browse strip (Movies/Shows/Music/Documents → Routes.libraryWithFilter) + Recently-added rail; bell → /notifications.  2026-05-08 trending rip-out replaced the middle Trending rail with the Browse strip per mobile redesign plan §17.2

@@ -1,7 +1,7 @@
 # Tech Stack
 
 > **Category:** Architecture
-> **Status:** Active — full canonical inventory of every dependency, codegen tool, build tool, and external service in use across the monorepo. Updated 2026-05-07 (no dep changes since 2026-05-03; date stamp reflects last sweep).
+> **Status:** Active — full canonical inventory of every dependency, codegen tool, build tool, and external service in use across the monorepo. Updated 2026-05-08 — re-baselined after the M11 Beyond-video round (2026-05-08, +5 mobile deps), the M12 onboarding revamp (2026-05-08, route changes only), and the mobile-settings remediation plan (2026-05-08, +2 mobile deps + 1 core dep).
 
 This doc lists what's *actually installed* (with versions) per package, why it's there, and what category it serves. When you add or remove a dep, update the relevant section here.
 
@@ -67,7 +67,7 @@ Versions pinned exactly in `apps/server/pyproject.toml` (no `^` / `~`).
 ### Dev dependencies
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `pytest` | 8.2.0 | Test runner — 247 passing tests |
+| `pytest` | 8.2.0 | Test runner — **669 passing tests** as of 2026-05-08 (Groups v2 + streaming §4.5 + audit §17.3 #3 + M11 `/content` + M2.5 `PATCH /clients/me`) |
 | `pytest-asyncio` | 0.23.7 | Async test support; `asyncio_mode = "auto"` |
 | `httpx` | 0.27.0 | `AsyncClient` for endpoint tests |
 | `black` | 24.4.0 | Code formatter (88-col, py311 target) |
@@ -175,25 +175,39 @@ Inherits `fluxora_core`. Adds:
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `flutter_bloc` | ^9.1.1 | State management |
-| `go_router` | ^13.0.0 | Routing (older minor — pending player-redesign bump) |
-| `get_it` | ^7.6.7 | DI |
+| `go_router` | ^13.0.0 | Routing (older minor — pending player-redesign bump). **27 routes today** (M12 + settings remediation added `/splash`, `/upgrade`, `/account`, `/privacy`, `/playback-prefs`). |
+| `get_it` | ^7.6.7 | DI — `PlayerCubit` is a long-lived `lazySingleton` (M7 `PlaybackProvider` per mobile redesign §9.2); `ProfileCubit` / `ProfileStatsCubit` / `MobileGroupsCubit` / `NotificationsCubit` also singleton-scoped so re-entries to tabs survive without refetching. |
 | `multicast_dns` | ^0.3.2 | mDNS discovery — PTR→SRV→A resolution chain |
-| `flutter_secure_storage` | ^9.0.0 | Token + URL storage |
+| `flutter_secure_storage` | ^9.0.0 | Token + URL storage. As of 2026-05-08 also persists 6 player prefs (`bg_playback_enabled`, `bg_playback_prompt_shown`, `wifi_only_streaming`, `max_streaming_quality`, `autoplay_next`, `subtitles_default_on`). |
 | `logger` | ^2.7.0 | Logging |
 | `media_kit` | ^1.2.6 | HLS video playback (replaces `better_player` — incompatible with AGP 8+) |
 | `media_kit_video` | ^2.0.1 | Video widget integration |
 | `media_kit_libs_video` | ^1.0.7 | Bundled libmpv for HLS |
-| `cached_network_image` | ^3.3.1 | TMDB poster caching |
+| `cached_network_image` | ^3.4.1 | TMDB poster caching (bumped from ^3.3.1 at M0 of mobile redesign) |
 | `flutter_webrtc` | ^1.4.1 | WebRTC peer for internet streaming |
+| `google_fonts` | ^8.1.0 | Inter (5 weights) at runtime — mobile redesign M0 (2026-05-03). Smaller than bundling Inter as an asset; cached after first download. |
+| `lucide_icons_flutter` | ^3.1.13 | 1.6 px Lucide icons — mobile redesign M0 (2026-05-03). Chosen over the unmaintained `lucide_icons` package per plan §6 ("pick whichever is more recently maintained"). |
+| `screen_brightness` | ^2.1.7 | Player left-rail brightness drag — mobile redesign M6 (2026-05-03). |
+| `mobile_scanner` | ^7.1.2 | QR-pairing scanner — Phase A backfill / pairing UX (2026-05-04). Decodes the desktop's `fluxora://pair?host=&port=&name=` payload. |
+| `audio_service` | ^0.18.18 | OS lockscreen + Now-Playing card + BT headset for video — Phase 3 player polish (2026-05-04). Music lockscreen integration via a separate `MusicAudioHandler` is **deferred to v1.1** to avoid sharing state with `FluxoraAudioHandler`. |
+| `package_info_plus` | ^9.0.1 | Runtime version + build readout for Profile → About sheet + Account screen — settings remediation M1 (2026-05-08). Replaced the hardcoded `v1.0.0 · build 482` placeholder. |
+| `just_audio` | ^0.10.5 | `MusicPlayerCubit` audio playback for the M11 music viewer (2026-05-08). `AudioSource.uri(headers:)` carries the bearer token. |
+| `pdfx` | ^2.9.2 | PDF rendering for the M11 doc viewer (2026-05-08). pdfx 2.x has no network-loading API, so the screen downloads the file via `GET /api/v1/files/{id}/content` to a temp path before opening with `PdfDocument.openFile`. |
+| `photo_view` | ^0.15.0 | Pinch-zoom for the M11 photo viewer (2026-05-08). Loads via `NetworkImage(url, headers: …)` directly — no temp download for viewing. |
+| `share_plus` | ^12.0.2 | OS share sheet for "Open in..." flows — M11 (2026-05-08). New 12.x API: `SharePlus.instance.share(ShareParams(files: [XFile(path)]))`. |
+| `path_provider` | ^2.1.5 | Promoted from transitive to direct dep at M11 (2026-05-08) for `getTemporaryDirectory()` — used by the doc + photo viewers' temp-download flow and by the Privacy & security screen's "Clear temp downloads" button. |
+| `connectivity_plus` | (transitive via core) | Wi-Fi vs cellular probe — settings remediation M3 (2026-05-08). Used by `PlayerCubit._shouldRefuseOverCellular()` for Wi-Fi-only enforcement; future M10 Offline live-detector will reuse it. Mobile re-pins it in `pubspec.yaml` for clarity even though core already declares it. |
 
 ### Dev dependencies
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `flutter_lints` | ^4.0.0 | Lint rule set |
-| `mocktail` | ^1.0.5 | Mocks |
+| `mocktail` | ^1.0.5 | Mocks — `MockPlayerRepository`, `MockSecureStorage`, `MockAuthRepository`, etc. |
 | `bloc_test` | ^10.0.0 | Bloc test harness |
 
-> Mobile is **not** wired to `freezed` / `build_runner` codegen — entities come from `fluxora_core` which is already codegen'd. Mobile-only data classes use plain `equatable`.
+> Mobile is **not** wired to `freezed` / `build_runner` codegen — entities come from `fluxora_core` which is already codegen'd. Mobile-only data classes use plain `equatable` (or `==` / `hashCode` overrides).
+>
+> **Test count: 75 passing as of 2026-05-08** (was 27 at M0 baseline; +48 from M3+M5+M6+M7+M8 cubits / Groups v2 / streaming §4.10 / M11 file kinds / M3 SecureStorage round-trip / M3 widget pump / Wi-Fi-only enforcement).
 
 ---
 

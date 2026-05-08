@@ -317,6 +317,36 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
 
 ---
 
+### `PATCH /api/v1/auth/clients/me`
+**Description:** Self-rename. Lets the calling client update its own `display_name` (the `clients.name` column under the hood). Backs the mobile Account screen's "Edit device name" affordance (mobile settings remediation plan M2.5, Open Question #1 follow-up). Bearer-only by design — the target `client_id` is resolved from the token, so the request cannot be spoofed to rename a different client's row. The operator-driven rename path is a separate concern (when added) on a localhost-gated route. Records a `client.profile_updated` activity event with `actor_kind='client'`.  
+**Auth:** Bearer token required (`validate_token`).  
+**Status:** ✅ Implemented (2026-05-08)
+
+**Request Body:**
+```json
+{ "display_name": "Alex's iPhone 15" }
+```
+
+- `display_name` is trimmed before length checks; `[1, 50]` characters after trim.
+- Pure-whitespace input, empty strings, and strings containing control characters (`\x00`–`\x1f`) are rejected with 422 — these would corrupt the operator's Clients screen and are a common log-injection vector.
+
+**Response:** Same shape as `GET /auth/clients/me` (the row is re-fetched after the UPDATE so `last_seen` reflects the bump from the request itself).
+```json
+{
+  "id": "uuid",
+  "display_name": "Alex's iPhone 15",
+  "email": "alex@fluxora.io",
+  "platform": "ios",
+  "paired_at": "2026-03-15T10:14:22.123Z",
+  "last_seen": "2026-05-08T12:00:00.000Z",
+  "tier": "plus"
+}
+```
+
+**Errors:** `401` missing/invalid bearer · `422` invalid body (blank, too long, control chars)
+
+---
+
 ### `DELETE /api/v1/auth/clients/me`
 **Description:** Self-revoke. Calling client's bearer + row are torched in the same teardown the operator-driven `DELETE /auth/revoke/{id}` performs (status → `rejected`, `auth_token` zeroed, `is_trusted` dropped). Backs the mobile sign-out flow (mobile redesign audit §17.3 #3) — without this the bearer would stay valid server-side until natural expiry, leaving a window where a stolen-and-not-yet-cleared device token could still authenticate. Records a `client.revoke` activity event with `actor_kind='client'` (vs `'operator'` for desktop-driven revokes) so the operator's Activity feed surfaces self-initiated sign-outs.  
 **Auth:** Bearer token required (`validate_token`).  
