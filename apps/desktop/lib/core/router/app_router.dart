@@ -12,6 +12,7 @@ import 'package:fluxora_desktop/features/help/presentation/screens/help_screen.d
 import 'package:fluxora_desktop/features/profile/presentation/screens/profile_screen.dart';
 import 'package:fluxora_desktop/features/settings/presentation/screens/settings_screen.dart';
 import 'package:fluxora_desktop/features/subscription/presentation/screens/subscription_screen.dart';
+import 'package:fluxora_desktop/features/transcode/presentation/screens/transcode_screen.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/screens/encoder_settings_screen.dart';
 import 'package:fluxora_desktop/features/transcoding/presentation/screens/transcoding_screen.dart';
 import 'package:fluxora_desktop/shared/showcase/primitives_showcase_screen.dart';
@@ -28,6 +29,7 @@ class Routes {
   static const String groupNew = '/groups/new';
   static String groupEdit(String id) => '/groups/$id/edit';
   static const String activity = '/activity';
+  static const String transcode = '/transcode';
   static const String transcoding = '/transcoding';
   static const String logs = '/logs';
   static const String settings = '/settings';
@@ -97,6 +99,10 @@ final appRouter = GoRouter(
         GoRoute(
           path: Routes.transcoding,
           builder: (_, _) => const TranscodingScreen(),
+        ),
+        GoRoute(
+          path: Routes.transcode,
+          builder: (_, _) => const TranscodeScreen(),
         ),
         GoRoute(
           path: Routes.encoderSettings,

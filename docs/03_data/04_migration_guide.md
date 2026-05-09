@@ -50,7 +50,8 @@ apps/server/database/
     ├── 023_clients_last_ip.sql
     ├── 024_benchmark_history.sql
     ├── 025_groups_v2_content_spaces.sql
-    └── 026_groups_per_client_pins.sql
+    ├── 026_groups_per_client_pins.sql
+    └── 027_transcode_jobs.sql
 ```
 
 Files are picked up alphabetically by `_run_migrations()` (in `db.py`). The `_migrations` table tracks which have already been applied by filename — re-running the server only executes new files. Each migration is wrapped in `executescript()`, which executes the entire file inside a single implicit transaction; on the next startup the new filename is appended to `_migrations` after a successful `executescript` + commit.
@@ -246,7 +247,7 @@ For settings/data changes: assert the row count or expected values in a fresh DB
 python -m pytest -q
 ```
 
-The full server test suite (698 tests as of 2026-05-09) must still pass. If a previously-passing test breaks, your migration changed something the rest of the code relied on.
+The full server test suite (730 tests as of 2026-05-09) must still pass. If a previously-passing test breaks, your migration changed something the rest of the code relied on.
 
 ---
 

@@ -24,6 +24,7 @@ from routers import (
     orders,
     profile,
     signal,
+    transcode,
     transcoding,
     webhook,
     ws,
@@ -316,6 +317,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     _asyncio.create_task(_tmdb_doh_prewarm_task())
 
+    # 8e. Start the user-initiated library transcode worker (single-tenant
+    # FIFO that pre-transcodes AV1/VP9 sources to H.264 sidecars; plan
+    # in `docs/10_planning/18_library_transcode_plan.md`).  ``start_worker``
+    # also runs the crash-recovery sweep that re-marks any
+    # ``transcode_jobs.status='running'`` rows from a previous crash as
+    # failed before accepting new work.
+    try:
+        from services import transcode_service as _transcode
+
+        await _transcode.start_worker()
+    except Exception:
+        logger.warning("Transcode worker failed to start", exc_info=True)
+
     # 9. Start mDNS broadcast
     await start_discovery(settings.fluxora_server_name, settings.fluxora_port)
 
@@ -331,6 +345,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     # Shutdown
+    try:
+        from services import transcode_service as _transcode
+
+        await _transcode.stop_worker()
+    except Exception:
+        logger.warning("Transcode worker shutdown raised", exc_info=True)
     await stop_discovery()
     await close_db()
     logger.info("Fluxora Server stopped")
@@ -413,5 +433,8 @@ app.include_router(
 app.include_router(activity.router, prefix="/api/v1/activity", tags=["activity"])
 app.include_router(
     transcoding.router, prefix="/api/v1/transcoding", tags=["transcoding"]
+)
+app.include_router(
+    transcode.router, prefix="/api/v1/transcode", tags=["transcode"]
 )
 app.include_router(logs.router, prefix="/api/v1/logs", tags=["logs"])

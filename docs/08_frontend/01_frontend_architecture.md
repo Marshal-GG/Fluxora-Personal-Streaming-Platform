@@ -383,7 +383,7 @@ Mobile test/ (78 tests)
 ├── storage/secure_storage_playback_prefs_test.dart   # bg-playback / Wi-Fi-only / max-quality / autoplay-next / subtitles defaults
 └── placeholder_test.dart
 
-Desktop test/ (90 tests)
+Desktop test/ (104 tests)
 ├── features/
 │   ├── dashboard/dashboard_cubit_test.dart                    # ✅
 │   ├── clients/clients_cubit_test.dart                        # ✅
@@ -392,7 +392,8 @@ Desktop test/ (90 tests)
 │   ├── transcoding/encoder_status_panel_test.dart             # ✅ (Slice A — pill rendering per status, sort order, failed-tooltip, banner severity → icon, ActiveEncoderStrip CPU/GPU pill + engine label)
 │   ├── transcoding/detected_hardware_card_test.dart           # ✅ (Slice B — loading / failure / empty states, CPU + GPU tile rendering with vendor pills, MB-vs-GB VRAM formatting, refresh button visibility)
 │   ├── transcoding/encoder_priority_list_test.dart            # ✅ (Slice C — empty-state copy, index pills, Primary pill on entry 0, remove-fires-onChanged, Add menu filters chained-out entries, Add appends to chain, "all in chain" hint)
-│   └── transcoding/fallback_history_panel_test.dart           # ✅ (Slice C — render-nothing while loading / on failure / empty, header + reason chips, requested → actual arrow, 5-event display cap)
+│   ├── transcoding/fallback_history_panel_test.dart           # ✅ (Slice C — render-nothing while loading / on failure / empty, header + reason chips, requested → actual arrow, 5-event display cap)
+│   └── transcode/transcode_cubit_test.dart                    # ✅ Plan 18 — 14 tests covering loadCandidates emit-order, selectFiles, startTranscode (POST /queue + refresh), cancelJob (DELETE + refresh), retryJob (POST /retry + refresh), 2 s polling lifecycle, selection auto-strip after queue
 ├── goldens/m3_dashboard_golden_test.dart                       # M3 dashboard golden snapshot via golden_toolkit
 └── placeholder_test.dart
 └── (library/orders/activity/logs cubits tested via manual integration)
@@ -502,6 +503,15 @@ apps/desktop/lib/
     │       ├── screens/transcoding_screen.dart        # 4 StatTiles + Active Sessions card; joins ActivityCubit
     │       └── screens/encoder_settings_screen.dart   # /transcoding/encoder; hardware selector + preset chips + CRF slider
     │
+    ├── transcode/               # ✅ Plan 18 (2026-05-09) — user-driven library transcode
+    │   ├── domain/entities/{transcode_candidate.dart, transcode_job.dart}    # Equatable; TranscodeJobStatus enum (queued/running/done/failed/cancelled)
+    │   ├── domain/repositories/transcode_repository.dart
+    │   ├── data/repositories/transcode_repository_impl.dart                  # GET /candidates · POST /queue · GET /jobs · DELETE /jobs/{id} · POST /jobs/{id}/retry
+    │   └── presentation/
+    │       ├── cubit/{transcode_cubit.dart, transcode_state.dart}            # sealed-union state (Initial/Loaded with candidates+jobs+selectedFileIds/Failure); 2 s `/jobs` polling timer; selection auto-strips ids that left the candidate list (post-queue)
+    │       ├── screens/transcode_screen.dart                                  # 3 TabBar + TabView (Candidates / Queue / History) — entry from FluxSidebar between Library and Clients
+    │       └── widgets/{candidates_tab.dart, queue_tab.dart, history_tab.dart}  # Candidates: multi-select + aggregate disk + runtime estimate (≈) + Start button.  Queue: live FluxProgress bars + per-row Cancel + bulk Cancel-selected.  History: terminal jobs + Retry on failed/cancelled
+    │
     ├── settings/                # ✅ Implemented (Phases 2 + 5)
     │   ├── domain/repositories/settings_repository.dart
     │   ├── data/repositories/settings_repository_impl.dart
@@ -559,6 +569,7 @@ apps/desktop/lib/
 | `/activity` | ActivityScreen | `RecentActivityCubit` (limit=200, live-poll) | ✅ Done (M5 redesign — replaced legacy) |
 | `/transcoding` | TranscodingScreen | `TranscodingCubit` + `ActivityCubit` | ✅ Done (M5 redesign) |
 | `/transcoding/encoder` | EncoderSettingsScreen | `SettingsCubit` + `TranscodingCubit` | ✅ Done (M5 redesign) |
+| `/transcode` | TranscodeScreen (Candidates / Queue / History tabs) | `TranscodeCubit` (factory; 2 s `/jobs` polling) | ✅ Done 2026-05-09 (plan 18 M5) |
 | `/settings` | SettingsScreen | `SettingsCubit` | ✅ Done |
 | `/profile` | ProfileScreen | `ProfileCubit` (factory) | ✅ Done |
 | `/help` | HelpScreen | — (stateless; external "Get Help" link rows via `url_launcher`) | ✅ Done |

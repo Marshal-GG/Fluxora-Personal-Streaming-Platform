@@ -2251,6 +2251,121 @@ Each result row carries `width` + `height` so the desktop can render matrix-mode
 
 ---
 
+## Library Transcode (Plan 18)
+
+User-driven, opt-in pre-transcode of AV1 / VP9 sources to H.264 sidecars stored next to the original (`<basename>.h264.<ext>`). Once a sidecar exists, `POST /stream/start/{file_id}` automatically uses it (stream-copies, no live transcode). Single-worker FIFO queue; concurrency = 1; H.264 + AAC only. Plan: [`docs/10_planning/18_library_transcode_plan.md`](../10_planning/18_library_transcode_plan.md).
+
+### `GET /api/v1/transcode/candidates`
+**Description:** List `media_files` rows whose video codec is AV1 or VP9 and which don't already have a transcoded sidecar.
+**Auth:** Bearer token **or** localhost — `validate_token_or_local`.
+**Status:** ✅ Implemented (2026-05-09)
+
+**Response:** `200 OK` + JSON array of `TranscodeCandidate`:
+
+```json
+[
+  {
+    "file_id": "abc-123",
+    "name": "Avicii - The Nights.mkv",
+    "library_id": "lib-xyz",
+    "size_bytes": 62914560,
+    "video_codec": "av1",
+    "duration_sec": 190.6,
+    "est_output_size_bytes": 125829120
+  }
+]
+```
+
+`est_output_size_bytes` is a coarse client-facing estimate (2.0× source for AV1, 1.5× for VP9) — the desktop renders it with a `≈` prefix to make the fuzziness obvious.
+
+### `POST /api/v1/transcode/queue`
+**Description:** Enqueue one or more files for transcoding. Skips files that already have a queued/running job (silent — they don't appear in the returned `job_ids`). Picks `h264_nvenc` if available in the encoder registry, else falls back to `libx264`.
+**Auth:** Bearer token **or** localhost.
+**Rate limit:** `10/minute` per `real_ip_key`.
+**Status:** ✅ Implemented (2026-05-09)
+
+**Request body** (`TranscodeQueueRequest`):
+
+```json
+{ "file_ids": ["abc-123", "def-456"] }
+```
+
+| Field | Type | Constraints |
+|-------|------|-------------|
+| `file_ids` | `list[str]` | Required; 1-50 items (Pydantic `min_length=1, max_length=50`). |
+
+**Response:** `201 Created`:
+
+```json
+{ "job_ids": [42, 43] }
+```
+
+**Errors:**
+- `400` — file_id doesn't exist, or file isn't a candidate (not AV1/VP9, or already has `transcoded_path`).
+- `422` — empty list / over 50 items.
+
+### `GET /api/v1/transcode/jobs`
+**Description:** List transcode jobs, optionally filtered by status.
+**Auth:** Bearer token **or** localhost.
+**Status:** ✅ Implemented (2026-05-09)
+
+**Query parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `status` | `str?` | Comma-separated subset of `queued`, `running`, `done`, `failed`, `cancelled`. Empty / omitted = all. Unknown value = 422. |
+
+**Response:** `200 OK` + JSON array of `TranscodeJobResponse`:
+
+```json
+[
+  {
+    "id": 42,
+    "file_id": "abc-123",
+    "file_name": "Avicii - The Nights.mkv",
+    "status": "running",
+    "progress_pct": 31.4,
+    "eta_sec": 47,
+    "error": null,
+    "output_path": null,
+    "encoder": "h264_nvenc",
+    "created_at": 1715212345,
+    "started_at": 1715212350,
+    "finished_at": null
+  }
+]
+```
+
+`progress_pct` is `0.0`–`100.0` (not `0.0`–`1.0`). `eta_sec` and `output_path` are populated only on `running` / `done`. `error` carries the last 240 chars of FFmpeg stderr on `failed`.
+
+### `DELETE /api/v1/transcode/jobs/{job_id}`
+**Description:** Cancel a queued or running job. For running jobs the worker SIGTERMs the FFmpeg process and unlinks the partial output file.
+**Auth:** Bearer token **or** localhost.
+**Status:** ✅ Implemented (2026-05-09)
+
+**Response:** `204 No Content` on success.
+
+**Errors:**
+- `404` — unknown job id.
+- `409` — job is already `done` / `failed` / `cancelled` (terminal state).
+
+### `POST /api/v1/transcode/jobs/{job_id}/retry`
+**Description:** Re-enqueue a failed or cancelled job. The original row is left untouched (its `error` column remains the History tab's record of what went wrong); a new `queued` row is inserted with the same `file_id` / `encoder` / `quality_preset`.
+**Auth:** Bearer token **or** localhost.
+**Status:** ✅ Implemented (2026-05-09)
+
+**Response:** `201 Created` (`TranscodeRetryResponse`):
+
+```json
+{ "new_job_id": 44 }
+```
+
+**Errors:**
+- `404` — unknown job id.
+- `409` — job is `queued` / `running` / `done` (only `failed` / `cancelled` can retry).
+
+---
+
 ### `PATCH /api/v1/settings` — `transcoding_chain` field
 The settings PATCH body gained a `transcoding_chain: list[str] | null` field for Slice C. Each entry must be a known encoder in the registry. The list is JSON-encoded into `user_settings.transcoding_chain` (migration 020). Validation rules:
 

@@ -291,3 +291,117 @@ Audit-follow-up changes uncommitted on top of `55f9865`. Operator's earlier "fix
 2. **Real-device regression test for the scrubber pin** (carried forward from prior entry — fragile surface; symptom is "scrubber paints at end for one frame after a forward seek > 5 s").
 3. **`current_status.md` size — still over the 25k Read-cap.** Use `Grep` + targeted `Read` with offset/limit. Splitting into per-component status files is a candidate refactor when the next non-trivial doc round comes through.
 4. **Watch for the `mobile_settings_remediation_plan` cross-link** — has been moved to `docs/10_planning/archive/15_mobile_settings_remediation_plan.md`. CLAUDE.md and the roadmap reference the archived path; some older docs may still link to the unarchived path.
+
+---
+
+## [2026-05-09] [server] [desktop] [feat] [tests] — Plan 18 — library transcode (M1–M5 + M8) shipped via 2 parallel opus subagents
+
+**Phase:** Phase 2 — closing the AV1/VP9 live-transcode pain
+**Status:** Complete (M1–M5 + M8). M6 + M7 deferred to v1.1.
+**Commits:** uncommitted
+
+### What Was Done
+
+Operator request: *"docs\10_planning\18_library_transcode_plan.md — we do this now, make proper ui for it too, still use multiple opus agents for faster work"*. Spawned 2 parallel Opus subagents — one for the server backend (M1–M4 + M8), one for the desktop UI (M5) — each owning a non-overlapping write surface, with the locked API contract embedded verbatim in both prompts so they couldn't diverge.
+
+§9 design-decisions resolved with the recommendations: H.264 only · default `slow cq=19` only · concurrency = 1 · AV1 + VP9 only as candidates · copy everything for subtitles + multi-track audio · keep orphan transcodes when source moves · never auto-delete originals · side-by-side `<basename>.h264.<ext>` storage.
+
+#### 1. Server backend (subagent A)
+
+- **Migration 027** (`027_transcode_jobs.sql`): adds `transcoded_path TEXT`, `transcoded_size_bytes INTEGER`, `transcoded_at INTEGER` to `media_files`; creates `transcode_jobs` (id PK, file_id FK ON DELETE CASCADE, target_codec, encoder, quality_preset, status CHECK in {queued, running, done, failed, cancelled}, progress_pct REAL, eta_sec, error, output_path, created_at, started_at, finished_at) + indexes on `status` and `file_id`.
+- **`models/transcode.py`**: `TranscodeCandidate`, `TranscodeQueueRequest` (1-50 file_ids), `TranscodeQueueResponse`, `TranscodeJobResponse` (joined `file_name` from `media_files.name`), `TranscodeRetryResponse`. JobStatus literal pinned to the 5 lifecycle states.
+- **`services/transcode_service.py`**: single-worker FIFO loop. `start_worker()` is invoked from `main.py`'s lifespan (before app accepts requests); `stop_worker()` on shutdown. Crash-recovery sweeps `running` rows on boot and marks them `failed` with `error="server restarted mid-job"`. Encoder picked at queue time: `h264_nvenc` if it's in `encoder_registry.ENCODER_REGISTRY` and supported, else `libx264`. FFmpeg cmd uses `-progress pipe:2` parsed every ~1.5 s; on success stats the sidecar and writes the three new `media_files` columns in one transaction. Output_path collision (target file already exists) = fail-fast with `error="output path collision: <path>"` before spawning FFmpeg. Audio: `-c:a copy` if source is AAC, else `-c:a aac -b:a 192k`.
+- **`routers/transcode.py`**: 5 endpoints under `/api/v1/transcode/...`, all `validate_token_or_local`. POST `/queue` is rate-limited `10/minute` per `real_ip_key` (matches the existing stream-start convention). `DELETE /jobs/{id}` returns 409 on terminal states; `POST /jobs/{id}/retry` returns 409 unless original is `failed` or `cancelled`.
+- **`routers/stream.py`** (one-place edit, not `ffmpeg_service.py` as the spec suggested — the file row dict only exists at the router layer): `POST /stream/start/{file_id}` and the seek-restart path now compute `playback_path = file_row.transcoded_path or file_row.path` with a `Path(...).exists()` guard that falls back to source on missing-sidecar with a WARNING log.
+- **Tests:** new `test_transcode_service.py` (14 tests covering candidate detection, queue dedup, active-job skip, cancel state transitions, retry preserving original error, status filter, crash-recovery sweep), new `test_transcode_router.py` (13 tests covering all 5 endpoints + 400/404/409/422 paths + auth gates), additions to `test_stream.py` (sidecar pickup + missing-sidecar fallback). Server suite **698 → 730 (+32)**.
+
+#### 2. Desktop UI (subagent B)
+
+- **`apps/desktop/lib/features/transcode/`** — full feature folder mirroring the existing `library/` Clean Architecture shape:
+  - `domain/entities/{transcode_candidate.dart, transcode_job.dart}` — Equatable entities; `TranscodeJobStatus` enum (queued / running / done / failed / cancelled).
+  - `domain/repositories/transcode_repository.dart` (interface) + `data/repositories/transcode_repository_impl.dart` (concrete over `ApiClient`).
+  - `presentation/cubit/{transcode_cubit.dart, transcode_state.dart}` — sealed-union state (`Initial`/`Loaded` with `candidates`+`jobs`+`selectedFileIds`+`lastFetchAt`/`Failure`). 2 s `/jobs` polling timer started/stopped with the screen lifecycle. Selection auto-strips ids that have left the candidate list (post-queue, post-completion) so the checkbox state stays consistent without operator-visible flicker.
+  - `presentation/screens/transcode_screen.dart` — TabBar + TabView wrapping the 3 tabs.
+  - `presentation/widgets/{candidates_tab.dart, queue_tab.dart, history_tab.dart}` — Candidates: multi-select + aggregate disk + runtime estimate (`≈` prefix + italic) + `[Start transcode]` button. Queue: live `FluxProgress` bars + per-row Cancel + bulk Cancel-selected. History: terminal jobs + Retry on failed/cancelled.
+- **Routing:** `Routes.transcode = '/transcode'` registered in `app_router.dart`.
+- **DI:** `TranscodeRepository` lazy-singleton + `TranscodeCubit` factory in `injector.dart`.
+- **Sidebar:** new entry between Library and Clients in `flux_sidebar.dart` (Material `Icons.fast_forward_outlined` — desktop sidebar uses Material icons exclusively).
+- **Tests:** new `test/features/transcode/transcode_cubit_test.dart` — 14 tests covering loadCandidates emit-order, selectFiles state mutation, startTranscode (POST `/queue` then refresh `/jobs`), cancelJob (DELETE then refresh), retryJob (POST `/retry` then refresh), 2 s polling lifecycle, selection auto-strip after queue. Desktop suite **90 → 104 (+14)**.
+
+#### 3. Verification
+
+- `cd apps/server && python -m pytest -q` → **730 passed** in 148 s.
+- `cd apps/server && ruff check .` → All checks passed.
+- `cd apps/desktop && flutter analyze` → No issues found.
+- `cd apps/desktop && flutter test --exclude-tags=golden` → **104 passed**.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|--------|------|-----|
+| Created | apps/server/database/migrations/027_transcode_jobs.sql | Sidecar columns + queue table |
+| Created | apps/server/models/transcode.py | 5 Pydantic wire models |
+| Created | apps/server/services/transcode_service.py | Queue + worker + FFmpeg invocation + crash-recovery |
+| Created | apps/server/routers/transcode.py | 5 REST endpoints |
+| Created | apps/server/tests/test_transcode_service.py | 14 service tests |
+| Created | apps/server/tests/test_transcode_router.py | 13 router tests |
+| Modified | apps/server/main.py | Mount router; `start_worker` / `stop_worker` in lifespan |
+| Modified | apps/server/routers/stream.py | `playback_path = transcoded or path` rewire (start + seek) |
+| Modified | apps/server/tests/test_stream.py | +2 sidecar pickup / fallback tests |
+| Created | apps/desktop/lib/features/transcode/{domain,data,presentation}/* | 11 new files (entities, repo, cubit/state, screen, 3 tab widgets) |
+| Created | apps/desktop/test/features/transcode/transcode_cubit_test.dart | 14 cubit tests |
+| Modified | apps/desktop/lib/core/router/app_router.dart | Register `Routes.transcode` |
+| Modified | apps/desktop/lib/core/di/injector.dart | Repo lazy-singleton + cubit factory |
+| Modified | apps/desktop/lib/shared/widgets/flux_sidebar.dart | Sidebar entry between Library and Clients |
+| Modified | docs/04_api/01_api_contracts.md | New "Library Transcode (Plan 18)" section with all 5 endpoints |
+| Modified | docs/03_data/02_database_schema.md | New `transcode_jobs` table + sidecar columns + 2 new index rows + migration 027 row |
+| Modified | docs/03_data/04_migration_guide.md | File layout extended to 027; test count 698 → 730 |
+| Modified | docs/09_backend/01_backend_architecture.md | New service/router/model/test rows; total 698 → 730 |
+| Modified | docs/08_frontend/01_frontend_architecture.md | New `transcode/` feature subtree, route row, test entry; desktop count 90 → 104 |
+| Modified | docs/10_planning/18_library_transcode_plan.md | Status banner; M1-M5 + M8 ✅; M6 + M7 deferred |
+| Modified | docs/10_planning/01_roadmap.md | Library-transcode row 🔲 → ✅ Done; counts |
+| Modified | docs/10_planning/05_ship_readiness.md | Counts 698/90 → 730/104 |
+| Modified | docs/02_architecture/02_tech_stack.md | Server count 698 → 730 |
+| Modified | docs/00_overview/folder_structure.md | 027 row; routers 17 → 18; services 24 → 25; models 12 → 13 |
+| Modified | docs/00_overview/current_status.md | New "(latest) 2026-05-09" lead paragraph; per-component server count |
+| Modified | AGENT_LOG.md | This entry |
+
+### Docs Updated
+
+Same as Files Modified — every `docs/` write listed above + AGENT_LOG.
+
+### Decisions Made
+
+- **Streaming-pipeline rewire moved from `ffmpeg_service.py::start_stream` to `routers/stream.py`.** The plan's spec snippet uses `file_row.get("transcoded_path")` but `start_stream` only receives `file_path: str` — the row dict only exists at the router layer. The router is the only place where the swap can be cleanly made. Both the start and seek-restart paths now do the same swap.
+- **Used `media_files.codec_name` (the actual column from migration 016), not `video_codec` as the spec wrote.** Same intent; the column name in this codebase is `codec_name`. The Pydantic wire field is still named `video_codec` per the spec (so the desktop client doesn't have to remap).
+- **Worker uses `proc.terminate()` (cross-platform) rather than POSIX `SIGTERM` directly.** On POSIX `terminate()` sends SIGTERM; on Windows it issues `TerminateProcess`. Preserves portability since Fluxora ships on Windows / macOS / Linux.
+- **API endpoint paths in `transcode_repository_impl.dart` are inline string literals**, not exported from `packages/fluxora_core/lib/network/endpoints.dart`. The desktop subagent's "don't touch core" rule prevented widening that file. Documented at the top of the impl.
+- **Sidebar uses `Icons.fast_forward_outlined` (Material), not `LucideIcons.*`.** The desktop has no `lucide_icons` dep; the rest of the sidebar uses Material icons exclusively, so we matched the existing convention.
+
+### Issues / Sharp Edges Discovered
+
+1. **Pre-migration-016 rows may have NULL `codec_name`** so the `LOWER(codec_name) IN ('av1','vp9')` candidate query returns 0 for libraries scanned before the codec_name column existed. Mitigation surfaced in the desktop UI's empty state (the operator should re-scan their library). Worth adding a server-side hint in a future round.
+2. **`.webm` source extension would produce a `.h264.webm` sidecar.** FFmpeg actually rejects H.264-in-WebM at mux time, so the job will fail with a stderr error pointing at the container/codec mismatch. Worth a future enhancement: force `.mkv` sidecar extension when source is `.webm`. Logged in plan 18 for v1.1.
+3. **Cancelled-running jobs leave a brief window** between `status='cancelled'` (set synchronously) and `_cleanup_partial` (deletes the partial output file on the worker's exit branch). Acceptable for v1; worth documenting if the operator sees "partially-written sidecar visible on disk for ~1 s after cancel".
+4. **Crash-recovery sweep marks orphan rows failed but doesn't clean up partial outputs they may have written.** Future enhancement: derive each orphan's expected `_sidecar_path` from its file row and unlink it on boot. Logged for v1.1.
+5. **`models/library.py` has no `name` field directly** — `file_name` in `TranscodeJobResponse` is joined from `media_files.name`. Verified the join works in the existing test fixtures.
+
+### Test Counts (re-baselined)
+
+- **Server: 730 passing** (+32 from `test_transcode_service.py` 14 + `test_transcode_router.py` 13 + `test_stream.py` +2 + 3 from prior audit-follow-up TURN tests landed in the same range).
+- **Mobile: 78 passing** (unchanged — plan 18 has zero mobile changes by design).
+- **Desktop: 104 passing** (+14 from `transcode_cubit_test.dart`).
+- **Core: 8 passing** (untouched).
+
+`flutter analyze` clean × all packages. `ruff check` clean.
+
+### Working-Tree Status
+
+Plan 18 changes uncommitted on top of `5fe519f`. Operator-asked single consolidating commit.
+
+### Next Agent Should
+
+1. **Real-device end-to-end test** of the transcode flow: queue an actual AV1 file, watch the worker run, verify the sidecar lands next to the source, verify subsequent playback stream-copies (server log says `mode=stream-copy(h264/mpegts) source_codec=h264` even though the original was AV1). The unit tests don't run a real FFmpeg.
+2. **Decide whether to ship M6 (post-scan toast) and M7 (stale-detection on rescan) for v1** or defer to v1.1. Both are listed as deferred in plan 18 right now.
+3. **Watch for the `.webm` source edge case** (Sharp Edge #2 above) — first job that fails on a `.webm` source is the trigger to ship the "force `.mkv` sidecar extension when source is webm" tweak.
+4. **`current_status.md` is still over the 25 k Read-cap.** Carried forward — splitting into per-component files is a future refactor.

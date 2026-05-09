@@ -1,7 +1,7 @@
 # User-Initiated Library Transcode Plan
 
 > **Category:** Planning
-> **Status:** Drafted 2026-05-09. Not started. Awaiting design-decision answers (§9) before scope-lock.
+> **Status:** Drafted 2026-05-09; **M1 + M2 + M3 + M4 + M5 + M8 ✅ shipped 2026-05-09 (same day)** — server queue worker + 5 REST endpoints + sidecar streaming pickup + desktop 3-tab UI + cancel/retry/crash-recovery. **M6 (post-scan toast) and M7 (stale-detection) deferred** — operator can reach Candidates from the sidebar; rescan is a manual action and the doc warns about source-mtime drift. §9 design-decisions resolved with the recommendations: H.264 only, default `slow cq=19` only, concurrency=1 (no slider), AV1+VP9 only as candidates, copy everything for subs/multi-track, keep orphan transcodes, never auto-delete originals, side-by-side storage. Server suite **698 → 730 (+32)**; desktop **90 → 104 (+14)**.
 > **Scope:** A user-driven workflow to pre-transcode AV1 / VP9 (and optionally HEVC) sources to H.264 + AAC, stored side-by-side with the original, so that subsequent playback stream-copies instead of doing live software-decode → NVENC.
 > **Non-goals:** Auto-transcode without user consent. Quality-rescaling (downscaling). Anything that mutates or deletes the original source file. Subtitle / chapter editing.
 > **Triggered by:** Operator-reported pain 2026-05-09 — playing a 60 MB AV1 YouTube `.mkv` resulted in CPU-bound software AV1 decode → NVENC encode pipeline running at ~1× realtime, segments produced at the player's own playback rate, intermittent `seg00018 404 → retry` stalls. Source: `D:\user\24-08-2021\Video\Song\Avicii - The Nights - YouTube.mkv` (1080p AV1, 3:10, 60 MB).
@@ -264,19 +264,19 @@ The desktop is the only client that needs UI for this feature.
 ## 7 · Sequenced milestones
 
 ```
-M1 — Schema + service skeleton                       │ ~1 h    │ low risk    │
-M2 — Worker loop + FFmpeg invocation                 │ ~2 h    │ medium risk │
-M3 — REST API + tests                                │ ~1 h    │ low risk    │
-M4 — Streaming pipeline rewires playback path        │ ~30 min │ medium risk │
-M5 — Desktop Candidates / Queue / History UI         │ ~3 h    │ medium risk │
-M6 — Post-scan toast + notification wiring           │ ~1 h    │ low risk    │
-M7 — Stale-detection on rescan                       │ ~30 min │ low risk    │
-M8 — Cancel / retry + crash-recovery on boot         │ ~1 h    │ medium risk │
+M1 — Schema + service skeleton                       │ ~1 h    │ low risk    │ ✅ shipped 2026-05-09
+M2 — Worker loop + FFmpeg invocation                 │ ~2 h    │ medium risk │ ✅ shipped 2026-05-09
+M3 — REST API + tests                                │ ~1 h    │ low risk    │ ✅ shipped 2026-05-09
+M4 — Streaming pipeline rewires playback path        │ ~30 min │ medium risk │ ✅ shipped 2026-05-09
+M5 — Desktop Candidates / Queue / History UI         │ ~3 h    │ medium risk │ ✅ shipped 2026-05-09
+M6 — Post-scan toast + notification wiring           │ ~1 h    │ low risk    │ 🔲 deferred — operator reaches Candidates from sidebar
+M7 — Stale-detection on rescan                       │ ~30 min │ low risk    │ 🔲 deferred — manual rescan + source-mtime warning enough for v1
+M8 — Cancel / retry + crash-recovery on boot         │ ~1 h    │ medium risk │ ✅ shipped 2026-05-09
 ─────────────────────────────────────────────────────│─────────│─────────────│
-Total                                                │ ~10 h   │             │
+Total                                                │ ~10 h   │             │ 6/8 closed; ~1.5 h deferred
 ```
 
-Each milestone ships independently. M1-M4 give a fully working backend (queue via curl, stream from the transcoded copy). M5+ surfaces it.
+M1–M4 give the backend (queue via curl, stream-copy from sidecar). M5 surfaces it. M8 covers the resilience cases the operator has to trust before queuing a multi-GB transcode.
 
 ---
 

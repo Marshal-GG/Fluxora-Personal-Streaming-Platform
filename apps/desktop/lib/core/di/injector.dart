@@ -12,6 +12,9 @@ import 'package:fluxora_desktop/features/notifications/presentation/cubit/notifi
 import 'package:fluxora_desktop/features/profile/data/repositories/profile_repository_impl.dart';
 import 'package:fluxora_desktop/features/profile/domain/repositories/profile_repository.dart';
 import 'package:fluxora_desktop/features/profile/presentation/cubit/profile_cubit.dart';
+import 'package:fluxora_desktop/features/transcode/data/repositories/transcode_repository_impl.dart';
+import 'package:fluxora_desktop/features/transcode/domain/repositories/transcode_repository.dart';
+import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_cubit.dart';
 import 'package:fluxora_desktop/features/transcoding/data/repositories/transcoding_repository_impl.dart';
 import 'package:fluxora_desktop/features/transcoding/domain/repositories/transcoding_repository.dart';
 import 'package:fluxora_desktop/features/dashboard/data/repositories/dashboard_repository_impl.dart';
@@ -151,5 +154,16 @@ Future<void> setupInjector() async {
   // ── Transcoding ───────────────────────────────────────────────────────────────
   getIt.registerLazySingleton<TranscodingRepository>(
     () => TranscodingRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+
+  // ── Library transcode (M5 of 18_library_transcode_plan.md) ───────────────────
+  // Distinct from `Transcoding` above (live encoder status) — this drives
+  // the operator-initiated AV1 / VP9 → H.264 sidecar workflow.  Cubit is
+  // a factory so each TranscodeScreen mount gets a fresh polling timer.
+  getIt.registerLazySingleton<TranscodeRepository>(
+    () => TranscodeRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+  getIt.registerFactory<TranscodeCubit>(
+    () => TranscodeCubit(repository: getIt<TranscodeRepository>()),
   );
 }

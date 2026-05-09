@@ -74,6 +74,7 @@ server/
 │   ├── profile.py          # GET/PATCH /api/v1/profile; require_local_caller ✅
 │   ├── activity.py         # GET /api/v1/activity?limit=&since=&type=; validate_token_or_local ✅
 │   ├── transcoding.py      # GET /transcoding/status, /advisor, /devices, /fallback-history; POST /transcoding/benchmark (run synthetic encode-per-encoder; clamps duration/fps/resolutions); GET /transcoding/benchmark/progress (in-flight snapshot polled by desktop ~500 ms); GET /transcoding/benchmark/history (recent run summaries) + GET /history/{run_id} (full body) + DELETE /history/{run_id}; all routes localhost-only ✅
+│   ├── transcode.py        # plan 18 — user-driven library transcode.  GET /transcode/candidates (AV1/VP9 sources without a sidecar), POST /transcode/queue (1-50 file_ids; 10/min rate-limited), GET /transcode/jobs (`?status=` csv filter), DELETE /transcode/jobs/{id} (cancel running or queued; 409 on terminal), POST /transcode/jobs/{id}/retry (failed/cancelled only); validate_token_or_local on every route ✅
 │   ├── logs.py             # GET /api/v1/logs; WS /api/v1/ws/logs; validate_token_or_local ✅
 │   └── webhook.py          # POST /api/v1/webhook/polar; Standard Webhooks signature ✅
 │
@@ -100,6 +101,7 @@ server/
 │   ├── session_router.py       # priority-chain walker for transcode mode; pick_encoder() / release_session() / 50-entry FIFO ring buffer of routing decisions; backs GET /api/v1/transcoding/fallback-history ✅ (Slice C)
 │   ├── benchmark_service.py    # multi-second `lavfi testsrc` encode per encoder (sequential; mpegts → DEVNULL); parses stderr for fps/speed/bitrate + first-frame init_ms; midpoint GPU sample via vendor probe; clamps duration [2, 20] s, fps [24, 60], resolution; 35 s per-encoder timeout; in-flight progress snapshot via `get_progress()`; backs POST /transcoding/benchmark ✅
 │   ├── benchmark_history_service.py # persists benchmark runs to `benchmark_runs` (migration 024) — top-level metadata + per-encoder JSON; `save_benchmark_run` prunes to `_HISTORY_LIMIT=50` after each insert; `list_benchmark_runs` / `get_benchmark_run` / `delete_benchmark_run` back the desktop history sidebar ✅
+│   ├── transcode_service.py   # plan 18 — user-driven library transcode worker.  Public surface: `candidates(db)` / `queue(db, file_ids)` / `cancel(db, job_id)` / `list_jobs(db, statuses)` / `get_job(db, id)` / `retry(db, job_id)` / `start_worker()` / `stop_worker()`.  Single-worker FIFO loop; claims oldest `queued` row, builds an FFmpeg cmd (NVENC `slow cq=19` if `h264_nvenc` is in the registry, else libx264 `slow crf=19`), parses `-progress pipe:2` to update `progress_pct` + `eta_sec` in DB every ~1.5 s, on success stats the sidecar and writes `media_files.transcoded_path` + `transcoded_size_bytes` + `transcoded_at`.  Crash-recovery on boot marks orphan `running` rows as `failed` with `error="server restarted mid-job"`.  Output_path collision = fail-fast before spawn.  Audio: `-c:a copy` if AAC, else `-c:a aac -b:a 192k` ✅
 │   ├── support_bundle_service.py # operator field-debug bundle generator — gzipped tar with `metadata.json` + `system/stats.json` + `system/encoders.json` + redacted `settings/redacted.json` + `database/schema.sql` (sqlite_master DDL only) + `logs/*` (active rotating log + ≤4 rotated siblings); per-collector try/except → `_collect_error` markers; backs POST /info/support-bundle ✅
 │   └── log_service.py              # parse JSON-line log file; filter (level/source/since/until/q); cursor pagination; pubsub for WS /ws/logs ✅
 │
@@ -115,6 +117,7 @@ server/
 │   ├── profile.py          # ProfileResponse (avatar_letter computed), ProfileUpdate ✅
 │   ├── group.py            # TimeWindow, GroupRestrictions, GroupResponse (v2 fields: is_public/requires_pin/pin_mode/pin_model/icon/color/max_concurrent_streams), GroupCreate (+ pin/pin_mode/pin_model — per-client groups reject pin at create), GroupUpdate (+ pin/pin_mode/pin_model with documented null/empty-string/digits semantic), GroupMemberAdd, GroupMemberPatch (per-member time_window_override — M5); GroupStatus, PinMode, PinModel literals ✅
 │   ├── transcoding.py      # TranscodingStatusResponse, EncoderLoad, ActiveTranscodeSession ✅
+│   ├── transcode.py        # plan 18 — TranscodeCandidate, TranscodeQueueRequest (1-50 file_ids), TranscodeQueueResponse, TranscodeJobResponse (joined `file_name`), TranscodeRetryResponse; JobStatus literal {queued, running, done, failed, cancelled} ✅
 │   └── log_record.py           # LogRecord, LogListResponse ✅
 │
 └── tests/
@@ -153,10 +156,13 @@ server/
     ├── test_session_router.py     # priority-chain walker + concurrent_session_cap reservation + 50-entry ring buffer ✅
     ├── test_benchmark_service.py  # encoder benchmark stderr parse + clamp helpers + GPU midpoint sample + timeout ✅
     ├── test_benchmark_history.py  # JSON serialisation round-trip + prune to _HISTORY_LIMIT + CRUD ✅
+    ├── test_transcode_service.py  # plan 18 — candidate detection (AV1/VP9 only, ignores already-transcoded); queue dedup + active-job skip; cancel/retry state transitions; status filter; orphan-running crash-recovery sweep ✅
+    ├── test_transcode_router.py   # /api/v1/transcode/{candidates, queue, jobs, jobs/{id}, jobs/{id}/retry} happy paths + 400/404/409/422 + auth gate ✅
+    ├── test_webrtc_ice_servers.py # `_ice_servers()` STUN-only when no TURN, includes TURN entry when all 3 of url/user/pass set, drops TURN if any empty (audit-follow-up regression guard for the env-var rename) ✅
     ├── test_support_bundle.py     # bundle contents + redaction + `_collect_error` partial-bundle path ✅
     └── test_logs.py               # JSON-line parse, level/source/since/until/q filters, pagination, WS fan-out, localhost + token auth ✅
 
-Total: **698 tests passing** ✅
+Total: **730 tests passing** ✅
 ```
 
 ---

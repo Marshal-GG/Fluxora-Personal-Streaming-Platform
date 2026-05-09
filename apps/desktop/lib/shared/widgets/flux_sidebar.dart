@@ -65,6 +65,14 @@ const List<_NavEntry> _navItems = [
     icon: Icons.video_library_outlined,
     path: '/library',
   ),
+  // Sits next to Library — both are content-management surfaces.
+  // M5 of `docs/10_planning/18_library_transcode_plan.md`.
+  _NavEntry(
+    id: 'transcode',
+    label: 'Transcode',
+    icon: Icons.fast_forward_outlined,
+    path: '/transcode',
+  ),
   _NavEntry(
     id: 'clients',
     label: 'Clients',

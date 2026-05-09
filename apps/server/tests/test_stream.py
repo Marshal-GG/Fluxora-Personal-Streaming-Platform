@@ -198,6 +198,92 @@ async def test_stop_stream(client: AsyncClient, monkeypatch, test_db, tmp_path):
     assert get_resp.json()["ended_at"] is not None
 
 
+# ── Library transcode sidecar pickup ────────────────────────────────────────
+# Plan: docs/10_planning/18_library_transcode_plan.md.
+# When `media_files.transcoded_path` is set AND that file exists on disk,
+# the stream router routes FFmpeg at the sidecar instead of the source so
+# the existing direct-remux H.264 branch can stream-copy it.
+
+
+@pytest.mark.asyncio
+async def test_start_stream_uses_transcoded_sidecar_when_present(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    token = await _get_token(client, monkeypatch)
+    file_id = await _insert_file(test_db)
+
+    # Create a real sidecar file on disk + write the row pointer.
+    sidecar = tmp_path / f"{file_id}.h264.mkv"
+    sidecar.write_bytes(b"\x00")  # contents irrelevant for the routing check
+    await test_db.execute(
+        "UPDATE media_files SET transcoded_path = ? WHERE id = ?",
+        (str(sidecar), file_id),
+    )
+    await test_db.commit()
+
+    captured_paths: list[str] = []
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **_
+    ) -> Path:
+        captured_paths.append(file_path)
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch(
+        "routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start
+    ):
+        resp = await client.post(
+            f"/api/v1/stream/start/{file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 201
+    assert captured_paths == [str(sidecar)]
+
+
+@pytest.mark.asyncio
+async def test_start_stream_falls_back_when_sidecar_missing_on_disk(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    token = await _get_token(client, monkeypatch)
+    file_id = await _insert_file(test_db)
+
+    # Pointer set, but the sidecar file does not exist — operator
+    # likely deleted it manually.  Router should fall back to source.
+    missing = tmp_path / "deleted.h264.mkv"
+    await test_db.execute(
+        "UPDATE media_files SET transcoded_path = ? WHERE id = ?",
+        (str(missing), file_id),
+    )
+    await test_db.commit()
+
+    captured_paths: list[str] = []
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **_
+    ) -> Path:
+        captured_paths.append(file_path)
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch(
+        "routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start
+    ):
+        resp = await client.post(
+            f"/api/v1/stream/start/{file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 201
+    # Should NOT route at the missing sidecar — falls back to source.
+    assert captured_paths == [f"/media/{file_id}.mp4"]
+
+
 @pytest.mark.asyncio
 async def test_stop_stream_wrong_client(
     client: AsyncClient, monkeypatch, test_db, tmp_path

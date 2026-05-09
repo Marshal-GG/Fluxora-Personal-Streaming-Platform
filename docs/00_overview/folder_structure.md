@@ -71,8 +71,9 @@ apps/server/
 │       ├── 023_clients_last_ip.sql # clients.last_ip TEXT — written at pair + every authenticated request via validate_token heartbeat
 │       ├── 024_benchmark_history.sql  # benchmark_runs table + idx_benchmark_runs_started_at
 │       ├── 025_groups_v2_content_spaces.sql  # v2 redesign — is_public/icon/color/requires_pin/pin_hash/pin_mode/max_concurrent_streams on groups; time_window_override on group_members; group_pin_grants + group_pin_attempts; manufactures Public; backfills allowed_libraries; auto-adds approved clients to Public
-│       └── 026_groups_per_client_pins.sql  # M8 hybrid PIN model — pin_model on groups + group_member_pins enrollment ledger
-├── routers/                     # 17 routers
+│       ├── 026_groups_per_client_pins.sql  # M8 hybrid PIN model — pin_model on groups + group_member_pins enrollment ledger
+│       └── 027_transcode_jobs.sql  # plan 18 — transcoded_path / size / at columns on media_files + transcode_jobs queue table
+├── routers/                     # 18 routers
 │   ├── activity.py             # GET /api/v1/activity; validate_token_or_local
 │   ├── auth.py                 # pairing, /clients/me, /clients/me/stats, /clients/me/continue-watching, PATCH /clients/me (M2.5)
 │   ├── deps.py                 # shared FastAPI dependencies
@@ -87,10 +88,11 @@ apps/server/
 │   ├── settings.py             # /settings GET + PATCH (transcoding + 18 extended fields + chain)
 │   ├── signal.py               # WS /ws/signal — WebRTC offer/answer
 │   ├── stream.py               # POST /stream/start/{file_id}?seek_sec=&tonemap=, POST /stream/{sid}/seek, DELETE /stream/{sid}
+│   ├── transcode.py            # plan 18 — /transcode/{candidates,queue,jobs,jobs/{id},jobs/{id}/retry}
 │   ├── transcoding.py          # GET /transcoding/status + /advisor + /devices + /fallback-history + POST /benchmark
 │   ├── webhook.py              # POST /webhook/polar (Standard Webhooks signature)
 │   └── ws.py
-├── services/                    # 24 services
+├── services/                    # 25 services
 │   ├── activity_service.py     # record() + list_events(limit, since, type_prefix)
 │   ├── auth_service.py         # pending-token store, update_client_heartbeat, list_clients
 │   ├── benchmark_history_service.py  # benchmark_runs persistence + 50-entry prune
@@ -112,10 +114,11 @@ apps/server/
 │   ├── support_bundle_service.py     # gzipped tar bundle for /info/support-bundle
 │   ├── system_stats_service.py # CPU/RAM/network/uptime + cached internet probe
 │   ├── tmdb_service.py
+│   ├── transcode_service.py    # plan 18 — single-worker FIFO queue + FFmpeg invocation + crash-recovery on boot
 │   ├── transcoding_service.py  # encoder discovery + GPU probe; backs GET /transcoding/status
 │   ├── webhook_service.py      # Polar Standard Webhooks signature verification + idempotent processing
 │   └── webrtc_service.py
-├── models/                      # 12 Pydantic response/request models
+├── models/                      # 13 Pydantic response/request models
 │   ├── activity.py             # ActivityEventResponse
 │   ├── client.py
 │   ├── group.py
@@ -127,6 +130,7 @@ apps/server/
 │   ├── profile.py              # ProfileResponse (avatar_letter computed), ProfileUpdate
 │   ├── settings.py
 │   ├── stream_session.py       # StreamStartResponse (applied_seek_sec field §16) + StreamSeekResponse
+│   ├── transcode.py            # plan 18 — TranscodeCandidate, TranscodeQueueRequest/Response, TranscodeJobResponse, TranscodeRetryResponse
 │   └── transcoding.py          # TranscodingStatusResponse, EncoderLoad, ActiveTranscodeSession
 ├── utils/
 │   ├── file_utils.py
@@ -231,7 +235,7 @@ apps/desktop/
 ├── macos/                # Not yet generated
 ├── linux/                # Not yet generated
 ├── test/
-│   ├── features/         # Unit + bloc tests (90 passing as of 2026-05-09)
+│   ├── features/         # Unit + bloc tests (104 passing as of 2026-05-09)
 │   └── goldens/          # M3 Dashboard golden — opt-in via --tags=golden, GetIt-mock recipe in _README.md
 └── lib/
     ├── main.dart         # windowManager.ensureInitialized() + WindowOptions(titleBarStyle: hidden)

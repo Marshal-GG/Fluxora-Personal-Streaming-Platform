@@ -289,6 +289,45 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at
 
 ---
 
+### `transcode_jobs` (Migration 027)
+
+```sql
+-- One row per user-initiated pre-transcode job (plan 18).  The desktop
+-- Transcode page enqueues here; a single FIFO worker in
+-- `services/transcode_service.py` claims the oldest queued row,
+-- transitions it to `running`, runs FFmpeg, and updates progress in
+-- place via `-progress pipe:2` parsing.  Crash-recovery on app boot
+-- sweeps any orphan `running` rows and marks them `failed`.
+CREATE TABLE IF NOT EXISTS transcode_jobs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id         TEXT NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    target_codec    TEXT NOT NULL DEFAULT 'h264',                 -- v1 only writes 'h264'; column is future-proofed
+    encoder         TEXT NOT NULL,                                -- 'h264_nvenc' / 'libx264' / etc.
+    quality_preset  TEXT NOT NULL,                                -- v1 only writes 'slow_cq19' (NVENC) / 'slow_crf19' (libx264)
+    status          TEXT NOT NULL CHECK(status IN
+                        ('queued','running','done','failed','cancelled')),
+    progress_pct    REAL NOT NULL DEFAULT 0.0,                    -- 0.0–100.0
+    eta_sec         INTEGER,                                      -- nullable; populated only while running
+    error           TEXT,                                         -- last 240 chars of stderr on failure
+    output_path     TEXT,                                         -- nullable until status='done'
+    created_at      INTEGER NOT NULL,                             -- epoch seconds
+    started_at      INTEGER,
+    finished_at     INTEGER
+);
+```
+
+Migration 027 also adds three sidecar columns to `media_files`:
+
+```sql
+ALTER TABLE media_files ADD COLUMN transcoded_path TEXT;            -- absolute path to '<basename>.h264.<ext>' sidecar
+ALTER TABLE media_files ADD COLUMN transcoded_size_bytes INTEGER;
+ALTER TABLE media_files ADD COLUMN transcoded_at INTEGER;           -- epoch seconds; lets future stale-detection compare to source mtime
+```
+
+When `media_files.transcoded_path` is non-NULL and the file exists on disk, `routers/stream.py::POST /stream/start` reads from that path instead of `media_files.path` — playback then takes the H.264 stream-copy fast path. If the sidecar row is set but the file is missing on disk (operator deleted it manually), playback falls back to the source and logs a warning (orphan-row case, deliberate; rescan would relink under §10 of plan 18 once §10 ships).
+
+---
+
 ## Indexes
 
 | Table | Column(s) | Type | Purpose |
@@ -308,6 +347,8 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at
 | `activity_events` | `created_at DESC` | B-Tree (`idx_activity_created`) | Default most-recent-first list query |
 | `activity_events` | `(type, created_at DESC)` | B-Tree (`idx_activity_type_created`) | Type-prefix filter + ordering |
 | `benchmark_runs` | `started_at DESC` | B-Tree (`idx_benchmark_runs_started_at`) | Newest-first list for the desktop benchmark history sidebar |
+| `transcode_jobs` | `status` | B-Tree (`idx_transcode_jobs_status`) | Worker poll picks oldest `queued`; UI Queue tab filters non-terminal statuses |
+| `transcode_jobs` | `file_id` | B-Tree (`idx_transcode_jobs_file`) | "Already enqueued?" dedup check on POST /transcode/queue |
 
 ---
 
@@ -348,3 +389,4 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at
 | `024_benchmark_history.sql` | Creates the `benchmark_runs` table for encoder-benchmark history persistence. Top-level metadata columns (`started_at`, `finished_at`, `duration_sec`, `fps`, `width`, `height`, `verify_caps`, `encoder_count`) + a `results_json TEXT` blob holding the per-encoder array as JSON (always fetched together with the parent run; relational split would add a join + order-preservation hassle for no query benefit at this scale). Indexed on `started_at DESC` to support the desktop sidebar's newest-first list. Auto-pruned to 50 entries by `benchmark_history_service.prune_history` after every save — runs are cheap to recreate and the operator only ever cares about recent comparisons. New endpoints: `GET /api/v1/transcoding/benchmark/history`, `GET /api/v1/transcoding/benchmark/history/{id}`, `DELETE /api/v1/transcoding/benchmark/history/{id}` (all localhost-only). `POST /transcoding/benchmark` persists every run before responding and returns the new `id` so the desktop's history sidebar can keep the visible result aligned with the highlighted row. |
 | `025_groups_v2_content_spaces.sql` | Groups v2 content-spaces redesign (plan: `docs/10_planning/13_groups_v2_content_spaces.md`). Adds 7 columns to `groups` (`is_public`, `icon`, `color`, `requires_pin`, `pin_hash`, `pin_mode`, `max_concurrent_streams`) + UNIQUE partial `idx_groups_public ON groups(is_public) WHERE is_public = 1` enforcing the singleton.  Adds `time_window_override TEXT` to `group_members` (per-member override of the group's window — "older kid stays up later").  Creates `group_pin_grants` (PIN unlock ledger) + `group_pin_attempts` (brute-force ledger) with their indexes.  Manufactures the singleton Public group with a friendly description + violet-grey color + 'public' icon.  Backfills `group_restrictions.allowed_libraries` for Public with `NULLIF(json_group_array(id), '[]') FROM libraries` — fresh installs (no libraries) store NULL (Public exposes nothing yet); upgrades store the full library set (Public exposes everything so v1 paired clients don't lose visibility on the upgrade).  The NULLIF dance is critical: v1's intersect logic reads `'[]'` as "block everything" which would 403 every stream-start for clients only in Public.  Auto-adds every approved client to Public so post-migration paired devices keep a baseline visibility.  **Semantic flip:** `group_restrictions.allowed_libraries` flips from subtractive ("client can ONLY stream from these") to additive ("this group EXPOSES these to its members"); JSON value is identical, only interpretation changes.  Operator audit recommended post-migration — see plan §M5. |
 | `026_groups_per_client_pins.sql` | Groups v2 §M8 — hybrid PIN model.  Adds `pin_model TEXT NOT NULL DEFAULT 'shared' CHECK(pin_model IN ('shared','per-client'))` to `groups`; existing rows default to `shared` so no behavior change for already-shipped data.  Creates `group_member_pins(group_id, client_id, pin_hash, enrolled_at)` ledger.  Per-client mode: each member device chooses + remembers its own PIN on first access; operator never sees the plaintext.  Recovery path = `DELETE FROM group_member_pins` for that (group, client), forcing re-enrollment on next access (operator-facing route is `DELETE /api/v1/groups/{id}/members/{cid}/pin`, localhost-only).  Compromise blast radius for per-client = one device, vs whole household for shared mode. |
+| `027_transcode_jobs.sql` | Plan 18 — user-driven library transcode.  Adds three sidecar columns to `media_files`: `transcoded_path TEXT`, `transcoded_size_bytes INTEGER`, `transcoded_at INTEGER`.  Creates `transcode_jobs` (id, file_id FK, target_codec, encoder, quality_preset, status CHECK in {queued,running,done,failed,cancelled}, progress_pct REAL, eta_sec, error, output_path, created_at, started_at, finished_at) with indexes on `status` and `file_id`.  Drives the desktop Transcode page's 3-tab UI (Candidates / Queue / History); FIFO worker in `services/transcode_service.py` claims `queued` rows and runs FFmpeg `-progress pipe:2` to populate `progress_pct` + `eta_sec` in place.  When `media_files.transcoded_path` is non-NULL and the file exists on disk, `routers/stream.py::POST /stream/start` reads from that path instead of `media_files.path` so playback stream-copies the H.264 sidecar (no live transcode). |

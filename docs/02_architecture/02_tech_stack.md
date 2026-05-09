@@ -67,7 +67,7 @@ Versions pinned exactly in `apps/server/pyproject.toml` (no `^` / `~`).
 ### Dev dependencies
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `pytest` | 8.2.0 | Test runner — **698 passing tests** as of 2026-05-09 (Groups v2 + streaming §4.5 + audit §17.3 #3 + M11 `/content` + M2.5 `PATCH /clients/me` + streaming §16 resume seek / audio diagnostics / scrubber-offset + streaming §17 `info` loglevel / `ffmpeg_capabilities` probe / transcode-only `-readrate` + same-day follow-on stream-copy regression guard; §17 second-round mobile follow-on on 2026-05-09 was mobile-only, no server delta; +3 audit follow-up TURN-ICE-server regression tests 2026-05-09) |
+| `pytest` | 8.2.0 | Test runner — **730 passing tests** as of 2026-05-09 (Groups v2 + streaming §4.5 + audit §17.3 #3 + M11 `/content` + M2.5 `PATCH /clients/me` + streaming §16 resume seek / audio diagnostics / scrubber-offset + streaming §17 `info` loglevel / `ffmpeg_capabilities` probe / transcode-only `-readrate` + same-day follow-on stream-copy regression guard; §17 second-round mobile follow-on on 2026-05-09 was mobile-only, no server delta; +3 audit follow-up TURN-ICE-server regression tests 2026-05-09) |
 | `pytest-asyncio` | 0.23.7 | Async test support; `asyncio_mode = "auto"` |
 | `httpx` | 0.27.0 | `AsyncClient` for endpoint tests |
 | `black` | 24.4.0 | Code formatter (88-col, py311 target) |
@@ -256,7 +256,7 @@ Inherits `fluxora_core`. Adds:
 | `mocktail` | core + desktop + mobile | Mock generation without source-code annotation |
 | `bloc_test` | desktop + mobile | `blocTest()` for cubit emit-order verification |
 | `golden_toolkit` 0.15 | desktop | Pixel-snapshot regression. Wraps `flutter_test`'s `matchesGoldenFile` with viewport + theme defaults. Goldens are tag-gated (`@Tags(['golden'])` per file); run with `flutter test --tags=golden test/goldens/`, regenerate with `--update-goldens`, exclude in CI with `--exclude-tags=golden`. Screens that build their cubits via `GetIt.I<>()` inside `MultiBlocProvider.create` need the GetIt-mock recipe in [`apps/desktop/test/goldens/_README.md`](../../apps/desktop/test/goldens/_README.md). |
-| `pytest` + `pytest-asyncio` | server | 698 passing tests as of 2026-05-09; async-mode auto |
+| `pytest` + `pytest-asyncio` | server | 730 passing tests as of 2026-05-09; async-mode auto |
 | `httpx.AsyncClient` | server | Endpoint integration tests against in-process FastAPI |
 
 ### Lint + format

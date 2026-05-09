@@ -112,6 +112,25 @@ async def start_stream(
             status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
         )
 
+    # Library transcode plan (docs/10_planning/18_library_transcode_plan.md):
+    # if a pre-transcoded H.264 sidecar exists for this file, route
+    # FFmpeg at it instead of the original source.  The sidecar is
+    # H.264 + AAC + .mkv by construction so the stream-copy branch in
+    # `ffmpeg_service.start_stream` kicks in and segments land instantly
+    # — no live software AV1/VP9 decode + NVENC pipeline.
+    #
+    # Belt-and-braces: when the sidecar row is set but the file has been
+    # manually deleted / moved, fall back to the original source and log
+    # the orphan so the operator can clean up.
+    playback_path = file_row.get("transcoded_path") or file_row["path"]
+    if file_row.get("transcoded_path"):
+        if not Path(file_row["transcoded_path"]).exists():
+            logger.warning(
+                "Transcoded sidecar missing on disk; falling back to source: %s",
+                file_row["transcoded_path"],
+            )
+            playback_path = file_row["path"]
+
     # v2 stream gate (M2 of `docs/10_planning/13_groups_v2_content_spaces.md`):
     # consult `reason_to_deny_stream` which uses the additive content-spaces
     # model + PIN grants.  Returns the most-specific deny reason — time-
@@ -211,7 +230,7 @@ async def start_stream(
 
     try:
         await ffmpeg_service.start_stream(
-            file_row["path"],
+            playback_path,
             session_id,
             settings.hls_tmp_path,
             tonemap_hdr=tonemap,
@@ -426,9 +445,22 @@ async def seek_stream(
             detail="Source file no longer exists",
         )
 
+    # Library transcode: prefer the H.264 sidecar if one exists.  Mirrors
+    # the playback_path resolution in /start so a session that began on
+    # the sidecar continues to use the sidecar after seek-restart.
+    playback_path = file_row.get("transcoded_path") or file_row["path"]
+    if file_row.get("transcoded_path") and not Path(
+        file_row["transcoded_path"]
+    ).exists():
+        logger.warning(
+            "Transcoded sidecar missing on disk; falling back to source: %s",
+            file_row["transcoded_path"],
+        )
+        playback_path = file_row["path"]
+
     try:
         await ffmpeg_service.restart_stream(
-            file_row["path"],
+            playback_path,
             session_id,
             settings.hls_tmp_path,
             seek_sec=seek_sec,
