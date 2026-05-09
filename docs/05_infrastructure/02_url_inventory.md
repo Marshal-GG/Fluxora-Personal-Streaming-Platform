@@ -2,7 +2,7 @@
 
 > **Category:** Infrastructure
 > **Status:** Active — Created 2026-05-02
-> **Last Updated:** 2026-05-08 (added `DELETE /api/v1/auth/clients/me` self-revoke for mobile sign-out — audit §17.3 #3; added `POST /api/v1/files/{file_id}/reset-progress` for the "Start over" affordance — streaming pipeline plan §4.10)
+> **Last Updated:** 2026-05-09 (deep-audit sync — added `POST /api/v1/info/support-bundle`, `GET /api/v1/files/{file_id}/content`, `PATCH /api/v1/auth/clients/me`, transcoding benchmark endpoints `POST /benchmark` + `GET /benchmark/progress` + `GET /benchmark/history` + `GET/DELETE /benchmark/history/{id}` that were live in code but missing from the inventory). 2026-05-08 (added `DELETE /api/v1/auth/clients/me` self-revoke for mobile sign-out — audit §17.3 #3; added `POST /api/v1/files/{file_id}/reset-progress` for the "Start over" affordance — streaming pipeline plan §4.10)
 
 Canonical reference for every URL Fluxora touches today and every URL that needs provisioning in the future. Update this file whenever an endpoint is added, a hostname is provisioned, or a third-party integration changes.
 
@@ -30,6 +30,7 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `GET` | `/api/v1/info/stats` | Token OR localhost | Live CPU, RAM, network, uptime, active streams |
 | `POST` | `/api/v1/info/restart` | Localhost only | Schedule graceful server restart |
 | `POST` | `/api/v1/info/stop` | Localhost only | Schedule graceful server shutdown |
+| `POST` | `/api/v1/info/support-bundle` | Localhost only | Generate redacted gzipped tar of operator debug state (settings + DB DDL + logs); secrets replaced with `***REDACTED***`. |
 
 ### `auth` router
 
@@ -42,6 +43,7 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `DELETE` | `/api/v1/auth/revoke/{client_id}` | Localhost only | Revoke an approved client (operator action) |
 | `GET` | `/api/v1/auth/clients` | Localhost only | List all paired clients |
 | `GET` | `/api/v1/auth/clients/me` | Token required | Calling client's own profile (mobile profile screen) |
+| `PATCH` | `/api/v1/auth/clients/me` | Token required | Self-rename `display_name` only. Cannot mutate any other client (the bearer identity drives the row); operator rename is a separate localhost-only concern. |
 | `DELETE` | `/api/v1/auth/clients/me` | Token required | Self-revoke — caller's bearer + client row are torched in the same teardown as the operator-driven `/auth/revoke/{id}`. Backs the mobile sign-out flow (mobile redesign audit §17.3 #3) so the token stops authenticating immediately, not at natural expiry |
 | `GET` | `/api/v1/auth/clients/me/stats` | Token required | Aggregate `{hours, movies, shows}` watch stats (mobile profile stats row) |
 | `GET` | `/api/v1/auth/clients/me/continue-watching` | Token required | Files with non-zero resume position, sorted most-recent-first (mobile Home rail) |
@@ -56,6 +58,7 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `GET` | `/api/v1/files/recent` | Token or localhost | Most-recently-added files (mobile Home rail; `?limit=N` clamped to [1,50]) |
 | `GET` | `/api/v1/files/search` | Token or localhost | Substring match on `name` + TMDB `title` (`?q=...&limit=N`; SQL `LIKE` for v1, FTS5 v2 swap-in) |
 | `GET` | `/api/v1/files/{file_id}` | Token or localhost | Get single file by ID |
+| `GET` | `/api/v1/files/{file_id}/content` | Token or localhost | Stream raw bytes (`FileResponse`) — backs M11 beyond-video viewers (PDF / photo / music) and the "Open in…" handoff. 404 (not 403) on cross-group access to prevent enumeration. |
 | `POST` | `/api/v1/files/upload` | Token or localhost | Upload a file to a library |
 | `DELETE` | `/api/v1/files/{file_id}` | Token or localhost | Remove file from index (does not delete from disk) |
 | `POST` | `/api/v1/files/{file_id}/reset-progress` | Token or localhost | Zero `last_progress_sec` so next playback starts from 0:00 — backs the "Start over" affordance on title detail (streaming pipeline plan §4.10). 404 (not 403) when bearer caller's groups don't expose the file's library, to prevent enumeration of gated content; localhost skips the visibility filter |
@@ -154,6 +157,11 @@ v2 endpoints (PIN flow + per-client enrollment + master override) extend the v1 
 | `GET` | `/api/v1/transcoding/advisor` | Localhost only | Recommendation for the active encoder (cpu_fallback / failed_active / hevc_compat / none) — drives Settings → Streaming banner |
 | `GET` | `/api/v1/transcoding/devices` | Localhost only | Detected CPU + GPU inventory (lspci / wmic / system_profiler + nvidia-smi). Drives the Detected Hardware card. Cached for server lifetime. |
 | `GET` | `/api/v1/transcoding/fallback-history` | Localhost only | Last 50 encoder routing decisions from `session_router` (in-memory ring buffer). Drives the FallbackHistoryPanel. |
+| `POST` | `/api/v1/transcoding/benchmark` | Localhost only | Run a synthetic encode through every available encoder (per-encoder + per-resolution); persisted to `benchmark_runs`. Long-running — clients should set ≥ 90 s receive timeout. |
+| `GET` | `/api/v1/transcoding/benchmark/progress` | Localhost only | In-flight benchmark progress snapshot (no DB hit; reads module-level state). Polled ~every 500 ms while a run is active. |
+| `GET` | `/api/v1/transcoding/benchmark/history` | Localhost only | Recent benchmark-run summaries, newest first; per-encoder rows excluded for payload size. |
+| `GET` | `/api/v1/transcoding/benchmark/history/{run_id}` | Localhost only | Full body for one stored run (per-encoder + per-resolution rows). |
+| `DELETE` | `/api/v1/transcoding/benchmark/history/{run_id}` | Localhost only | Delete one stored run. |
 
 ### `logs` router
 

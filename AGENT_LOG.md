@@ -132,3 +132,87 @@ Single uncommitted batch on top of `eb92ef5` (post-archive-10 chunked commits al
 2. **Patch `_seekRelative` in `flux_player_controls.dart:270`** to thread `playlistOffsetSec` and emit a source-time target. Currently ships a double-tap-skip bug that's only exposed after a forward server-restart.
 3. **Real-device regression test for the scrubber pin** — operator confirmed the jump-to-end is fixed, but the iteration history (didUpdateWidget clear → premature) suggests this surface is fragile. If a future change to `_commitServerSeek`'s emit ordering, or to media_kit's stream behavior, breaks the pin, the symptom is "scrubber paints at end for one frame after a forward seek > 5 s". The 750 ms settle tolerance + 5 s fallback timer should keep it self-healing, but watch for it.
 4. **`current_status.md` test counts didn't change today** — don't bump them on no-op rounds. (Carried forward from archive 10's same note.)
+
+---
+
+## [2026-05-09] [docs] [audit] — Full-codebase doc audit (6 parallel opus subagents)
+
+**Phase:** Phase 2 — doc maintenance
+**Status:** Complete
+**Commits:** uncommitted (this entry written before commit)
+
+### What Was Done
+
+Spawned 6 Opus subagents in parallel, each owning a non-overlapping doc territory, to perform a deep audit of the docs against current code state. Operator-requested ("do full code base doc audit and check if anything is missed from docs, and do it deeply and update all the docs, dont miss any code or file, spawn multiple opus sub agents to do it faster"). Each subagent read its assigned code surfaces (services / routers / models / migrations / mobile features / desktop features / etc.) and updated only its assigned docs in place, returning a concise drift report.
+
+Subagent partition (no write-overlap):
+
+| Subagent | Owned docs |
+|---|---|
+| A — Backend architecture | `docs/09_backend/01_backend_architecture.md` |
+| B — API contracts | `docs/04_api/01_api_contracts.md` |
+| C — Data (schema, models, flows, migration guide) | `docs/03_data/01..04*.md` |
+| D — Frontend architecture | `docs/08_frontend/01_frontend_architecture.md` |
+| E — Overview + tech stack + system + components | `docs/00_overview/*.md` + `docs/02_architecture/*.md` |
+| F — Security + infrastructure | `docs/06_security/01_security.md` + `docs/05_infrastructure/*.md` (excl. runbooks) |
+
+Net total: **16 docs modified, +546 / −269 lines**. No code touched.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|--------|------|-----|
+| Modified | docs/00_overview/current_status.md | New "(latest) 2026-05-09" lead paragraph; test counts re-baselined to 695/78/90/8 |
+| Modified | docs/00_overview/folder_structure.md | Server tree counts (24 services / 17 routers / 12 models, excluding `__init__.py`); top-level dir additions (`functions/`, `installer/`, `build/`); mobile/desktop test comments |
+| Modified | docs/02_architecture/01_system_overview.md | §16/§17 streaming-engine notes; status stamp |
+| Modified | docs/02_architecture/02_tech_stack.md | pytest count datestamp; 247 → 695 in testing matrix; mobile 75 → 78 |
+| Modified | docs/02_architecture/03_component_architecture.md | Streaming Engine block rewritten with §16/§17 plumbing + ffmpeg_capabilities dependency |
+| Modified | docs/03_data/01_data_models.md | Added `transcoding_hwaccel_device`, `transcoding_chain` settings columns |
+| Modified | docs/03_data/02_database_schema.md | Fixed NOT NULL/DEFAULT mismatches (`bytes_transferred`, `progress_sec`, `language`, `transcoding_hwaccel_device`); INTEGER → BOOLEAN for migration-015 cols; added explicit index names |
+| Modified | docs/03_data/03_data_flows.md | "Last Updated" stamp; flows verified against current services |
+| Modified | docs/03_data/04_migration_guide.md | File-layout extended 010 → 026; test count refreshed; new "Patterns introduced post-014" section (sanitisation, FK ordering, JSON-blob columns, semantic flips, `_migrations` filename ledger); WAL + foreign_keys=ON note added |
+| Modified | docs/04_api/01_api_contracts.md | 16 drift fixes — status code corrections (notifications 204 not 200), schema corrections (groups enter/grant-status/enroll, LibraryResponse `cover_urls`, BenchmarkProgress matrix-mode fields, BenchmarkHistoryEntry `resolution_count`), rate-limit decorators added, HLS route shape rewritten as single route, activity event types table expanded, auth modes table expanded |
+| Modified | docs/05_infrastructure/01_infrastructure.md | Env-var table flagged TURN name-pair caveat |
+| Modified | docs/05_infrastructure/02_url_inventory.md | +9 endpoints (`/info/support-bundle`, `/files/{id}/content`, `PATCH /auth/clients/me`, 5× `/transcoding/benchmark*`, `/healthz` row) |
+| Modified | docs/05_infrastructure/06_webrtc_and_turn.md | TURN env-var bug flagged; doc tells operators to set both `webrtc_turn_*` AND `fluxora_turn_*` until code-fix lands |
+| Modified | docs/06_security/01_security.md | Token storage: SHA-256 → HMAC-SHA256 (matches CLAUDE.md hard rule #13); token format: opaque UUID/JWT-future → `secrets.token_urlsafe(32)`; sign-out flow updated to mention existing `DELETE /auth/clients/me`; rate-limit summary added stream `/seek` 30/min; activity-log row marked shipped |
+| Modified | docs/08_frontend/01_frontend_architecture.md | Added M11 viewer screens (doc/photo/music), M12 settings sub-screens (account/privacy/playback prefs), reconnect/scan-qr screens, desktop sub-features (subscription/profile/help/command_palette/system_stats); pruned moved widgets (`flux_button.dart` + `flux_chip.dart` now in core); player tree mentions `_pendingValue` + `isSeeking` cascade; framework table version pins per app; new shared-widgets section for `packages/fluxora_core/lib/widgets/` |
+| Modified | docs/09_backend/01_backend_architecture.md | Added missing services (`benchmark_service`, `benchmark_history_service`, `ffmpeg_capabilities`); added missing router endpoints (`/benchmark*`, `/stream/{id}/seek`, `/clients/me/visible-libraries|continue-watching|stats`); added missing models (`StreamSeekResponse`, `StorageBreakdownResponse`, `ServerInfoResponse`, etc.); test count 351 → 695; tree indent corrected |
+| Modified | AGENT_LOG.md | This entry |
+
+### Docs Updated
+
+Same as Files Modified — every change in this round was documentation.
+
+### Decisions Made
+
+- **Doc-only audit, no code fix.** The TURN env-var bug surfaced in the audit (see Sharp Edges below) is a real defect, but the operator's request was scoped to docs. Flagged in the security/infra docs and in this entry; the actual code fix is for a follow-up round.
+- **Subagent ownership lock prevented file collisions.** Each of the 6 subagents wrote to a non-overlapping set of doc files. Verified post-run via `git status` — no merge conflicts, no double-edits.
+- **Authoritative test counts injected into each prompt** (server 695 / mobile 78 / desktop 90 / core 8) rather than asking subagents to re-count. Reduced token cost + ensured consistency across the 16 updated docs.
+
+### Issues / Sharp Edges Discovered
+
+1. **🚨 Real bug — TURN config name mismatch.** `apps/server/services/webrtc_service.py:59-61` reads `webrtc_turn_url` / `webrtc_turn_username` / `webrtc_turn_password` via `getattr(settings, …, None)`, but `apps/server/config.py:76-78` declares `fluxora_turn_url` / `fluxora_turn_user` / `fluxora_turn_pass`. The two name pairs never bind, so the TURN code path silently ignores any env var and `_ice_servers()` returns STUN-only. **Effect:** Internet streaming over restrictive NATs will fail to negotiate even when the operator has set TURN credentials. **Fix:** rename the service-side reads to match config (or rename config to match service; pick one). Either change is a single-file diff. Not done in this audit because the operator scoped the work to docs. Until fixed, operators must export BOTH name pairs to make TURN work.
+2. **`Routes.downloads` is registered nowhere.** `apps/mobile/lib/features/downloads/.../downloads_screen.dart` is in tree but `app_router.dart` doesn't define a route for it. Either wire it for v1.1 or delete the orphaned screen.
+3. **Migration 023 IP-tracking limitation has no code-level TODO.** `auth_service.update_client_heartbeat` records `127.0.0.1` for all Cloudflare-tunneled clients because `CF-Connecting-IP` isn't consumed in that path. Documented in the migration guide; consider adding a `# TODO(real-ip)` marker in the service.
+4. **`docs/00_overview/current_status.md` size — already at the 25k-token Read-cap from the 2026-05-08 entry.** This audit added a "(latest) 2026-05-09" paragraph at the top per the standard pattern. Future agents should still grep + targeted-Read; full-file `Read` will fail.
+5. **Code count source-of-truth ambiguity.** Two ways to count `apps/server/services/`: 25 (`ls *.py | wc -l`, includes `__init__.py`) or 24 (excludes init). Folder-structure doc uses 24; I'd been telling subagents 25/18/13. Discrepancy is benign (init files don't carry behaviour) — left at 24/17/12 in folder doc since it's more useful for human readers.
+
+### Test Counts (re-baselined)
+
+No test changes this round (docs only). Numbers unchanged from the prior session entry:
+- **Server: 695 passing**.
+- **Mobile: 78 passing**.
+- **Desktop: 90 passing**.
+- **Core: 8 passing**.
+
+### Working-Tree Status
+
+16 modified docs, no new files, no code changes. Operator asked for a single audit-result commit.
+
+### Next Agent Should
+
+1. **Fix the TURN env-var name mismatch** (Sharp Edge #1). Either rename `services/webrtc_service.py:59-61` reads from `webrtc_turn_*` → `fluxora_turn_*`, or rename `config.py:76-78` declarations from `fluxora_turn_*` → `webrtc_turn_*`. The `fluxora_*` prefix is more consistent with the rest of the project's env vars; recommend renaming the service-side reads. Add a regression test asserting `_ice_servers()` actually returns the TURN entry when the env vars are set. Operator-facing impact: Internet streaming over restrictive NATs is currently silent-fail.
+2. **Decide the `Routes.downloads` fate** (Sharp Edge #2). Either wire it into `app_router.dart` for v1.1, or delete `downloads_screen.dart` + ancillary code.
+3. **Address the §9 design questions in plan 18** (carried forward from prior entry).
+4. **Patch `_seekRelative` for `playlistOffsetSec`** (carried forward — double-tap-skip after a forward server-restart still bugged).

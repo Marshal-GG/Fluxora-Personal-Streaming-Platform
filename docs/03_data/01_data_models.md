@@ -1,7 +1,7 @@
 # Data Models
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-07 (TMDB fields, resume progress, license keys, Polar orders + customer_email, transcoding settings, Groups + stream-gate, Profile fields, Notification entity, ActivityEvent entity, UserSettings 18 new §7.10 columns, LogRecord computed entity, **Groups v2 content-spaces redesign — Public group + PIN-gate columns + grant/attempt ledgers + per-member time-window override + icon/color/concurrent-stream cap + M8 hybrid PIN per-client enrollment ledger**)
+> **Status:** Active - Updated 2026-05-09 (TMDB fields, resume progress, license keys, Polar orders + customer_email, transcoding settings (encoder, preset, CRF, **hwaccel_device, encoder priority chain**), Groups + stream-gate, Profile fields, Notification entity, ActivityEvent entity, UserSettings 18 new §7.10 columns, LogRecord computed entity, Groups v2 content-spaces redesign — Public group + PIN-gate columns + grant/attempt ledgers + per-member time-window override + icon/color/concurrent-stream cap + M8 hybrid PIN per-client enrollment ledger)
 
 ---
 
@@ -116,9 +116,11 @@ Backed by `auth_service.update_client_display_name(db, client_id, display_name)`
 | subscription_tier | TEXT | ✅ | Enum: `free`, `plus`, `pro`, `ultimate` |
 | tmdb_api_key | TEXT | ❌ | User's TMDB key |
 | license_key | TEXT | ❌ | Paid-plan license key; format `FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>`, 5 segments (migration 006) |
-| transcoding_encoder | TEXT | ✅ | FFmpeg video encoder: `libx264`, `h264_nvenc`, `h264_qsv`, `h264_vaapi`; default `libx264` (migration 010) |
+| transcoding_encoder | TEXT | ✅ | FFmpeg video encoder; one of `libx264`, `libx265`, `h264_nvenc`, `hevc_nvenc`, `h264_qsv`, `hevc_qsv`, `h264_vaapi`, `hevc_vaapi`, `h264_videotoolbox`, `hevc_videotoolbox`; default `libx264` (migration 010; sanitised by migration 018 to reset legacy values not in the current registry) |
 | transcoding_preset | TEXT | ✅ | FFmpeg speed preset: `ultrafast`…`veryslow`; default `veryfast` (migration 010) |
 | transcoding_crf | INTEGER | ✅ | Constant Rate Factor 0–51; lower = better quality; default 23 (migration 010) |
+| transcoding_hwaccel_device | TEXT | ❌ | Optional VAAPI device path (Linux multi-GPU; e.g. `/dev/dri/renderD129`). `NULL` = auto (server uses `/dev/dri/renderD128` by default); silently ignored on Windows / macOS / non-VAAPI encoders (migration 017) |
+| transcoding_chain | TEXT (JSON) | ❌ | Encoder priority chain — JSON array of registry encoder names tried in order on every transcode session. Example `["h264_nvenc","h264_qsv","libx264"]`. `NULL` = use the default chain `[transcoding_encoder, "libx264"]` (migration 020, Slice C of the GPU UX plan) |
 | display_name | TEXT | ❌ | Operator display name shown in the Profile screen (migration 012) |
 | email | TEXT | ❌ | Operator email address (migration 012) |
 | avatar_path | TEXT | ❌ | Absolute path to a local avatar image file (migration 012) |

@@ -1,7 +1,7 @@
 # Component Architecture
 
 > **Category:** Architecture  
-> **Status:** Active — Updated 2026-05-07 (Group Service rewritten for v2 content-spaces redesign — additive semantic + Public group + PIN-gate + per-client enrollment + activity-feed aggregation + bulk grants reset.  Earlier 2026-05-02 round added system stats / license / webhook / orders / Profile / Notification / Activity / Transcoding / Log services + desktop screen list refresh.)
+> **Status:** Active — Updated 2026-05-09 (Streaming Engine description amended for §16/§17 seek-restart + scrubber-offset plumbing; library-side AV1/VP9 → H.264 sidecar pipeline drafted in plan 18, not yet built and therefore not yet a component.  2026-05-07 round rewrote Group Service for v2 content-spaces redesign — additive semantic + Public group + PIN-gate + per-client enrollment + activity-feed aggregation + bulk grants reset.  Earlier 2026-05-02 round added system stats / license / webhook / orders / Profile / Notification / Activity / Transcoding / Log services + desktop screen list refresh.)
 
 ---
 
@@ -123,9 +123,9 @@
 - **Dependencies:** OS file system, SQLite (for library index)
 
 ### Streaming Engine (FFmpeg → HLS)
-- **Responsibility:** Takes a file path, spawns FFmpeg subprocess, produces HLS segments served over HTTP. Reads encoder/preset/CRF from `user_settings` at start time and supports software (libx264) and hardware (NVENC/QSV/VAAPI) acceleration. On `POST /stream/start/{file_id}`, calls `group_service.get_effective_restrictions(client_id)` and `reason_to_deny(...)` before starting the session — returns 403 if the file's library is not in the client's allowed libraries or the current time is outside the client's active time window.
-- **Interfaces:** `POST /stream/start/{file_id}` → returns `.m3u8` playlist URL; `DELETE /stream/{session_id}` to stop
-- **Dependencies:** FFmpeg binary, `settings_service`, `group_service`, temp segment storage
+- **Responsibility:** Takes a file path, spawns FFmpeg subprocess, produces HLS segments served over HTTP. Reads encoder/preset/CRF from `user_settings` at start time and supports software (libx264) and hardware (NVENC/QSV/VAAPI) acceleration. On `POST /stream/start/{file_id}`, calls `group_service.get_effective_restrictions(client_id)` and `reason_to_deny(...)` before starting the session — returns 403 if the file's library is not in the client's allowed libraries or the current time is outside the client's active time window.  **Seek-restart (§16):** start accepts `?seek_sec=`; `POST /stream/{session_id}/seek` returns `{applied_seek_sec}` so clients can render `position + offset` and keep their scrubber in source-time. **§17 readrate gate:** `-readrate 1.5` only injected on transcode sessions (capability-probed via `services/ffmpeg_capabilities.py`); `_omits_readrate_for_stream_copy` regression guard.
+- **Interfaces:** `POST /stream/start/{file_id}?seek_sec=&tonemap=` → returns `StreamStartResponse` with `applied_seek_sec`; `POST /stream/{session_id}/seek?seek_sec=` (rate-limited 30/min/IP) → `StreamSeekResponse`; `DELETE /stream/{session_id}` to stop
+- **Dependencies:** FFmpeg binary, `settings_service`, `group_service`, `ffmpeg_capabilities`, temp segment storage
 
 ### Library Manager
 - **Responsibility:** Indexes media directories, fetches metadata from TMDB, stores in SQLite

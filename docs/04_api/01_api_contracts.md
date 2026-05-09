@@ -1,7 +1,7 @@
 # API Contracts
 
 > **Category:** API  
-> **Status:** Active - Updated 2026-05-08 (new `DELETE /api/v1/auth/clients/me` self-revoke for the mobile sign-out flow — mobile redesign audit §17.3 #3 + new `POST /api/v1/files/{file_id}/reset-progress` for the "Start over" affordance — streaming pipeline plan §4.10). 2026-05-04 (**Phase 6 follow-ups:** `POST /api/v1/stream/start/{file_id}` gained `?tonemap=true` query param; `StreamStartResponse` gains `hdr_format: string | null` + `tonemapped: bool` fields. GPU UX Slice A: new `GET /api/v1/transcoding/advisor` endpoint; `/transcoding/status` gains `encoder_test_error` + `encoder_tested_at` fields; `transcoding_encoder` allowed values expanded to all 10 registry encoders; `/stream/start` 503 detail now carries the FFmpeg stderr tail. Earlier 2026-05-04: Phase B real-data backfill: new `GET /api/v1/files/search?q=&limit=`, new `GET /api/v1/auth/clients/me/continue-watching?limit=`, new `GET /api/v1/auth/clients/me/stats` returning `{hours, movies, shows}`. Phase A real-data backfill: new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
+> **Status:** Active - Updated 2026-05-09 (deep doc audit — fixed status-code drift on `/notifications/{id}/read` + `/notifications/read-all` (204 in code, doc said 200), schema drift on `/groups/{id}/enter` + `/groups/{id}/grant-status` (no `group_id` in body; `grant-status` does not return `pin_mode`), added missing `5/minute` rate limit on `/auth/request-pair` + `10/minute` on `/stream/start/{file_id}`, added missing `transcoding_hwaccel_device` settings field, added `cover_urls` on library responses, tightened `ai_segment_duration_seconds` bounds to `[1, 30]`, added `total_resolutions` + `current_resolution_*` fields on benchmark progress + `resolution_count` on benchmark history entries, expanded HLS file-serving description to cover `.m4s` / `init.mp4`, refreshed activity event types list).  2026-05-08 (new `DELETE /api/v1/auth/clients/me` self-revoke for the mobile sign-out flow — mobile redesign audit §17.3 #3 + new `POST /api/v1/files/{file_id}/reset-progress` for the "Start over" affordance — streaming pipeline plan §4.10). 2026-05-04 (**Phase 6 follow-ups:** `POST /api/v1/stream/start/{file_id}` gained `?tonemap=true` query param; `StreamStartResponse` gains `hdr_format: string | null` + `tonemapped: bool` fields. GPU UX Slice A: new `GET /api/v1/transcoding/advisor` endpoint; `/transcoding/status` gains `encoder_test_error` + `encoder_tested_at` fields; `transcoding_encoder` allowed values expanded to all 10 registry encoders; `/stream/start` 503 detail now carries the FFmpeg stderr tail. Earlier 2026-05-04: Phase B real-data backfill: new `GET /api/v1/files/search?q=&limit=`, new `GET /api/v1/auth/clients/me/continue-watching?limit=`, new `GET /api/v1/auth/clients/me/stats` returning `{hours, movies, shows}`. Phase A real-data backfill: new `GET /api/v1/files/recent`; new `GET /api/v1/auth/clients/me`; `POST /api/v1/auth/request-pair` accepts optional `email`; `MediaFileResponse` extended with FFprobe + episode aggregation fields; pairing flow now resets a previously-approved client back to `pending` instead of returning 409). 2026-05-03: library-screen P0/P1: new `PATCH /api/v1/library/{id}` + `total_size_bytes` field on every library response; `library.update` activity event; type field is now immutable per ADR-016; disk-file deletion is policy-locked per ADR-017. 2026-05-02 batch: new endpoints for the desktop redesign: `/info/stats` + `/ws/stats`, `/info/restart`, `/info/stop`, `/library/storage-breakdown`; previous round added orders, upload, delete file, stream sessions, progress; auth model updated for files/library; transcoding settings fields validated as enums + CRF bounded 0-51; license keys are 5-part only; Groups CRUD + member management + stream-gate; Profile endpoints; Notifications REST + WS added; Activity event log added; §7.8 `GET /api/v1/transcoding/status`; §7.9 `GET /api/v1/logs` + `WS /api/v1/ws/logs`; §7.10 settings PATCH extended with 18 new fields; §7.11 orders pagination + `/orders/portal-url`
 
 ---
 
@@ -33,10 +33,10 @@ Authorization: Bearer {auth_token}
 
 | Mode | Dependency | Used by |
 |------|-----------|---------|
-| Bearer token required | `validate_token` | Stream, HLS, WebSocket endpoints, `GET /auth/clients/me` |
+| Bearer token required | `validate_token` | Stream + HLS endpoints, all `/api/v1/ws/*` WebSockets (when not localhost), every `/auth/clients/me*` route (`GET`, `PATCH`, `DELETE`, `/stats`, `/continue-watching`, `/visible-libraries`), and the bearer-only PIN unlock surfaces (`POST /groups/{id}/enter`, `POST /groups/{id}/enroll`, `POST /groups/{id}/enroll/change`, `DELETE /groups/{id}/grant`, `GET /groups/{id}/grant-status`) |
 | Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /info/stats`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity`, `GET /logs` — desktop control panel needs no token |
-| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `POST /transcoding/benchmark`, `GET /transcoding/benchmark/progress`, `GET /transcoding/benchmark/history`, `GET /transcoding/benchmark/history/{id}`, `DELETE /transcoding/benchmark/history/{id}`, `POST /info/restart`, `POST /info/stop`, `POST /info/support-bundle`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `DELETE /groups/{id}/members/{cid}`, `GET /profile`, `PATCH /profile` |
-| No auth | — | `/info`, `/auth/request-pair`, `/auth/status`, `/webhook/polar` |
+| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `GET /auth/clients/{id}/visible-libraries`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `GET /transcoding/advisor`, `GET /transcoding/devices`, `GET /transcoding/fallback-history`, `POST /transcoding/benchmark`, `GET /transcoding/benchmark/progress`, `GET /transcoding/benchmark/history`, `GET /transcoding/benchmark/history/{id}`, `DELETE /transcoding/benchmark/history/{id}`, `POST /info/restart`, `POST /info/stop`, `POST /info/support-bundle`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `PATCH /groups/{id}/members/{cid}`, `DELETE /groups/{id}/members/{cid}`, `DELETE /groups/{id}/members/{cid}/pin`, `POST /groups/{id}/grants/reset`, `POST /groups/{id}/master-override`, `GET /profile`, `PATCH /profile` |
+| No auth | — | `/info`, `/healthz`, `/auth/request-pair`, `/auth/status/{client_id}`, `/webhook/polar` |
 
 **Heartbeat side effect (migration 023, 2026-05-06):** every successful `validate_token` resolution writes `clients.last_seen = NOW()` and `clients.last_ip = request.client.host` for the resolving client. This is best-effort — wrapped in try/except + WARNING log so a transient SQLite write failure can't 401 a valid request — but it changes the semantics of `last_seen` from "frozen at pair / approval" to "live within one poll cycle." Tunneled requests (cloudflared) record the loopback IP because `CF-Connecting-IP` isn't consumed in this path; documented limitation. See [`docs/03_data/02_database_schema.md`](../03_data/02_database_schema.md) migration 023 row.
 
@@ -168,6 +168,7 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
 ### `POST /api/v1/auth/request-pair`
 **Description:** Client initiates pairing. Creates a pending client record on the server, or — if a row with this `client_id` already exists — resets it back to `pending` and clears any previously-issued bearer token. Same-`client_id` re-pair is the supported recovery path for re-installed apps and restored device backups; it intentionally invalidates the prior token immediately so a stolen token cannot survive a re-pair.  
 **Auth:** None required.  
+**Rate limit:** 5/minute per client IP — pair-request flooding is the classic enumeration vector against an unauthenticated endpoint, so the limiter caps both initial pair attempts and re-pair recoveries.  
 **Status:** ✅ Implemented
 
 **Request:**
@@ -540,12 +541,18 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
     "last_scanned": null,
     "created_at": "2026-04-27T10:00:00+00:00",
     "file_count": 142,
-    "total_size_bytes": 1_380_000_000_000
+    "total_size_bytes": 1_380_000_000_000,
+    "cover_urls": [
+      "https://image.tmdb.org/t/p/w500/9gk7adHYeDvHkCSEqAvQNLV5Uge.jpg",
+      "https://image.tmdb.org/t/p/w500/aBcD....jpg"
+    ]
   }
 ]
 ```
 
 `total_size_bytes` is computed via `SUM(media_files.size_bytes)` in the `list_libraries` / `get_library` SQL — `0` for libraries with no files.
+
+`cover_urls` is a small ordered list of TMDB poster URLs sampled from the library's most-recently-enriched files — backs the desktop Library card collage.  Empty list when the library has no TMDB-enriched files yet (no posters available); never `null`.  Defaulted to `[]` server-side so older clients deserialising the response don't break.
 
 ---
 
@@ -715,9 +722,10 @@ The decision is invisible to the client — the response shape is identical for 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `tonemap` | `bool` | `false` | When `true` and the source has an HDR format (HDR10 / HLG / DolbyVision per `media_files.hdr_format`), the server forces transcode mode and applies a zscale + Hable tonemap filter chain to convert BT.2020 PQ → BT.709 SDR.  No-op for SDR sources — the flag is accepted but `tonemapped` in the response will be `false`.  Tonemap forces CPU-side decode (drops the GPU input pipeline) because the `zscale` and `tonemap` filters cannot consume CUDA frames. |
-| `seek_sec` | `float` | `null` | Optional starting source-time in seconds.  When omitted, the server falls back to the file's `last_progress_sec` (resume-point).  Validated `≥ 0` and `< file duration` server-side.  The server snaps the requested seek to the previous segment boundary (`floor(seek_sec / hls_time) * hls_time`) so segment numbering aligns with the encoded output; the snapped value is echoed back as `applied_seek_sec` so the mobile client can render source-time on the scrubber.  Streaming pipeline plan §16 M1. |
+| `seek_sec` | `float` | `null` | Optional starting source-time in seconds.  When omitted, the server falls back to the file's `last_progress_sec` (resume-point).  Validated `≥ 0` and `< file duration` server-side — both validation failures return **400 Bad Request** (not 422) with a `detail` field naming the violation.  The server snaps the requested seek to the previous segment boundary (`floor(seek_sec / hls_time) * hls_time`) so segment numbering aligns with the encoded output; the snapped value is echoed back as `applied_seek_sec` so the mobile client can render source-time on the scrubber.  Streaming pipeline plan §16 M1. |
 
 **Auth:** Bearer token required.  
+**Rate limit:** 10/minute per client IP — stream-start is FFmpeg-spawn-heavy; the limiter prevents an over-eager retry loop or rogue caller from pinning the encoder pool.  
 **Status:** ✅ Implemented
 
 **Response:** `201 Created`
@@ -743,7 +751,7 @@ The decision is invisible to the client — the response shape is identical for 
 | `tonemapped` | `bool` | `true` when the server is actively tonemapping HDR → SDR for this session.  Echoes `tonemap && hdr_format != null`. |
 | `applied_seek_sec` | `float` | Segment-snapped source-time the encoder actually started at (= `floor((seek_sec or last_progress_sec) / hls_time) * hls_time`).  The client adds this to libmpv's playlist-local position to render source-time on the scrubber after a seek-restart.  `0.0` for fresh-start sessions.  Streaming pipeline plan §16 scrubber-offset patch. |
 
-**Errors:** `404` file not found · `429` concurrency limit reached · `503` FFmpeg failed (the response body now carries the first FFmpeg stderr line so the operator notification can surface the real reason — e.g. `"No NVENC capable devices found"`, not a generic "FFmpeg failed")
+**Errors:** `400` `seek_sec` negative or `≥ file duration` · `404` file not found · `429` concurrency limit reached or rate-limit (10/min per IP) · `503` FFmpeg failed (the response body now carries the first FFmpeg stderr line so the operator notification can surface the real reason — e.g. `"No NVENC capable devices found"`, not a generic "FFmpeg failed")
 
 ---
 
@@ -826,19 +834,25 @@ The playlist URL itself is unchanged — only the *contents* of `playlist.m3u8` 
 
 ---
 
-### `GET /api/v1/hls/{session_id}/playlist.m3u8`
-**Description:** Serve the HLS playlist generated by FFmpeg.  
-**Auth:** Bearer token required.  
-**Status:** ✅ Implemented  
-Content-Type: `application/vnd.apple.mpegurl`
+### `GET /api/v1/hls/{session_id}/{filename}`
+**Description:** Serve a single file from the HLS session directory — the playlist, an mpegts segment (stream-copy of h264 sources), an fmp4 segment + init segment (stream-copy of hevc sources or transcode output), or the rewritten playlist after a seek-restart.  Backed by one route handler in `apps/server/routers/stream.py::serve_hls` that resolves `filename` against `settings.hls_tmp_path / session_id`, with a path-traversal guard rejecting `..`, `/`, `\\`.  Excluded from the OpenAPI schema (`include_in_schema=False`) because the path shape is FFmpeg-implementation-defined and not part of the public v1 contract.  
+**Auth:** Bearer token required + caller must own the session (`stream_sessions.client_id == me`); cross-client hijacking returns 403.  Localhost is NOT a shortcut here — the desktop CP doesn't consume HLS, so the bearer-only path is enough.  
+**Status:** ✅ Implemented
 
----
+**Content-Type by filename suffix:**
 
-### `GET /api/v1/hls/{session_id}/{segment}.ts`
-**Description:** Serve an individual HLS video segment.  
-**Auth:** Bearer token required.  
-**Status:** ✅ Implemented  
-Content-Type: `video/MP2T`
+| Suffix | Content-Type | Used for |
+|--------|--------------|----------|
+| `.m3u8` | `application/vnd.apple.mpegurl` | The playlist itself |
+| `.ts` | `video/MP2T` | mpegts segments (stream-copy of h264 sources) |
+| `.m4s` / `.mp4` | `video/mp4` | fmp4 segments + the `init.mp4` initialization segment.  Mis-typing `init.mp4` as `application/octet-stream` makes media_kit / Safari refuse to parse the moov, which silently kills playback — the explicit branch in the route guards against that regression. |
+
+**Notes:**
+- When a filename starting with `seg` or equal to `init.mp4` doesn't exist on disk yet, the route waits up to 2 s in 100 ms slices for FFmpeg to produce it (worker-pinning budget tightened from 5 s → 2 s on 2026-05-08, streaming pipeline plan §4.3).  This bridges the gap between a player-side seek and FFmpeg's first written segment when the static VOD playlist lists segments faster than the encoder can produce them.  Tonemap restarts (≥10 s gap) rely on the mobile player's `_SeekingOverlay` + media_kit's 404-retry loop instead.
+- Path traversal: `..`, `/`, `\\` in the filename → 400.  Resolved path outside the session dir → 403.
+- Segment that genuinely never appears (encode failed / file ended early) → 404 after the retry budget elapses.
+
+**Errors:** `400` invalid filename (path-traversal characters) · `403` not your session / resolved path outside session dir · `404` session not found / segment not found
 
 ---
 
@@ -939,11 +953,13 @@ Client connects → sends auth message → server replies auth_ok
   "max_concurrent_streams": 3,
   "transcoding_enabled": true,
   "license_key": null,
-  "license_status": "missing",
-  "license_tier": "free",
+  "license_status": "none",
+  "license_tier": null,
   "transcoding_encoder": "libx264",
   "transcoding_preset": "veryfast",
   "transcoding_crf": 23,
+  "transcoding_hwaccel_device": null,
+  "transcoding_chain": null,
   "language": "en",
   "auto_start_on_boot": false,
   "auto_restart_on_crash": true,
@@ -965,6 +981,8 @@ Client connects → sends auth message → server replies auth_ok
 }
 ```
 
+`license_status` enumerates `none` / `valid` / `expired` / `invalid` / `no_secret`.  `license_tier` is the tier encoded in the key (when valid or `no_secret`), else `null`.  `transcoding_hwaccel_device` is the optional VAAPI render-node path (Linux only; null = auto-detect `/dev/dri/renderD128`).
+
 ---
 
 ### `PATCH /api/v1/settings`
@@ -982,10 +1000,13 @@ Client connects → sends auth message → server replies auth_ok
   "transcoding_encoder": "h264_nvenc",
   "transcoding_preset": "fast",
   "transcoding_crf": 20,
+  "transcoding_hwaccel_device": "/dev/dri/renderD128",
+  "transcoding_chain": ["h264_nvenc", "h264_qsv", "libx264"],
   "language": "en",
   "auto_start_on_boot": false,
   "auto_restart_on_crash": true,
   "minimize_to_system_tray": true,
+  "theme_accent": null,
   "default_library_view": "grid",
   "scan_libraries_on_startup": true,
   "generate_thumbnails": true,
@@ -1002,6 +1023,8 @@ Client connects → sends auth message → server replies auth_ok
 }
 ```
 
+Changing `transcoding_encoder` or `transcoding_hwaccel_device` triggers a background encoder self-test re-run after the PATCH commits (so the operator sees an updated `encoder_test_passed` / `encoder_test_error` on the next `/transcoding/status` poll without bouncing the server).  Every successful PATCH also writes a `settings.change` activity event with the field-name list in `payload.fields`; field *values* are never logged so a license key or custom URL can't leak via the audit feed.
+
 **Field constraints (Pydantic-enforced — invalid values return 422):**
 
 | Field | Allowed values |
@@ -1014,7 +1037,9 @@ Client connects → sends auth message → server replies auth_ok
 | `preferred_mode` | `auto` · `lan` · `webrtc` |
 | `default_quality` | `auto` · `4k` · `1080p` · `720p` · `480p` |
 | `session_timeout_minutes` | Integer in `[1, 1440]` (1 minute to 24 hours) |
-| `ai_segment_duration_seconds` | Positive integer |
+| `ai_segment_duration_seconds` | Integer in `[1, 30]` |
+| `transcoding_hwaccel_device` | Optional string; VAAPI render-node path on Linux (`/dev/dri/renderD128` etc.); `null` for auto-detect / non-Linux |
+| `transcoding_chain` | Optional list of registry encoder names; empty list / `null` falls back to the default chain `[transcoding_encoder, "libx264"]`.  Validation lives in the service layer: unknown encoder name → 422; chain where every entry is identical → 422 |
 
 **Tier values and stream limits:**
 
@@ -1450,17 +1475,18 @@ Client connects → sends auth message → server replies auth_ok
 **Response (200):**
 ```json
 {
-  "group_id": "uuid",
   "expires_at": "2026-05-08T10:00:00+00:00",
   "pin_mode": "session"
 }
 ```
 
+The route returns the `_PinEnterResponse` Pydantic shape directly — `group_id` is NOT echoed in the body since it's already in the URL.  `pin_mode` is fetched from the row post-grant so the mobile UI can size the "this unlock lasts 12 hours" / "5 minutes" caption correctly.
+
 **Errors:**
-- `400` group is not PIN-gated (`requires_pin = false`)
-- `401` wrong PIN — body includes `{detail: "...", attempts_remaining: int}`
+- `400` group is not PIN-gated (`requires_pin = false`) · `400` per-client mode + no enrollment yet (caller should hit `/enroll` first)
+- `401` wrong PIN — `detail` is `"Incorrect PIN (N attempts remaining)"`
 - `404` group not found
-- `429` too many failed attempts — 5 fails / 60 s / `(client, group)` tuple triggers a temporary lockout; `Retry-After` header set
+- `429` too many failed attempts — 5 fails / 60 s / `(client, group)` tuple triggers a 60 s lockout; `detail` is `"Too many failed PIN attempts — try again in a minute"`.  No `Retry-After` header is set; the lockout window is operator-fixed, not server-advertised.
 
 **Master override:** the dedicated `POST /api/v1/groups/{id}/master-override?client_id=...` endpoint (below) is the operator-side recovery path; do not bypass on `/enter` itself.
 
@@ -1484,16 +1510,14 @@ Client connects → sends auth message → server replies auth_ok
 **Response:**
 ```json
 {
-  "group_id": "uuid",
   "unlocked": true,
   "expires_at": "2026-05-08T10:00:00+00:00",
-  "pin_mode": "session",
   "pin_model": "per-client",
   "enrollment_state": "enrolled"
 }
 ```
 
-When `unlocked = false`, `expires_at` is `null`.
+When `unlocked = false`, `expires_at` is `null`.  `group_id` is NOT echoed (caller already has it in the URL); `pin_mode` is NOT included on this surface — read it from `GET /groups/{id}` if you need the session-vs-per-entry value.
 
 **M8 fields** — let the mobile UI route to the right surface without a follow-up call:
 
@@ -1513,7 +1537,7 @@ When `unlocked = false`, `expires_at` is `null`.
 **Status:** ✅ Implemented (v2 M8, 2026-05-07)
 
 **Request:** `{ "pin": "5283" }`  
-**Response:** same shape as `/enter` — `{group_id, expires_at, pin_mode}`.  
+**Response:** same shape as `/enter` — `{expires_at, pin_mode}` (no `group_id` in body; caller already has it in the URL).  
 **Errors:**
 - `400` strength rejection / not-pin-required / wrong mode (group is shared) / already-enrolled (use `/enroll/change`) / not-enrolled (use `/enter`)
 - `403` calling client isn't a member of the group
@@ -1666,24 +1690,21 @@ All fields except `avatar_letter` are nullable and will be `null` if not yet con
 ---
 
 ### `POST /api/v1/notifications/{id}/read`
-**Description:** Mark a single notification as read. Sets `read_at` to the current UTC timestamp. Idempotent — calling twice does not update the timestamp again.  
+**Description:** Mark a single notification as read. The service sets `read_at` to the current UTC timestamp and is idempotent — calling on an already-read row no-ops at the SQL layer.  Note: the route raises 404 when the row was *already* read or dismissed (the underlying `notification_service.mark_read` returns `False` on no-op rows, not just on missing ids), so a client that double-taps the same notification can see one 204 followed by a 404 — not a bug, just the no-op-as-404 contract.  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
-**Response:** `200 OK` — the updated `NotificationResponse`.  
-**Errors:** `404` notification not found
+**Response:** `204 No Content`  
+**Errors:** `404` notification not found, already read, or already dismissed
 
 ---
 
 ### `POST /api/v1/notifications/read-all`
-**Description:** Mark all unread notifications as read in a single call.  
+**Description:** Mark every unread notification as read in a single SQL `UPDATE`.  Used by the desktop notification bell's "Mark all read" action.  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
-**Response:** `200 OK`
-```json
-{ "updated": 12 }
-```
+**Response:** `204 No Content`
 
 ---
 
@@ -1774,7 +1795,16 @@ All emitter call-sites are wrapped in `try/except` with logging — a notificati
 | `client.pair` | `client` | `client` | Device sends a pair request |
 | `client.approve` | `operator` | `client` | Operator approves a client |
 | `client.reject` | `operator` | `client` | Operator rejects a client |
+| `client.revoke` | `operator` or `client` | `client` | Operator-driven revoke via `DELETE /auth/revoke/{id}` (`actor_kind=operator`) OR mobile self-revoke via `DELETE /auth/clients/me` (`actor_kind=client`) |
+| `client.profile_updated` | `client` | `client` | Calling client renamed itself via `PATCH /auth/clients/me` |
 | `library.scan` | `system` | `library` | Library scan adds 1+ files (no-op scans are not recorded) |
+| `library.create` | `client` or `operator` | `library` | New library created via `POST /library` |
+| `library.update` | `client` or `operator` | `library` | Existing library renamed / root_paths edited via `PATCH /library/{id}` |
+| `library.delete` | `client` or `operator` | `library` | Library deleted via `DELETE /library/{id}` (file rows torched; on-disk files untouched per ADR-017) |
+| `file.upload` | `client` or `operator` | `file` | Upload via `POST /files/upload` |
+| `file.delete` | `client` or `operator` | `file` | Index-row delete via `DELETE /files/{id}` |
+| `settings.change` | `operator` | `settings` | `PATCH /settings` succeeds; `payload.fields` lists field names changed (values redacted) |
+| `group.pin.grants-reset` | `operator` | `group` | `POST /groups/{id}/grants/reset` drops ≥1 grant; `payload.dropped` carries the count |
 
 All producer call-sites are wrapped in `try/except` with logging — an activity-write failure never breaks the underlying flow.
 
@@ -2121,7 +2151,11 @@ Each result row carries `width` + `height` so the desktop can render matrix-mode
   "completed": 2,
   "current_encoder": "h264_nvenc",
   "current_step": "encoding",
-  "current_index": 3
+  "current_index": 3,
+  "total_resolutions": 3,
+  "current_resolution_index": 1,
+  "current_resolution_width": 1920,
+  "current_resolution_height": 1080
 }
 ```
 
@@ -2134,9 +2168,15 @@ Each result row carries `width` + `height` so the desktop can render matrix-mode
   "completed": null,
   "current_encoder": null,
   "current_step": null,
-  "current_index": null
+  "current_index": null,
+  "total_resolutions": null,
+  "current_resolution_index": null,
+  "current_resolution_width": null,
+  "current_resolution_height": null
 }
 ```
+
+**Matrix-mode fields** (`total_resolutions` + `current_resolution_*`): in single-resolution runs `total_resolutions=1` and the index stays at `1` throughout, so the desktop can read these unconditionally without branching.  Matrix runs report progress per-resolution so the operator sees `(720p · h264_nvenc)` advance through `(1080p · h264_nvenc)` as the outer loop walks resolutions.
 
 **`current_step` values:**
 | Value | Meaning |
@@ -2176,11 +2216,14 @@ Each result row carries `width` + `height` so the desktop can render matrix-mode
       "width": 1920,
       "height": 1080,
       "verify_caps": true,
-      "encoder_count": 6
+      "encoder_count": 6,
+      "resolution_count": 1
     }
   ]
 }
 ```
+
+`resolution_count` is derived server-side by counting distinct `(width, height)` tuples in the stored `results_json`.  Old rows written before matrix mode shipped have all results at the same resolution → `resolution_count == 1`, which the desktop renders as the legacy `1080p · 30 fps · 6 enc` format; matrix runs render `3 res · 30 fps · 18 enc` instead.  Defaulted to `1` for backwards compat.
 
 **Errors:** `403` not from localhost
 

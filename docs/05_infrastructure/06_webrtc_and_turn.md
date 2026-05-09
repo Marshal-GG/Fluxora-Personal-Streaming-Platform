@@ -2,7 +2,7 @@
 
 > **Category:** Infrastructure
 > **Status:** Active — STUN works out of the box; TURN is optional and currently unprovisioned
-> **Last Updated:** 2026-05-01
+> **Last Updated:** 2026-05-09 (deep-audit sync — flagged config-vs-service env-var drift in §"Wire it into Fluxora"; the `WEBRTC_TURN_*` names the doc previously suggested are read by `webrtc_service.py` via `getattr` with defaults, but `config.py` only declares `FLUXORA_TURN_URL` / `FLUXORA_TURN_USER` / `FLUXORA_TURN_PASS`. Until that mismatch is reconciled in code, operators must add **both** name pairs to `.env` for TURN to actually engage.)
 
 Operational guide for the WebRTC stack: how it's wired today, how to set up a TURN server when symmetric NATs start dropping connections, and how to debug ICE failures from logs.
 
@@ -142,18 +142,22 @@ Expect `Total connect time: 0.0xx sec` and `0 errors`.
 
 ## Wire it into Fluxora
 
-The server already supports TURN via env vars — no code change.
+> **Known config drift (2026-05-09 audit).** `apps/server/services/webrtc_service.py::_ice_servers()` reads `webrtc_turn_url` / `webrtc_turn_username` / `webrtc_turn_password` via `getattr(settings, …, None)`, but `apps/server/config.py` only declares `fluxora_turn_url` / `fluxora_turn_user` / `fluxora_turn_pass`. The `WEBRTC_*` env names therefore never land on the `Settings` object as attributes — `getattr` falls through to `None` and TURN is silently disabled even when the env vars are set. **Operator workaround until this is reconciled in code:** export both name pairs in `~/.fluxora/.env`. The forward-compatible target is to rename the service-side reads to `fluxora_turn_*` (the existing config keys) so the env-var name matches the rest of the project. Tracked as a follow-up in the next code change to this service.
 
 ```bash
-# Add to ~/.fluxora/.env
+# Add to ~/.fluxora/.env (set BOTH name pairs until the drift is reconciled)
+FLUXORA_TURN_URL=turn:turn.fluxora.marshalx.dev:3478
+FLUXORA_TURN_USER=fluxora
+FLUXORA_TURN_PASS=<the-password-from-step-3>
+
 WEBRTC_TURN_URL=turn:turn.fluxora.marshalx.dev:3478
 WEBRTC_TURN_USERNAME=fluxora
 WEBRTC_TURN_CREDENTIAL=<the-password-from-step-3>
 ```
 
-Restart the Fluxora server. The `RTCConfiguration` returned to clients now includes the TURN entry — ICE will try direct, then STUN, then TURN.
+Restart the Fluxora server. When the service-side `webrtc_turn_*` reads pick up a value, the `RTCConfiguration` returned to clients includes the TURN entry — ICE will try direct, then STUN, then TURN.
 
-`webrtc_service.py:_ice_servers()` will log `TURN server configured: turn:turn.fluxora.marshalx.dev:3478` at startup.
+`webrtc_service.py:_ice_servers()` logs `TURN server configured: turn:turn.fluxora.marshalx.dev:3478` at INFO when the values resolve, or drops to `No TURN server configured — using STUN only` at DEBUG when they don't (useful signal that the env-var drift bit you).
 
 ---
 

@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-07 (migrations 001-026; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device, encoder sanitiser, license-key sanitiser, encoder priority chain (Slice C), per-session encoder_used, corrupt-path data cleanup, `clients.last_ip` + per-request heartbeat, `benchmark_runs` history table, **Groups v2 content-spaces redesign (Public group + PIN gate + grant/attempt ledgers + per-member time-window override + icon/color/concurrent-stream cap), Groups v2 §M8 hybrid PIN model (per-client enrollment ledger)**)
+> **Status:** Active - Updated 2026-05-09 (migrations 001-026; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device (nullable), encoder sanitiser, license-key sanitiser, encoder priority chain (Slice C), per-session encoder_used, corrupt-path data cleanup, `clients.last_ip` + per-request heartbeat, `benchmark_runs` history table, Groups v2 content-spaces redesign (Public group + PIN gate + grant/attempt ledgers + per-member time-window override + icon/color/concurrent-stream cap), Groups v2 §M8 hybrid PIN model (per-client enrollment ledger). Drift fixes 2026-05-09: stream-session NOT NULL on `bytes_transferred`/`progress_sec`; `language` NOT NULL; `transcoding_hwaccel_device` re-stated as nullable; explicit index names in the index table.)
 
 ---
 
@@ -75,8 +75,8 @@ CREATE TABLE stream_sessions (
     started_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     ended_at           TIMESTAMP,
     connection_type    TEXT NOT NULL CHECK(connection_type IN ('lan','webrtc_p2p','turn_relay')),
-    bytes_transferred  INTEGER DEFAULT 0,
-    progress_sec       REAL DEFAULT 0,
+    bytes_transferred  INTEGER NOT NULL DEFAULT 0,
+    progress_sec       REAL    NOT NULL DEFAULT 0,
     encoder_used       TEXT     -- migration 021: encoder picked by session_router (NULL on stream-copy)
 );
 
@@ -101,32 +101,32 @@ CREATE TABLE user_settings (
     last_login_at            TEXT,      -- reserved for v2; always NULL in v1
     -- migration 015: extended settings (18 new columns)
     -- General
-    language                 TEXT DEFAULT 'en',
-    auto_start_on_boot       INTEGER NOT NULL DEFAULT 0,
-    auto_restart_on_crash    INTEGER NOT NULL DEFAULT 1,
-    minimize_to_system_tray  INTEGER NOT NULL DEFAULT 1,
+    language                 TEXT NOT NULL DEFAULT 'en',
+    auto_start_on_boot       BOOLEAN NOT NULL DEFAULT 0,
+    auto_restart_on_crash    BOOLEAN NOT NULL DEFAULT 1,
+    minimize_to_system_tray  BOOLEAN NOT NULL DEFAULT 1,
     theme_accent             TEXT,      -- forward-compat; NULL in v1 (brand locked to violet)
     default_library_view     TEXT NOT NULL DEFAULT 'grid',  -- 'grid' | 'list'
-    scan_libraries_on_startup INTEGER NOT NULL DEFAULT 1,
-    generate_thumbnails      INTEGER NOT NULL DEFAULT 1,
+    scan_libraries_on_startup BOOLEAN NOT NULL DEFAULT 1,
+    generate_thumbnails      BOOLEAN NOT NULL DEFAULT 1,
     -- Network
     preferred_mode           TEXT NOT NULL DEFAULT 'auto',  -- 'auto' | 'lan' | 'webrtc'
-    enable_mdns              INTEGER NOT NULL DEFAULT 1,
-    enable_webrtc            INTEGER NOT NULL DEFAULT 1,
+    enable_mdns              BOOLEAN NOT NULL DEFAULT 1,
+    enable_webrtc            BOOLEAN NOT NULL DEFAULT 1,
     relay_server_url         TEXT,      -- override TURN relay; NULL = use default
     -- Streaming
     default_quality          TEXT NOT NULL DEFAULT 'auto',  -- 'auto' | '4k' | '1080p' | '720p' | '480p'
     ai_segment_duration_seconds INTEGER NOT NULL DEFAULT 4,
     -- Security
-    enable_pairing_required  INTEGER NOT NULL DEFAULT 1,
+    enable_pairing_required  BOOLEAN NOT NULL DEFAULT 1,
     session_timeout_minutes  INTEGER NOT NULL DEFAULT 60,   -- range 1–1440
     -- Advanced
-    enable_log_export        INTEGER NOT NULL DEFAULT 1,
+    enable_log_export        BOOLEAN NOT NULL DEFAULT 1,
     custom_server_url        TEXT,      -- operator-specified public URL; NULL = use env var
-    -- migration 017: VAAPI device path
-    transcoding_hwaccel_device TEXT NOT NULL DEFAULT '',  -- '' = auto; set to /dev/dri/renderD129 etc. for multi-GPU Linux
+    -- migration 017: VAAPI device path (nullable; NULL = auto, /dev/dri/renderD128 default)
+    transcoding_hwaccel_device TEXT DEFAULT NULL,
     -- migration 020: encoder priority chain (Slice C of GPU UX plan)
-    transcoding_chain          TEXT      -- JSON-encoded list e.g. '["h264_nvenc","h264_qsv","libx264"]'; NULL = use default chain
+    transcoding_chain          TEXT DEFAULT NULL  -- JSON-encoded list e.g. '["h264_nvenc","h264_qsv","libx264"]'; NULL = use default chain
 );
 
 -- Polar paid-order idempotency table
@@ -293,13 +293,13 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at
 
 | Table | Column(s) | Type | Purpose |
 |-------|-----------|------|---------|
-| `media_files` | `library_id` | B-Tree | Fast library → files lookup |
-| `media_files` | `path` | Unique | Prevent duplicate indexing |
-| `media_files` | `tmdb_id` | B-Tree | Metadata join |
+| `media_files` | `library_id` | B-Tree (`idx_media_files_library_id`) | Fast library → files lookup |
+| `media_files` | `path` | Implicit UNIQUE (column-level) | Prevent duplicate indexing |
+| `media_files` | `tmdb_id` | B-Tree (`idx_media_files_tmdb_id`) | Metadata join |
 | `media_files` | `tmdb_show_id` | B-Tree (`idx_media_files_tmdb_show_id`) | Phase D show → episodes aggregate query (`WHERE tmdb_show_id = ? ORDER BY season_number, episode_number`) |
-| `stream_sessions` | `client_id` | B-Tree | Client history lookup |
-| `stream_sessions` | `file_id` | B-Tree | File stream history |
-| `stream_sessions` | `ended_at` | B-Tree | Active session queries (WHERE ended_at IS NULL) |
+| `stream_sessions` | `client_id` | B-Tree (`idx_stream_sessions_client_id`) | Client history lookup |
+| `stream_sessions` | `file_id` | B-Tree (`idx_stream_sessions_file_id`) | File stream history |
+| `stream_sessions` | `ended_at` | B-Tree (`idx_stream_sessions_ended_at`) | Active session queries (`WHERE ended_at IS NULL`) |
 | `group_members` | `client_id` | B-Tree (`idx_group_members_client`) | Fast lookup of all groups a client belongs to (stream-gate query) |
 | `groups` | `is_public` (partial WHERE `is_public = 1`) | UNIQUE (`idx_groups_public`) | Enforces the singleton Public group at the schema level |
 | `group_pin_grants` | `expires_at` | B-Tree (`idx_group_pin_grants_expiry`) | Housekeeping prune of expired grants |
@@ -338,7 +338,7 @@ CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started_at
 | `014_activity_events.sql` | Creates `activity_events` table (id UUID PK, type, actor_kind?, actor_id?, target_kind?, target_id?, summary, payload JSON?, created_at); adds `idx_activity_created` on `(created_at DESC)` and `idx_activity_type_created` on `(type, created_at DESC)`. |
 | `015_extended_settings.sql` | Adds 18 columns to `user_settings` (skips `max_concurrent_streams` which already exists from 001): General — `language`, `auto_start_on_boot`, `auto_restart_on_crash`, `minimize_to_system_tray`, `theme_accent`, `default_library_view`, `scan_libraries_on_startup`, `generate_thumbnails`; Network — `preferred_mode`, `enable_mdns`, `enable_webrtc`, `relay_server_url`; Streaming — `default_quality`, `ai_segment_duration_seconds`; Security — `enable_pairing_required`, `session_timeout_minutes`; Advanced — `enable_log_export`, `custom_server_url`. |
 | `016_media_quality_episodes_client_email.sql` | Three independent additions for Phase A of the real-data backfill: (a) FFprobe-derived `width`, `height`, `codec_name`, `hdr_format` on `media_files` (quality badges + Phase G direct-play allowlist); (b) TV episode aggregation columns `tmdb_show_id`, `season_number`, `episode_number` on `media_files` plus `idx_media_files_tmdb_show_id` (Phase D ships pure-SQL show endpoints — no new `episodes` table); (c) `email` and `paired_at` on `clients` for the new `GET /auth/clients/me` profile endpoint. `paired_at` is back-filled to migration-apply time for already-paired rows so the desktop's "Paired Mar 15" label never shows blank. |
-| `017_hwaccel_device.sql` | Adds `transcoding_hwaccel_device TEXT NOT NULL DEFAULT ''` to `user_settings`. Back-fills existing rows to `''` (empty = auto-detect). Used by `ffmpeg_service` for the VAAPI `-hwaccel_device` flag on Linux multi-GPU setups. |
+| `017_hwaccel_device.sql` | Adds nullable `transcoding_hwaccel_device TEXT DEFAULT NULL` to `user_settings`. `NULL` = auto (server uses `/dev/dri/renderD128` as the VAAPI default). Used by `ffmpeg_service` for the VAAPI `-hwaccel_device` flag on multi-GPU Linux. Silently ignored on Windows / macOS / for non-VAAPI encoders. |
 | `018_sanitize_encoder.sql` | Cleans `user_settings.transcoding_encoder` rows that hold legacy encoder values (e.g. `h264_amf`) not in the current 10-encoder registry `Literal` set — resets them to `libx264`. Prevents Pydantic 422 on every settings save after an encoder is removed from the registry. |
 | `019_sanitize_license_key.sql` | Sanitises stale `user_settings.license_key` values to NULL when they don't match the current 5-segment FLUXORA shape (`FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<HMAC8>`). The 4-segment legacy shape from phase-4 was tightened to 5 segments without a migration; this closes that gap. Uses pure SQL `length - length(replace(key, '-', ''))` to count dashes without regex. Idempotent. |
 | `020_encoder_chain.sql` | Adds `transcoding_chain TEXT DEFAULT NULL` to `user_settings`. Stored as JSON-encoded list (chains are tiny + single-tenant; never queried relationally). Walked by `services/session_router.py` on every transcode session start; NULL falls back to the default chain `[transcoding_encoder, "libx264"]`. Slice C of the GPU UX plan. |

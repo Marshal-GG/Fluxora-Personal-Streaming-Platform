@@ -21,10 +21,16 @@ Fluxora/
 │
 ├── docs/           # Architecture, planning, design docs
 ├── scripts/        # Build, release, CI scripts
+├── functions/      # Cloud Functions (Phase 3+ Firebase signaling — degrades gracefully if absent)
+├── installer/      # Windows installer build artefacts
+├── build/          # Local build outputs (gitignored)
 │
+├── AGENT_LOG.md    # Append-only agent activity log (rotation policy: archive when >1000 lines)
 ├── CLAUDE.md
 ├── DESIGN.md
 ├── README.md
+├── LICENSE / NOTICE / PRIVACY.md / TERMS.md / SECURITY.md / CODE_OF_CONDUCT.md / CONTRIBUTING.md
+├── firebase.json   # Firebase project config (Phase 3+ only)
 └── .github/        # GitHub Actions CI/CD
 ```
 
@@ -66,44 +72,62 @@ apps/server/
 │       ├── 024_benchmark_history.sql  # benchmark_runs table + idx_benchmark_runs_started_at
 │       ├── 025_groups_v2_content_spaces.sql  # v2 redesign — is_public/icon/color/requires_pin/pin_hash/pin_mode/max_concurrent_streams on groups; time_window_override on group_members; group_pin_grants + group_pin_attempts; manufactures Public; backfills allowed_libraries; auto-adds approved clients to Public
 │       └── 026_groups_per_client_pins.sql  # M8 hybrid PIN model — pin_model on groups + group_member_pins enrollment ledger
-├── routers/
-│   ├── auth.py
+├── routers/                     # 17 routers
 │   ├── activity.py             # GET /api/v1/activity; validate_token_or_local
-│   ├── files.py
+│   ├── auth.py                 # pairing, /clients/me, /clients/me/stats, /clients/me/continue-watching, PATCH /clients/me (M2.5)
+│   ├── deps.py                 # shared FastAPI dependencies
+│   ├── files.py                # upload/delete/recent/search + GET /files/{id}/content (M11)
 │   ├── groups.py
+│   ├── info.py                 # /info, /healthz, /info/stats, /info/support-bundle, /info/restart, /info/stop
 │   ├── library.py
 │   ├── logs.py                 # GET /api/v1/logs; WS /api/v1/ws/logs; validate_token_or_local
 │   ├── notifications.py        # GET, POST /{id}/read, POST /read-all, DELETE /{id}; WS /ws/notifications
+│   ├── orders.py               # /orders + /orders/portal-url (Polar order list)
 │   ├── profile.py
-│   ├── stream.py
-│   ├── transcoding.py          # GET /api/v1/transcoding/status; require_local_caller
+│   ├── settings.py             # /settings GET + PATCH (transcoding + 18 extended fields + chain)
+│   ├── signal.py               # WS /ws/signal — WebRTC offer/answer
+│   ├── stream.py               # POST /stream/start/{file_id}?seek_sec=&tonemap=, POST /stream/{sid}/seek, DELETE /stream/{sid}
+│   ├── transcoding.py          # GET /transcoding/status + /advisor + /devices + /fallback-history + POST /benchmark
+│   ├── webhook.py              # POST /webhook/polar (Standard Webhooks signature)
 │   └── ws.py
-├── services/
+├── services/                    # 24 services
 │   ├── activity_service.py     # record() + list_events(limit, since, type_prefix)
-│   ├── ffmpeg_service.py
-│   ├── ffmpeg_capabilities.py  # version probe + capability flags (§17 M2)
-│   ├── group_service.py
-│   ├── library_service.py
+│   ├── auth_service.py         # pending-token store, update_client_heartbeat, list_clients
+│   ├── benchmark_history_service.py  # benchmark_runs persistence + 50-entry prune
+│   ├── benchmark_service.py    # encoder benchmark runner
 │   ├── discovery_service.py
-│   ├── auth_service.py
+│   ├── encoder_advisor.py      # better-encoder recommendations for /transcoding/advisor
+│   ├── encoder_registry.py     # 10-encoder registry (sw / NVENC / QSV / VAAPI / VideoToolbox)
+│   ├── ffmpeg_capabilities.py  # FFmpeg version probe + capability flags (§17 M2)
+│   ├── ffmpeg_service.py       # HLS pipeline (stream-copy / transcode), cuvid hint, HDR tonemap, static VOD playlist
+│   ├── group_service.py
+│   ├── hardware_probe.py       # GPU probes (best-effort)
+│   ├── library_service.py      # FFprobe-at-scan, _persist_probe, backfill_missing_durations
+│   ├── license_service.py      # 5-part HMAC-SHA256 license keys (advisory mode if FLUXORA_LICENSE_SECRET unset)
 │   ├── log_service.py          # parse JSON-line log; filter/paginate; pubsub for WS /ws/logs
 │   ├── notification_service.py # CRUD + asyncio pub/sub fan-out
 │   ├── profile_service.py
+│   ├── session_router.py       # multi-encoder priority chain (Slice C); pick_encoder + release_session
+│   ├── settings_service.py     # user_settings read/write + tier-to-stream-cap mapping
+│   ├── support_bundle_service.py     # gzipped tar bundle for /info/support-bundle
+│   ├── system_stats_service.py # CPU/RAM/network/uptime + cached internet probe
 │   ├── tmdb_service.py
 │   ├── transcoding_service.py  # encoder discovery + GPU probe; backs GET /transcoding/status
+│   ├── webhook_service.py      # Polar Standard Webhooks signature verification + idempotent processing
 │   └── webrtc_service.py
-├── models/
+├── models/                      # 12 Pydantic response/request models
 │   ├── activity.py             # ActivityEventResponse
-│   ├── media_file.py           # MediaFileResponse (resume_sec alias)
+│   ├── client.py
 │   ├── group.py
 │   ├── library.py
-│   ├── client.py
 │   ├── log_record.py           # LogRecord, LogListResponse
+│   ├── media_file.py           # MediaFileResponse (resume_sec alias)
 │   ├── notification.py         # NotificationResponse, NotificationCreate, type/category enums
+│   ├── order.py                # OrderResponse, OrderListResponse
 │   ├── profile.py              # ProfileResponse (avatar_letter computed), ProfileUpdate
-│   ├── transcoding.py          # TranscodingStatusResponse, EncoderLoad, ActiveTranscodeSession
-│   ├── stream_session.py
-│   └── settings.py
+│   ├── settings.py
+│   ├── stream_session.py       # StreamStartResponse (applied_seek_sec field §16) + StreamSeekResponse
+│   └── transcoding.py          # TranscodingStatusResponse, EncoderLoad, ActiveTranscodeSession
 ├── utils/
 │   ├── file_utils.py
 │   └── tmdb_client.py
@@ -134,7 +158,7 @@ apps/mobile/
 ├── README.md
 ├── android/
 ├── ios/
-├── test/                      # 75 tests as of 2026-05-08 (PlayerCubit + auth + connect + library bloc + groups cubit + storage round-trip + widget pump)
+├── test/                      # 78 tests as of 2026-05-09 (PlayerCubit + auth + connect + library bloc + groups cubit + storage round-trip + widget pump)
 │   ├── features/              # cubit + bloc tests
 │   └── storage/               # SecureStorage playback-prefs round-trip + PlaybackPrefsScreen widget pump (settings remediation M3)
 └── lib/
@@ -207,7 +231,7 @@ apps/desktop/
 ├── macos/                # Not yet generated
 ├── linux/                # Not yet generated
 ├── test/
-│   ├── features/         # Unit + bloc tests (38 passing)
+│   ├── features/         # Unit + bloc tests (90 passing as of 2026-05-09)
 │   └── goldens/          # M3 Dashboard golden — opt-in via --tags=golden, GetIt-mock recipe in _README.md
 └── lib/
     ├── main.dart         # windowManager.ensureInitialized() + WindowOptions(titleBarStyle: hidden)

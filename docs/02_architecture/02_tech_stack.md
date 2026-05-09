@@ -1,7 +1,7 @@
 # Tech Stack
 
 > **Category:** Architecture
-> **Status:** Active — full canonical inventory of every dependency, codegen tool, build tool, and external service in use across the monorepo. Updated 2026-05-08 — re-baselined after the M11 Beyond-video round (2026-05-08, +5 mobile deps), the M12 onboarding revamp (2026-05-08, route changes only), and the mobile-settings remediation plan (2026-05-08, +2 mobile deps + 1 core dep).
+> **Status:** Active — full canonical inventory of every dependency, codegen tool, build tool, and external service in use across the monorepo. Updated 2026-05-09 — no dependency changes since 2026-05-08; refresh covers test-count drift only (mobile 75 → 78 after the §17 second-round drag-state tests).
 
 This doc lists what's *actually installed* (with versions) per package, why it's there, and what category it serves. When you add or remove a dep, update the relevant section here.
 
@@ -67,7 +67,7 @@ Versions pinned exactly in `apps/server/pyproject.toml` (no `^` / `~`).
 ### Dev dependencies
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `pytest` | 8.2.0 | Test runner — **695 passing tests** as of 2026-05-08 (Groups v2 + streaming §4.5 + audit §17.3 #3 + M11 `/content` + M2.5 `PATCH /clients/me` + streaming §16 resume seek / audio diagnostics / scrubber-offset + streaming §17 `info` loglevel / `ffmpeg_capabilities` probe / transcode-only `-readrate` + same-day follow-on stream-copy regression guard) |
+| `pytest` | 8.2.0 | Test runner — **695 passing tests** as of 2026-05-09 (Groups v2 + streaming §4.5 + audit §17.3 #3 + M11 `/content` + M2.5 `PATCH /clients/me` + streaming §16 resume seek / audio diagnostics / scrubber-offset + streaming §17 `info` loglevel / `ffmpeg_capabilities` probe / transcode-only `-readrate` + same-day follow-on stream-copy regression guard; §17 second-round mobile follow-on on 2026-05-09 was mobile-only, no server delta) |
 | `pytest-asyncio` | 0.23.7 | Async test support; `asyncio_mode = "auto"` |
 | `httpx` | 0.27.0 | `AsyncClient` for endpoint tests |
 | `black` | 24.4.0 | Code formatter (88-col, py311 target) |
@@ -207,7 +207,7 @@ Inherits `fluxora_core`. Adds:
 
 > Mobile is **not** wired to `freezed` / `build_runner` codegen — entities come from `fluxora_core` which is already codegen'd. Mobile-only data classes use plain `equatable` (or `==` / `hashCode` overrides).
 >
-> **Test count: 75 passing as of 2026-05-08** (was 27 at M0 baseline; +48 from M3+M5+M6+M7+M8 cubits / Groups v2 / streaming §4.10 / M11 file kinds / M3 SecureStorage round-trip / M3 widget pump / Wi-Fi-only enforcement).
+> **Test count: 78 passing as of 2026-05-09** (was 27 at M0 baseline; +51 from M3+M5+M6+M7+M8 cubits / Groups v2 / streaming §4.10 / M11 file kinds / M3 SecureStorage round-trip / M3 widget pump / Wi-Fi-only enforcement / §17 second-round drag-state tests).
 
 ---
 
@@ -256,7 +256,7 @@ Inherits `fluxora_core`. Adds:
 | `mocktail` | core + desktop + mobile | Mock generation without source-code annotation |
 | `bloc_test` | desktop + mobile | `blocTest()` for cubit emit-order verification |
 | `golden_toolkit` 0.15 | desktop | Pixel-snapshot regression. Wraps `flutter_test`'s `matchesGoldenFile` with viewport + theme defaults. Goldens are tag-gated (`@Tags(['golden'])` per file); run with `flutter test --tags=golden test/goldens/`, regenerate with `--update-goldens`, exclude in CI with `--exclude-tags=golden`. Screens that build their cubits via `GetIt.I<>()` inside `MultiBlocProvider.create` need the GetIt-mock recipe in [`apps/desktop/test/goldens/_README.md`](../../apps/desktop/test/goldens/_README.md). |
-| `pytest` + `pytest-asyncio` | server | 247 passing tests; async-mode auto |
+| `pytest` + `pytest-asyncio` | server | 695 passing tests as of 2026-05-09; async-mode auto |
 | `httpx.AsyncClient` | server | Endpoint integration tests against in-process FastAPI |
 
 ### Lint + format

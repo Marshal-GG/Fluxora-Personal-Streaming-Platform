@@ -2,7 +2,7 @@
 
 > **Category:** Security  
 > **Status:** Active  
-> **Last Updated:** 2026-05-08 (added `DELETE /api/v1/auth/clients/me` self-revoke for mobile sign-out — closes the window where a sign-out cleared local state but left the bearer valid server-side; mobile redesign audit §17.3 #3). 2026-05-06 (migration 023 — added `clients.last_ip` field + per-request heartbeat narrative to "Stored fields & PII surface" section). 2026-05-04 (Phase B QA round — added QR-code pairing flow doc + mDNS-fallback narrative; the QR carries only network location, not credentials, so the operator-approve security model is unchanged. Phase A backfill plan §8.5 bug 1 fix — same-`client_id` re-pair now resets the row to `pending` and invalidates the prior token; new bearer-protected `GET /auth/clients/me`). 2026-05-01 added Cloudflare Tunnel threat model + admin-route hardening.
+> **Last Updated:** 2026-05-09 (deep-audit sync — corrected token-storage row from "SHA-256" to "HMAC-SHA256" + token-format row from "UUID" to `secrets.token_urlsafe(32)`; back-filled Route Authorization Matrix with `/healthz`, `/info/restart` / `/stop` / `/support-bundle`, full `auth/clients/me/*` family + `PATCH /clients/me` self-rename, `/files/recent` + `/search` + `/{id}/content` + `/{id}/reset-progress` + `/upload`, `/library/storage-breakdown` + `PATCH` + `/enrich-tmdb`, `/stream/sessions` + `PATCH /progress` + `POST /seek`, `/transcoding/{advisor,devices,fallback-history,benchmark*}`, `/settings`; updated Phase 2 additions table to reflect that the activity-log addition is shipped). 2026-05-08 (added `DELETE /api/v1/auth/clients/me` self-revoke for mobile sign-out — closes the window where a sign-out cleared local state but left the bearer valid server-side; mobile redesign audit §17.3 #3). 2026-05-06 (migration 023 — added `clients.last_ip` field + per-request heartbeat narrative to "Stored fields & PII surface" section). 2026-05-04 (Phase B QA round — added QR-code pairing flow doc + mDNS-fallback narrative; the QR carries only network location, not credentials, so the operator-approve security model is unchanged. Phase A backfill plan §8.5 bug 1 fix — same-`client_id` re-pair now resets the row to `pending` and invalidates the prior token; new bearer-protected `GET /auth/clients/me`). 2026-05-01 added Cloudflare Tunnel threat model + admin-route hardening.
 
 ---
 
@@ -20,7 +20,7 @@ it can access any protected API endpoint.
 | Mechanism | Technology | Notes |
 |-----------|-----------|-------|
 | Client identity | UUID (`client_id`) generated at first run | Stored in `flutter_secure_storage` |
-| Auth token | Opaque UUID token (Phase 1) → JWT (Phase 2+) | Issued after pairing approval |
+| Auth token | Opaque `secrets.token_urlsafe(32)` string | Issued after pairing approval; stored server-side as HMAC-SHA256 hash only |
 | Token storage (client) | `flutter_secure_storage` | OS Keychain / Android Keystore |
 | Token transmission | `Authorization: Bearer {token}` header | All protected routes |
 | Token revocation | Server deletes row from `clients` table | Takes effect immediately |
@@ -101,7 +101,7 @@ Mobile Sign Out:
         Future deep links to authed routes redirect back to /connect.
 ```
 
-**Server-side note:** sign-out is a *client-side* credential wipe — the server's `clients` table row is **not** deleted. The token remains hash-recorded server-side and can technically be replayed if extracted before `secureStorage.deleteAll()`. For full revocation, the operator must `DELETE /api/v1/auth/revoke/{client_id}` from the desktop control panel (localhost-only endpoint). Future enhancement: a `POST /api/v1/auth/sign-out` endpoint that the client calls before clearing storage, so the server can mark the row revoked atomically.
+**Server-side note (updated 2026-05-08):** sign-out now hits `DELETE /api/v1/auth/clients/me` (`validate_token`-gated) before the local-storage wipe in step 2c, so the server-side row flips to `status='rejected'` + zeroed `auth_token` + `is_trusted=0` atomically with the client-side teardown. The previously-documented gap (token remained hash-recorded after sign-out and could be replayed) is closed. For operator-driven revocation of a different device, `DELETE /api/v1/auth/revoke/{client_id}` is still the canonical localhost-only path. The `clients` table row itself is preserved for audit; only the credential is invalidated.
 
 ---
 
@@ -110,27 +110,49 @@ Mobile Sign Out:
 | Route Pattern | Auth Required | Notes |
 |--------------|--------------|-------|
 | `GET /api/v1/info` | ❌ Public | Server identity only — no sensitive data |
+| `GET /api/v1/healthz` | ❌ Public | Constant `{"ok": true}`. Cloudflare Tunnel ingress probe + client reachability check. Excluded from OpenAPI schema. |
 | `GET /api/v1/info/stats` | 🟡 Token OR localhost | `validate_token_or_local` — earlier versions had no auth, leaking CPU / RAM / lan_ip / public_address over the public tunnel; tightened to match `/ws/stats`. |
-| `POST /api/v1/auth/request-pair` | ❌ Public | Pairing initiation; same-`client_id` re-pair resets the row to `pending` and invalidates the prior token (see "Re-pair from the same `client_id`" above) |
+| `POST /api/v1/info/restart` | 🔒 Localhost only | `require_local_caller`; SIGINTs the process after a 300 ms response flush. |
+| `POST /api/v1/info/stop` | 🔒 Localhost only | Same as `/info/restart`; differs only in log-line semantics. |
+| `POST /api/v1/info/support-bundle` | 🔒 Localhost only | `require_local_caller`; returns gzipped tar of redacted operator debug state (see Sensitive Data Handling row below). |
+| `POST /api/v1/auth/request-pair` | ❌ Public, 5/min/IP | `slowapi @limiter.limit("5/minute")`; same-`client_id` re-pair resets the row to `pending` and invalidates the prior token (see "Re-pair from the same `client_id`" above). |
 | `GET /api/v1/auth/status/{id}` | ❌ Public | Polling endpoint — token returned once on first approved poll |
-| `POST /api/v1/auth/approve/{id}` | 🔒 Localhost only | `require_local_caller` dep — 403 if `request.client.host` not in `{127.0.0.1, ::1, localhost}` |
+| `POST /api/v1/auth/approve/{id}` | 🔒 Localhost only | `require_local_caller` dep — 403 if `request.client.host` not in `{127.0.0.1, ::1, localhost}` OR if `CF-Connecting-IP` is set (tunneled). |
 | `POST /api/v1/auth/reject/{id}` | 🔒 Localhost only | Same `require_local_caller` restriction |
+| `GET /api/v1/auth/clients` | 🔒 Localhost only | List all paired clients — operator action surfaced on desktop Clients screen. |
 | `GET /api/v1/auth/clients/me` | 🔑 Token required | `validate_token` — returns the calling client's profile (name/email/tier/paired_at/last_seen). Mobile profile screen, Phase A. |
+| `PATCH /api/v1/auth/clients/me` | 🔑 Token required | `validate_token` — self-rename of `display_name` only. Cannot mutate any other client (the bearer identity drives the row). |
 | `DELETE /api/v1/auth/clients/me` | 🔑 Token required | `validate_token` — self-revoke. The calling client tears down its own bearer + row in the same teardown the operator-driven `/auth/revoke/{id}` performs. Mobile sign-out flow calls this before clearing local state so a stolen-and-not-yet-cleared token can't outlive the user's tap (mobile redesign audit §17.3 #3, 2026-05-08). |
+| `GET /api/v1/auth/clients/me/stats` | 🔑 Token required | Aggregate watch hours / movies / shows for the calling client. |
+| `GET /api/v1/auth/clients/me/continue-watching` | 🔑 Token required | Non-zero-progress files filtered through the v2 visibility model. |
+| `GET /api/v1/auth/clients/me/visible-libraries` | 🔑 Token required | Mobile profile-screen "what can I see right now" surface; same `VisibleLibraries` shape as the localhost View-As route, scoped to the bearer identity. |
+| `GET /api/v1/auth/clients/{id}/visible-libraries` | 🔒 Localhost only | Operator "View as" debug — `require_local_caller`; reveals access-control state across all clients, so off-loopback callers would enable cross-client enumeration. |
 | `DELETE /api/v1/auth/revoke/{id}` | 🔒 Localhost only | `require_local_caller` — operator action surfaced from desktop Clients screen. Earlier versions accepted any bearer token, which let one client revoke another (privilege escalation); tightened to localhost-only. |
-| `GET /api/v1/files` | ✅ Bearer token | List indexed media files |
-| `GET /api/v1/files/{id}` | ✅ Bearer token | Single file lookup |
-| `GET /api/v1/library` | ✅ Bearer token | List libraries |
-| `POST /api/v1/library` | ✅ Bearer token | Create library |
-| `GET /api/v1/library/{id}` | ✅ Bearer token | Single library lookup |
-| `DELETE /api/v1/library/{id}` | ✅ Bearer token | Delete library |
-| `POST /api/v1/library/{id}/scan` | ✅ Bearer token | Trigger directory scan |
-| `POST /api/v1/stream/start/{id}` | ✅ Bearer token | Start FFmpeg transcode session |
-| `GET /api/v1/stream/{id}` | ✅ Bearer token | Session details |
-| `DELETE /api/v1/stream/{id}` | ✅ Bearer token | Stop session (owner only) |
-| `GET /api/v1/hls/{session}/{file}` | ✅ Bearer token | Serve HLS playlist or segment |
-| `WS /api/v1/ws/status` | ✅ First-message token | Token sent as `{"type":"auth","token":"..."}` — not in header |
-| `WS /api/v1/ws/signal` | ✅ Bearer token | WebRTC signaling (Phase 3) |
+| `GET /api/v1/files` | 🟡 Token OR localhost | `validate_token_or_local`; bearer callers see only files in libraries their groups expose (v2 content-spaces model). |
+| `GET /api/v1/files/recent` | 🟡 Token OR localhost | Same visibility filter as `GET /files`. |
+| `GET /api/v1/files/search` | 🟡 Token OR localhost | Substring match on `name` + TMDB `title`; visibility-filtered. |
+| `GET /api/v1/files/{id}` | 🟡 Token OR localhost | Single-file lookup; returns 404 (not 403) on cross-group access to prevent enumeration of gated content. |
+| `GET /api/v1/files/{id}/content` | 🟡 Token OR localhost | Raw file bytes (`FileResponse`); backs M11 beyond-video viewers + "Open in…" handoff. Same 404-on-cross-group rule. |
+| `POST /api/v1/files/{id}/reset-progress` | 🟡 Token OR localhost | Zero `last_progress_sec` for the "Start over" affordance. Same 404-on-cross-group rule. |
+| `POST /api/v1/files/upload` | 🟡 Token OR localhost | Multipart upload into a library. |
+| `DELETE /api/v1/files/{id}` | 🟡 Token OR localhost | Remove from index; never deletes file from disk (ADR-017). |
+| `GET /api/v1/library` | 🟡 Token OR localhost | List libraries. |
+| `POST /api/v1/library` | 🟡 Token OR localhost | Create library. |
+| `GET /api/v1/library/storage-breakdown` | 🟡 Token OR localhost | Per-type storage totals + disk capacity. |
+| `GET /api/v1/library/{id}` | 🟡 Token OR localhost | Single library. |
+| `PATCH /api/v1/library/{id}` | 🟡 Token OR localhost | Update name / root_paths (type immutable per ADR-016). |
+| `DELETE /api/v1/library/{id}` | 🟡 Token OR localhost | Delete library entry + index; files-on-disk untouched (ADR-017). |
+| `POST /api/v1/library/{id}/scan` | 🟡 Token OR localhost | Walk roots, index files, run TMDB enrichment. |
+| `POST /api/v1/library/{id}/enrich-tmdb` | 🟡 Token OR localhost | Re-run TMDB enrichment on rows with `tmdb_id IS NULL`. |
+| `GET /api/v1/stream/sessions` | 🔒 Localhost only | List all active stream sessions — operator visibility into who is streaming. |
+| `POST /api/v1/stream/start/{id}` | ✅ Bearer token, 10/min/IP | `slowapi @limiter.limit("10/minute")`; spawns FFmpeg transcode. |
+| `GET /api/v1/stream/{id}` | ✅ Bearer token | Session details. |
+| `PATCH /api/v1/stream/{id}/progress` | ✅ Bearer token | Record playback position; debounced server-side. |
+| `POST /api/v1/stream/{id}/seek` | ✅ Bearer token, 30/min/IP | `slowapi @limiter.limit("30/minute")`; re-spawns FFmpeg from `seek_sec`. |
+| `DELETE /api/v1/stream/{id}` | ✅ Bearer token | Stop session and kill FFmpeg process (owner only). |
+| `GET /api/v1/hls/{session}/{file}` | ✅ Bearer token | Serve HLS playlist or segment. **Blocked over Cloudflare Tunnel** — `HLSBlockOverTunnelMiddleware` 403s any request with `CF-Connecting-IP` (see Cloudflare Tunnel Threat Model below). |
+| `WS /api/v1/ws/status` | ✅ First-message token | Token sent as `{"type":"auth","token":"..."}` — not in header. |
+| `WS /api/v1/ws/signal` | ✅ First-message token | WebRTC signaling (Phase 3); same handshake as `/ws/status`. |
 | `POST /api/v1/webhook/polar` | 🔒 Polar signature | Public route; verifies Standard Webhooks headers before JSON parsing |
 | `GET /api/v1/groups` | ✅ Bearer token or localhost | List all groups |
 | `POST /api/v1/groups` | 🔒 Localhost only | Create group — `require_local_caller` |
@@ -159,6 +181,16 @@ Mobile Sign Out:
 | `GET /api/v1/logs` | ✅ Bearer token or localhost | Structured log records with filtering (`validate_token_or_local`) |
 | `WS /api/v1/ws/logs` | ✅ Loopback or first-message token | Live log tail; same auth pattern as `/ws/stats` |
 | `GET /api/v1/transcoding/status` | 🔒 Localhost only | Encoder loads + active sessions — `require_local_caller` |
+| `GET /api/v1/transcoding/advisor` | 🔒 Localhost only | Recommendation for the active encoder. |
+| `GET /api/v1/transcoding/devices` | 🔒 Localhost only | Detected CPU + GPU inventory. |
+| `GET /api/v1/transcoding/fallback-history` | 🔒 Localhost only | Last 50 encoder routing decisions. |
+| `POST /api/v1/transcoding/benchmark` | 🔒 Localhost only | Synthetic benchmark across all available encoders. |
+| `GET /api/v1/transcoding/benchmark/progress` | 🔒 Localhost only | In-flight benchmark progress snapshot. |
+| `GET /api/v1/transcoding/benchmark/history` | 🔒 Localhost only | Recent benchmark-run summaries. |
+| `GET /api/v1/transcoding/benchmark/history/{id}` | 🔒 Localhost only | Full body for one stored run. |
+| `DELETE /api/v1/transcoding/benchmark/history/{id}` | 🔒 Localhost only | Delete one stored run. |
+| `GET /api/v1/settings` | 🔒 Localhost only | Read full server settings (incl. extended fields). |
+| `PATCH /api/v1/settings` | 🔒 Localhost only | Update settings via dynamic SET-list. |
 | `GET /api/v1/orders` | 🔒 Localhost only | Paginated Polar order list — `require_local_caller` |
 | `GET /api/v1/orders/portal-url` | 🔒 Localhost only | Polar customer-portal URL — `require_local_caller`; 404 when env var unset |
 | All Control Panel routes | ✅ Localhost only | Not exposed externally |
@@ -274,7 +306,7 @@ Desktop CP mirrors the blocklist client-side for snappy feedback (`_OBVIOUS_PINS
 
 | Data | Storage | Notes |
 |------|---------|-------|
-| Auth tokens | Server: SHA-256 hash in DB only | Plain token never persisted on server |
+| Auth tokens | Server: HMAC-SHA256 hash in DB only (key = `TOKEN_HMAC_KEY`) | Plain token never persisted on server. Constant-time compare via `hmac.compare_digest`. |
 | Auth tokens | Client: `flutter_secure_storage` | OS-backed secure enclave |
 | Device names | SQLite `clients` table | Plain text — not sensitive |
 | Client email (optional) | SQLite `clients.email` | Captured during pairing's optional contact step (Phase A backfill plan §9.1); echoed via `GET /auth/clients/me` only; never used as identity key |
@@ -354,13 +386,13 @@ See [`docs/05_infrastructure/03_public_routing.md`](../05_infrastructure/03_publ
 
 ## Phase 2 Security Additions
 
-| Addition | Notes |
-|----------|-------|
-| JWT tokens | Replace opaque UUID tokens with short-lived JWTs (15-min access, 30-day refresh) |
-| Token refresh flow | `POST /auth/refresh` using refresh token |
-| Audit log | Log all auth events (pair, approve, reject, revoke) to DB |
+| Addition | Status | Notes |
+|----------|--------|-------|
+| JWT tokens | 🔲 Not started | Replace opaque `secrets.token_urlsafe(32)` strings with short-lived JWTs (15-min access, 30-day refresh). v1 keeps the opaque-token model — same threat surface, less moving parts. |
+| Token refresh flow | 🔲 Not started | `POST /auth/refresh` using refresh token; only meaningful once tokens carry an expiry. |
+| Audit log | ✅ Shipped | `services/activity_service.py` writes `client.pair`, `client.approve`, `client.reject`, `client.revoke`, `client.profile_updated` rows; surfaced via `GET /api/v1/activity`. |
 
-> **Already implemented in Phase 1:** Rate limiting (`slowapi`, 5/minute on `/auth/request-pair`; 10/minute on stream start); localhost restriction on `approve`/`reject`; startup key validation.
+> **Already implemented in Phase 1:** Rate limiting (`slowapi`, 5/minute on `/auth/request-pair`; 10/minute on `stream/start/{id}`; 30/minute on `stream/{id}/seek`); localhost restriction on `approve`/`reject`/`revoke`; startup key validation; `CF-Connecting-IP` rejection on every `require_local_caller` route so tunneled callers can't ride the loopback shortcut.
 
 ---
 

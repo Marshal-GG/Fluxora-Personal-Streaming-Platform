@@ -1,7 +1,7 @@
 # Data Flow Diagrams
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-08 (Flow 4 gains a Sign-out / self-revoke sub-flow — mobile sign-out now calls `DELETE /auth/clients/me` before clearing local state so the bearer can't outlive the user's tap; mobile redesign audit §17.3 #3).  Earlier 2026-05-07: Flow 6 stream-gate flow rewritten for v2 content-spaces redesign — `get_visible_libraries` + `reason_to_deny_stream` replace v1 intersection logic; multi-group composition is now UNION not intersection; new Flow 6b for the PIN-flow + per-client enrollment.  Earlier 2026-05-02: Polar payment webhook flow + Notification fan-out + Activity event log + §7.9 Log Pipeline flow.
+> **Status:** Active - Updated 2026-05-09 (verified end-to-end against migrations 001-026; no flow shape changes since 2026-05-08).  2026-05-08: Flow 4 gained a Sign-out / self-revoke sub-flow — mobile sign-out now calls `DELETE /auth/clients/me` before clearing local state so the bearer can't outlive the user's tap; mobile redesign audit §17.3 #3.  Earlier 2026-05-07: Flow 6 stream-gate flow rewritten for v2 content-spaces redesign — `get_visible_libraries` + `reason_to_deny_stream` replace v1 intersection logic; multi-group composition is now UNION not intersection; new Flow 6b for the PIN-flow + per-client enrollment.  Earlier 2026-05-02: Polar payment webhook flow + Notification fan-out + Activity event log + §7.9 Log Pipeline flow.
 
 ---
 
