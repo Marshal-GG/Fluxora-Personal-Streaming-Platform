@@ -123,13 +123,27 @@ async def start_stream(
     # manually deleted / moved, fall back to the original source and log
     # the orphan so the operator can clean up.
     playback_path = file_row.get("transcoded_path") or file_row["path"]
+    using_sidecar = False
     if file_row.get("transcoded_path"):
-        if not Path(file_row["transcoded_path"]).exists():
+        if Path(file_row["transcoded_path"]).exists():
+            using_sidecar = True
+        else:
             logger.warning(
                 "Transcoded sidecar missing on disk; falling back to source: %s",
                 file_row["transcoded_path"],
             )
             playback_path = file_row["path"]
+    # When the sidecar is in play, the FFmpeg input is NOT the same as
+    # `file_row["path"]` — the path-based lookups inside `start_stream`
+    # (codec resolution + duration for the static VOD playlist) would
+    # miss and silently send the already-H.264 sidecar through NVENC.
+    # Plan 18 sidecars are H.264 SDR by construction, so override.
+    sidecar_codec_override = "h264" if using_sidecar else None
+    sidecar_duration_override = (
+        float(file_row["duration_sec"])
+        if using_sidecar and file_row.get("duration_sec")
+        else None
+    )
 
     # v2 stream gate (M2 of `docs/10_planning/13_groups_v2_content_spaces.md`):
     # consult `reason_to_deny_stream` which uses the additive content-spaces
@@ -235,6 +249,8 @@ async def start_stream(
             settings.hls_tmp_path,
             tonemap_hdr=tonemap,
             seek_sec=resolved_seek_sec,
+            source_codec_override=sidecar_codec_override,
+            duration_sec_override=sidecar_duration_override,
         )
     except FileNotFoundError as exc:
         raise HTTPException(
@@ -447,16 +463,26 @@ async def seek_stream(
 
     # Library transcode: prefer the H.264 sidecar if one exists.  Mirrors
     # the playback_path resolution in /start so a session that began on
-    # the sidecar continues to use the sidecar after seek-restart.
+    # the sidecar continues to use the sidecar after seek-restart, AND
+    # the sidecar codec/duration overrides are forwarded so the restart
+    # spawn doesn't accidentally fall through to NVENC transcode again.
     playback_path = file_row.get("transcoded_path") or file_row["path"]
-    if file_row.get("transcoded_path") and not Path(
-        file_row["transcoded_path"]
-    ).exists():
-        logger.warning(
-            "Transcoded sidecar missing on disk; falling back to source: %s",
-            file_row["transcoded_path"],
-        )
-        playback_path = file_row["path"]
+    using_sidecar = False
+    if file_row.get("transcoded_path"):
+        if Path(file_row["transcoded_path"]).exists():
+            using_sidecar = True
+        else:
+            logger.warning(
+                "Transcoded sidecar missing on disk; falling back to source: %s",
+                file_row["transcoded_path"],
+            )
+            playback_path = file_row["path"]
+    sidecar_codec_override = "h264" if using_sidecar else None
+    sidecar_duration_override = (
+        float(file_row["duration_sec"])
+        if using_sidecar and file_row.get("duration_sec")
+        else None
+    )
 
     try:
         await ffmpeg_service.restart_stream(
@@ -465,6 +491,8 @@ async def seek_stream(
             settings.hls_tmp_path,
             seek_sec=seek_sec,
             tonemap_hdr=tonemap,
+            source_codec_override=sidecar_codec_override,
+            duration_sec_override=sidecar_duration_override,
         )
     except FileNotFoundError as exc:
         raise HTTPException(

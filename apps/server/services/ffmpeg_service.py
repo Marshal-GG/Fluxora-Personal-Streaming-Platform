@@ -456,6 +456,8 @@ def _build_ffmpeg_cmd(
     source_codec: str | None,
     direct_remux: bool,
     direct_remux_hevc: bool,
+    direct_remux_av1: bool = False,
+    direct_remux_vp9: bool = False,
     use_gpu_input: bool,
     apply_hdr_tonemap: bool = False,
     seek_sec: float = 0.0,
@@ -611,14 +613,18 @@ def _build_ffmpeg_cmd(
         # Path 3 — full re-encode + resample to 48 kHz.
         cmd.extend(["-c:a", "aac", "-b:a", "128k", "-ar", "48000"])
 
-    # fmp4 segments for HEVC sources (Apple HLS spec compliance) and for
-    # transcode-mode encoders whose registry says fmp4.  The bundled
-    # FFmpeg's HLS muxer is unreliable about writing the init segment
-    # under stream-copy — `_ensure_fmp4_init_segment()` generates one
-    # ourselves if FFmpeg skipped it, so the playlist's `#EXT-X-MAP URI`
-    # always points at a real file.
-    use_fmp4 = direct_remux_hevc or (
-        not direct_remux and meta.segment_fmt == "fmp4"
+    # fmp4 segments for HEVC / AV1 / VP9 stream-copy and for transcode-
+    # mode encoders whose registry says fmp4.  Plan 19 §M7 — AV1 + VP9
+    # ride the same fmp4 segment path HEVC uses; MPEG-TS doesn't carry
+    # those codecs cleanly across all clients but fmp4 (CMAF) is
+    # well-supported.  The bundled FFmpeg's HLS muxer is unreliable
+    # about writing the init segment under stream-copy —
+    # `_ensure_fmp4_init_segment()` generates one ourselves if FFmpeg
+    # skipped it, so the playlist's `#EXT-X-MAP URI` always points at a
+    # real file.
+    use_fmp4 = (
+        direct_remux_hevc or direct_remux_av1 or direct_remux_vp9
+        or (not direct_remux and meta.segment_fmt == "fmp4")
     )
     hls_time = "10" if direct_remux else "6"
     common_hls = [
@@ -1061,6 +1067,8 @@ async def start_stream(
     tonemap_hdr: bool = False,
     seek_sec: float = 0.0,
     discontinuity_seq: int = 0,
+    source_codec_override: str | None = None,
+    duration_sec_override: float | None = None,
 ) -> Path:
     """Spawn FFmpeg for HLS output; return the .m3u8 playlist path.
 
@@ -1102,7 +1110,19 @@ async def start_stream(
     crf: int = int(settings_row.get("transcoding_crf", 23) or 23)
     hwaccel_device: str | None = settings_row.get("transcoding_hwaccel_device")
 
-    source_codec, hdr_format = await _resolve_source_metadata(db, file_path)
+    # Plan 18 — when the router is feeding a transcoded sidecar (the
+    # `.h264.<ext>` produced by `transcode_service`), the file_path
+    # FFmpeg actually reads is NOT in `media_files`; the path-based
+    # lookup in `_resolve_source_metadata` would miss + return
+    # (None, None), the direct-remux check below would then fail,
+    # and we'd silently NVENC-transcode the already-H.264 sidecar.
+    # The router knows the sidecar is H.264 SDR by construction;
+    # `source_codec_override` short-circuits the lookup.
+    if source_codec_override is not None:
+        source_codec = source_codec_override
+        hdr_format = None
+    else:
+        source_codec, hdr_format = await _resolve_source_metadata(db, file_path)
 
     # Streaming pipeline plan §16 M4 — probe the source's audio params at
     # session start.  Two consumers:
@@ -1149,13 +1169,30 @@ async def start_stream(
 
     direct_remux_h264 = source_codec == "h264"
     direct_remux_hevc = source_codec in ("hevc", "h265")
-    direct_remux = direct_remux_h264 or direct_remux_hevc
+    # Plan 19 §M7 — when streaming_mode is `client-decode` (the v1
+    # default) the server stream-copies AV1 / VP9 sources via fmp4
+    # rather than running the live transcode pipeline.  Modern phones
+    # / tablets / desktops hardware-decode both codecs at near-zero
+    # power cost.  When `server-transcode` (legacy fallback for older
+    # device pools) the AV1/VP9 paths fall through to the existing
+    # transcode-to-H.264 branch from plan 18.
+    streaming_mode = settings_row.get("streaming_mode") or "client-decode"
+    direct_remux_av1 = (
+        streaming_mode == "client-decode" and source_codec == "av1"
+    )
+    direct_remux_vp9 = (
+        streaming_mode == "client-decode" and source_codec == "vp9"
+    )
+    direct_remux = (
+        direct_remux_h264 or direct_remux_hevc
+        or direct_remux_av1 or direct_remux_vp9
+    )
 
     # Tonemap requires decoded pixels, so it forces transcode mode even
-    # for h264 / hevc sources we'd otherwise stream-copy.  The tonemap
-    # filter chain runs CPU-side; CUDA hwaccel input would push frames
-    # into VRAM and the zscale/tonemap filters can't read them.  Drop
-    # the GPU-input pipeline for tonemap sessions.
+    # for h264 / hevc / av1 / vp9 sources we'd otherwise stream-copy.
+    # The tonemap filter chain runs CPU-side; CUDA hwaccel input would
+    # push frames into VRAM and the zscale/tonemap filters can't read
+    # them.  Drop the GPU-input pipeline for tonemap sessions.
     if apply_hdr_tonemap and direct_remux:
         logger.info(
             "Tonemap requested for HDR source — overriding stream-copy "
@@ -1164,6 +1201,8 @@ async def start_stream(
         direct_remux = False
         direct_remux_h264 = False
         direct_remux_hevc = False
+        direct_remux_av1 = False
+        direct_remux_vp9 = False
 
     # Stream-copy doesn't invoke any encoder, so it bypasses the router
     # entirely.  Transcode mode consults the router so the operator's
@@ -1204,11 +1243,18 @@ async def start_stream(
     playlist = session_dir / "playlist.m3u8"
     ff_playlist = session_dir / "_ff_playlist.m3u8"
 
-    use_fmp4 = direct_remux_hevc or (
+    # AV1 + VP9 ride the same fmp4 segment path HEVC uses — MPEG-TS
+    # doesn't carry AV1 / VP9 cleanly across all clients, but fmp4
+    # (CMAF) is well-supported.  H.264 stays on MPEG-TS for back-compat.
+    use_fmp4 = direct_remux_hevc or direct_remux_av1 or direct_remux_vp9 or (
         not direct_remux and meta.segment_fmt == "fmp4"
     )
     if direct_remux_hevc:
         mode = "stream-copy(hevc/fmp4)"
+    elif direct_remux_av1:
+        mode = "stream-copy(av1/fmp4)"
+    elif direct_remux_vp9:
+        mode = "stream-copy(vp9/fmp4)"
     elif direct_remux_h264:
         mode = "stream-copy(h264/mpegts)"
     else:
@@ -1289,6 +1335,8 @@ async def start_stream(
         source_codec=source_codec,
         direct_remux=direct_remux,
         direct_remux_hevc=direct_remux_hevc,
+        direct_remux_av1=direct_remux_av1,
+        direct_remux_vp9=direct_remux_vp9,
         use_gpu_input=first_attempt_gpu_input,
         apply_hdr_tonemap=apply_hdr_tonemap,
         seek_sec=aligned_seek_sec,
@@ -1369,13 +1417,21 @@ async def start_stream(
         # to FFmpeg's incremental playlist by copying it once.
         try:
             duration_sec: float | None = None
-            async with db.execute(
-                "SELECT duration_sec FROM media_files WHERE path = ?",
-                (file_path,),
-            ) as cur:
-                drow = await cur.fetchone()
-            if drow and drow["duration_sec"]:
-                duration_sec = float(drow["duration_sec"])
+            # Plan 18 — sidecar playback path isn't in media_files, so
+            # the path-based lookup misses and the static VOD playlist
+            # gets skipped (player loses the scrubber's known total
+            # duration).  The router has the source row's duration in
+            # hand; thread it through as an override.
+            if duration_sec_override is not None and duration_sec_override > 0:
+                duration_sec = float(duration_sec_override)
+            else:
+                async with db.execute(
+                    "SELECT duration_sec FROM media_files WHERE path = ?",
+                    (file_path,),
+                ) as cur:
+                    drow = await cur.fetchone()
+                if drow and drow["duration_sec"]:
+                    duration_sec = float(drow["duration_sec"])
             if duration_sec and duration_sec > 0:
                 count = _write_static_vod_playlist(
                     playlist=playlist,
@@ -1586,6 +1642,8 @@ async def restart_stream(
     seek_sec: float,
     *,
     tonemap_hdr: bool = False,
+    source_codec_override: str | None = None,
+    duration_sec_override: float | None = None,
 ) -> Path:
     """Re-spawn FFmpeg from ``seek_sec`` for an existing session.
 
@@ -1670,6 +1728,8 @@ async def restart_stream(
             tonemap_hdr=tonemap_hdr,
             seek_sec=seek_sec,
             discontinuity_seq=next_seq,
+            source_codec_override=source_codec_override,
+            duration_sec_override=duration_sec_override,
         )
 
 

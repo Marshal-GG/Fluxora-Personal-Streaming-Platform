@@ -39,6 +39,7 @@ async def update_settings(
     transcoding_crf: int | None = None,
     transcoding_hwaccel_device: str | None = None,
     transcoding_chain: list[str] | None = None,
+    streaming_mode: str | None = None,
     # General
     language: str | None = None,
     auto_start_on_boot: bool | None = None,
@@ -126,6 +127,7 @@ async def update_settings(
         "transcoding_crf": "transcoding_crf",
         "transcoding_hwaccel_device": "transcoding_hwaccel_device",
         "transcoding_chain": "transcoding_chain",
+        "streaming_mode": "streaming_mode",
         "language": "language",
         "auto_start_on_boot": "auto_start_on_boot",
         "auto_restart_on_crash": "auto_restart_on_crash",
@@ -160,6 +162,7 @@ async def update_settings(
         # at the validation step above so the dynamic UPDATE only sees the
         # serialised form.
         "transcoding_chain": encoded_chain,
+        "streaming_mode": streaming_mode,
         "language": language,
         "auto_start_on_boot": auto_start_on_boot,
         "auto_restart_on_crash": auto_restart_on_crash,
@@ -234,6 +237,7 @@ def _defaults() -> dict:
         "transcoding_crf": 23,
         "transcoding_hwaccel_device": None,
         "transcoding_chain": None,
+        "streaming_mode": "client-decode",
         "language": "en",
         "auto_start_on_boot": 0,
         "auto_restart_on_crash": 1,

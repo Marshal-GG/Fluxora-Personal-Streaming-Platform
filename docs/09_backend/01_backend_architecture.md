@@ -79,7 +79,7 @@ server/
 │   └── webhook.py          # POST /api/v1/webhook/polar; Standard Webhooks signature ✅
 │
 ├── services/
-│   ├── ffmpeg_service.py   # FFmpeg subprocess management, HLS output ✅ — uniform `-loglevel info` (was conditional warning/error; §17 M1); transcode-only `-readrate 1.5` + capability-gated `-readrate_initial_burst 30` (§17 M3 + same-day follow-on transcode-only refinement); 30 s playlist-timeout floor when readrate is active (§17 M4); three-path audio branch (copy / re-encode-no-resample under tonemap / re-encode-resample fallback — §16 M4); per-session `_applied_seek_sec[session_id]` dict surfaces segment-snapped seek source-time to routers for `applied_seek_sec` response field
+│   ├── ffmpeg_service.py   # FFmpeg subprocess management, HLS output ✅ — uniform `-loglevel info` (was conditional warning/error; §17 M1); transcode-only `-readrate 1.5` + capability-gated `-readrate_initial_burst 30` (§17 M3 + same-day follow-on transcode-only refinement); 30 s playlist-timeout floor when readrate is active (§17 M4); three-path audio branch (copy / re-encode-no-resample under tonemap / re-encode-resample fallback — §16 M4); per-session `_applied_seek_sec[session_id]` dict surfaces segment-snapped seek source-time to routers for `applied_seek_sec` response field; **plan 19 §M7** — direct-remux check extends to AV1 + VP9 (gated on `user_settings.streaming_mode == 'client-decode'`); AV1 / VP9 / HEVC all ride the same fmp4 segment path; **plan-18 hotfix** — `start_stream` accepts `source_codec_override` + `duration_sec_override` kwargs so router-supplied sidecar metadata overrides the path-based DB lookups (sidecar paths aren't in `media_files`)
 │   ├── ffmpeg_capabilities.py # FFmpeg version probe at server startup; `FfmpegCapabilities` frozen dataclass with `is_known` + `supports_readrate_initial_burst` properties; lazy import of `_ffmpeg_bin` at call-time so test monkey-patches propagate.  Streaming pipeline plan §17 M2 ✅
 │   ├── library_service.py  # Library + file CRUD + scan_library + update_library + total_size_bytes SUM aggregate; `_is_valid_absolute_media_path` rejects relative + `[`-prefixed + null-byte paths in scan and upload; `_persist_probe` writes `duration_sec`; `backfill_missing_durations(db, batch_size, max_rows)` startup task fills duration on rows that pre-date the probe-writes-duration fix ✅
 │   ├── discovery_service.py # mDNS/Zeroconf broadcasting ✅
@@ -162,7 +162,7 @@ server/
     ├── test_support_bundle.py     # bundle contents + redaction + `_collect_error` partial-bundle path ✅
     └── test_logs.py               # JSON-line parse, level/source/since/until/q filters, pagination, WS fan-out, localhost + token auth ✅
 
-Total: **730 tests passing** ✅
+Total: **734 tests passing** ✅
 ```
 
 ---

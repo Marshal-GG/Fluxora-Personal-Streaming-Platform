@@ -212,21 +212,26 @@ async def test_start_stream_uses_transcoded_sidecar_when_present(
     token = await _get_token(client, monkeypatch)
     file_id = await _insert_file(test_db)
 
-    # Create a real sidecar file on disk + write the row pointer.
+    # Create a real sidecar file on disk + write the row pointer.  Also
+    # set the source's codec to 'av1' so we can prove the override
+    # forces direct-remux even when the source row says otherwise.
     sidecar = tmp_path / f"{file_id}.h264.mkv"
     sidecar.write_bytes(b"\x00")  # contents irrelevant for the routing check
     await test_db.execute(
-        "UPDATE media_files SET transcoded_path = ? WHERE id = ?",
+        "UPDATE media_files SET transcoded_path = ?, codec_name = 'av1',"
+        "  duration_sec = 190.6 WHERE id = ?",
         (str(sidecar), file_id),
     )
     await test_db.commit()
 
     captured_paths: list[str] = []
+    captured_kwargs: list[dict] = []
 
     async def _mock_start(
-        file_path: str, session_id: str, hls_root: Path, **_
+        file_path: str, session_id: str, hls_root: Path, **kwargs
     ) -> Path:
         captured_paths.append(file_path)
+        captured_kwargs.append(kwargs)
         playlist = tmp_path / session_id / "playlist.m3u8"
         playlist.parent.mkdir(parents=True, exist_ok=True)
         playlist.write_text("#EXTM3U\n")
@@ -242,6 +247,47 @@ async def test_start_stream_uses_transcoded_sidecar_when_present(
 
     assert resp.status_code == 201
     assert captured_paths == [str(sidecar)]
+    # The router MUST pass the H.264 + duration overrides along with the
+    # sidecar path — without them, start_stream's path-based codec lookup
+    # would miss the sidecar (not in media_files), yield <unknown>, and
+    # the file would silently round-trip through NVENC even though the
+    # sidecar bytes are already H.264 (operator-reported regression).
+    assert captured_kwargs[0]["source_codec_override"] == "h264"
+    assert captured_kwargs[0]["duration_sec_override"] == 190.6
+
+
+@pytest.mark.asyncio
+async def test_start_stream_no_overrides_when_no_sidecar(
+    client: AsyncClient, monkeypatch, test_db, tmp_path
+):
+    """No sidecar row → router must NOT pass overrides; the existing
+    path-based codec lookup is the right behaviour for source playback."""
+    token = await _get_token(client, monkeypatch)
+    file_id = await _insert_file(test_db)
+    # Insert leaves transcoded_path NULL by default.
+
+    captured_kwargs: list[dict] = []
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        captured_kwargs.append(kwargs)
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch(
+        "routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start
+    ):
+        resp = await client.post(
+            f"/api/v1/stream/start/{file_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 201
+    assert captured_kwargs[0]["source_codec_override"] is None
+    assert captured_kwargs[0]["duration_sec_override"] is None
 
 
 @pytest.mark.asyncio
@@ -2819,3 +2865,93 @@ def test_build_ffmpeg_cmd_falls_back_to_safe_re_encode_when_audio_unknown(tmp_pa
 # combo) were dropped along with the readrate flag itself.  The two
 # `test_build_ffmpeg_cmd_omits_readrate*` regression guards above are
 # what stays in v1.
+
+
+# ── Plan 19 §M7 — AV1 / VP9 stream-copy via fmp4 ────────────────────────────
+#
+# When the operator's `streaming_mode` is `client-decode` (the v1 default),
+# AV1 and VP9 sources must take the direct-remux fmp4 path — same shape as
+# HEVC stream-copy: `-c:v copy`, `-hls_segment_type fmp4`, `init.mp4`.
+# When `server-transcode` (legacy fallback), they fall back to the existing
+# transcode-to-H.264 branch from plan 18.
+
+
+def test_build_ffmpeg_cmd_stream_copies_av1_when_client_decode(tmp_path):
+    """direct_remux_av1=True ⇒ `-c:v copy` + fmp4 segments, no encoder."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mkv",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],  # never invoked under stream-copy
+        preset="slow",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="av1",
+        direct_remux=True,
+        direct_remux_hevc=False,
+        direct_remux_av1=True,
+        direct_remux_vp9=False,
+        use_gpu_input=False,
+    )
+    assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
+    assert "-hls_segment_type" in cmd
+    assert cmd[cmd.index("-hls_segment_type") + 1] == "fmp4"
+    assert "init.mp4" in cmd[cmd.index("-hls_fmp4_init_filename") + 1]
+    assert "h264_nvenc" not in cmd
+    assert "libx264" not in cmd
+
+
+def test_build_ffmpeg_cmd_stream_copies_vp9_when_client_decode(tmp_path):
+    """Same shape as AV1 — VP9 also rides fmp4 stream-copy under client-decode."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.webm",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="slow",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="vp9",
+        direct_remux=True,
+        direct_remux_hevc=False,
+        direct_remux_av1=False,
+        direct_remux_vp9=True,
+        use_gpu_input=False,
+    )
+    assert "-c:v" in cmd and cmd[cmd.index("-c:v") + 1] == "copy"
+    assert "-hls_segment_type" in cmd
+    assert cmd[cmd.index("-hls_segment_type") + 1] == "fmp4"
+
+
+def test_build_ffmpeg_cmd_transcodes_av1_when_server_transcode(tmp_path):
+    """When direct_remux_av1=False (server-transcode mode), the AV1 source
+    falls into the transcode branch and the encoder's video codec args are
+    used instead of `-c:v copy`."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mkv",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="slow",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="av1",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        direct_remux_av1=False,  # ← gate is closed under server-transcode
+        direct_remux_vp9=False,
+        use_gpu_input=False,
+    )
+    # libx264 codec args must be present (transcode path), NOT `-c:v copy`.
+    assert "libx264" in cmd
+    cv_idx = cmd.index("-c:v")
+    assert cmd[cv_idx + 1] != "copy"

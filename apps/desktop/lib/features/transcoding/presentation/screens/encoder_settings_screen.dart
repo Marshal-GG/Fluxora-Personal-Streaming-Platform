@@ -61,6 +61,10 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
   String? _encoder;
   String? _preset;
   int? _crf;
+  // Plan 19 §M7 — global streaming mode toggle.  `'client-decode'` (the
+  // launch default) stream-copies AV1 / VP9 sources directly to clients
+  // via fmp4; `'server-transcode'` is the legacy plan-18 behaviour.
+  String? _streamingMode;
 
   // Tab state — Configuration is the default landing tab (operator's most
   // common reason to be here is changing the active encoder); Benchmark is
@@ -103,6 +107,7 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
             _encoder = state.transcodingEncoder;
             _preset = state.transcodingPreset;
             _crf = state.transcodingCrf;
+            _streamingMode = state.streamingMode;
           });
         }
         if (state is SettingsSaved) {
@@ -216,6 +221,14 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
         Expanded(
           child: Column(
             children: [
+              // Streaming mode card (plan 19 §M7)
+              _StreamingModeCard(
+                value: _streamingMode ?? 'client-decode',
+                onChanged: (mode) =>
+                    setState(() => _streamingMode = mode),
+              ),
+              const SizedBox(height: AppSpacing.s14),
+
               // Hardware acceleration card
               _HardwareAccelCard(
                 currentEncoder: _encoder,
@@ -304,7 +317,174 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
           transcodingEncoder: _encoder,
           transcodingPreset: _preset,
           transcodingCrf: _crf,
+          streamingMode: _streamingMode,
         );
+  }
+}
+
+// ── Streaming mode card (plan 19 §M7) ─────────────────────────────────────────
+
+class _StreamingModeCard extends StatelessWidget {
+  const _StreamingModeCard({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return _SettingsBlock(
+      title: 'Streaming Mode',
+      children: [
+        _StreamingModeOption(
+          mode: 'client-decode',
+          title: 'Client decodes',
+          subtitle: 'Recommended',
+          body:
+              'Stream original codec (AV1, VP9, HEVC, H.264) directly to '
+              'your devices. Modern phones / tablets / desktops hardware-'
+              'decode at near-zero power cost. Server CPU stays near 0 %.',
+          warning:
+              'Devices older than ~2021 may fail to play AV1 sources.',
+          selected: value == 'client-decode',
+          onTap: () => onChanged('client-decode'),
+        ),
+        _StreamingModeOption(
+          mode: 'server-transcode',
+          title: 'Server transcodes',
+          subtitle: 'Legacy / mixed device pools',
+          body:
+              'Server live-transcodes AV1 / VP9 sources to H.264 before '
+              'streaming. Works on every device, but uses significant '
+              'CPU/GPU per active stream.',
+          warning: null,
+          selected: value == 'server-transcode',
+          onTap: () => onChanged('server-transcode'),
+        ),
+      ],
+    );
+  }
+}
+
+class _StreamingModeOption extends StatelessWidget {
+  const _StreamingModeOption({
+    required this.mode,
+    required this.title,
+    required this.subtitle,
+    required this.body,
+    required this.warning,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String mode;
+  final String title;
+  final String subtitle;
+  final String body;
+  final String? warning;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadii.md),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s16,
+          vertical: AppSpacing.s12,
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Visual radio dot — explicit container instead of Material
+            // Radio so we don't trigger the v3.32 deprecation churn around
+            // RadioGroup; the InkWell-wrapped row is the actual selector.
+            Container(
+              width: 16,
+              height: 16,
+              margin: const EdgeInsets.only(top: 2),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? AppColors.violet : AppColors.textFaint,
+                  width: 2,
+                ),
+              ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.violet,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: AppSpacing.s12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        title,
+                        style: AppTypography.body.copyWith(
+                          color: AppColors.textBright,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.s8),
+                      Text(
+                        subtitle,
+                        style: AppTypography.captionV2.copyWith(
+                          color: AppColors.textMutedV2,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.s4),
+                  Text(
+                    body,
+                    style: AppTypography.body.copyWith(
+                      color: AppColors.textMutedV2,
+                    ),
+                  ),
+                  if (warning != null) ...[
+                    const SizedBox(height: AppSpacing.s6),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.warning_amber_rounded,
+                          size: 14,
+                          color: AppColors.amber,
+                        ),
+                        const SizedBox(width: AppSpacing.s6),
+                        Expanded(
+                          child: Text(
+                            warning!,
+                            style: AppTypography.captionV2.copyWith(
+                              color: AppColors.amber,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

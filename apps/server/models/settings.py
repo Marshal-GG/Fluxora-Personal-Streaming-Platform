@@ -81,6 +81,11 @@ class UserSettingsResponse(BaseModel):
     # session_router falls through to the next.  Empty list / None means
     # "use the default chain": [transcoding_encoder, "libx264"].
     transcoding_chain: list[str] | None = None
+    # Plan 19 §M7 — streaming pipeline mode.  `client-decode` (default)
+    # stream-copies AV1 / VP9 sources via fmp4 so modern devices
+    # hardware-decode them.  `server-transcode` is the legacy plan-18
+    # behaviour: server live-transcodes to H.264 before streaming.
+    streaming_mode: Literal["client-decode", "server-transcode"] = "client-decode"
     # General
     language: str = "en"
     auto_start_on_boot: bool = False
@@ -122,6 +127,8 @@ class UpdateSettingsBody(BaseModel):
     # in the registry (validated at the service layer, not here, because
     # the registry isn't a Pydantic-friendly Literal).
     transcoding_chain: list[str] | None = None
+    # Plan 19 §M7 — streaming pipeline mode.
+    streaming_mode: Literal["client-decode", "server-transcode"] | None = None
     # General
     language: str | None = None
     auto_start_on_boot: bool | None = None

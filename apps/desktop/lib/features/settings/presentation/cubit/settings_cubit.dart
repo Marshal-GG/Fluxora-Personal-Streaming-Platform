@@ -36,6 +36,7 @@ class SettingsCubit extends Cubit<SettingsState> {
       String transcodingPreset = 'veryfast';
       int transcodingCrf = 23;
       List<String>? transcodingChain;
+      String streamingMode = 'client-decode';
 
       // §7.10 extended-settings — defaults match `models/settings.py`
       // `UserSettingsResponse` so an offline load + a successful load show
@@ -72,6 +73,7 @@ class SettingsCubit extends Cubit<SettingsState> {
         if (rawChain is List) {
           transcodingChain = rawChain.whereType<String>().toList();
         }
+        streamingMode = data['streaming_mode'] as String? ?? streamingMode;
         defaultLibraryView =
             data['default_library_view'] as String? ?? defaultLibraryView;
         scanLibrariesOnStartup =
@@ -121,6 +123,7 @@ class SettingsCubit extends Cubit<SettingsState> {
         transcodingPreset: transcodingPreset,
         transcodingCrf: transcodingCrf,
         transcodingChain: transcodingChain,
+        streamingMode: streamingMode,
         defaultLibraryView: defaultLibraryView,
         scanLibrariesOnStartup: scanLibrariesOnStartup,
         generateThumbnails: generateThumbnails,
@@ -199,6 +202,9 @@ class SettingsCubit extends Cubit<SettingsState> {
     /// chain so the server falls back to the default; a non-empty list
     /// replaces it.
     List<String>? transcodingChain,
+    /// Plan 19 §M7 — `'client-decode'` or `'server-transcode'`. Null
+    /// means "leave the existing mode unchanged".
+    String? streamingMode,
     // §7.10 extended-settings — every field is optional; omit to leave
     // the server-side value unchanged.
     String? defaultLibraryView,
@@ -269,6 +275,7 @@ class SettingsCubit extends Cubit<SettingsState> {
           'transcoding_preset': ?transcodingPreset,
           'transcoding_crf': ?transcodingCrf,
           'transcoding_chain': ?transcodingChain,
+          'streaming_mode': ?streamingMode,
           // §7.10 extended-settings
           'default_library_view': ?defaultLibraryView,
           'scan_libraries_on_startup': ?scanLibrariesOnStartup,

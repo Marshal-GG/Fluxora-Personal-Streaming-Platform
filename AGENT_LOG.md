@@ -405,3 +405,104 @@ Plan 18 changes uncommitted on top of `5fe519f`. Operator-asked single consolida
 2. **Decide whether to ship M6 (post-scan toast) and M7 (stale-detection on rescan) for v1** or defer to v1.1. Both are listed as deferred in plan 18 right now.
 3. **Watch for the `.webm` source edge case** (Sharp Edge #2 above) — first job that fails on a `.webm` source is the trigger to ship the "force `.mkv` sidecar extension when source is webm" tweak.
 4. **`current_status.md` is still over the 25 k Read-cap.** Carried forward — splitting into per-component files is a future refactor.
+
+---
+
+## [2026-05-09] [server] [desktop] [feat] [fix] [tests] — Plan 19 §M7 client-side decoding default + plan 18 sidecar-metadata-override hotfix
+
+**Phase:** Phase 2 — strategic pivot to client-side decoding for v1 launch + plan-18 real-device test follow-up
+**Status:** Complete (M7 launch-priority milestone). M1-M6 + M8 of plan 19 deferred to v1.1.
+**Commits:** uncommitted
+
+### What Was Done
+
+Two threads, one commit. Both touch `routers/stream.py` + `services/ffmpeg_service.py`; shipping together avoids a half-fix interim state where the sidecar metadata overrides land but the streaming-mode toggle doesn't (or vice versa).
+
+#### 1. Strategic pivot — plan 19 §M7 (launch priority)
+
+Operator real-device test of plan 18 surfaced four pain points in the live-transcode pipeline (4× sized sidecars at default `nvenc cq=19`, side-by-side storage clutter, no path control, no UI feedback). Mid-iteration the strategy reframed: *"we will just launch project currently with client side decoding, priority casue that is more reliable and work with more clients as server load is very low … dont remove the server work code, for now just create a toggle in encoding settings."*
+
+Built **plan 19** as the formal followup roadmap, then immediately elevated **M7 (AV1/VP9 stream-copy + global "Streaming mode" toggle) to launch priority** with M1-M6 + M8 deferred to v1.1.
+
+- **Migration 028** (`028_streaming_mode.sql`) — single column on `user_settings`: `streaming_mode TEXT NOT NULL DEFAULT 'client-decode' CHECK(streaming_mode IN ('client-decode','server-transcode'))`. Default `client-decode` matches launch intent (server CPU near zero from day 1; modern devices hardware-decode).
+- **`services/ffmpeg_service.py`** — `start_stream` reads `streaming_mode` from settings; extends the direct-remux check to AV1 + VP9 when `client-decode`. Uses the existing fmp4 segment path that HEVC already shipped (`-c:v copy -hls_segment_type fmp4 -hls_fmp4_init_filename init.mp4`). `_build_ffmpeg_cmd` gains `direct_remux_av1: bool = False` and `direct_remux_vp9: bool = False` kwargs (default False keeps existing tests green); the local `use_fmp4` derivation extends to fire on AV1 / VP9 too. New `mode=stream-copy(av1/fmp4)` and `mode=stream-copy(vp9/fmp4)` log shapes.
+- **`models/settings.py`** — `UserSettingsResponse.streaming_mode: Literal["client-decode","server-transcode"] = "client-decode"`; `UpdateSettingsBody.streaming_mode: Literal[…] | None = None`.
+- **`services/settings_service.py`** — kwarg + DB-column mapping for `streaming_mode`; default-row stub uses `'client-decode'`.
+- **Desktop** — new `_StreamingModeCard` at the top of the Configuration tab in `EncoderSettingsScreen`. Two radio rows ("Client decodes (recommended)" + "Server transcodes (legacy / mixed device pools)") with body copy + an amber-tinted "Devices older than ~2021 may fail to play AV1 sources" advisory under the recommended option. Custom radio dot (Container with circular border) so we don't churn against Flutter's v3.32 `Radio.groupValue` deprecation. Hooked to `SettingsCubit`'s new `streamingMode` field via the existing PATCH path.
+- **Tests** — `test_stream.py` +3 cases: `test_build_ffmpeg_cmd_stream_copies_av1_when_client_decode`, `_vp9_…`, `_transcodes_av1_when_server_transcode`. Server suite **731 → 734 (+3)**. Desktop unchanged (the new widget is hand-validated; deeper widget tests deferred with the rest of plan 19).
+
+#### 2. Plan 18 sidecar-metadata-override hotfix (real-device follow-up)
+
+Operator's real-device retest of the plan-18 transcode pipeline surfaced that the sidecar swap in `routers/stream.py` was working at the path level (FFmpeg got the sidecar path), but **two adjacent path-based DB lookups inside `start_stream` were missing**:
+- `_resolve_source_metadata(file_path)` queries `media_files WHERE path = ?` — sidecar paths aren't in `media_files`, so it returned `(None, None)` and `source_codec` came back as `<unknown>`. The direct-remux check failed and the file fell into the transcode branch — silent NVENC re-encode of an already-H.264 sidecar back to H.264.
+- The static-VOD-playlist `SELECT duration_sec FROM media_files WHERE path = ?` missed for the same reason — surfaced as "Static VOD playlist skipped — no duration known" in the operator's log; player got the FFmpeg-incremental playlist with no scrubber.
+
+**Fix:** added `source_codec_override: str | None = None` and `duration_sec_override: float | None = None` kwargs to `start_stream` and `restart_stream`. When set, they short-circuit the path-based DB lookups. The router computes both values from the source row's existing fields (`"h264"` because the sidecar is H.264 by construction; `file_row["duration_sec"]` because the sidecar's duration matches the source) and passes them through whenever `transcoded_path` is in use AND the file exists on disk. Same logic mirrored in the seek-restart path.
+
+**Tests:** extended `test_start_stream_uses_transcoded_sidecar_when_present` to assert the overrides reach `start_stream`'s call site; added `test_start_stream_no_overrides_when_no_sidecar` companion. The +3 audit-follow-up TURN tests + the +2 here account for `731 → 734` total.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|--------|------|-----|
+| Created | apps/server/database/migrations/028_streaming_mode.sql | One-column migration: `streaming_mode` enum on `user_settings` |
+| Modified | apps/server/services/ffmpeg_service.py | AV1/VP9 direct-remux check; `_build_ffmpeg_cmd` gains `direct_remux_av1`/`_vp9`; `use_fmp4` extended; new `mode=` log shapes; `start_stream`/`restart_stream` gain `source_codec_override` + `duration_sec_override` |
+| Modified | apps/server/services/settings_service.py | `streaming_mode` kwarg + column mapping + default-row stub |
+| Modified | apps/server/models/settings.py | `streaming_mode` `Literal` field on `UserSettingsResponse` and `UpdateSettingsBody` |
+| Modified | apps/server/routers/stream.py | Sidecar override-kwargs computed in both `/start` and `/seek` paths |
+| Modified | apps/server/tests/test_stream.py | +3 AV1/VP9 cmd-builder tests; +2 sidecar-override regression tests |
+| Modified | apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart | `_StreamingModeCard` + `_StreamingModeOption` widgets at top of Configuration tab; `_streamingMode` state; threaded into `_save` |
+| Modified | apps/desktop/lib/features/settings/presentation/cubit/settings_state.dart | `streamingMode` field + copyWith |
+| Modified | apps/desktop/lib/features/settings/presentation/cubit/settings_cubit.dart | Load + save wiring for `streamingMode` |
+| Modified | docs/10_planning/19_library_transcode_followups.md | Status banner re-baselined to "M7 launch priority"; §3 migration scope shrunk; §7 milestones reordered; §9 simplified to launch decisions; §10 split launch / deferred; §12 TL;DR rewritten |
+| Modified | docs/00_overview/current_status.md | New "(latest) 2026-05-09" lead paragraph for §M7 + sidecar hotfix; per-component server count 730 → 734 |
+| Modified | docs/00_overview/folder_structure.md | 028 row added to migrations |
+| Modified | docs/02_architecture/02_tech_stack.md | Server tests 730 → 734 |
+| Modified | docs/03_data/02_database_schema.md | Migration 028 row in Applied Migrations |
+| Modified | docs/03_data/04_migration_guide.md | File-layout extended to 028; test count refreshed |
+| Modified | docs/04_api/01_api_contracts.md | New `PATCH /settings — streaming_mode field` section |
+| Modified | docs/09_backend/01_backend_architecture.md | `ffmpeg_service.py` row gains §M7 + sidecar override notes; total 730 → 734 |
+| Modified | docs/10_planning/01_roadmap.md | New "Client-side codec passthrough (plan 19 §M7)" row marked ✅ Done; counts refreshed |
+| Modified | docs/10_planning/05_ship_readiness.md | Counts 730 / 104 → 734 / 104 |
+| Modified | CLAUDE.md | "Where the detail lives" gains plan 19 row |
+| Modified | AGENT_LOG.md | This entry |
+
+### Docs Updated
+
+Same as Files Modified above — every `docs/`-prefixed entry plus CLAUDE.md and the AGENT_LOG.
+
+### Decisions Made
+
+- **Default `streaming_mode = 'client-decode'`** matches the operator's stated launch intent. Server CPU near zero from day 1; modern devices "just work"; legacy operators flip to `server-transcode` after seeing one device fail. The settings UI carries an explicit "Older devices may not play AV1 / VP9 directly" warning under the recommended option so the failure mode is set as expectation rather than discovered.
+- **Single global toggle, not per-codec.** AV1 and VP9 flip together. Per-codec granularity (separate `av1_stream_copy_enabled` / `vp9_stream_copy_enabled`) was the original §M7 draft; collapsing to one `streaming_mode` enum is simpler UI and mirrors the operator's mental model. Per-library overrides (M8, deferred) would re-introduce per-codec granularity at the per-library scope when they ship.
+- **Sidecar pickup wins regardless of mode.** If `media_files.transcoded_path` is set + the file exists on disk, the existing H.264 sidecar streams (stream-copy from H.264). Mode only governs what happens when there's no sidecar. Operators who already ran plan-18 jobs don't lose that work when v1 ships with `client-decode` default.
+- **Custom radio dot vs Material `Radio` widget.** Flutter v3.32 deprecated `Radio.groupValue` + `onChanged` in favour of a `RadioGroup` ancestor. The `_StreamingModeCard` uses a hand-built circular `Container` for the visual radio dot + an `InkWell`-wrapped row for the actual selector — avoids the deprecation churn while keeping the visual semantics.
+- **Hot-fix and §M7 ship together as one commit.** Both touch the same `routers/stream.py` and `services/ffmpeg_service.py` paths. Shipping the sidecar-override fix without §M7 would mean an operator on `client-decode` mode would still see live transcode for every AV1 / VP9 file unless they had already run plan-18 jobs on every file individually — defeats the launch-priority intent. Shipping §M7 without the override fix would mean operators who DID run plan-18 jobs would still see transcode-instead-of-stream-copy for those files. Both fixes complete the picture.
+
+### Issues / Sharp Edges Discovered
+
+1. **AV1 / VP9 in fmp4 stream-copy is library/build dependent on the client side.** media_kit / libmpv must be built with AV1 + VP9 decode for the client to actually play these. Modern builds do; older Android / iOS builds may not. Operator-facing knob is the `streaming_mode` toggle — flip to `server-transcode` for legacy device pools. **Repro for next agent:** point an iOS pre-A17 device at a 1080p AV1 source with `streaming_mode='client-decode'`; expected: stream stalls or media_kit raises a "no decoder for codec" error.
+2. **The `direct_remux_av1` and `direct_remux_vp9` defaults of `False` on `_build_ffmpeg_cmd` are deliberate** — the retry path (line 1378) for the cuvid auto-fallback never gets here under stream-copy (retry is gated on `not direct_remux`), so passing the new kwargs there is a no-op. Defaults of `False` mean "treat as transcode," which matches the retry-path semantics.
+3. **`media_files.codec_name` is the canonical column** — plan 18 / plan 19 both query it for codec detection. Pre-migration-016 rows have NULL `codec_name` and won't appear as transcode candidates AND won't be picked up by the AV1/VP9 stream-copy path either. Carried forward from plan 18's known sharp edges.
+4. **Plan 19 deferred milestones are real work for v1.1.** M1 (preset chooser, lower default `cq=19` → `cq=23`) is the highest-priority deferred item — operators who DO opt into transcoding still hit the 4×-bigger sidecar pain immediately. The operator's launch path (`client-decode` default) sidesteps it for AV1/VP9 sources but still bites for true-non-stream-copy sources (MPEG-2/4, ancient codecs).
+
+### Test Counts (re-baselined)
+
+- **Server: 731 → 734 passing** (+3 from `test_stream.py` AV1/VP9 cmd-builder tests; the +2 sidecar override tests landed in the 730 → 731 hot-fix-style run already).
+- **Mobile: 78 passing** (unchanged — plan 19 §M7 has zero mobile changes by design).
+- **Desktop: 104 passing** (unchanged).
+- **Core: 8 passing** (untouched).
+
+`flutter analyze lib/features/transcoding` clean. `ruff check` clean. Server suite ran in 132 s.
+
+### Working-Tree Status
+
+All §M7 + hotfix changes uncommitted on top of `191fe44`. Operator-asked single consolidating commit covering both threads.
+
+### Next Agent Should
+
+1. **Real-device end-to-end test of `client-decode` mode.** Point a modern phone at an AV1 source on a fresh server (post-migration). Server log should say `mode=stream-copy(av1/fmp4) source_codec=av1` and CPU should stay near zero. Compare against the same source on `server-transcode` mode (toggle in Settings → Encoder Settings → Streaming Mode) — should fall back to the plan-18 transcode pipeline.
+2. **Watch for AV1 / VP9 fmp4 playback issues on real devices.** Modern (~2022+) phones / tablets / desktops should hardware-decode both. Older devices may not — that's the documented failure mode behind the `server-transcode` fallback toggle.
+3. **Plan 19 deferred milestones — M1 is highest priority** when the operator round comes back. Lowering the transcode default from `cq=19` to `cq=23` is a one-line change that halves the sidecar size for operators who DO opt into transcoding.
+4. **`_seekRelative` mobile bug** (still carried forward from earlier — double-tap-skip after a forward server-restart still bugged; flagged in the prior AGENT_LOG entry but not yet fixed).
+5. **`current_status.md` is still over the 25 k Read-cap.** Carried forward.

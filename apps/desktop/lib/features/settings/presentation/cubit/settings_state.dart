@@ -24,6 +24,7 @@ final class SettingsLoaded extends SettingsState {
     required this.transcodingPreset,
     required this.transcodingCrf,
     this.transcodingChain,
+    this.streamingMode = 'client-decode',
     // §7.10 extended-settings fields (migration 015 + 023).
     this.defaultLibraryView = 'grid',
     this.scanLibrariesOnStartup = true,
@@ -55,6 +56,12 @@ final class SettingsLoaded extends SettingsState {
   /// default chain" (`[transcodingEncoder, libx264]`). Drives the
   /// EncoderPriorityList widget.
   final List<String>? transcodingChain;
+
+  /// Plan 19 §M7 — streaming pipeline mode. `'client-decode'` (default)
+  /// stream-copies AV1 / VP9 sources via fmp4 so modern devices
+  /// hardware-decode them. `'server-transcode'` is the legacy plan-18
+  /// behaviour (server live-transcodes to H.264 before streaming).
+  final String streamingMode;
 
   // ── §7.10 extended-settings fields (migration 015) ──────────────────────
   // General
@@ -101,6 +108,7 @@ final class SettingsLoaded extends SettingsState {
       transcodingPreset: transcodingPreset,
       transcodingCrf: transcodingCrf,
       transcodingChain: transcodingChain,
+      streamingMode: streamingMode,
       defaultLibraryView: defaultLibraryView,
       scanLibrariesOnStartup: scanLibrariesOnStartup,
       generateThumbnails: generateThumbnails,

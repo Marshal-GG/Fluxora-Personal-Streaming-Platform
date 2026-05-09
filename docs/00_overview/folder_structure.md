@@ -72,7 +72,8 @@ apps/server/
 │       ├── 024_benchmark_history.sql  # benchmark_runs table + idx_benchmark_runs_started_at
 │       ├── 025_groups_v2_content_spaces.sql  # v2 redesign — is_public/icon/color/requires_pin/pin_hash/pin_mode/max_concurrent_streams on groups; time_window_override on group_members; group_pin_grants + group_pin_attempts; manufactures Public; backfills allowed_libraries; auto-adds approved clients to Public
 │       ├── 026_groups_per_client_pins.sql  # M8 hybrid PIN model — pin_model on groups + group_member_pins enrollment ledger
-│       └── 027_transcode_jobs.sql  # plan 18 — transcoded_path / size / at columns on media_files + transcode_jobs queue table
+│       ├── 027_transcode_jobs.sql  # plan 18 — transcoded_path / size / at columns on media_files + transcode_jobs queue table
+│       └── 028_streaming_mode.sql  # plan 19 §M7 — streaming_mode TEXT on user_settings (client-decode default; server-transcode fallback)
 ├── routers/                     # 18 routers
 │   ├── activity.py             # GET /api/v1/activity; validate_token_or_local
 │   ├── auth.py                 # pairing, /clients/me, /clients/me/stats, /clients/me/continue-watching, PATCH /clients/me (M2.5)

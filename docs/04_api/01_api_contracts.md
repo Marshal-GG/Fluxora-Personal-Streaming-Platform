@@ -2375,6 +2375,16 @@ The settings PATCH body gained a `transcoding_chain: list[str] | null` field for
 
 The response's `transcoding_chain` field decodes back to a list (or null). The desktop's `EncoderPriorityList` widget renders + reorders.
 
+### `PATCH /api/v1/settings` — `streaming_mode` field
+Plan 19 §M7 — global streaming-mode toggle. Two values, `Literal['client-decode', 'server-transcode']` (Pydantic-validated; 422 outside).
+
+| Value | Behaviour | Default |
+|-------|-----------|---------|
+| `client-decode` | Server stream-copies AV1 / VP9 sources via fmp4; modern devices hardware-decode. Server CPU near zero. Older devices may not play AV1 sources. | ✅ v1 launch default |
+| `server-transcode` | Server live-transcodes AV1 / VP9 to H.264 before streaming. Works on every device but uses significant CPU/GPU per active stream. | Legacy / mixed device pools |
+
+Stored on `user_settings.streaming_mode` (migration 028). H.264 + HEVC sources stream-copy regardless of mode (the toggle only governs AV1 / VP9). Sidecar pickup wins regardless of mode — files already transcoded via plan 18 keep stream-copying their H.264 sidecar. The desktop's `_StreamingModeCard` (in `EncoderSettingsScreen`) reads + writes this field.
+
 ---
 
 ### `GET /api/v1/logs`
