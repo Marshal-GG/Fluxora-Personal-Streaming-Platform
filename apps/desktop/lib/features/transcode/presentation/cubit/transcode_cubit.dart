@@ -9,10 +9,15 @@ import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_
 
 /// Drives the three-tab Transcode page.
 ///
-/// Polling cadence: every 2 s while the page is mounted, mirroring the
-/// existing TranscodingCubit / SystemStatsCubit pattern.  No WebSocket —
-/// the spec calls out polling explicitly so the desktop stays consistent
-/// with the rest of the live-data screens.
+/// Polling cadence:
+///  - `/jobs` every 2 s (live progress + status flips).
+///  - `/storage` every 5 s (cheap aggregate query — spec calls out the
+///    cadence explicitly so the strip doesn't churn the server's SUM
+///    query 30× a minute).
+///
+/// Both polls run while the page is mounted and stop on close.  No
+/// WebSocket — the desktop is consistent with the rest of the
+/// live-data screens (SystemStats / TranscodingCubit / Clients).
 class TranscodeCubit extends Cubit<TranscodeState> {
   TranscodeCubit({required TranscodeRepository repository})
       : _repository = repository,
@@ -20,25 +25,31 @@ class TranscodeCubit extends Cubit<TranscodeState> {
 
   final TranscodeRepository _repository;
   static final _log = Logger();
-  Timer? _timer;
+  Timer? _jobsTimer;
+  Timer? _storageTimer;
 
-  static const Duration _interval = Duration(seconds: 2);
+  static const Duration _jobsInterval = Duration(seconds: 2);
+  static const Duration _storageInterval = Duration(seconds: 5);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-  /// Fetch once immediately, then start polling /jobs every 2 s.
-  /// /candidates is fetched alongside the first load and on explicit
+  /// Fetch once immediately, then start polling.
+  /// `/candidates` is fetched alongside the first load and on explicit
   /// `loadCandidates()` calls — it doesn't change second-to-second so
   /// hitting it on every poll would waste round trips.
   void start() {
-    if (_timer != null) return;
+    if (_jobsTimer != null) return;
     unawaited(loadCandidates());
-    _timer = Timer.periodic(_interval, (_) => _refreshJobs());
+    unawaited(_refreshStorage());
+    _jobsTimer = Timer.periodic(_jobsInterval, (_) => _refreshJobs());
+    _storageTimer = Timer.periodic(_storageInterval, (_) => _refreshStorage());
   }
 
   void stop() {
-    _timer?.cancel();
-    _timer = null;
+    _jobsTimer?.cancel();
+    _jobsTimer = null;
+    _storageTimer?.cancel();
+    _storageTimer = null;
   }
 
   // ── Public commands ───────────────────────────────────────────────────────
@@ -66,6 +77,13 @@ class TranscodeCubit extends Cubit<TranscodeState> {
           lastFetchAt: DateTime.now().toUtc(),
           busyJobIds: prev is TranscodeLoaded ? prev.busyJobIds : const {},
           busyAction: false,
+          storage: prev is TranscodeLoaded ? prev.storage : null,
+          expandedPaths: prev is TranscodeLoaded
+              ? prev.expandedPaths
+              : const <String>{},
+          queuePreset: prev is TranscodeLoaded
+              ? prev.queuePreset
+              : TranscodePreset.recommended,
         ),
       );
     } catch (e, st) {
@@ -98,6 +116,24 @@ class TranscodeCubit extends Cubit<TranscodeState> {
     selectFiles(next);
   }
 
+  /// Bulk-select / bulk-deselect every leaf under a folder node.
+  /// `leafFileIds` is the recursive flatten of the node's candidates —
+  /// callers (the folder-tree widget) compute it from `_FolderNode.flatten`.
+  ///
+  /// When [select] is true the leaves are added to the current selection
+  /// (preserving any other selected files); when false they are removed.
+  void selectFolder(Iterable<String> leafFileIds, bool select) {
+    final s = state;
+    if (s is! TranscodeLoaded) return;
+    final next = Set<String>.from(s.selectedFileIds);
+    if (select) {
+      next.addAll(leafFileIds);
+    } else {
+      next.removeAll(leafFileIds);
+    }
+    selectFiles(next);
+  }
+
   /// Select every candidate currently visible.
   void selectAll() {
     final s = state;
@@ -112,9 +148,36 @@ class TranscodeCubit extends Cubit<TranscodeState> {
     selectFiles(const <String>{});
   }
 
-  /// POST /queue with the current selection, then refresh jobs so the
-  /// Queue tab shows the freshly enqueued rows immediately instead of
-  /// waiting up to 2 s for the next poll.
+  /// Toggle a folder-tree node's expanded state.
+  void toggleExpanded(String absolutePath) {
+    final s = state;
+    if (s is! TranscodeLoaded) return;
+    final next = Set<String>.from(s.expandedPaths);
+    if (!next.add(absolutePath)) next.remove(absolutePath);
+    emit(s.copyWith(expandedPaths: next));
+  }
+
+  /// Set the default expand-state of every node up-front (Candidates +
+  /// History tabs both call this on first render to expand the top
+  /// level by default).
+  void seedExpanded(Iterable<String> paths) {
+    final s = state;
+    if (s is! TranscodeLoaded) return;
+    if (s.expandedPaths.isNotEmpty) return;
+    emit(s.copyWith(expandedPaths: paths.toSet()));
+  }
+
+  /// Pick a quality preset for the Queue dialog.
+  void setQueuePreset(TranscodePreset preset) {
+    final s = state;
+    if (s is! TranscodeLoaded) return;
+    if (s.queuePreset == preset) return;
+    emit(s.copyWith(queuePreset: preset));
+  }
+
+  /// POST /queue with the current selection and preset, then refresh
+  /// jobs so the Queue tab shows the freshly enqueued rows immediately
+  /// instead of waiting up to 2 s for the next poll.
   Future<void> startTranscode() async {
     final s = state;
     if (s is! TranscodeLoaded) return;
@@ -123,6 +186,7 @@ class TranscodeCubit extends Cubit<TranscodeState> {
     try {
       await _repository.queueJobs(
         fileIds: s.selectedFileIds.toList(),
+        preset: s.queuePreset,
       );
       await _refreshAll();
     } catch (e, st) {
@@ -217,6 +281,24 @@ class TranscodeCubit extends Cubit<TranscodeState> {
       }
     } catch (e, st) {
       _log.w('TranscodeCubit._refreshJobs failed (non-fatal)',
+          error: e, stackTrace: st);
+    }
+  }
+
+  /// Background tick — `/storage`.  Same swallow-and-log pattern as
+  /// `_refreshJobs`; a single failed fetch keeps the previous snapshot
+  /// rather than blanking the strip.
+  Future<void> _refreshStorage() async {
+    if (isClosed) return;
+    try {
+      final storage = await _repository.getStorage();
+      if (isClosed) return;
+      final cur = state;
+      if (cur is TranscodeLoaded) {
+        emit(cur.copyWith(storage: storage));
+      }
+    } catch (e, st) {
+      _log.w('TranscodeCubit._refreshStorage failed (non-fatal)',
           error: e, stackTrace: st);
     }
   }

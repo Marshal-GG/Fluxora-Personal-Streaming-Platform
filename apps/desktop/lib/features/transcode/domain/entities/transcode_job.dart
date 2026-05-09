@@ -57,6 +57,9 @@ class TranscodeJob extends Equatable {
     required this.createdAt,
     required this.startedAt,
     required this.finishedAt,
+    this.outputSizeBytes,
+    this.srcSizeBytes,
+    this.srcPath = '',
   });
 
   final int id;
@@ -78,6 +81,22 @@ class TranscodeJob extends Equatable {
   final int? startedAt;
   final int? finishedAt;
 
+  /// Actual H.264 sidecar size on disk, in bytes.  Set on `done` jobs;
+  /// null on queued / running / failed / cancelled rows.  Used by the
+  /// History tab's per-row "Source → Sidecar" size column to surface
+  /// the actual output (no leading `~`) instead of the queue-time estimate.
+  final int? outputSizeBytes;
+
+  /// Source file size at job-creation time, in bytes.  Server stores
+  /// this on the row so History rows can render the original size even
+  /// after the source has been deleted / moved.  Null when missing.
+  final int? srcSizeBytes;
+
+  /// Absolute path of the source file.  Drives History-tab folder-tree
+  /// grouping (plan 19 §M4).  Falls back to an empty string when an
+  /// older server build doesn't surface it.
+  final String srcPath;
+
   factory TranscodeJob.fromJson(Map<String, dynamic> json) {
     int? readNullableInt(String key) {
       final v = json[key];
@@ -98,6 +117,9 @@ class TranscodeJob extends Equatable {
       createdAt: (json['created_at'] as num).toInt(),
       startedAt: readNullableInt('started_at'),
       finishedAt: readNullableInt('finished_at'),
+      outputSizeBytes: readNullableInt('output_size_bytes'),
+      srcSizeBytes: readNullableInt('src_size_bytes'),
+      srcPath: (json['src_path'] as String?) ?? '',
     );
   }
 
@@ -115,5 +137,8 @@ class TranscodeJob extends Equatable {
         createdAt,
         startedAt,
         finishedAt,
+        outputSizeBytes,
+        srcSizeBytes,
+        srcPath,
       ];
 }

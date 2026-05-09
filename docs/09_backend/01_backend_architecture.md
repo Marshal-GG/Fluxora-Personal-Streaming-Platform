@@ -162,7 +162,7 @@ server/
     ├── test_support_bundle.py     # bundle contents + redaction + `_collect_error` partial-bundle path ✅
     └── test_logs.py               # JSON-line parse, level/source/since/until/q filters, pagination, WS fan-out, localhost + token auth ✅
 
-Total: **734 tests passing** ✅
+Total: **775 tests passing** ✅
 ```
 
 ---

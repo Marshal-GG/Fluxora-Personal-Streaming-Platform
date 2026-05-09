@@ -86,6 +86,13 @@ class UserSettingsResponse(BaseModel):
     # hardware-decode them.  `server-transcode` is the legacy plan-18
     # behaviour: server live-transcodes to H.264 before streaming.
     streaming_mode: Literal["client-decode", "server-transcode"] = "client-decode"
+    # Plan 19 §M2 — transcode storage location chooser.  `dedicated`
+    # nests sidecars under `transcode_cache_root`; `inline` keeps them
+    # next to source under `.fluxora-transcodes/`.  The cache-root
+    # value is the operator-set absolute path or NULL when the worker
+    # should fall back to a server-data-directory sibling.
+    transcode_storage_mode: Literal["dedicated", "inline"] = "dedicated"
+    transcode_cache_root: str | None = None
     # General
     language: str = "en"
     auto_start_on_boot: bool = False
@@ -129,6 +136,11 @@ class UpdateSettingsBody(BaseModel):
     transcoding_chain: list[str] | None = None
     # Plan 19 §M7 — streaming pipeline mode.
     streaming_mode: Literal["client-decode", "server-transcode"] | None = None
+    # Plan 19 §M2 — transcode storage location chooser.  Service-layer
+    # validation enforces `transcode_cache_root` is absolute, writable,
+    # and outside every library root before persisting.
+    transcode_storage_mode: Literal["dedicated", "inline"] | None = None
+    transcode_cache_root: str | None = None
     # General
     language: str | None = None
     auto_start_on_boot: bool | None = None

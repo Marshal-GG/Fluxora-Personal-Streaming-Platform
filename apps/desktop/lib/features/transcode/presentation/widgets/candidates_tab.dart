@@ -11,6 +11,8 @@ import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_candidate.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_cubit.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_state.dart';
+import 'package:fluxora_desktop/features/transcode/presentation/widgets/folder_tree.dart';
+import 'package:fluxora_desktop/features/transcode/presentation/widgets/queue_dialog.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 
 /// Encoder runtime multipliers used to estimate wall-clock duration.
@@ -23,9 +25,10 @@ import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 const double _nvencRealtime = 5.0;
 const double _libx264Realtime = 0.8;
 
-/// Candidates tab — multi-select list of files that need pre-transcoding,
-/// with an aggregate-disk + aggregate-runtime estimator footer and the
-/// `Start transcode` CTA.
+/// Candidates tab — folder-grouped tree of files needing pre-transcode
+/// (plan 19 §M4 replaces the flat list), with an aggregate-disk +
+/// aggregate-runtime estimator footer and the `Start transcode` CTA
+/// that opens the Queue dialog (§M1 + §M5).
 class CandidatesTab extends StatelessWidget {
   const CandidatesTab({super.key});
 
@@ -74,6 +77,11 @@ class _CandidatesView extends StatelessWidget {
     final allSelected = selectedCount == state.candidates.length &&
         selectedCount > 0;
 
+    final root = buildFolderTree<TranscodeCandidate>(
+      leaves: state.candidates,
+      pathOf: (c) => c.path.isEmpty ? c.name : c.path,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -107,21 +115,22 @@ class _CandidatesView extends StatelessWidget {
           ),
         ),
 
-        // ── Rows ───────────────────────────────────────────────────────
+        // ── Folder-grouped tree ────────────────────────────────────────
         FluxCard(
           padding: 0,
-          child: Column(
-            children: [
-              for (var i = 0; i < state.candidates.length; i++)
-                _CandidateRow(
-                  candidate: state.candidates[i],
-                  selected: state.selectedFileIds
-                      .contains(state.candidates[i].fileId),
-                  isFirst: i == 0,
-                  onToggle: () =>
-                      cubit.toggleSelection(state.candidates[i].fileId),
-                ),
-            ],
+          child: FolderTreeView<TranscodeCandidate>(
+            root: root,
+            expandedPaths: state.expandedPaths,
+            onToggleExpanded: cubit.toggleExpanded,
+            idOf: (c) => c.fileId,
+            sizeOf: (c) => c.sizeBytes,
+            selectedIds: state.selectedFileIds,
+            onFolderToggle: cubit.selectFolder,
+            leafBuilder: (ctx, c) => _CandidateRow(
+              candidate: c,
+              selected: state.selectedFileIds.contains(c.fileId),
+              onToggle: () => cubit.toggleSelection(c.fileId),
+            ),
           ),
         ),
 
@@ -139,13 +148,11 @@ class _CandidateRow extends StatefulWidget {
   const _CandidateRow({
     required this.candidate,
     required this.selected,
-    required this.isFirst,
     required this.onToggle,
   });
 
   final TranscodeCandidate candidate;
   final bool selected;
-  final bool isFirst;
   final VoidCallback onToggle;
 
   @override
@@ -167,15 +174,13 @@ class _CandidateRowState extends State<_CandidateRow> {
         child: Container(
           decoration: BoxDecoration(
             color: _hover ? const Color(0x08FFFFFF) : Colors.transparent,
-            border: widget.isFirst
-                ? null
-                : const Border(
-                    top: BorderSide(color: AppColors.borderSubtle),
-                  ),
+            border: const Border(
+              top: BorderSide(color: AppColors.borderSubtle),
+            ),
           ),
           padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.s18,
-            vertical: AppSpacing.s14,
+            vertical: AppSpacing.s10,
           ),
           child: Row(
             children: [
@@ -260,7 +265,6 @@ class _EstimateFooter extends StatelessWidget {
     final selected = state.candidates
         .where((c) => state.selectedFileIds.contains(c.fileId))
         .toList(growable: false);
-    final cubit = context.read<TranscodeCubit>();
 
     final int totalSourceBytes =
         selected.fold<int>(0, (sum, c) => sum + c.sizeBytes);
@@ -290,7 +294,7 @@ class _EstimateFooter extends StatelessWidget {
                 icon: Icons.play_arrow_rounded,
                 onPressed: (selected.isEmpty || state.busyAction)
                     ? null
-                    : cubit.startTranscode,
+                    : () => _launchQueueDialog(context),
                 child: Text(
                   state.busyAction ? 'Queueing…' : 'Start transcode',
                 ),
@@ -320,6 +324,14 @@ class _EstimateFooter extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _launchQueueDialog(BuildContext context) async {
+    final cubit = context.read<TranscodeCubit>();
+    final confirmed = await showQueueDialog(context);
+    if (confirmed == true) {
+      await cubit.startTranscode();
+    }
   }
 }
 

@@ -2955,3 +2955,61 @@ def test_build_ffmpeg_cmd_transcodes_av1_when_server_transcode(tmp_path):
     assert "libx264" in cmd
     cv_idx = cmd.index("-c:v")
     assert cmd[cv_idx + 1] != "copy"
+
+
+# ── Plan 19 §M8 — per-library codec passthrough overrides ─────────────────
+
+
+def test_codec_passthrough_global_client_decode_no_override():
+    """No per-library override + global=client-decode ⇒ stream-copy."""
+    from services.ffmpeg_service import _resolve_codec_passthrough
+
+    settings_row = {"streaming_mode": "client-decode"}
+    library_row = {"av1_stream_copy_override": None, "vp9_stream_copy_override": None}
+    assert _resolve_codec_passthrough(settings_row, library_row, "av1") is True
+    assert _resolve_codec_passthrough(settings_row, library_row, "vp9") is True
+
+
+def test_codec_passthrough_global_server_transcode_no_override():
+    """No per-library override + global=server-transcode ⇒ no stream-copy."""
+    from services.ffmpeg_service import _resolve_codec_passthrough
+
+    settings_row = {"streaming_mode": "server-transcode"}
+    library_row = {"av1_stream_copy_override": None, "vp9_stream_copy_override": None}
+    assert _resolve_codec_passthrough(settings_row, library_row, "av1") is False
+    assert _resolve_codec_passthrough(settings_row, library_row, "vp9") is False
+
+
+def test_codec_passthrough_per_library_override_beats_global_client_decode():
+    """Library override=False under global client-decode ⇒ override wins
+    (transcode AV1 in this library even though the global says copy)."""
+    from services.ffmpeg_service import _resolve_codec_passthrough
+
+    settings_row = {"streaming_mode": "client-decode"}
+    library_row = {"av1_stream_copy_override": 0, "vp9_stream_copy_override": None}
+    assert _resolve_codec_passthrough(settings_row, library_row, "av1") is False
+    # VP9 still inherits the global (None override).
+    assert _resolve_codec_passthrough(settings_row, library_row, "vp9") is True
+
+
+def test_codec_passthrough_per_library_override_beats_global_server_transcode():
+    """Library override=True under global server-transcode ⇒ stream-copy
+    AV1 even though the global says transcode."""
+    from services.ffmpeg_service import _resolve_codec_passthrough
+
+    settings_row = {"streaming_mode": "server-transcode"}
+    library_row = {"av1_stream_copy_override": 1, "vp9_stream_copy_override": None}
+    assert _resolve_codec_passthrough(settings_row, library_row, "av1") is True
+    assert _resolve_codec_passthrough(settings_row, library_row, "vp9") is False
+
+
+def test_codec_passthrough_no_library_row_falls_back_to_global():
+    """Detached file (no library row) ⇒ resolver falls back to the global."""
+    from services.ffmpeg_service import _resolve_codec_passthrough
+
+    assert _resolve_codec_passthrough(
+        {"streaming_mode": "client-decode"}, None, "av1"
+    ) is True
+    assert _resolve_codec_passthrough(
+        {"streaming_mode": "server-transcode"}, None, "vp9"
+    ) is False

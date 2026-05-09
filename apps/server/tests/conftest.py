@@ -29,9 +29,10 @@ def reset_rate_limits():
     """Clear in-memory rate-limit counters so each test gets a clean slate."""
     from routers.auth import limiter as auth_limiter
     from routers.stream import limiter as stream_limiter
+    from routers.transcode import limiter as transcode_limiter
 
-    for lim in (auth_limiter, stream_limiter):
+    for lim in (auth_limiter, stream_limiter, transcode_limiter):
         lim._storage.reset()
     yield
-    for lim in (auth_limiter, stream_limiter):
+    for lim in (auth_limiter, stream_limiter, transcode_limiter):
         lim._storage.reset()

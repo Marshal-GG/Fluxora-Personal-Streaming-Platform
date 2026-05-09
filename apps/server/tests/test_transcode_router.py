@@ -258,6 +258,82 @@ async def test_retry_unknown_job_returns_404(client: AsyncClient):
     assert resp.status_code == 404
 
 
+# ── Plan 19 §M1 — preset field on POST /queue ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_queue_accepts_preset_field(client: AsyncClient, test_db):
+    fid = await _insert_file(test_db, codec="av1")
+    resp = await client.post(
+        "/api/v1/transcode/queue",
+        json={"file_ids": [fid], "preset": "smaller"},
+    )
+    assert resp.status_code == 201
+    job_id = resp.json()["job_ids"][0]
+    async with test_db.execute(
+        "SELECT quality_preset FROM transcode_jobs WHERE id = ?", (job_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["quality_preset"] == "smaller"
+
+
+@pytest.mark.asyncio
+async def test_queue_rejects_unknown_preset_with_422(client: AsyncClient):
+    resp = await client.post(
+        "/api/v1/transcode/queue",
+        json={"file_ids": ["any"], "preset": "ultra"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_queue_default_preset_is_recommended(client: AsyncClient, test_db):
+    fid = await _insert_file(test_db, codec="av1")
+    resp = await client.post(
+        "/api/v1/transcode/queue", json={"file_ids": [fid]}
+    )
+    assert resp.status_code == 201
+    job_id = resp.json()["job_ids"][0]
+    async with test_db.execute(
+        "SELECT quality_preset FROM transcode_jobs WHERE id = ?", (job_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["quality_preset"] == "recommended"
+
+
+# ── Plan 19 §M3 — GET /storage ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_storage_returns_zero_payload_when_empty(client: AsyncClient):
+    resp = await client.get("/api/v1/transcode/storage")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["transcoded_size_bytes"] == 0
+    assert body["transcoded_file_count"] == 0
+    assert body["by_codec"] == {}
+    assert body["storage_mode"] == "dedicated"
+    assert isinstance(body["cache_root"], str) and body["cache_root"]
+    assert "free_bytes_at_cache_root" in body
+
+
+@pytest.mark.asyncio
+async def test_storage_includes_transcoded_rows(client: AsyncClient, test_db):
+    fid = await _insert_file(test_db, codec="av1")
+    await test_db.execute(
+        "UPDATE media_files SET transcoded_path = ?, transcoded_size_bytes = ?"
+        " WHERE id = ?",
+        ("/sidecar/x.h264.mkv", 4_242, fid),
+    )
+    await test_db.commit()
+    resp = await client.get("/api/v1/transcode/storage")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["transcoded_file_count"] == 1
+    assert body["transcoded_size_bytes"] == 4_242
+    assert body["by_codec"]["av1"]["count"] == 1
+
+
 @pytest.mark.asyncio
 async def test_retry_running_job_returns_409(client: AsyncClient, test_db):
     fid = await _insert_file(test_db, codec="av1")

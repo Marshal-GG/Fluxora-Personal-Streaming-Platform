@@ -18,6 +18,7 @@ class TranscodeCandidate extends Equatable {
     required this.videoCodec,
     required this.durationSec,
     required this.estOutputSizeBytes,
+    this.path = '',
   });
 
   final String fileId;
@@ -34,6 +35,13 @@ class TranscodeCandidate extends Equatable {
   /// Server-side estimate of the H.264 output size, in bytes.
   final int estOutputSizeBytes;
 
+  /// Absolute on-disk path of the source file.  Required by the
+  /// folder-grouped tree (plan 19 §M4) — the desktop groups candidates
+  /// by parent directory.  Server populates from `media_files.path`.
+  /// Falls back to an empty string when absent so older server builds
+  /// degrade to a flat list under the synthetic root.
+  final String path;
+
   factory TranscodeCandidate.fromJson(Map<String, dynamic> json) {
     final dynamic dur = json['duration_sec'];
     return TranscodeCandidate(
@@ -44,6 +52,7 @@ class TranscodeCandidate extends Equatable {
       videoCodec: (json['video_codec'] as String).toLowerCase(),
       durationSec: dur == null ? null : (dur as num).toDouble(),
       estOutputSizeBytes: (json['est_output_size_bytes'] as num).toInt(),
+      path: (json['path'] as String?) ?? '',
     );
   }
 
@@ -56,5 +65,6 @@ class TranscodeCandidate extends Equatable {
         videoCodec,
         durationSec,
         estOutputSizeBytes,
+        path,
       ];
 }

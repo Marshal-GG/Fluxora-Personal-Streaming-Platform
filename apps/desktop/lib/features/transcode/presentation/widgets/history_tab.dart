@@ -10,11 +10,16 @@ import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_job.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_cubit.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_state.dart';
+import 'package:fluxora_desktop/features/transcode/presentation/widgets/folder_tree.dart';
+import 'package:fluxora_desktop/features/transcode/presentation/widgets/storage_strip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_glass_menu.dart';
 
-/// History tab — every terminal job (done / failed / cancelled).  Failed
-/// rows expose a Retry button which re-enqueues the job preserving the
-/// original error in the row above.
+/// History tab — every terminal job (done / failed / cancelled), grouped
+/// into a folder tree by source path (plan 19 §M4).  Each row shows the
+/// actual `Source → Sidecar` size column (no leading `~` since this is
+/// the real `output_size_bytes`), a Stored at menu, and a Retry button
+/// for failed rows.
 class HistoryTab extends StatelessWidget {
   const HistoryTab({super.key});
 
@@ -32,17 +37,30 @@ class HistoryTab extends StatelessWidget {
             return tb.compareTo(ta);
           });
         if (jobs.isEmpty) return const _EmptyHistory();
+
+        final root = buildFolderTree<TranscodeJob>(
+          leaves: jobs,
+          // Fallback to file_name when src_path is absent (older server).
+          pathOf: (j) => j.srcPath.isEmpty ? j.fileName : j.srcPath,
+        );
+
         return FluxCard(
           padding: 0,
-          child: Column(
-            children: [
-              for (var i = 0; i < jobs.length; i++)
-                _HistoryRow(
-                  job: jobs[i],
-                  isFirst: i == 0,
-                  busy: state.busyJobIds.contains(jobs[i].id),
-                ),
-            ],
+          child: FolderTreeView<TranscodeJob>(
+            root: root,
+            expandedPaths: state.expandedPaths,
+            onToggleExpanded: context.read<TranscodeCubit>().toggleExpanded,
+            idOf: (j) => j.id.toString(),
+            // History rows surface output bytes — the operator's "did
+            // this actually shrink things?" view.  Falls back to source
+            // bytes when the job didn't complete.
+            sizeOf: (j) => j.outputSizeBytes ?? j.srcSizeBytes ?? 0,
+            // No selection on the History tab — read-only review.
+            showCheckbox: false,
+            leafBuilder: (ctx, j) => _HistoryRow(
+              job: j,
+              busy: state.busyJobIds.contains(j.id),
+            ),
           ),
         );
       },
@@ -53,22 +71,20 @@ class HistoryTab extends StatelessWidget {
 class _HistoryRow extends StatelessWidget {
   const _HistoryRow({
     required this.job,
-    required this.isFirst,
     required this.busy,
   });
 
   final TranscodeJob job;
-  final bool isFirst;
   final bool busy;
 
   @override
   Widget build(BuildContext context) {
     final cubit = context.read<TranscodeCubit>();
     return Container(
-      decoration: BoxDecoration(
-        border: isFirst
-            ? null
-            : const Border(top: BorderSide(color: AppColors.borderSubtle)),
+      decoration: const BoxDecoration(
+        border: Border(
+          top: BorderSide(color: AppColors.borderSubtle),
+        ),
       ),
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.s18,
@@ -97,6 +113,15 @@ class _HistoryRow extends StatelessWidget {
                     color: AppColors.textDim,
                   ),
                 ),
+                if (_sizeColumnText(job).isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.s4),
+                  Text(
+                    _sizeColumnText(job),
+                    style: AppTypography.monoCaption.copyWith(
+                      color: AppColors.textMutedV2,
+                    ),
+                  ),
+                ],
                 if (job.status == TranscodeJobStatus.failed &&
                     job.error != null) ...[
                   const SizedBox(height: AppSpacing.s6),
@@ -114,6 +139,8 @@ class _HistoryRow extends StatelessWidget {
           ),
           const SizedBox(width: AppSpacing.s12),
           _statusChip(job.status),
+          const SizedBox(width: AppSpacing.s8),
+          _StoredAtMenu(outputPath: job.outputPath),
           if (job.status == TranscodeJobStatus.failed) ...[
             const SizedBox(width: AppSpacing.s8),
             FluxButton(
@@ -165,6 +192,94 @@ class _HistoryRow extends StatelessWidget {
   }
 }
 
+/// "Source → Sidecar" — uses the actual `output_size_bytes` (no `~`)
+/// for done jobs; falls back to source-only when output is unknown
+/// (failed / cancelled rows that didn't produce a sidecar).
+String _sizeColumnText(TranscodeJob job) {
+  if (job.srcSizeBytes == null) return '';
+  final src = _formatBytes(job.srcSizeBytes!);
+  if (job.outputSizeBytes != null) {
+    return '$src → ${_formatBytes(job.outputSizeBytes!)}';
+  }
+  return src;
+}
+
+/// Stored-at menu — same widget logic as the Queue tab's, kept inline
+/// here to avoid a cross-tab shared widget that pulls both Queue and
+/// History into the same compilation unit.  Disabled when `output_path`
+/// is null (typical for failed/cancelled rows).
+class _StoredAtMenu extends StatelessWidget {
+  const _StoredAtMenu({required this.outputPath});
+
+  final String? outputPath;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = outputPath != null && outputPath!.isNotEmpty;
+    if (!enabled) {
+      return Tooltip(
+        message: 'No sidecar on disk',
+        child: Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          child: const Icon(
+            Icons.folder_outlined,
+            size: 16,
+            color: AppColors.textFaint,
+          ),
+        ),
+      );
+    }
+    return FluxGlassMenu<String>(
+      width: 200,
+      items: const [
+        FluxGlassMenuItem(
+          value: 'copy',
+          label: 'Copy path',
+          icon: Icons.copy_rounded,
+        ),
+        FluxGlassMenuItem(
+          value: 'open',
+          label: 'Open folder',
+          icon: Icons.open_in_new_rounded,
+        ),
+      ],
+      onSelected: (v) {
+        final messenger = ScaffoldMessenger.of(context);
+        if (v == 'copy') {
+          copyPathToClipboard(outputPath!, messenger: messenger);
+        } else if (v == 'open') {
+          final dir = _parentDir(outputPath!);
+          openPathInFileManager(dir, messenger: messenger);
+        }
+      },
+      child: Tooltip(
+        message: outputPath!,
+        child: Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          child: const Icon(
+            Icons.folder_open_rounded,
+            size: 16,
+            color: AppColors.textBody,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _parentDir(String path) {
+  final norm = path.replaceAll('\\', '/');
+  final idx = norm.lastIndexOf('/');
+  if (idx <= 0) return path;
+  return path.contains('\\')
+      ? path.substring(0, path.lastIndexOf('\\'))
+      : norm.substring(0, idx);
+}
+
 class _EmptyHistory extends StatelessWidget {
   const _EmptyHistory();
 
@@ -204,4 +319,16 @@ class _EmptyHistory extends StatelessWidget {
       ),
     );
   }
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  double v = bytes / 1024;
+  int i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return '${v.toStringAsFixed(v >= 100 ? 0 : 1)} ${units[i]}';
 }

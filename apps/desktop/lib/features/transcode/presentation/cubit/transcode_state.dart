@@ -1,6 +1,8 @@
 import 'package:equatable/equatable.dart';
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_candidate.dart';
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_job.dart';
+import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_storage.dart';
+import 'package:fluxora_desktop/features/transcode/domain/repositories/transcode_repository.dart';
 
 /// Sealed-union state for the Transcode page.  Three variants:
 ///
@@ -30,6 +32,9 @@ final class TranscodeLoaded extends TranscodeState {
     this.lastFetchAt,
     this.busyJobIds = const <int>{},
     this.busyAction = false,
+    this.storage,
+    this.expandedPaths = const <String>{},
+    this.queuePreset = TranscodePreset.recommended,
   });
 
   /// Most recent `/candidates` snapshot.
@@ -52,6 +57,21 @@ final class TranscodeLoaded extends TranscodeState {
   /// True while a `Start transcode` request is in flight.
   final bool busyAction;
 
+  /// Last `/storage` snapshot.  Null until the first poll lands; the
+  /// `_StorageStrip` widget renders a placeholder until then.
+  final TranscodeStorage? storage;
+
+  /// Folder-tree expand state (absolute parent-dir paths that are
+  /// currently expanded).  Survives polls and tab switches because
+  /// the cubit holds it instead of each tab.
+  final Set<String> expandedPaths;
+
+  /// Quality preset selected in the Queue dialog.  Persisted on the
+  /// cubit so closing/reopening the dialog mid-session keeps the last
+  /// pick visible — the operator usually queues several batches at
+  /// the same quality.
+  final TranscodePreset queuePreset;
+
   /// Jobs that are queued or actively running.
   Iterable<TranscodeJob> get activeJobs =>
       jobs.where((j) => j.status.isActive);
@@ -67,6 +87,9 @@ final class TranscodeLoaded extends TranscodeState {
     DateTime? lastFetchAt,
     Set<int>? busyJobIds,
     bool? busyAction,
+    TranscodeStorage? storage,
+    Set<String>? expandedPaths,
+    TranscodePreset? queuePreset,
   }) =>
       TranscodeLoaded(
         candidates: candidates ?? this.candidates,
@@ -75,6 +98,9 @@ final class TranscodeLoaded extends TranscodeState {
         lastFetchAt: lastFetchAt ?? this.lastFetchAt,
         busyJobIds: busyJobIds ?? this.busyJobIds,
         busyAction: busyAction ?? this.busyAction,
+        storage: storage ?? this.storage,
+        expandedPaths: expandedPaths ?? this.expandedPaths,
+        queuePreset: queuePreset ?? this.queuePreset,
       );
 
   @override
@@ -85,6 +111,9 @@ final class TranscodeLoaded extends TranscodeState {
         lastFetchAt,
         busyJobIds,
         busyAction,
+        storage,
+        expandedPaths,
+        queuePreset,
       ];
 }
 

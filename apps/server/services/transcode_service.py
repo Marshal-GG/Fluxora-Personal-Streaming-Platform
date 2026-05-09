@@ -46,12 +46,37 @@ logger = logging.getLogger(__name__)
 
 # ── encoder selection ──────────────────────────────────────────────────────
 
-# Quality presets.  v1 ships a single preset string per encoder so the
-# UI doesn't need to expose a picker.  ``slow_cq19`` and ``slow_crf19``
-# are visually equivalent (~2x source size, transparent on a typical
-# 1080p source).
-_QUALITY_PRESET_NVENC = "slow_cq19"
-_QUALITY_PRESET_LIBX264 = "slow_crf19"
+# Plan 19 §M1 — quality preset chooser (canonical map).  The worker
+# writes the preset name (e.g. ``"recommended"``) onto each
+# ``transcode_jobs`` row and re-translates it into FFmpeg flags here at
+# command-build time.  Lower default (cq=23) than plan 18 shipped with
+# (cq=19) — operator real-device test showed cq=19 produced ~4× the
+# source bytes for typical 2 Mbps AV1; cq=23 lands at ~2× (visually
+# transparent in normal viewing).
+QUALITY_PRESETS: dict[str, dict[str, object]] = {
+    "smaller": {
+        "nvenc_args":   ["-preset", "p4",     "-cq",  "28"],
+        "libx264_args": ["-preset", "medium", "-crf", "28"],
+        "size_multiplier": 1.2,
+    },
+    "recommended": {  # ← plan 19 default
+        "nvenc_args":   ["-preset", "slow", "-cq",  "23"],
+        "libx264_args": ["-preset", "slow", "-crf", "23"],
+        "size_multiplier": 2.0,
+    },
+    "mastering": {
+        "nvenc_args":   ["-preset", "slow", "-cq",  "19"],
+        "libx264_args": ["-preset", "slow", "-crf", "19"],
+        "size_multiplier": 4.0,
+    },
+}
+
+# Default preset name when the queue request omits the field.  The
+# worker also reads existing `transcode_jobs.quality_preset` rows
+# verbatim (no migration of historical values — pre-plan-19 rows keep
+# whatever string they were written with, and the FFmpeg-cmd builder
+# falls through to the recommended map for any unknown name).
+DEFAULT_QUALITY_PRESET = "recommended"
 
 # Output-size estimator — coarse multipliers from §3 of the plan.
 # Used by candidates() so the desktop can render an aggregate disk
@@ -102,28 +127,122 @@ async def _resolve_encoder() -> str:
     return "libx264"
 
 
-def _quality_preset_for(encoder: str) -> str:
-    """Return the canonical preset string we persist on the job row.
+def _resolve_preset_args(preset_name: str | None, encoder: str) -> list[str]:
+    """Return the FFmpeg argv fragment for the requested preset+encoder.
 
-    The string is descriptive only — the FFmpeg cmd builder maps it
-    back to actual flags.  Stored on the job row so the History tab
-    can display "what was actually used" without re-deriving it from
-    the encoder name.
+    Plan 19 §M1 — the worker persists the preset name verbatim on the
+    job row; this helper translates it back into ``-preset … -cq …`` /
+    ``-preset … -crf …`` flags at command-build time.
+
+    Pre-plan-19 rows can carry the legacy strings ``slow_cq19`` /
+    ``slow_crf19``; both map to the ``mastering`` preset (cq=19 /
+    crf=19) so historical jobs keep their behaviour after the upgrade.
+    Unknown preset names fall through to ``recommended`` with a
+    warning — better to encode at a sensible default than to fail
+    every queued job because of a typo.
     """
-    if encoder == "h264_nvenc":
-        return _QUALITY_PRESET_NVENC
-    return _QUALITY_PRESET_LIBX264
+    legacy_aliases = {
+        "slow_cq19": "mastering",
+        "slow_crf19": "mastering",
+    }
+    name = preset_name or DEFAULT_QUALITY_PRESET
+    name = legacy_aliases.get(name, name)
+    preset = QUALITY_PRESETS.get(name)
+    if preset is None:
+        logger.warning(
+            "transcode: unknown quality preset %r — falling back to %s",
+            preset_name,
+            DEFAULT_QUALITY_PRESET,
+        )
+        preset = QUALITY_PRESETS[DEFAULT_QUALITY_PRESET]
+
+    key = "nvenc_args" if encoder == "h264_nvenc" else "libx264_args"
+    args = preset[key]
+    # Defensive copy so callers can't mutate the module-level dict.
+    return list(args)  # type: ignore[arg-type]
 
 
-def _sidecar_path(source_path: str) -> Path:
-    """Return the sidecar path for ``source_path``.
+def _default_cache_root() -> Path:
+    """Plan 19 §M2 — fallback cache root when settings carry NULL.
 
-    ``Avicii.mkv`` -> ``Avicii.h264.mkv``.  Lives next to the source
-    so the operator's existing backup tooling follows it naturally
-    and removing the source removes the sidecar at the same time.
+    Resolves to a sibling of the SQLite DB inside the platform-correct
+    data directory.  Never the C: drive default user profile — that
+    would silently fill the OS volume on a Windows server with
+    multiple drives mounted.
     """
-    src = Path(source_path)
-    return src.with_name(f"{src.stem}.h264{src.suffix}")
+    from config import settings
+
+    return Path(settings.fluxora_db_path).parent / "transcodes"
+
+
+def _sidecar_path(
+    file_row: aiosqlite.Row | dict,
+    settings_row: dict | None = None,
+    library_row: dict | None = None,
+) -> Path:
+    """Return the H.264 sidecar path for ``file_row`` per plan 19 §M2.
+
+    Two storage modes:
+
+    * ``"dedicated"`` (default) — sidecars live under
+      ``<cache_root>/<library_name>/<rel_source_path>/<basename>.h264.<ext>``
+      so the operator can rm one tree to free space without scanning
+      per-file across their library volumes.
+    * ``"inline"`` — sidecars live in a hidden
+      ``.fluxora-transcodes`` subfolder next to the source so existing
+      backup tooling follows them naturally.  Both modes always nest
+      (loose side-by-side dropped in plan-19 after the real-device
+      test showed it cluttered library views).
+
+    M6 — ``.webm`` sources can't carry H.264 in the WebM container
+    (HLS / fmp4 stream-copy of a WebM-muxed H.264 sidecar would
+    refuse), so the sidecar extension is force-overridden to ``.mkv``.
+    """
+    src_str = file_row["path"] if not isinstance(file_row, dict) else file_row["path"]
+    src = Path(src_str)
+    basename = src.stem
+    src_ext = src.suffix.lower()
+    # M6 #19 — webm container can't host H.264; fall back to Matroska.
+    ext = ".mkv" if src_ext == ".webm" else src.suffix
+
+    settings_row = settings_row or {}
+    mode = settings_row.get("transcode_storage_mode") or "dedicated"
+
+    if mode == "inline":
+        cache_dir = src.parent / ".fluxora-transcodes"
+    else:
+        cache_root_str = settings_row.get("transcode_cache_root")
+        cache_root = Path(cache_root_str) if cache_root_str else _default_cache_root()
+        # Mirror the source's directory hierarchy under the cache
+        # root so the operator browsing the cache sees the same tree
+        # shape they're used to.
+        rel: Path = Path(".")
+        if library_row is not None:
+            roots: list[str] = []
+            raw_roots = library_row.get("root_paths")
+            if isinstance(raw_roots, list):
+                roots = [str(r) for r in raw_roots]
+            elif isinstance(raw_roots, str):
+                try:
+                    import json as _json
+
+                    decoded = _json.loads(raw_roots)
+                    if isinstance(decoded, list):
+                        roots = [str(r) for r in decoded]
+                except (TypeError, ValueError):
+                    roots = []
+            for root_str in roots:
+                try:
+                    rel = src.parent.relative_to(Path(root_str))
+                    break
+                except ValueError:
+                    continue
+        lib_name = (
+            library_row.get("name") if library_row else None
+        ) or "library"
+        cache_dir = cache_root / lib_name / rel
+
+    return cache_dir / f"{basename}.h264{ext}"
 
 
 def _est_output_size(codec: str | None, size_bytes: int) -> int:
@@ -218,6 +337,7 @@ async def queue(
     db: aiosqlite.Connection,
     file_ids: list[str],
     encoder: str | None = None,
+    preset: str | None = None,
 ) -> list[int]:
     """Enqueue transcode jobs for the given file ids.
 
@@ -226,6 +346,12 @@ async def queue(
     quietly — caller reconciles via ``GET /jobs``).  Validates each
     file is a real AV1/VP9 candidate; the first invalid id raises
     ``ValueError`` which the router converts to 400.
+
+    Plan 19 §M1 — ``preset`` selects the quality / size trade-off
+    (``smaller`` / ``recommended`` / ``mastering``).  Defaults to
+    ``recommended`` when omitted.  Persisted verbatim on each
+    ``transcode_jobs`` row; the worker re-reads it at command-build
+    time and translates via ``QUALITY_PRESETS``.
     """
     # De-dupe the input list while preserving order.  ``set()`` would
     # lose order, which would scramble the returned ``job_ids`` list
@@ -239,7 +365,12 @@ async def queue(
         deduped.append(fid)
 
     chosen_encoder = encoder or await _resolve_encoder()
-    preset = _quality_preset_for(chosen_encoder)
+    chosen_preset = preset or DEFAULT_QUALITY_PRESET
+    if chosen_preset not in QUALITY_PRESETS:
+        raise ValueError(
+            f"unknown quality preset: {chosen_preset!r} "
+            f"(must be one of {', '.join(sorted(QUALITY_PRESETS))})"
+        )
     now = int(time.time())
 
     job_ids: list[int] = []
@@ -260,7 +391,7 @@ async def queue(
                  progress_pct, created_at)
             VALUES (?, 'h264', ?, ?, 'queued', 0.0, ?)
             """,
-            (fid, chosen_encoder, preset, now),
+            (fid, chosen_encoder, chosen_preset, now),
         )
         job_ids.append(int(cur.lastrowid))
     if job_ids:
@@ -532,7 +663,64 @@ async def _recover_orphan_running_jobs(db: aiosqlite.Connection) -> int:
     """On boot, mark any ``running`` rows from a previous server run
     as failed so the worker doesn't think a long-dead PID still owns
     them.  Runs *before* ``_worker_loop`` accepts new work.
+
+    Plan 19 §M6 — also unlink partial sidecar outputs so a half-encoded
+    file from a crashed run isn't left occupying disk space (and isn't
+    picked up by a follow-up retry as if it were complete).  Best-effort
+    — if the file is gone or unreadable we ignore and keep going.
     """
+    from services import library_service, settings_service
+
+    # Snapshot the orphan set before the bulk UPDATE so we can iterate
+    # them for the partial-output cleanup pass.
+    orphan_rows: list[aiosqlite.Row] = []
+    async with db.execute(
+        "SELECT id, file_id FROM transcode_jobs WHERE status = 'running'"
+    ) as cur:
+        orphan_rows = list(await cur.fetchall())
+
+    settings_row = await settings_service.get_settings(db) if orphan_rows else {}
+    for row in orphan_rows:
+        file_id = row["file_id"]
+        if not file_id:
+            continue
+        async with db.execute(
+            "SELECT * FROM media_files WHERE id = ?", (file_id,)
+        ) as cur:
+            file_row = await cur.fetchone()
+        if file_row is None:
+            continue
+        library_row: dict | None = None
+        if file_row["library_id"]:
+            library_row = await library_service.get_library(
+                db, file_row["library_id"]
+            )
+        try:
+            partial = _sidecar_path(file_row, settings_row, library_row)
+        except Exception:
+            logger.debug(
+                "crash-recovery: could not derive sidecar path for job %s",
+                row["id"],
+                exc_info=True,
+            )
+            continue
+        try:
+            partial.unlink()
+            logger.info(
+                "crash-recovery: removed partial sidecar %s (job=%s)",
+                partial,
+                row["id"],
+            )
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning(
+                "crash-recovery: could not unlink partial sidecar %s (job=%s)",
+                partial,
+                row["id"],
+                exc_info=True,
+            )
+
     now = int(time.time())
     result = await db.execute(
         """
@@ -645,12 +833,19 @@ async def _run_job(db: aiosqlite.Connection, job_row: aiosqlite.Row) -> None:
        written by ``cancel()`` but this branch handles
        ``stop_worker()`` shutdowns).
     """
+    from services import library_service, settings_service
+
     job_id = int(job_row["id"])
     file_id = job_row["file_id"]
     encoder = job_row["encoder"]
+    preset_name = (
+        job_row["quality_preset"]
+        if "quality_preset" in job_row.keys()
+        else None
+    )
 
     async with db.execute(
-        "SELECT path, duration_sec FROM media_files WHERE id = ?", (file_id,)
+        "SELECT * FROM media_files WHERE id = ?", (file_id,)
     ) as cur:
         file_row = await cur.fetchone()
     if file_row is None:
@@ -661,7 +856,22 @@ async def _run_job(db: aiosqlite.Connection, job_row: aiosqlite.Row) -> None:
     duration_sec: float | None = (
         float(file_row["duration_sec"]) if file_row["duration_sec"] else None
     )
-    output_path = _sidecar_path(source_path)
+
+    # Plan 19 §M2 — sidecar location is settings-driven.  The worker
+    # consults user_settings + the source's library at job-start so
+    # operator changes between queue and run propagate naturally.
+    settings_row = await settings_service.get_settings(db)
+    library_row: dict | None = None
+    if file_row["library_id"]:
+        library_row = await library_service.get_library(db, file_row["library_id"])
+    output_path = _sidecar_path(file_row, settings_row, library_row)
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        await _mark_failed(
+            db, job_id, error=f"cannot create sidecar parent dir: {exc}"
+        )
+        return
 
     # output_path_collision — fail loudly rather than overwrite a
     # mystery file the operator left next to the source.
@@ -690,6 +900,7 @@ async def _run_job(db: aiosqlite.Connection, job_row: aiosqlite.Row) -> None:
         output_path=str(output_path),
         encoder=encoder,
         source_audio_codec=audio_codec_name,
+        preset_name=preset_name,
     )
 
     logger.info(
@@ -743,12 +954,20 @@ async def _run_job(db: aiosqlite.Connection, job_row: aiosqlite.Row) -> None:
             size_bytes = output_path.stat().st_size
         except OSError:
             size_bytes = 0
+        # Plan 19 §M6 — capture source mtime alongside the sidecar so
+        # subsequent library scans can detect "source was overwritten
+        # since transcode" and clear the stale `transcoded_path` row.
+        try:
+            source_mtime = int(Path(source_path).stat().st_mtime)
+        except OSError:
+            source_mtime = None
         await _mark_done(
             db,
             job_id,
             file_id=file_id,
             output_path=str(output_path),
             output_size_bytes=size_bytes,
+            source_mtime=source_mtime,
         )
         logger.info(
             "transcode job %s done: %s (%d bytes)",
@@ -777,12 +996,15 @@ def _build_ffmpeg_cmd(
     output_path: str,
     encoder: str,
     source_audio_codec: str | None,
+    preset_name: str | None = None,
 ) -> list[str]:
     """Return the argv for the FFmpeg encode.
 
-    Encoder flags follow §4.5 of the plan:
-    NVENC -> ``-preset slow -cq 19 -profile:v high -pix_fmt yuv420p``
-    libx264 -> ``-preset slow -crf 19 -profile:v high -pix_fmt yuv420p``
+    Plan 19 §M1 — encoder flags come from ``QUALITY_PRESETS[preset_name]``
+    so the operator's preset choice (``smaller`` / ``recommended`` /
+    ``mastering``) actually changes the produced bytes.  Common
+    quality-irrelevant flags (``-profile:v high -pix_fmt yuv420p``)
+    stay the same across presets.
 
     Audio: ``-c:a copy`` when the source is AAC, else re-encode to
     AAC 192k.
@@ -803,21 +1025,8 @@ def _build_ffmpeg_cmd(
         "-c:v",
         encoder,
     ]
-    if encoder == "h264_nvenc":
-        cmd += [
-            "-preset", "slow",
-            "-cq", "19",
-            "-profile:v", "high",
-            "-pix_fmt", "yuv420p",
-        ]
-    else:
-        # libx264 (or any other unknown encoder gets the software flags).
-        cmd += [
-            "-preset", "slow",
-            "-crf", "19",
-            "-profile:v", "high",
-            "-pix_fmt", "yuv420p",
-        ]
+    cmd += _resolve_preset_args(preset_name, encoder)
+    cmd += ["-profile:v", "high", "-pix_fmt", "yuv420p"]
 
     if source_audio_codec == "aac":
         cmd += ["-c:a", "copy"]
@@ -974,6 +1183,7 @@ async def _mark_done(
     file_id: str,
     output_path: str,
     output_size_bytes: int,
+    source_mtime: int | None = None,
 ) -> None:
     now = int(time.time())
     await db.execute(
@@ -981,10 +1191,11 @@ async def _mark_done(
         UPDATE media_files
            SET transcoded_path = ?,
                transcoded_size_bytes = ?,
-               transcoded_at = ?
+               transcoded_at = ?,
+               transcoded_source_mtime = ?
          WHERE id = ?
         """,
-        (output_path, output_size_bytes, now, file_id),
+        (output_path, output_size_bytes, now, source_mtime, file_id),
     )
     await db.execute(
         """
@@ -1001,6 +1212,78 @@ async def _mark_done(
     await db.commit()
 
 
+async def storage_aggregate(db: aiosqlite.Connection) -> dict:
+    """Plan 19 §M3 — aggregate transcode-cache metrics for the storage strip.
+
+    Returns a dict suitable for ``TranscodeStorageResponse`` (the
+    router decorates / coerces).  Cheap query: one SUM, one COUNT,
+    grouped per source codec, plus ``shutil.disk_usage`` on the
+    resolved cache root.
+    """
+    import shutil as _shutil
+
+    from services import settings_service
+
+    settings_row = await settings_service.get_settings(db)
+    storage_mode = settings_row.get("transcode_storage_mode") or "dedicated"
+    cache_root_str = settings_row.get("transcode_cache_root")
+    cache_root = (
+        Path(cache_root_str) if cache_root_str else _default_cache_root()
+    )
+    # Don't fail the response if the cache root isn't yet on disk —
+    # the strip should render zeros and a "click to create" affordance,
+    # not a 500.  Walk up to the first existing parent for the
+    # disk_usage call.
+    probe = cache_root
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        free_bytes = _shutil.disk_usage(probe).free
+    except OSError:
+        free_bytes = 0
+
+    async with db.execute(
+        """
+        SELECT
+            COUNT(*) AS file_count,
+            COALESCE(SUM(transcoded_size_bytes), 0) AS total_bytes
+          FROM media_files
+         WHERE transcoded_path IS NOT NULL
+        """
+    ) as cur:
+        agg_row = await cur.fetchone()
+    file_count = int(agg_row["file_count"] or 0) if agg_row else 0
+    total_bytes = int(agg_row["total_bytes"] or 0) if agg_row else 0
+
+    by_codec: dict[str, dict[str, int]] = {}
+    async with db.execute(
+        """
+        SELECT
+            LOWER(COALESCE(codec_name, '')) AS codec,
+            COUNT(*) AS cnt,
+            COALESCE(SUM(transcoded_size_bytes), 0) AS bytes
+          FROM media_files
+         WHERE transcoded_path IS NOT NULL
+         GROUP BY LOWER(COALESCE(codec_name, ''))
+        """
+    ) as cur:
+        async for r in cur:
+            codec = r["codec"] or "unknown"
+            by_codec[codec] = {
+                "count": int(r["cnt"] or 0),
+                "bytes": int(r["bytes"] or 0),
+            }
+
+    return {
+        "cache_root": str(cache_root),
+        "storage_mode": storage_mode,
+        "transcoded_size_bytes": total_bytes,
+        "transcoded_file_count": file_count,
+        "free_bytes_at_cache_root": int(free_bytes),
+        "by_codec": by_codec,
+    }
+
+
 __all__ = [
     "candidates",
     "queue",
@@ -1010,4 +1293,7 @@ __all__ = [
     "retry",
     "start_worker",
     "stop_worker",
+    "storage_aggregate",
+    "QUALITY_PRESETS",
+    "DEFAULT_QUALITY_PRESET",
 ]

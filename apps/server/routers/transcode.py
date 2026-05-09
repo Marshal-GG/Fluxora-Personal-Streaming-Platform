@@ -30,6 +30,7 @@ from models.transcode import (
     TranscodeQueueRequest,
     TranscodeQueueResponse,
     TranscodeRetryResponse,
+    TranscodeStorageResponse,
 )
 from routers.deps import validate_token_or_local
 from services import transcode_service
@@ -79,12 +80,33 @@ async def queue_jobs(
       created ids.
     """
     try:
-        job_ids = await transcode_service.queue(db, body.file_ids)
+        job_ids = await transcode_service.queue(
+            db, body.file_ids, preset=body.preset
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
     return TranscodeQueueResponse(job_ids=job_ids)
+
+
+# ── GET /api/v1/transcode/storage ──────────────────────────────────────────
+
+
+@router.get("/storage", response_model=TranscodeStorageResponse)
+async def get_storage(
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> TranscodeStorageResponse:
+    """Plan 19 §M3 — aggregate transcode-cache disk usage.
+
+    Polled by the desktop's storage-strip widget every 5 s while the
+    Transcode screen is mounted, so the query stays cheap (one SUM,
+    one COUNT, grouped per source codec, plus a single
+    ``shutil.disk_usage`` syscall).
+    """
+    payload = await transcode_service.storage_aggregate(db)
+    return TranscodeStorageResponse(**payload)
 
 
 # ── GET /api/v1/transcode/jobs ─────────────────────────────────────────────

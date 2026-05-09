@@ -1,6 +1,7 @@
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_candidate.dart';
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_job.dart';
+import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_storage.dart';
 import 'package:fluxora_desktop/features/transcode/domain/repositories/transcode_repository.dart';
 
 /// Concrete impl over [ApiClient] — paths live here rather than in
@@ -15,11 +16,13 @@ class TranscodeRepositoryImpl implements TranscodeRepository {
   final ApiClient _apiClient;
 
   // ── Path constants — mirror the spec in
-  //    docs/10_planning/18_library_transcode_plan.md §4.2.
+  //    docs/10_planning/18_library_transcode_plan.md §4.2 +
+  //    docs/10_planning/19_library_transcode_followups.md §M3 (/storage).
   static const String _base = '/api/v1/transcode';
   static const String _candidates = '$_base/candidates';
   static const String _queue = '$_base/queue';
   static const String _jobs = '$_base/jobs';
+  static const String _storage = '$_base/storage';
   static String _job(int id) => '$_base/jobs/$id';
   static String _jobRetry(int id) => '$_base/jobs/$id/retry';
 
@@ -36,9 +39,11 @@ class TranscodeRepositoryImpl implements TranscodeRepository {
   @override
   Future<List<int>> queueJobs({
     required List<String> fileIds,
+    TranscodePreset? preset,
     String? encoder,
   }) {
     final body = <String, dynamic>{'file_ids': fileIds};
+    if (preset != null) body['preset'] = preset.wireValue;
     if (encoder != null) body['encoder'] = encoder;
     return _apiClient.post<List<int>>(
       _queue,
@@ -69,6 +74,13 @@ class TranscodeRepositoryImpl implements TranscodeRepository {
           .toList(),
     );
   }
+
+  @override
+  Future<TranscodeStorage> getStorage() => _apiClient.get<TranscodeStorage>(
+        _storage,
+        fromJson: (data) =>
+            TranscodeStorage.fromJson(data as Map<String, dynamic>),
+      );
 
   @override
   Future<void> cancelJob(int jobId) => _apiClient.delete(_job(jobId));

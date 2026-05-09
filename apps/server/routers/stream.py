@@ -112,6 +112,16 @@ async def start_stream(
             status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
         )
 
+    # Plan 19 §M8 — fetch the library row so per-library codec
+    # passthrough overrides reach `ffmpeg_service.start_stream`.  The
+    # row is None when the file is detached from any library (legacy
+    # data); the resolver falls back cleanly to the global setting.
+    library_row: dict | None = None
+    if file_row.get("library_id"):
+        library_row = await library_service.get_library(
+            db, file_row["library_id"]
+        )
+
     # Library transcode plan (docs/10_planning/18_library_transcode_plan.md):
     # if a pre-transcoded H.264 sidecar exists for this file, route
     # FFmpeg at it instead of the original source.  The sidecar is
@@ -251,6 +261,7 @@ async def start_stream(
             seek_sec=resolved_seek_sec,
             source_codec_override=sidecar_codec_override,
             duration_sec_override=sidecar_duration_override,
+            library_row=library_row,
         )
     except FileNotFoundError as exc:
         raise HTTPException(
@@ -461,6 +472,14 @@ async def seek_stream(
             detail="Source file no longer exists",
         )
 
+    # Plan 19 §M8 — same library-row plumbing as /start so the seek
+    # restart preserves the per-library codec passthrough decision.
+    library_row: dict | None = None
+    if file_row.get("library_id"):
+        library_row = await library_service.get_library(
+            db, file_row["library_id"]
+        )
+
     # Library transcode: prefer the H.264 sidecar if one exists.  Mirrors
     # the playback_path resolution in /start so a session that began on
     # the sidecar continues to use the sidecar after seek-restart, AND
@@ -493,6 +512,7 @@ async def seek_stream(
             tonemap_hdr=tonemap,
             source_codec_override=sidecar_codec_override,
             duration_sec_override=sidecar_duration_override,
+            library_row=library_row,
         )
     except FileNotFoundError as exc:
         raise HTTPException(

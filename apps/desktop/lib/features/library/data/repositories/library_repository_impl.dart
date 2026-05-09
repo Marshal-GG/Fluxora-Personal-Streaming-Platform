@@ -3,6 +3,7 @@ import 'package:fluxora_core/entities/library.dart';
 import 'package:fluxora_core/entities/media_file.dart';
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/network/endpoints.dart';
+import 'package:fluxora_desktop/features/library/domain/entities/library.dart' as desktop;
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 
 class LibraryRepositoryImpl implements LibraryRepository {
@@ -12,12 +13,28 @@ class LibraryRepositoryImpl implements LibraryRepository {
   final ApiClient _apiClient;
 
   @override
-  Future<List<Library>> getLibraries() => _apiClient.get<List<Library>>(
+  Future<LibrariesPayload> getLibrariesWithOverrides() =>
+      _apiClient.get<LibrariesPayload>(
         Endpoints.library,
-        fromJson: (data) => (data as List<dynamic>)
-            .map((e) => Library.fromJson(e as Map<String, dynamic>))
-            .toList(),
+        fromJson: (data) {
+          final list = (data as List<dynamic>);
+          final libraries = <Library>[];
+          final overrides = <String, desktop.LibraryCodecOverrides>{};
+          for (final raw in list) {
+            final json = raw as Map<String, dynamic>;
+            libraries.add(Library.fromJson(json));
+            overrides[json['id'] as String] =
+                desktop.LibraryCodecOverrides.fromJson(json);
+          }
+          return (libraries: libraries, overrides: overrides);
+        },
       );
+
+  @override
+  Future<List<Library>> getLibraries() async {
+    final payload = await getLibrariesWithOverrides();
+    return payload.libraries;
+  }
 
   @override
   Future<List<MediaFile>> getFiles({String? libraryId}) =>
@@ -43,10 +60,20 @@ class LibraryRepositoryImpl implements LibraryRepository {
     required String libraryId,
     String? name,
     List<String>? rootPaths,
+    LibraryOverrideUpdate? av1Override,
+    LibraryOverrideUpdate? vp9Override,
   }) {
     final body = <String, dynamic>{};
     if (name != null) body['name'] = name;
     if (rootPaths != null) body['root_paths'] = rootPaths;
+    if (av1Override != null) {
+      final wire = overrideUpdateWireValue(av1Override);
+      if (wire.included) body['av1_stream_copy_override'] = wire.value;
+    }
+    if (vp9Override != null) {
+      final wire = overrideUpdateWireValue(vp9Override);
+      if (wire.included) body['vp9_stream_copy_override'] = wire.value;
+    }
     return _apiClient.patch<Library>(
       '${Endpoints.library}/$libraryId',
       body: body,
@@ -55,8 +82,16 @@ class LibraryRepositoryImpl implements LibraryRepository {
   }
 
   @override
-  Future<void> deleteLibrary(String libraryId) =>
-      _apiClient.delete('${Endpoints.library}/$libraryId');
+  Future<void> deleteLibrary(
+    String libraryId, {
+    bool deleteSidecars = true,
+  }) =>
+      // ApiClient.delete doesn't expose a query-param hook so we build the
+      // URL by hand.  The boolean is wire-explicit on the server side
+      // (see plan 19 §M8).
+      _apiClient.delete(
+        '${Endpoints.library}/$libraryId?delete_sidecars=$deleteSidecars',
+      );
 
   @override
   Future<int> scanLibrary(String libraryId) => _apiClient.post<int>(

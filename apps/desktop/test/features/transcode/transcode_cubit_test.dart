@@ -4,9 +4,11 @@ import 'package:mocktail/mocktail.dart';
 
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_candidate.dart';
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_job.dart';
+import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_storage.dart';
 import 'package:fluxora_desktop/features/transcode/domain/repositories/transcode_repository.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_cubit.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_state.dart';
+import 'package:fluxora_desktop/features/transcode/presentation/widgets/folder_tree.dart';
 
 class _MockRepo extends Mock implements TranscodeRepository {}
 
@@ -22,6 +24,7 @@ void main() {
     videoCodec: 'av1',
     durationSec: 190,
     estOutputSizeBytes: 120 * 1024 * 1024,
+    path: 'D:/Music/Videos/Avicii - The Nights.mkv',
   );
 
   const candidateVp9 = TranscodeCandidate(
@@ -32,6 +35,18 @@ void main() {
     videoCodec: 'vp9',
     durationSec: 5400,
     estOutputSizeBytes: 1200 * 1024 * 1024,
+    path: 'D:/Movies/2010s/Old Movie.webm',
+  );
+
+  const candidateSibling = TranscodeCandidate(
+    fileId: 'file-3',
+    name: 'Another.mkv',
+    libraryId: 'lib-1',
+    sizeBytes: 200 * 1024 * 1024,
+    videoCodec: 'av1',
+    durationSec: 600,
+    estOutputSizeBytes: 400 * 1024 * 1024,
+    path: 'D:/Movies/2010s/Another.mkv',
   );
 
   const runningJob = TranscodeJob(
@@ -64,8 +79,20 @@ void main() {
     finishedAt: 1700000180,
   );
 
+  const fakeStorage = TranscodeStorage(
+    cacheRoot: 'D:\\Fluxora\\transcodes',
+    storageMode: 'dedicated',
+    transcodedSizeBytes: 5832019712,
+    transcodedFileCount: 12,
+    freeBytesAtCacheRoot: 909521817600,
+    byCodec: {},
+  );
+
   setUp(() {
     repo = _MockRepo();
+    // Storage is fetched on every start() — stub it by default so any
+    // test that exercises the timer path has a value to return.
+    when(() => repo.getStorage()).thenAnswer((_) async => fakeStorage);
   });
 
   TranscodeCubit buildCubit() => TranscodeCubit(repository: repo);
@@ -100,7 +127,9 @@ void main() {
         isA<TranscodeLoaded>()
             .having((s) => s.candidates.length, 'candidates length', 2)
             .having((s) => s.jobs, 'jobs', isEmpty)
-            .having((s) => s.selectedFileIds, 'no selection', isEmpty),
+            .having((s) => s.selectedFileIds, 'no selection', isEmpty)
+            .having((s) => s.queuePreset, 'default preset',
+                TranscodePreset.recommended),
       ],
     );
 
@@ -199,14 +228,110 @@ void main() {
       act: (cubit) => cubit.selectFiles({'file-1'}),
       expect: () => <TranscodeState>[],
     );
+
+    blocTest<TranscodeCubit, TranscodeState>(
+      'selectFolder adds every leaf id under the folder',
+      build: () => buildCubit(),
+      seed: () => const TranscodeLoaded(
+        candidates: [candidateAv1, candidateVp9, candidateSibling],
+        jobs: <TranscodeJob>[],
+      ),
+      act: (cubit) =>
+          cubit.selectFolder(['file-2', 'file-3'], true),
+      expect: () => [
+        isA<TranscodeLoaded>().having(
+          (s) => s.selectedFileIds,
+          'folder-toggled selection',
+          {'file-2', 'file-3'},
+        ),
+      ],
+    );
+
+    blocTest<TranscodeCubit, TranscodeState>(
+      'selectFolder with select=false strips just the folder leaves',
+      build: () => buildCubit(),
+      seed: () => const TranscodeLoaded(
+        candidates: [candidateAv1, candidateVp9, candidateSibling],
+        jobs: <TranscodeJob>[],
+        selectedFileIds: {'file-1', 'file-2', 'file-3'},
+      ),
+      act: (cubit) =>
+          cubit.selectFolder(['file-2', 'file-3'], false),
+      expect: () => [
+        isA<TranscodeLoaded>().having(
+          (s) => s.selectedFileIds,
+          'folder leaves removed, sibling kept',
+          {'file-1'},
+        ),
+      ],
+    );
+  });
+
+  group('TranscodeCubit.toggleExpanded / preset', () {
+    blocTest<TranscodeCubit, TranscodeState>(
+      'toggleExpanded flips a single path in the expanded set',
+      build: () => buildCubit(),
+      seed: () => const TranscodeLoaded(
+        candidates: [candidateAv1],
+        jobs: <TranscodeJob>[],
+      ),
+      act: (cubit) async {
+        cubit.toggleExpanded('D:/Movies');
+        cubit.toggleExpanded('D:/Movies');
+      },
+      expect: () => [
+        isA<TranscodeLoaded>().having(
+          (s) => s.expandedPaths,
+          'added',
+          {'D:/Movies'},
+        ),
+        isA<TranscodeLoaded>().having(
+          (s) => s.expandedPaths,
+          'removed',
+          isEmpty,
+        ),
+      ],
+    );
+
+    blocTest<TranscodeCubit, TranscodeState>(
+      'setQueuePreset updates the cubit-held preset',
+      build: () => buildCubit(),
+      seed: () => const TranscodeLoaded(
+        candidates: [candidateAv1],
+        jobs: <TranscodeJob>[],
+      ),
+      act: (cubit) => cubit.setQueuePreset(TranscodePreset.smaller),
+      expect: () => [
+        isA<TranscodeLoaded>().having(
+          (s) => s.queuePreset,
+          'preset switched',
+          TranscodePreset.smaller,
+        ),
+      ],
+    );
+
+    blocTest<TranscodeCubit, TranscodeState>(
+      'setQueuePreset is a no-op when the same preset is picked again',
+      build: () => buildCubit(),
+      seed: () => const TranscodeLoaded(
+        candidates: [candidateAv1],
+        jobs: <TranscodeJob>[],
+      ),
+      act: (cubit) => cubit.setQueuePreset(TranscodePreset.recommended),
+      expect: () => <TranscodeState>[],
+    );
   });
 
   group('TranscodeCubit.startTranscode', () {
     blocTest<TranscodeCubit, TranscodeState>(
-      'POSTs /queue with the selected ids then refreshes both endpoints',
+      'POSTs /queue with the selected ids + preset, then refreshes',
       build: () {
-        when(() => repo.queueJobs(fileIds: ['file-1']))
-            .thenAnswer((_) async => [99]);
+        when(
+          () => repo.queueJobs(
+            fileIds: ['file-1'],
+            preset: TranscodePreset.recommended,
+          ),
+        ).thenAnswer((_) async => [99]);
         when(() => repo.getCandidates())
             .thenAnswer((_) async => <TranscodeCandidate>[]);
         when(() => repo.getJobs()).thenAnswer((_) async => [runningJob]);
@@ -233,7 +358,10 @@ void main() {
                 isEmpty),
       ],
       verify: (_) {
-        verify(() => repo.queueJobs(fileIds: ['file-1'])).called(1);
+        verify(() => repo.queueJobs(
+              fileIds: ['file-1'],
+              preset: TranscodePreset.recommended,
+            )).called(1);
         // Refresh = both endpoints, exactly once each.
         verify(() => repo.getCandidates()).called(1);
         verify(() => repo.getJobs()).called(1);
@@ -250,15 +378,20 @@ void main() {
       act: (cubit) => cubit.startTranscode(),
       expect: () => <TranscodeState>[],
       verify: (_) => verifyNever(
-        () => repo.queueJobs(fileIds: any(named: 'fileIds')),
+        () => repo.queueJobs(
+          fileIds: any(named: 'fileIds'),
+          preset: any(named: 'preset'),
+        ),
       ),
     );
 
     blocTest<TranscodeCubit, TranscodeState>(
       'clears busy flag when /queue throws',
       build: () {
-        when(() => repo.queueJobs(fileIds: any(named: 'fileIds')))
-            .thenThrow(Exception('500 server error'));
+        when(() => repo.queueJobs(
+              fileIds: any(named: 'fileIds'),
+              preset: any(named: 'preset'),
+            )).thenThrow(Exception('500 server error'));
         return buildCubit();
       },
       seed: () => const TranscodeLoaded(
@@ -355,4 +488,109 @@ void main() {
       },
     );
   });
+
+  group('FolderNode tree-building', () {
+    test('groups leaves by parent directory', () {
+      final root = buildFolderTree<TranscodeCandidate>(
+        leaves: const [candidateAv1, candidateVp9, candidateSibling],
+        pathOf: (c) => c.path,
+      );
+      // D:/Movies/2010s/(Old Movie.webm + Another.mkv) and
+      // D:/Music/Videos/(Avicii…) share D: as the implicit drive root.
+      // The synthetic root has one or two children depending on how the
+      // tree builder normalises segments — just verify totals match.
+      expect(root.totalCount, 3);
+      expect(root.totalSize((c) => c.sizeBytes),
+          (60 + 800 + 200) * 1024 * 1024);
+    });
+
+    test('isFullySelected reports tri-state correctly', () {
+      final root = buildFolderTree<TranscodeCandidate>(
+        leaves: const [candidateVp9, candidateSibling],
+        pathOf: (c) => c.path,
+      );
+      // The folder containing both VP9 + sibling.
+      final folderNode = _findDeepestSingleParent(root);
+      expect(folderNode.flatten().length, 2);
+
+      // None selected → false.
+      expect(
+        folderNode.isFullySelected(<String>{}, (c) => c.fileId),
+        false,
+      );
+      // One selected → null (partial).
+      expect(
+        folderNode
+            .isFullySelected({'file-2'}, (c) => c.fileId),
+        isNull,
+      );
+      // Both selected → true.
+      expect(
+        folderNode
+            .isFullySelected({'file-2', 'file-3'}, (c) => c.fileId),
+        true,
+      );
+    });
+  });
+
+  group('estimateOutputBytes (preset multipliers)', () {
+    test('AV1 source uses the full multiplier', () {
+      expect(
+        estimateOutputBytes(
+          sourceBytes: 100,
+          sourceCodec: 'av1',
+          preset: TranscodePreset.smaller,
+        ),
+        120, // 1.2× source
+      );
+      expect(
+        estimateOutputBytes(
+          sourceBytes: 100,
+          sourceCodec: 'av1',
+          preset: TranscodePreset.recommended,
+        ),
+        200,
+      );
+      expect(
+        estimateOutputBytes(
+          sourceBytes: 100,
+          sourceCodec: 'av1',
+          preset: TranscodePreset.mastering,
+        ),
+        400,
+      );
+    });
+
+    test('VP9 source uses 0.7× the multiplier', () {
+      // 100 × (1.2 × 0.7) = 84
+      expect(
+        estimateOutputBytes(
+          sourceBytes: 100,
+          sourceCodec: 'vp9',
+          preset: TranscodePreset.smaller,
+        ),
+        84,
+      );
+      // 100 × (2.0 × 0.7) = 140
+      expect(
+        estimateOutputBytes(
+          sourceBytes: 100,
+          sourceCodec: 'vp9',
+          preset: TranscodePreset.recommended,
+        ),
+        140,
+      );
+    });
+  });
+}
+
+/// Find the deepest single-parent node in a tree — used by tests to
+/// reach into the synthesised "leaves' parent" without hard-coding the
+/// path string the tree builder ends up with on this platform.
+FolderNode<T> _findDeepestSingleParent<T>(FolderNode<T> root) {
+  FolderNode<T> cursor = root;
+  while (cursor.children.length == 1 && cursor.leaves.isEmpty) {
+    cursor = cursor.children.first;
+  }
+  return cursor;
 }

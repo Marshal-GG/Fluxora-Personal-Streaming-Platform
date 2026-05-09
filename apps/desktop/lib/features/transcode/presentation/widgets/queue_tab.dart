@@ -8,14 +8,18 @@ import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
 
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_job.dart';
+import 'package:fluxora_desktop/features/transcode/domain/repositories/transcode_repository.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_cubit.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_state.dart';
+import 'package:fluxora_desktop/features/transcode/presentation/widgets/storage_strip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_glass_menu.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_progress.dart';
 
-/// Queue tab — running + queued jobs, each with a live progress bar and
-/// a per-row Cancel button, plus a "Cancel selected" bulk action that
-/// kills every active job currently shown.
+/// Queue tab — running + queued jobs, each with a live progress bar, a
+/// per-row Cancel button, the new "Source → ~Sidecar" size column
+/// (plan 19 §M5), and a "Stored at" menu trigger that's dimmed until
+/// `output_path` is set (i.e. while the job is queued / running).
 class QueueTab extends StatelessWidget {
   const QueueTab({super.key});
 
@@ -72,6 +76,7 @@ class QueueTab extends StatelessWidget {
                       job: jobs[i],
                       isFirst: i == 0,
                       busy: state.busyJobIds.contains(jobs[i].id),
+                      preset: state.queuePreset,
                     ),
                 ],
               ),
@@ -88,11 +93,17 @@ class _JobRow extends StatelessWidget {
     required this.job,
     required this.isFirst,
     required this.busy,
+    required this.preset,
   });
 
   final TranscodeJob job;
   final bool isFirst;
   final bool busy;
+
+  /// Used only as a fallback for in-flight jobs that don't yet carry a
+  /// per-job preset on the row — the cubit's queue-time preset stays
+  /// in sync with the operator's last pick.
+  final TranscodePreset preset;
 
   @override
   Widget build(BuildContext context) {
@@ -135,6 +146,13 @@ class _JobRow extends StatelessWidget {
                         color: AppColors.textDim,
                       ),
                     ),
+                    const SizedBox(height: AppSpacing.s4),
+                    Text(
+                      _sizeColumnText(job, preset),
+                      style: AppTypography.monoCaption.copyWith(
+                        color: AppColors.textMutedV2,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -143,6 +161,8 @@ class _JobRow extends StatelessWidget {
                 running ? 'running' : 'queued',
                 color: running ? FluxChipColor.purple : FluxChipColor.info,
               ),
+              const SizedBox(width: AppSpacing.s8),
+              _StoredAtMenu(outputPath: job.outputPath),
               const SizedBox(width: AppSpacing.s8),
               FluxButton(
                 variant: FluxButtonVariant.danger,
@@ -201,6 +221,100 @@ class _JobRow extends StatelessWidget {
   }
 }
 
+/// Build the new "Source → ~Sidecar" column for queued/running rows.
+/// Falls back gracefully when the server doesn't surface src_size_bytes
+/// or output_size_bytes.
+String _sizeColumnText(TranscodeJob job, TranscodePreset preset) {
+  if (job.srcSizeBytes == null) return '';
+  final src = _formatBytes(job.srcSizeBytes!);
+  if (job.outputSizeBytes != null) {
+    return '$src → ${_formatBytes(job.outputSizeBytes!)}';
+  }
+  // Estimate from preset multiplier — VP9 source we can't tell here, so
+  // fall back to the AV1-style multiplier (worst case).  History rows
+  // get the actual number once the job lands.
+  final est = (job.srcSizeBytes! * preset.multiplier).round();
+  return '$src → ~${_formatBytes(est)}';
+}
+
+/// "Stored at" trailing button — opens a glass menu with Copy / Open
+/// folder when an output path is known, otherwise renders a dimmed
+/// IconButton with no menu.
+class _StoredAtMenu extends StatelessWidget {
+  const _StoredAtMenu({required this.outputPath});
+
+  final String? outputPath;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = outputPath != null && outputPath!.isNotEmpty;
+    if (!enabled) {
+      return Tooltip(
+        message: 'Path appears once the job completes',
+        child: Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          child: const Icon(
+            Icons.folder_outlined,
+            size: 16,
+            color: AppColors.textFaint,
+          ),
+        ),
+      );
+    }
+    return FluxGlassMenu<String>(
+      width: 200,
+      items: const [
+        FluxGlassMenuItem(
+          value: 'copy',
+          label: 'Copy path',
+          icon: Icons.copy_rounded,
+        ),
+        FluxGlassMenuItem(
+          value: 'open',
+          label: 'Open folder',
+          icon: Icons.open_in_new_rounded,
+        ),
+      ],
+      onSelected: (v) {
+        final messenger = ScaffoldMessenger.of(context);
+        if (v == 'copy') {
+          copyPathToClipboard(outputPath!, messenger: messenger);
+        } else if (v == 'open') {
+          // Open the parent dir, not the file — the operator wants the
+          // folder browser at the sidecar.
+          final dir = _parentDir(outputPath!);
+          openPathInFileManager(dir, messenger: messenger);
+        }
+      },
+      child: Tooltip(
+        message: outputPath!,
+        child: Container(
+          width: 30,
+          height: 30,
+          alignment: Alignment.center,
+          child: const Icon(
+            Icons.folder_open_rounded,
+            size: 16,
+            color: AppColors.textBody,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String _parentDir(String path) {
+  final norm = path.replaceAll('\\', '/');
+  final idx = norm.lastIndexOf('/');
+  if (idx <= 0) return path;
+  // Preserve original separator style for Windows.
+  return path.contains('\\')
+      ? path.substring(0, path.lastIndexOf('\\'))
+      : norm.substring(0, idx);
+}
+
 class _EmptyQueue extends StatelessWidget {
   const _EmptyQueue();
 
@@ -240,4 +354,16 @@ class _EmptyQueue extends StatelessWidget {
       ),
     );
   }
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  double v = bytes / 1024;
+  int i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return '${v.toStringAsFixed(v >= 100 ? 0 : 1)} ${units[i]}';
 }

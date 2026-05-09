@@ -11,6 +11,7 @@ import 'package:fluxora_core/entities/enums.dart';
 import 'package:fluxora_core/entities/library.dart';
 import 'package:fluxora_core/entities/media_file.dart';
 import 'package:fluxora_desktop/core/router/app_router.dart';
+import 'package:fluxora_desktop/features/library/domain/entities/library.dart' as desktop;
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_cubit.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_state.dart';
@@ -314,7 +315,8 @@ class _LibraryViewState extends State<_LibraryView> {
       title: 'Add Library',
       submitLabel: 'Create Library',
       typeEditable: true,
-      onSubmit: (name, type, paths) async {
+      onSubmit: (name, type, paths,
+          {required av1Override, required vp9Override}) async {
         try {
           await cubit.createLibrary(name, type, paths);
           messenger.showSnackBar(SnackBar(
@@ -332,6 +334,10 @@ class _LibraryViewState extends State<_LibraryView> {
   Future<void> _showEditLibraryDialog(
       BuildContext context, Library lib) async {
     final cubit = context.read<LibraryCubit>();
+    final state = cubit.state;
+    final initialOverrides = state is LibraryLoaded
+        ? state.overridesFor(lib.id)
+        : desktop.LibraryCodecOverrides.empty;
     final messenger = ScaffoldMessenger.of(context);
     await _showLibraryFormDialog(
       context: context,
@@ -341,12 +347,24 @@ class _LibraryViewState extends State<_LibraryView> {
       initialType: _typeKey(lib.type),
       initialPaths: List<String>.from(lib.rootPaths),
       typeEditable: false,
-      onSubmit: (name, _, paths) async {
+      showCodecOverrides: true,
+      initialAv1Override: initialOverrides.av1StreamCopyOverride,
+      initialVp9Override: initialOverrides.vp9StreamCopyOverride,
+      onSubmit: (name, _, paths,
+          {required av1Override, required vp9Override}) async {
         try {
           await cubit.updateLibrary(
             libraryId: lib.id,
             name: name == lib.name ? null : name,
             rootPaths: _pathsEqual(paths, lib.rootPaths) ? null : paths,
+            av1Override: _diffOverride(
+              initialOverrides.av1StreamCopyOverride,
+              av1Override,
+            ),
+            vp9Override: _diffOverride(
+              initialOverrides.vp9StreamCopyOverride,
+              vp9Override,
+            ),
           );
           messenger.showSnackBar(SnackBar(
             content: Text('Library "$name" updated'),
@@ -360,36 +378,122 @@ class _LibraryViewState extends State<_LibraryView> {
     );
   }
 
+  /// Build the 3-state PATCH update sentinel for one codec — `null`
+  /// when the operator didn't touch the field, otherwise an explicit
+  /// `clear` / `value(true|false)`.
+  static LibraryOverrideUpdate? _diffOverride(bool? initial, bool? next) {
+    if (initial == next) return null; // unchanged
+    if (next == null) return const LibraryOverrideUpdate.clear();
+    return LibraryOverrideUpdate.value(next);
+  }
+
   Future<void> _confirmRemove(BuildContext context, Library lib) async {
     final cubit = context.read<LibraryCubit>();
     final messenger = ScaffoldMessenger.of(context);
+    // Plan 19 §M8 — sidecar cleanup checkbox; defaults to true so the
+    // common-case "I'm removing this library and don't want orphan
+    // transcoded files lying around" is the one-click path.
+    bool deleteSidecars = true;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => FluxGlassDialog(
-        title: Text('Remove "${lib.name}"?'),
-        content: const Text(
-          'This removes only the library entry and its file index from '
-          'Fluxora. Your files on disk are never deleted by this app.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => FluxGlassDialog(
+          title: Text('Remove "${lib.name}"?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This removes only the library entry and its file index from '
+                'Fluxora. Your source files on disk are never deleted by this '
+                'app.',
+              ),
+              const SizedBox(height: AppSpacing.s14),
+              InkWell(
+                onTap: () => setLocal(() => deleteSidecars = !deleteSidecars),
+                borderRadius: BorderRadius.circular(AppRadii.sm),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s8,
+                    vertical: AppSpacing.s8,
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 18,
+                        height: 18,
+                        margin: const EdgeInsets.only(top: 1),
+                        decoration: BoxDecoration(
+                          color: deleteSidecars
+                              ? AppColors.violet
+                              : const Color(0x08FFFFFF),
+                          border: Border.all(
+                            color: deleteSidecars
+                                ? AppColors.violet
+                                : AppColors.borderHover,
+                            width: 1,
+                          ),
+                          borderRadius:
+                              BorderRadius.circular(AppRadii.xs),
+                        ),
+                        child: deleteSidecars
+                            ? const Icon(
+                                Icons.check_rounded,
+                                size: 13,
+                                color: Colors.white,
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: AppSpacing.s10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Also delete transcoded sidecars',
+                              style: AppTypography.body.copyWith(
+                                color: AppColors.textBright,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Removes any H.264 transcoded files this '
+                              'library produced. Source files are never touched.',
+                              style: AppTypography.bodySmall.copyWith(
+                                color: AppColors.textMutedV2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFEF4444),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
             ),
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Remove'),
-          ),
-        ],
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFEF4444),
+              ),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Remove'),
+            ),
+          ],
+        ),
       ),
     );
 
     if (confirmed != true) return;
     try {
-      await cubit.deleteLibrary(lib.id);
+      await cubit.deleteLibrary(lib.id, deleteSidecars: deleteSidecars);
       messenger.showSnackBar(SnackBar(
         content: Text('Library "${lib.name}" removed'),
       ));
@@ -418,21 +522,37 @@ class _LibraryViewState extends State<_LibraryView> {
 
 // ── Add / Edit shared dialog ───────────────────────────────────────────────────
 
+/// Callback signature for the shared library form dialog.  The override
+/// args are always passed (default `null` when the dialog isn't showing
+/// the codec section); call sites that don't care about overrides
+/// declare them as `_, _` in their lambda.
+typedef LibraryFormSubmit = void Function(
+  String name,
+  String type,
+  List<String> paths, {
+  required bool? av1Override,
+  required bool? vp9Override,
+});
+
 Future<void> _showLibraryFormDialog({
   required BuildContext context,
   required String title,
   required String submitLabel,
-  required void Function(String name, String type, List<String> paths)
-      onSubmit,
+  required LibraryFormSubmit onSubmit,
   String? initialName,
   String? initialType,
   List<String>? initialPaths,
   bool typeEditable = true,
+  bool showCodecOverrides = false,
+  bool? initialAv1Override,
+  bool? initialVp9Override,
 }) async {
   final nameController = TextEditingController(text: initialName ?? '');
   String type = initialType ?? 'movies';
   final paths = List<String>.from(initialPaths ?? const <String>[]);
   String? nameError;
+  bool? av1Override = initialAv1Override;
+  bool? vp9Override = initialVp9Override;
 
   await showDialog<void>(
     context: context,
@@ -550,6 +670,28 @@ Future<void> _showLibraryFormDialog({
                       ),
                   ],
                 ),
+              if (showCodecOverrides) ...[
+                const SizedBox(height: AppSpacing.s18),
+                Text(
+                  'Stream original codec to clients',
+                  style: AppTypography.captionV2.copyWith(
+                    color: AppColors.textMutedV2,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.s10),
+                _CodecOverrideRow(
+                  label: 'AV1',
+                  value: av1Override,
+                  onChanged: (v) => setLocal(() => av1Override = v),
+                ),
+                const SizedBox(height: AppSpacing.s8),
+                _CodecOverrideRow(
+                  label: 'VP9',
+                  value: vp9Override,
+                  onChanged: (v) => setLocal(() => vp9Override = v),
+                ),
+              ],
             ],
           ),
         ),
@@ -572,7 +714,13 @@ Future<void> _showLibraryFormDialog({
                 return;
               }
               Navigator.of(dialogCtx).pop();
-              onSubmit(name, type, List<String>.from(paths));
+              onSubmit(
+                name,
+                type,
+                List<String>.from(paths),
+                av1Override: av1Override,
+                vp9Override: vp9Override,
+              );
             },
             child: Text(submitLabel),
           ),
@@ -2500,6 +2648,123 @@ class _ListRowAction extends StatelessWidget {
       ),
       visualDensity: VisualDensity.compact,
       splashRadius: 18,
+    );
+  }
+}
+
+// ── Per-library codec override segmented control (plan 19 §M8) ──────────────
+
+/// 3-state segmented control for one codec's per-library passthrough
+/// override.  Maps to the API field as:
+///   - "Use global"  → `null`
+///   - "Always"      → `true`
+///   - "Never"       → `false`
+class _CodecOverrideRow extends StatelessWidget {
+  const _CodecOverrideRow({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool? value;
+  final ValueChanged<bool?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 48,
+          child: Text(
+            label,
+            style: AppTypography.body.copyWith(
+              color: AppColors.textBright,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s12),
+        Expanded(
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0x08FFFFFF),
+              border: Border.all(color: const Color(0x0DFFFFFF)),
+              borderRadius: BorderRadius.circular(AppRadii.sm),
+            ),
+            child: Row(
+              children: [
+                _Segment(
+                  label: 'Use global',
+                  selected: value == null,
+                  onTap: () => onChanged(null),
+                ),
+                _SegmentDivider(),
+                _Segment(
+                  label: 'Always',
+                  selected: value == true,
+                  onTap: () => onChanged(true),
+                ),
+                _SegmentDivider(),
+                _Segment(
+                  label: 'Never',
+                  selected: value == false,
+                  onTap: () => onChanged(false),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _Segment extends StatelessWidget {
+  const _Segment({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadii.sm - 1),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color:
+                selected ? AppColors.violet.withValues(alpha: 0.18) : null,
+            borderRadius: BorderRadius.circular(AppRadii.sm - 1),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: AppTypography.bodySmall.copyWith(
+              color: selected ? AppColors.violetTint : AppColors.textBody,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SegmentDivider extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      height: 22,
+      color: const Color(0x0DFFFFFF),
     );
   }
 }

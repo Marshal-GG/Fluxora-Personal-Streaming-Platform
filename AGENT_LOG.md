@@ -506,3 +506,107 @@ All §M7 + hotfix changes uncommitted on top of `191fe44`. Operator-asked single
 3. **Plan 19 deferred milestones — M1 is highest priority** when the operator round comes back. Lowering the transcode default from `cq=19` to `cq=23` is a one-line change that halves the sidecar size for operators who DO opt into transcoding.
 4. **`_seekRelative` mobile bug** (still carried forward from earlier — double-tap-skip after a forward server-restart still bugged; flagged in the prior AGENT_LOG entry but not yet fixed).
 5. **`current_status.md` is still over the 25 k Read-cap.** Carried forward.
+
+---
+
+## [2026-05-09] [server] [desktop] [feat] [tests] — Plan 19 close-out — M1, M2, M3, M4, M5, M6, M8 shipped via 2 parallel opus subagents
+
+**Phase:** Phase 2 — closing the remaining 7 milestones of plan 19 in one round
+**Status:** Complete. All 8 milestones of plan 19 closed (M7 shipped earlier same day as launch-priority commit `627cdf1`; M1-M6 + M8 shipped here).
+**Commits:** uncommitted
+
+### What Was Done
+
+Operator request: *"create multiple opus sub agents to do them now"* — referring to the 7 plan-19 milestones marked deferred at M7's ship time. Spawned **2 parallel Opus subagents**, partitioned along the server / desktop boundary so cubit / repository / model files don't collide. The locked API contract was embedded in both prompts so they could build in parallel without diverging.
+
+| Subagent | Owns | Milestones |
+|---|---|---|
+| A — Server backend | All of `apps/server/` for plan 19 + tests | M1 (preset map + worker default), M2 (storage settings + sidecar-path rewrite + cache-root validation), M3 (`/transcode/storage` endpoint), M6 (.webm extension override + stale-mtime detection on rescan + partial-output cleanup on crash recovery), M8 (per-library codec passthrough overrides + library-delete cascade with sidecar cleanup) |
+| B — Desktop UI | All of `apps/desktop/lib/features/transcode/` and the relevant settings + library widgets | M1 (Queue dialog with preset chooser), M3 (`_StorageStrip` widget + 5 s polling), M4 (folder-grouped tree with tri-state checkboxes), M5 (per-row size column + Stored-at menu), M8 (3-state segmented controls per codec on library edit form + sidecar-cleanup checkbox in library-delete confirmation) |
+
+3 new migrations (029, 030, 031) added in correct numerical order. Plan 19 §3's separate-migration-per-milestone discipline is preserved — each migration's CHECK constraints + nullable defaults reflect the milestone's specific shape.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|--------|------|-----|
+| Created | apps/server/database/migrations/029_transcode_storage_settings.sql | M2 — `transcode_storage_mode` + `transcode_cache_root` on `user_settings` |
+| Created | apps/server/database/migrations/030_per_library_codec_passthrough.sql | M8 — `av1_stream_copy_override` + `vp9_stream_copy_override` on `libraries` (nullable, tri-state) |
+| Created | apps/server/database/migrations/031_sidecar_source_mtime.sql | M6 — `transcoded_source_mtime` on `media_files` |
+| Modified | apps/server/services/transcode_service.py | M1 `QUALITY_PRESETS` map (smaller / recommended / mastering); M2 `_sidecar_path()` rewrite for both modes; M6 .webm→.mkv ext override + partial-output cleanup on crash recovery; M3 storage aggregate query helper |
+| Modified | apps/server/services/settings_service.py | M2 `_validate_transcode_cache_root` async helper (absolute / writable / outside-library checks via `asyncio.to_thread`); kwarg + column-mapping for both new fields; default-row stub extended; sentinel `_UNSET` for explicit-clear vs leave-unchanged semantics |
+| Modified | apps/server/services/library_service.py | M6 stale-sidecar detection on rescan; M8 `delete_library` accepts `delete_sidecars: bool = True` and unlinks files before CASCADE delete |
+| Modified | apps/server/services/ffmpeg_service.py | M8 `_resolve_codec_passthrough(settings_row, library_row, codec)` helper replaces direct `streaming_mode` read; per-library override beats global setting; `start_stream` + `restart_stream` accept `library_row` kwarg |
+| Modified | apps/server/routers/transcode.py | M1 `POST /queue` accepts `preset` field (Pydantic Literal); M3 new `GET /storage` endpoint |
+| Modified | apps/server/routers/settings.py | M2 PATCH accepts `transcode_storage_mode` + `transcode_cache_root` with validation pass-through |
+| Modified | apps/server/routers/library.py | M8 PATCH accepts `av1_stream_copy_override` + `vp9_stream_copy_override` (3-state); DELETE accepts `?delete_sidecars=` query (default true) |
+| Modified | apps/server/routers/stream.py | Threads `library_row` into `start_stream` / `restart_stream` calls so per-library overrides resolve |
+| Modified | apps/server/models/transcode.py | M1 `preset` on `TranscodeQueueRequest`; M3 `TranscodeStorageResponse` |
+| Modified | apps/server/models/settings.py | M2 `transcode_storage_mode` + `transcode_cache_root` fields on both Update + Response |
+| Modified | apps/server/models/library.py | M8 2 override fields on Library models |
+| Modified | apps/server/tests/{test_transcode_service,test_transcode_router,test_stream,test_library,test_settings_extended,conftest}.py | +41 server tests |
+| Created | apps/desktop/lib/features/transcode/domain/entities/transcode_storage.dart | M3 entity + per-codec breakdown |
+| Created | apps/desktop/lib/features/transcode/presentation/widgets/storage_strip.dart | M3 top-of-page aggregate widget + cross-platform open-in-file-manager helpers |
+| Created | apps/desktop/lib/features/transcode/presentation/widgets/queue_dialog.dart | M1+M5 `showQueueDialog()` with 3-radio preset chooser + live estimated total + cache-root readout |
+| Created | apps/desktop/lib/features/transcode/presentation/widgets/folder_tree.dart | M4 `FolderNode<T>` + `buildFolderTree()` + recursive `FolderTreeView<T>` with tri-state checkboxes |
+| Created | apps/desktop/lib/features/library/domain/entities/library.dart | M8 desktop-only `LibraryCodecOverrides` sidecar (the canonical Library is freezed in fluxora_core; off-limits) |
+| Modified | apps/desktop/lib/features/transcode/domain/entities/{transcode_candidate,transcode_job}.dart | M4 `path` field for tree grouping; M5 `outputSizeBytes` / `srcSizeBytes` / `srcPath` |
+| Modified | apps/desktop/lib/features/transcode/domain/repositories/transcode_repository.dart | M1 `TranscodePreset` enum + `estimateOutputBytes()` helper; M3 `getStorage()`; preset arg on `queueJobs()` |
+| Modified | apps/desktop/lib/features/transcode/data/repositories/transcode_repository_impl.dart | M1 preset wiring; M3 `/storage` endpoint |
+| Modified | apps/desktop/lib/features/transcode/presentation/cubit/{transcode_cubit,transcode_state}.dart | Storage state slice; expanded-paths set for tree; queue preset; split timers (2 s `/jobs` + 5 s `/storage`) |
+| Modified | apps/desktop/lib/features/transcode/presentation/screens/transcode_screen.dart | Mounted `_StorageStrip` above the TabBar |
+| Modified | apps/desktop/lib/features/transcode/presentation/widgets/{candidates,queue,history}_tab.dart | M4 folder tree replaces flat list (Candidates + History); M5 per-row size column + Stored-at menu (Queue + History) |
+| Modified | apps/desktop/lib/features/library/{domain/repositories,data/repositories,presentation/cubit,presentation/cubit/state,presentation/screens}/* | M8 `LibrariesPayload` typedef + `LibraryOverrideUpdate` 3-state sentinel (unchanged / clear / value); `deleteSidecars` flag; `codecOverrides` map; library edit form gains 3-state segmented controls per codec; library-delete dialog gains sidecar-cleanup checkbox (default checked) |
+| Modified | apps/desktop/test/features/transcode/transcode_cubit_test.dart | +9 desktop tests for storage state, folder tree, preset selection, expand-state |
+| Modified | docs/10_planning/19_library_transcode_followups.md | Status banner: full plan closed; milestone table marks M1-M6 + M8 ✅; §12 TL;DR rewritten |
+| Modified | docs/00_overview/current_status.md | New "(latest) 2026-05-09" lead paragraph for the close-out; per-component server count 734 → 775 |
+| Modified | docs/00_overview/folder_structure.md | 029 / 030 / 031 rows added |
+| Modified | docs/02_architecture/02_tech_stack.md | Server tests 734 → 775 |
+| Modified | docs/03_data/02_database_schema.md | 029 / 030 / 031 rows in Applied Migrations table |
+| Modified | docs/03_data/04_migration_guide.md | File-layout extended to 031; test count refreshed |
+| Modified | docs/09_backend/01_backend_architecture.md | Test tally 734 → 775 |
+| Modified | docs/10_planning/01_roadmap.md | Plan-19 row collapsed to "all 8 milestones closed same day"; counts |
+| Modified | docs/10_planning/05_ship_readiness.md | Counts 734 / 104 → 775 / 113 |
+| Modified | AGENT_LOG.md | This entry |
+
+### Docs Updated
+
+Same as Files Modified above — every `docs/`-prefixed entry plus the AGENT_LOG.
+
+### Decisions Made
+
+- **Subagent partition along the server / desktop boundary, not by milestone.** Plan 19's milestones were too cross-cutting at the file level — `services/transcode_service.py`, `models/transcode.py`, `routers/transcode.py`, `transcode_cubit.dart`, `transcode_repository.dart`, `history_tab.dart` would all have been touched by 3+ subagents if we'd partitioned by milestone. By-layer partition kept each subagent's write surface disjoint and let them run in parallel without merge conflicts. Same approach as plan 18's first ship.
+- **API contract embedded verbatim in both prompts.** Field names, endpoint paths, status codes, JSON shapes — all specified in both the server and desktop prompts so neither subagent could invent its own naming. This was the load-bearing risk-mitigation move; without it the desktop subagent would have had to wait for the server subagent to finish before building, defeating the parallelism.
+- **`LibraryOverrideUpdate` sealed sentinel for the 3-state PATCH semantics.** "Use global" (`null`) is ambiguous — it could mean "leave unchanged" (don't include in PATCH body) or "explicitly clear" (set to NULL on the server). Desktop subagent introduced a `LibraryOverrideUpdate.unchanged | .clear | .value(true|false)` sealed type so the cubit can express both. Server side accepts the same field as `bool | null` per the API contract; the desktop's sentinel is only its own internal modeling.
+- **Did NOT extend the per-library Library entity in fluxora_core.** That entity is freezed and shared across mobile + desktop + future clients; reaching into it for desktop-only fields would force a mobile rebuild. Desktop subagent created a `LibraryCodecOverrides` sidecar entity stored in `apps/desktop/lib/features/library/domain/entities/library.dart` and threaded it through `library_state.codecOverrides: Map<String, LibraryCodecOverrides>`. Mobile is unaffected.
+- **`UNSET` sentinel in `settings_service.update_settings`.** The kwargs all default to `None`, but `None` is also the in-band "explicitly clear this column" value for `transcode_cache_root` (so the operator can clear back to the data-dir default). The server subagent introduced a module-level `_UNSET = object()` sentinel that both the API and the test fixtures use to distinguish "kwarg not provided" from "kwarg = None". This is on the server side; desktop's PATCH body just omits or sets `null` per the existing convention.
+
+### Issues / Sharp Edges Discovered
+
+1. **No per-library size breakdown in the storage endpoint.** The desktop's library-delete confirmation says "Also delete N transcoded sidecars" but renders the checkbox without the N — `GET /transcode/storage` returns aggregate size only, not per-library. Adding a `by_library: dict[str, {count, bytes}]` field to `TranscodeStorageResponse` is a small server-side enhancement; deferred to a follow-up round.
+2. **Folder-tree memoisation isn't there yet.** `buildFolderTree()` runs on every Candidates rebuild. Free for ≤17 candidates (the typical home-server scale); at 5000+ candidates it'd want caching keyed by `state.candidates.identityHashCode`. Not blocking for v1.
+3. **`ApiClient.delete` had no query-param hook.** Desktop subagent appended `?delete_sidecars=…` to the path string. Worth landing a proper `delete<T>(path, {queryParameters})` overload eventually for consistency with the GET / POST / PATCH variants.
+4. **`Process.start("explorer", [path])` exit code on Windows.** The Windows-side "Open folder" affordance returns non-zero exit codes even on success in some cases; desktop subagent wraps the call in try/catch and only surfaces a SnackBar on actual exceptions. Worth migrating to `url_launcher`'s `file://` URI eventually for parity with the existing `_ExternalLinkRow` pattern.
+5. **Cancel button text style.** The Queue / Library-delete confirmation modals use the platform-default `TextButton` for `[Cancel]` — there's no explicit FluxButton variant for "muted cancel". Consistent with existing dialogs in the codebase, but worth a future M14 visual-polish pass.
+
+### Test Counts (re-baselined)
+
+- **Server: 734 → 775 passing** (+41 across the 5 milestones; majority in `test_transcode_service.py` for preset map + sidecar paths + crash recovery, plus `test_settings_extended.py` for cache-root validation, plus `test_library.py` for delete-with-sidecars, plus `test_stream.py` for per-library override resolution).
+- **Desktop: 104 → 113 passing** (+9 in `transcode_cubit_test.dart` for storage / preset / folder tree / expand-state).
+- **Mobile: 78 passing** (unchanged — plan 19 has zero mobile changes).
+- **Core: 8 passing** (untouched).
+
+`flutter analyze lib/features/transcode lib/features/library` clean. `ruff check` clean. Server suite ran in 227 s.
+
+### Working-Tree Status
+
+All plan-19 close-out changes uncommitted on top of `627cdf1`. Operator-asked single consolidating commit covering both subagents' output + the doc updates.
+
+### Next Agent Should
+
+1. **Real-device retest of the full transcode-with-presets flow.** Queue an AV1 file on `recommended` preset, verify sidecar lands at the new dedicated cache root with `~2×` source size (vs the `~4×` of the old `mastering` default that motivated this whole round). Compare against `smaller` preset and verify it's `~1.2×`.
+2. **Per-library override real-device test.** Mark a library as "always transcode" via the segmented control, play an AV1 file from that library, confirm server log says `mode=transcode(...)` even though global setting is `client-decode`. Then mark the library "use global" and verify it goes back to `mode=stream-copy(av1/fmp4)`.
+3. **Library-delete-with-sidecars real-device test.** Delete a library that has transcoded sidecars; verify all sidecar files on disk are removed when the checkbox is checked, preserved when unchecked.
+4. **`_seekRelative` mobile bug** (still carried forward — double-tap-skip after a forward server-restart still bugged; flagged in the prior AGENT_LOG entry but not yet fixed).
+5. **`current_status.md` is over 25 k Read-cap.** Carried forward.
+6. **Add per-library breakdown to `/transcode/storage`** when an operator round comes through — closes Sharp Edge #1 (the missing N in the delete confirmation).

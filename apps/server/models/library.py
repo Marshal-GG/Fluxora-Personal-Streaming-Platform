@@ -13,6 +13,13 @@ class LibraryResponse(BaseModel):
     file_count: int = 0
     total_size_bytes: int = 0
     cover_urls: list[str] = []
+    # Plan 19 §M8 — per-library AV1 / VP9 codec passthrough overrides.
+    # Tri-state: None inherits the global `streaming_mode` setting,
+    # True forces stream-copy for sources of that codec in this
+    # library, False forces transcoding.  Honoured by
+    # `ffmpeg_service.start_stream` via `_resolve_codec_passthrough`.
+    av1_stream_copy_override: bool | None = None
+    vp9_stream_copy_override: bool | None = None
 
 
 class CreateLibraryBody(BaseModel):
@@ -26,6 +33,12 @@ class UpdateLibraryBody(BaseModel):
 
     name: str | None = None
     root_paths: list[str] | None = None
+    # Plan 19 §M8 — tri-state per-codec override.  Setting NULL
+    # explicitly clears the override (inherit global setting); True /
+    # False pin the behaviour for this library regardless of the
+    # global toggle.
+    av1_stream_copy_override: bool | None = None
+    vp9_stream_copy_override: bool | None = None
 
 
 class StorageByType(BaseModel):

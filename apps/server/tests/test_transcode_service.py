@@ -1,6 +1,7 @@
 """Unit tests for the library transcode service.
 
-Plan: docs/10_planning/18_library_transcode_plan.md.
+Plan: docs/10_planning/18_library_transcode_plan.md
++ docs/10_planning/19_library_transcode_followups.md (M1 / M2 / M6).
 
 Coverage:
 
@@ -14,11 +15,17 @@ Coverage:
 * list_jobs filters by status correctly
 * crash-recovery sweep on start_worker boot turns orphan running rows
   into failed
+* plan 19 §M1 — quality preset chooser produces the right NVENC /
+  libx264 args for `smaller` / `recommended` / `mastering`
+* plan 19 §M2 — sidecar path resolution under both storage modes
+* plan 19 §M6 — `.webm` sources force `.mkv` extension
+* plan 19 §M6 — partial-output cleanup on crash recovery
 """
 
 import time
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -338,3 +345,333 @@ async def test_recover_orphan_running_jobs_marks_them_failed(test_db, monkeypatc
     assert job is not None
     assert job.status == "failed"
     assert job.error == "server restarted mid-job"
+
+
+# ── Plan 19 §M1 — quality preset chooser ──────────────────────────────────
+
+
+def test_quality_preset_recommended_maps_to_cq23_for_nvenc():
+    args = transcode_service._resolve_preset_args("recommended", "h264_nvenc")
+    assert "-cq" in args
+    assert args[args.index("-cq") + 1] == "23"
+    assert "-preset" in args
+    assert args[args.index("-preset") + 1] == "slow"
+
+
+def test_quality_preset_smaller_maps_to_cq28_for_nvenc():
+    args = transcode_service._resolve_preset_args("smaller", "h264_nvenc")
+    assert args[args.index("-cq") + 1] == "28"
+    assert args[args.index("-preset") + 1] == "p4"
+
+
+def test_quality_preset_mastering_maps_to_cq19_for_nvenc():
+    args = transcode_service._resolve_preset_args("mastering", "h264_nvenc")
+    assert args[args.index("-cq") + 1] == "19"
+
+
+def test_quality_preset_recommended_maps_to_crf23_for_libx264():
+    args = transcode_service._resolve_preset_args("recommended", "libx264")
+    assert "-crf" in args
+    assert args[args.index("-crf") + 1] == "23"
+    assert args[args.index("-preset") + 1] == "slow"
+
+
+def test_quality_preset_smaller_maps_to_crf28_for_libx264():
+    args = transcode_service._resolve_preset_args("smaller", "libx264")
+    assert args[args.index("-crf") + 1] == "28"
+    assert args[args.index("-preset") + 1] == "medium"
+
+
+def test_quality_preset_legacy_string_aliases_to_mastering():
+    """Pre-plan-19 rows carry `slow_cq19` / `slow_crf19`; both map to
+    the new `mastering` preset so historical jobs retain behaviour."""
+    nvenc_args = transcode_service._resolve_preset_args("slow_cq19", "h264_nvenc")
+    libx264_args = transcode_service._resolve_preset_args("slow_crf19", "libx264")
+    assert nvenc_args[nvenc_args.index("-cq") + 1] == "19"
+    assert libx264_args[libx264_args.index("-crf") + 1] == "19"
+
+
+def test_quality_preset_unknown_falls_back_to_recommended():
+    args = transcode_service._resolve_preset_args("nonexistent", "h264_nvenc")
+    assert args[args.index("-cq") + 1] == "23"  # recommended
+
+
+def test_build_ffmpeg_cmd_uses_recommended_preset_by_default():
+    cmd = transcode_service._build_ffmpeg_cmd(
+        source_path="/src.mkv",
+        output_path="/out.mkv",
+        encoder="libx264",
+        source_audio_codec="aac",
+        preset_name=None,
+    )
+    assert cmd[cmd.index("-crf") + 1] == "23"
+
+
+def test_build_ffmpeg_cmd_honours_smaller_preset():
+    cmd = transcode_service._build_ffmpeg_cmd(
+        source_path="/src.mkv",
+        output_path="/out.mkv",
+        encoder="libx264",
+        source_audio_codec="aac",
+        preset_name="smaller",
+    )
+    assert cmd[cmd.index("-crf") + 1] == "28"
+    assert cmd[cmd.index("-preset") + 1] == "medium"
+
+
+@pytest.mark.asyncio
+async def test_queue_rejects_unknown_preset(test_db, monkeypatch):
+    fid = await _insert_file(test_db, codec="av1")
+
+    async def _fake_resolve():
+        return "libx264"
+
+    monkeypatch.setattr(transcode_service, "_resolve_encoder", _fake_resolve)
+
+    with pytest.raises(ValueError):
+        await transcode_service.queue(test_db, [fid], preset="ultra-mastering")
+
+
+@pytest.mark.asyncio
+async def test_queue_records_default_preset_when_omitted(test_db, monkeypatch):
+    fid = await _insert_file(test_db, codec="av1")
+
+    async def _fake_resolve():
+        return "libx264"
+
+    monkeypatch.setattr(transcode_service, "_resolve_encoder", _fake_resolve)
+
+    [job_id] = await transcode_service.queue(test_db, [fid])
+    async with test_db.execute(
+        "SELECT quality_preset FROM transcode_jobs WHERE id = ?", (job_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["quality_preset"] == "recommended"
+
+
+# ── Plan 19 §M2 — sidecar path resolution ──────────────────────────────────
+
+
+def test_sidecar_path_dedicated_mirrors_library_tree(tmp_path):
+    library_root = tmp_path / "lib"
+    library_root.mkdir()
+    (library_root / "Movies" / "2024").mkdir(parents=True)
+
+    file_row = {
+        "path": str(library_root / "Movies" / "2024" / "Dune.mkv"),
+        "library_id": "lib-1",
+    }
+    library_row = {
+        "id": "lib-1",
+        "name": "Films",
+        "root_paths": [str(library_root)],
+    }
+    settings_row = {
+        "transcode_storage_mode": "dedicated",
+        "transcode_cache_root": str(tmp_path / "cache"),
+    }
+
+    out = transcode_service._sidecar_path(file_row, settings_row, library_row)
+    assert out == (
+        tmp_path / "cache" / "Films" / "Movies" / "2024" / "Dune.h264.mkv"
+    )
+
+
+def test_sidecar_path_inline_uses_subfolder(tmp_path):
+    src = tmp_path / "Movies" / "Dune.mkv"
+    src.parent.mkdir(parents=True)
+    file_row = {"path": str(src), "library_id": None}
+    settings_row = {"transcode_storage_mode": "inline"}
+
+    out = transcode_service._sidecar_path(file_row, settings_row, None)
+    assert out == src.parent / ".fluxora-transcodes" / "Dune.h264.mkv"
+
+
+def test_sidecar_path_webm_forces_mkv(tmp_path):
+    """M6 — H.264 can't be muxed into WebM; sidecar is forced to .mkv."""
+    src = tmp_path / "clip.webm"
+    file_row = {"path": str(src), "library_id": None}
+    settings_row = {"transcode_storage_mode": "inline"}
+
+    out = transcode_service._sidecar_path(file_row, settings_row, None)
+    assert out.suffix == ".mkv"
+    assert out.name == "clip.h264.mkv"
+
+
+def test_sidecar_path_dedicated_falls_back_to_default_root_when_unset(tmp_path):
+    library_root = tmp_path / "lib"
+    library_root.mkdir()
+    file_row = {"path": str(library_root / "x.mkv"), "library_id": "lib-1"}
+    library_row = {"name": "L", "root_paths": [str(library_root)]}
+    settings_row = {"transcode_storage_mode": "dedicated"}
+
+    out = transcode_service._sidecar_path(file_row, settings_row, library_row)
+    # Resolves under whichever default cache root the server picks; we
+    # only assert the relative-to-library shape because the absolute
+    # parent depends on the platform-correct data dir.
+    assert out.name == "x.h264.mkv"
+    assert "L" in out.parts
+
+
+# ── Plan 19 §M6 — partial-output cleanup on crash recovery ─────────────────
+
+
+@pytest.mark.asyncio
+async def test_crash_recovery_unlinks_partial_sidecar(
+    test_db, monkeypatch, tmp_path
+):
+    """A crashed job's partial sidecar must be removed on next boot."""
+
+    async def _fake_resolve():
+        return "libx264"
+
+    monkeypatch.setattr(transcode_service, "_resolve_encoder", _fake_resolve)
+
+    # Set up a library + file pair so `_sidecar_path` resolves cleanly.
+    import json
+    import uuid as _uuid
+
+    lib_id = str(_uuid.uuid4())
+    lib_root = tmp_path / "lib"
+    lib_root.mkdir()
+    (lib_root / "src.mkv").write_bytes(b"\x00")
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths, created_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (lib_id, "L", "movies", json.dumps([str(lib_root)]),
+         datetime.now(UTC).isoformat()),
+    )
+    fid = str(_uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    await test_db.execute(
+        """
+        INSERT INTO media_files
+            (id, path, name, extension, size_bytes, codec_name,
+             library_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (fid, str(lib_root / "src.mkv"), "src.mkv", ".mkv", 100, "av1",
+         lib_id, now, now),
+    )
+    await test_db.commit()
+
+    [job_id] = await transcode_service.queue(test_db, [fid])
+    # Mark the job as orphan-running and pre-place a "partial" sidecar
+    # at the path the resolver computes.  Settings default to dedicated
+    # mode + default cache root.
+    await test_db.execute(
+        "UPDATE transcode_jobs SET status = 'running', started_at = ?"
+        " WHERE id = ?",
+        (int(time.time()), job_id),
+    )
+    await test_db.commit()
+
+    # Force an inline cache so the sidecar lands under tmp_path
+    # rather than the platform data dir.
+    await test_db.execute(
+        "UPDATE user_settings SET transcode_storage_mode = 'inline'"
+        " WHERE id = 1"
+    )
+    await test_db.commit()
+
+    sidecar = tmp_path / "lib" / ".fluxora-transcodes" / "src.h264.mkv"
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_bytes(b"partial-encode")
+    assert sidecar.exists()
+
+    swept = await transcode_service._recover_orphan_running_jobs(test_db)
+    assert swept == 1
+    assert not sidecar.exists()
+
+
+# ── Plan 19 §M3 — storage aggregate ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_storage_aggregate_returns_zeros_when_empty(test_db):
+    payload = await transcode_service.storage_aggregate(test_db)
+    assert payload["transcoded_size_bytes"] == 0
+    assert payload["transcoded_file_count"] == 0
+    assert payload["by_codec"] == {}
+    assert payload["storage_mode"] == "dedicated"
+    assert Path(payload["cache_root"]).is_absolute()
+
+
+@pytest.mark.asyncio
+async def test_storage_aggregate_groups_by_codec(test_db):
+    # Two transcoded AV1 files + one transcoded VP9 file.
+    for size, codec in [(1_000, "av1"), (2_000, "av1"), (5_000, "vp9")]:
+        fid = str(uuid.uuid4())
+        now = datetime.now(UTC).isoformat()
+        await test_db.execute(
+            """
+            INSERT INTO media_files
+                (id, path, name, extension, size_bytes, codec_name,
+                 transcoded_path, transcoded_size_bytes,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (fid, f"/m/{fid}.mkv", f"f-{fid[:6]}.mkv", ".mkv", size * 2,
+             codec, f"/sidecar/{fid}.mkv", size, now, now),
+        )
+    await test_db.commit()
+
+    payload = await transcode_service.storage_aggregate(test_db)
+    assert payload["transcoded_file_count"] == 3
+    assert payload["transcoded_size_bytes"] == 8_000
+    assert payload["by_codec"]["av1"]["count"] == 2
+    assert payload["by_codec"]["av1"]["bytes"] == 3_000
+    assert payload["by_codec"]["vp9"]["count"] == 1
+    assert payload["by_codec"]["vp9"]["bytes"] == 5_000
+
+
+# ── Plan 19 §M6 — stale-sidecar detection ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_stale_sidecar_detection_clears_path_on_mtime_advance(
+    test_db, tmp_path
+):
+    """Library scan re-discovering a file whose source mtime advanced
+    past `transcoded_source_mtime` clears the row's transcoded_path."""
+    import json as _json
+    import uuid as _uuid
+
+    from services import library_service as _libsvc
+
+    src = tmp_path / "lib" / "movie.mkv"
+    src.parent.mkdir()
+    src.write_bytes(b"original")
+
+    lib_id = str(_uuid.uuid4())
+    await test_db.execute(
+        "INSERT INTO libraries (id, name, type, root_paths, created_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (lib_id, "L", "movies", _json.dumps([str(src.parent)]),
+         datetime.now(UTC).isoformat()),
+    )
+    fid = str(_uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    # Stamp `transcoded_source_mtime` deliberately in the past so any
+    # current mtime advance will trigger the stale clear.
+    old_mtime = int(src.stat().st_mtime) - 1_000
+    await test_db.execute(
+        """
+        INSERT INTO media_files
+            (id, path, name, extension, size_bytes, codec_name,
+             transcoded_path, transcoded_source_mtime,
+             library_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (fid, str(src), "movie.mkv", ".mkv", 8, "av1",
+         "/sidecar/movie.h264.mkv", old_mtime, lib_id, now, now),
+    )
+    await test_db.commit()
+
+    await _libsvc.scan_library(test_db, lib_id)
+
+    async with test_db.execute(
+        "SELECT transcoded_path FROM media_files WHERE id = ?", (fid,)
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["transcoded_path"] is None

@@ -39,9 +39,17 @@ class TranscodeQueueRequest(BaseModel):
     Up to 50 file ids per request — the desktop's multi-select UI fits
     well below that ceiling, and the cap stops a runaway client from
     enqueueing thousands of rows in one POST.
+
+    ``preset`` selects the quality / size trade-off; the worker
+    persists the chosen name on each ``transcode_jobs`` row and
+    translates it to FFmpeg flags at command-build time.  Defaults to
+    ``recommended`` (cq=23 / crf=23, ~2× source size) — visually
+    indistinguishable in normal viewing, half the disk of the original
+    plan-18 ``mastering`` default.
     """
 
     file_ids: list[str] = Field(min_length=1, max_length=50)
+    preset: Literal["smaller", "recommended", "mastering"] | None = "recommended"
 
 
 class TranscodeQueueResponse(BaseModel):
@@ -86,3 +94,31 @@ class TranscodeRetryResponse(BaseModel):
     """
 
     new_job_id: int
+
+
+class TranscodeStorageResponse(BaseModel):
+    """Aggregate transcode-cache disk usage.
+
+    Returned by ``GET /api/v1/transcode/storage``.  Polled by the
+    desktop's storage-strip widget every 5 s while the Transcode
+    screen is mounted, so the query stays cheap (one SUM, one COUNT,
+    one ``shutil.disk_usage`` syscall).
+
+    ``cache_root`` is always an absolute path — the resolved location
+    sidecars are landing at right now, not the raw setting (which may
+    be NULL meaning "use the data-dir default").  ``storage_mode`` is
+    ``"dedicated"`` or ``"inline"`` per ``user_settings``.
+    ``free_bytes_at_cache_root`` reports free space on the disk that
+    backs ``cache_root`` (or the source disks for ``inline`` mode —
+    in which case the value is the free space at the data-dir as a
+    rough proxy because each library may live on a different mount).
+    ``by_codec`` keys the per-source-codec breakdown
+    (``{"av1": {"count": 8, "bytes": ...}, "vp9": {...}}``).
+    """
+
+    cache_root: str
+    storage_mode: Literal["dedicated", "inline"]
+    transcoded_size_bytes: int
+    transcoded_file_count: int
+    free_bytes_at_cache_root: int
+    by_codec: dict[str, dict[str, int]]

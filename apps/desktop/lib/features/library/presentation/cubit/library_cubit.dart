@@ -16,9 +16,13 @@ class LibraryCubit extends Cubit<LibraryState> {
   Future<void> load() async {
     emit(const LibraryLoading());
     try {
-      final libraries = await _repository.getLibraries();
+      final payload = await _repository.getLibrariesWithOverrides();
       final files = await _repository.getFiles();
-      emit(LibraryLoaded(libraries: libraries, files: files));
+      emit(LibraryLoaded(
+        libraries: payload.libraries,
+        files: files,
+        codecOverrides: payload.overrides,
+      ));
     } on ApiException catch (e, st) {
       _log.e('Library load failed', error: e, stackTrace: st);
       emit(LibraryFailure(e.message));
@@ -32,11 +36,12 @@ class LibraryCubit extends Cubit<LibraryState> {
   /// so the UI doesn't flash a spinner after every mutation.
   Future<void> _refresh() async {
     try {
-      final libraries = await _repository.getLibraries();
+      final payload = await _repository.getLibrariesWithOverrides();
       final files = await _repository.getFiles();
       emit(LibraryLoaded(
-        libraries: libraries,
+        libraries: payload.libraries,
         files: files,
+        codecOverrides: payload.overrides,
         selectedLibraryId: state is LibraryLoaded
             ? (state as LibraryLoaded).selectedLibraryId
             : null,
@@ -57,6 +62,7 @@ class LibraryCubit extends Cubit<LibraryState> {
       libraries: current.libraries,
       files: current.files,
       selectedLibraryId: libraryId,
+      codecOverrides: current.codecOverrides,
     ));
   }
 
@@ -86,12 +92,16 @@ class LibraryCubit extends Cubit<LibraryState> {
     required String libraryId,
     String? name,
     List<String>? rootPaths,
+    LibraryOverrideUpdate? av1Override,
+    LibraryOverrideUpdate? vp9Override,
   }) async {
     try {
       final lib = await _repository.updateLibrary(
         libraryId: libraryId,
         name: name,
         rootPaths: rootPaths,
+        av1Override: av1Override,
+        vp9Override: vp9Override,
       );
       await _refresh();
       return lib;
@@ -104,18 +114,31 @@ class LibraryCubit extends Cubit<LibraryState> {
     }
   }
 
-  Future<void> deleteLibrary(String libraryId) async {
+  /// Plan 19 §M8 — `deleteSidecars: true` (default) sweeps any
+  /// transcoded H.264 files attached to this library off disk; `false`
+  /// keeps the on-disk files (useful when migrating to a new library
+  /// definition without re-running the transcode worker).
+  Future<void> deleteLibrary(
+    String libraryId, {
+    bool deleteSidecars = true,
+  }) async {
     try {
-      await _repository.deleteLibrary(libraryId);
+      await _repository.deleteLibrary(
+        libraryId,
+        deleteSidecars: deleteSidecars,
+      );
       final current = state;
       if (current is LibraryLoaded) {
         final remaining =
             current.libraries.where((l) => l.id != libraryId).toList();
         final remainingFiles =
             current.files.where((f) => f.libraryId != libraryId).toList();
+        final remainingOverrides =
+            Map.of(current.codecOverrides)..remove(libraryId);
         emit(LibraryLoaded(
           libraries: remaining,
           files: remainingFiles,
+          codecOverrides: remainingOverrides,
           selectedLibraryId: current.selectedLibraryId == libraryId
               ? null
               : current.selectedLibraryId,

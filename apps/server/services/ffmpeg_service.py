@@ -1059,6 +1059,30 @@ async def _spawn_ffmpeg_attempt(
     return False, tail, proc.returncode, True
 
 
+def _resolve_codec_passthrough(
+    settings_row: dict | None,
+    library_row: dict | None,
+    codec: str,
+) -> bool:
+    """Plan 19 §M8 — resolve whether to stream-copy `codec` for this session.
+
+    Per-library override beats the global `streaming_mode` setting.
+    Tri-state: NULL inherits, 0 forces transcoding, 1 forces stream-
+    copy.  The global toggle's two values are mapped to bool here:
+    `client-decode` ⇒ True (stream-copy modern codecs straight to
+    capable clients), `server-transcode` ⇒ False (run AV1/VP9
+    through the H.264 transcode pipeline).
+    """
+    settings_row = settings_row or {}
+    if library_row is not None:
+        override_col = f"{codec}_stream_copy_override"
+        override = library_row.get(override_col)
+        if override is not None:
+            return bool(override)
+    mode = settings_row.get("streaming_mode") or "client-decode"
+    return mode == "client-decode"
+
+
 async def start_stream(
     file_path: str,
     session_id: str,
@@ -1069,6 +1093,7 @@ async def start_stream(
     discontinuity_seq: int = 0,
     source_codec_override: str | None = None,
     duration_sec_override: float | None = None,
+    library_row: dict | None = None,
 ) -> Path:
     """Spawn FFmpeg for HLS output; return the .m3u8 playlist path.
 
@@ -1169,19 +1194,16 @@ async def start_stream(
 
     direct_remux_h264 = source_codec == "h264"
     direct_remux_hevc = source_codec in ("hevc", "h265")
-    # Plan 19 §M7 — when streaming_mode is `client-decode` (the v1
-    # default) the server stream-copies AV1 / VP9 sources via fmp4
-    # rather than running the live transcode pipeline.  Modern phones
-    # / tablets / desktops hardware-decode both codecs at near-zero
-    # power cost.  When `server-transcode` (legacy fallback for older
-    # device pools) the AV1/VP9 paths fall through to the existing
-    # transcode-to-H.264 branch from plan 18.
-    streaming_mode = settings_row.get("streaming_mode") or "client-decode"
-    direct_remux_av1 = (
-        streaming_mode == "client-decode" and source_codec == "av1"
+    # Plan 19 §M7 — global `streaming_mode` controls AV1/VP9 stream-
+    # copy.  M8 layers a per-library tri-state override on top so an
+    # operator can pin behaviour for one library without changing
+    # the global default.  The resolver collapses both to a single
+    # bool per codec.
+    direct_remux_av1 = source_codec == "av1" and _resolve_codec_passthrough(
+        settings_row, library_row, "av1"
     )
-    direct_remux_vp9 = (
-        streaming_mode == "client-decode" and source_codec == "vp9"
+    direct_remux_vp9 = source_codec == "vp9" and _resolve_codec_passthrough(
+        settings_row, library_row, "vp9"
     )
     direct_remux = (
         direct_remux_h264 or direct_remux_hevc
@@ -1644,6 +1666,7 @@ async def restart_stream(
     tonemap_hdr: bool = False,
     source_codec_override: str | None = None,
     duration_sec_override: float | None = None,
+    library_row: dict | None = None,
 ) -> Path:
     """Re-spawn FFmpeg from ``seek_sec`` for an existing session.
 
@@ -1730,6 +1753,7 @@ async def restart_stream(
             discontinuity_seq=next_seq,
             source_codec_override=source_codec_override,
             duration_sec_override=duration_sec_override,
+            library_row=library_row,
         )
 
 

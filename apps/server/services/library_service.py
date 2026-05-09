@@ -356,15 +356,36 @@ async def get_library(db: aiosqlite.Connection, library_id: str) -> dict | None:
     }
 
 
+# Sentinel for tri-state PATCH — distinguishes "kwarg omitted" from
+# "kwarg explicitly set to None".  Mirrors the router's ``_UNSET`` so
+# both layers can speak the same shape.
+_UNSET: object = object()
+
+
 async def update_library(
     db: aiosqlite.Connection,
     library_id: str,
     *,
     name: str | None = None,
     root_paths: list[str] | None = None,
+    av1_stream_copy_override: object = _UNSET,
+    vp9_stream_copy_override: object = _UNSET,
 ) -> dict | None:
-    """Partial update of a library. Returns the refreshed row or None if not found."""
-    if name is None and root_paths is None:
+    """Partial update of a library. Returns the refreshed row or None if not found.
+
+    Plan 19 §M8 — the two ``<codec>_stream_copy_override`` kwargs are
+    tri-state: ``_UNSET`` (default) means "don't touch", ``None``
+    explicitly clears the override (inherit global), and ``True`` /
+    ``False`` pin the behaviour for this library.
+    """
+    has_av1_override = av1_stream_copy_override is not _UNSET
+    has_vp9_override = vp9_stream_copy_override is not _UNSET
+    if (
+        name is None
+        and root_paths is None
+        and not has_av1_override
+        and not has_vp9_override
+    ):
         return await get_library(db, library_id)
 
     async with db.execute(
@@ -381,6 +402,18 @@ async def update_library(
     if root_paths is not None:
         sets.append("root_paths = ?")
         params.append(json.dumps(root_paths))
+    if has_av1_override:
+        sets.append("av1_stream_copy_override = ?")
+        params.append(
+            None if av1_stream_copy_override is None
+            else int(bool(av1_stream_copy_override))
+        )
+    if has_vp9_override:
+        sets.append("vp9_stream_copy_override = ?")
+        params.append(
+            None if vp9_stream_copy_override is None
+            else int(bool(vp9_stream_copy_override))
+        )
 
     params.append(library_id)
     await db.execute(
@@ -425,12 +458,60 @@ async def create_library(
     }
 
 
-async def delete_library(db: aiosqlite.Connection, library_id: str) -> bool:
+async def delete_library(
+    db: aiosqlite.Connection,
+    library_id: str,
+    *,
+    delete_sidecars: bool = True,
+) -> bool:
+    """Delete a library and (by default) its produced H.264 sidecars.
+
+    Plan 19 §M8 — ``delete_sidecars=True`` (default) unlinks every
+    on-disk transcoded sidecar belonging to the library before the
+    row + CASCADE drops.  Best-effort: file-level errors are logged
+    and skipped — a single read-only mount shouldn't block the
+    operator from removing the library.
+
+    Pass ``delete_sidecars=False`` to preserve the cache (e.g. when
+    the operator plans to reattach the cache to a renamed library
+    or relocate it).
+    """
     async with db.execute(
         "SELECT id FROM libraries WHERE id = ?", (library_id,)
     ) as cur:
         if await cur.fetchone() is None:
             return False
+
+    if delete_sidecars:
+        async with db.execute(
+            "SELECT transcoded_path FROM media_files"
+            " WHERE library_id = ? AND transcoded_path IS NOT NULL",
+            (library_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+        removed = 0
+        for r in rows:
+            sidecar = r["transcoded_path"]
+            if not sidecar:
+                continue
+            try:
+                p = Path(sidecar)
+                p.unlink()
+                removed += 1
+            except FileNotFoundError:
+                continue
+            except OSError:
+                logger.warning(
+                    "delete_library: could not unlink sidecar %s",
+                    sidecar,
+                    exc_info=True,
+                )
+        if removed:
+            logger.info(
+                "delete_library: removed %d sidecar(s) for library %s",
+                removed,
+                library_id,
+            )
 
     await db.execute("DELETE FROM libraries WHERE id = ?", (library_id,))
     await db.commit()
@@ -669,11 +750,45 @@ async def _scan_library_locked(
                 )
                 continue
             async with db.execute(
-                "SELECT id FROM media_files WHERE path = ?", (path_str,)
+                "SELECT id, transcoded_path, transcoded_source_mtime"
+                "  FROM media_files WHERE path = ?",
+                (path_str,),
             ) as cur:
                 existing = await cur.fetchone()
 
             if existing:
+                # Plan 19 §M6 — stale-sidecar detection.  If the
+                # source has been overwritten since the sidecar was
+                # produced (mtime advance), clear `transcoded_path`
+                # so the next play uses the fresh source.  The on-
+                # disk sidecar is left in place; the operator can
+                # decide whether to clean up via the History tab.
+                if (
+                    existing["transcoded_path"] is not None
+                    and existing["transcoded_source_mtime"] is not None
+                ):
+                    try:
+                        current_mtime = int(file_path.stat().st_mtime)
+                    except OSError:
+                        current_mtime = None
+                    if (
+                        current_mtime is not None
+                        and current_mtime > int(
+                            existing["transcoded_source_mtime"]
+                        )
+                    ):
+                        await db.execute(
+                            "UPDATE media_files SET transcoded_path = NULL"
+                            " WHERE id = ?",
+                            (existing["id"],),
+                        )
+                        logger.info(
+                            "library scan: cleared stale sidecar for %s "
+                            "(source mtime advanced %s -> %s)",
+                            path_str,
+                            existing["transcoded_source_mtime"],
+                            current_mtime,
+                        )
                 continue
 
             file_id = str(uuid.uuid4())

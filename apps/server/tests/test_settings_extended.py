@@ -188,6 +188,77 @@ async def test_transcoding_chain_rejects_all_duplicates(client: AsyncClient):
     assert "distinct" in str(res.json()["detail"])
 
 
+# ── Plan 19 §M2 — transcode storage settings ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_transcode_storage_mode_default_is_dedicated(client: AsyncClient):
+    res = await client.get("/api/v1/settings")
+    assert res.status_code == 200
+    assert res.json()["transcode_storage_mode"] == "dedicated"
+    assert res.json()["transcode_cache_root"] is None
+
+
+@pytest.mark.asyncio
+async def test_transcode_storage_mode_round_trips(client: AsyncClient):
+    res = await client.patch(
+        "/api/v1/settings", json={"transcode_storage_mode": "inline"}
+    )
+    assert res.status_code == 200
+    assert res.json()["transcode_storage_mode"] == "inline"
+
+
+@pytest.mark.asyncio
+async def test_transcode_storage_mode_rejects_unknown_literal(client: AsyncClient):
+    res = await client.patch(
+        "/api/v1/settings", json={"transcode_storage_mode": "loose"}
+    )
+    assert res.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_transcode_cache_root_rejects_relative_path(client: AsyncClient):
+    res = await client.patch(
+        "/api/v1/settings", json={"transcode_cache_root": "relative/cache"}
+    )
+    assert res.status_code == 422
+    assert "absolute" in str(res.json()["detail"]).lower()
+
+
+@pytest.mark.asyncio
+async def test_transcode_cache_root_accepts_writable_absolute_path(
+    client: AsyncClient, tmp_path
+):
+    res = await client.patch(
+        "/api/v1/settings", json={"transcode_cache_root": str(tmp_path / "cache")}
+    )
+    assert res.status_code == 200
+    assert res.json()["transcode_cache_root"] == str(tmp_path / "cache")
+
+
+@pytest.mark.asyncio
+async def test_transcode_cache_root_rejects_path_inside_library(
+    client: AsyncClient, tmp_path
+):
+    """A cache root inside a library root would loop on rescan — every
+    produced sidecar would be re-discovered and fail to match the
+    candidate codec list."""
+    lib_root = tmp_path / "lib"
+    lib_root.mkdir()
+    create_resp = await client.post(
+        "/api/v1/library",
+        json={"name": "L", "type": "movies", "root_paths": [str(lib_root)]},
+    )
+    assert create_resp.status_code == 201
+
+    res = await client.patch(
+        "/api/v1/settings",
+        json={"transcode_cache_root": str(lib_root / "cache")},
+    )
+    assert res.status_code == 422
+    assert "library" in str(res.json()["detail"]).lower()
+
+
 @pytest.mark.asyncio
 async def test_transcoding_chain_empty_list_clears(client: AsyncClient):
     """An empty list means 'use the default chain' — stored as null in DB,

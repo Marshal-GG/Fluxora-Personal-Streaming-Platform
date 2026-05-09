@@ -11,6 +11,7 @@ import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_
 import 'package:fluxora_desktop/features/transcode/presentation/widgets/candidates_tab.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/widgets/history_tab.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/widgets/queue_tab.dart';
+import 'package:fluxora_desktop/features/transcode/presentation/widgets/storage_strip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_tab_bar.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 
@@ -64,6 +65,9 @@ class _TranscodeViewState extends State<_TranscodeView> {
               subtitle:
                   'Pre-convert AV1 / VP9 sources to H.264 sidecars so playback stream-copies',
             ),
+            // Plan 19 §M3 — persistent storage info strip above the
+            // tab bar. Reads from the cubit's storage slice (5 s poll).
+            const StorageStrip(),
             BlocBuilder<TranscodeCubit, TranscodeState>(
               buildWhen: (a, b) => _countsChanged(a, b),
               builder: (context, state) {

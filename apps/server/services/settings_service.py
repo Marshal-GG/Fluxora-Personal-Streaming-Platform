@@ -1,12 +1,126 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import aiosqlite
 
 from services import license_service
 
 logger = logging.getLogger(__name__)
+
+
+# Sentinel marker used by `update_settings` to distinguish
+# "kwarg not provided" from "kwarg explicitly set to None".  Without
+# this, callers couldn't clear `transcode_cache_root` back to the
+# data-dir default — `None` is the in-band default-marker too.
+_UNSET = object()
+
+
+def _default_cache_root() -> Path:
+    """Fall-back cache root used when `transcode_cache_root` is unset.
+
+    Resolves to a sibling of the SQLite DB inside the platform-correct
+    data directory.  Never the C: drive default user profile — that
+    would silently fill the OS volume on a Windows server with
+    multiple drives mounted.
+    """
+    from config import settings
+
+    return Path(settings.fluxora_db_path).parent / "transcodes"
+
+
+def _validate_transcode_cache_root_sync(
+    path_str: str, library_roots: list[str]
+) -> None:
+    """Sync portion of `transcode_cache_root` validation.
+
+    Raises `ValueError` with a user-facing string on any rule break:
+
+    * Path must be absolute.
+    * Path must be writable (1-byte test write + unlink).
+    * Path must NOT live inside any library root (would loop on
+      rescan — every produced sidecar would be re-scanned as a media
+      file, and the next scan would consider it a new H.264 source
+      with no codec match for transcoding).
+    """
+    if not path_str or not path_str.strip():
+        raise ValueError("transcode_cache_root must not be empty")
+    p = Path(path_str)
+    if not p.is_absolute():
+        raise ValueError(
+            f"transcode_cache_root must be an absolute path, got: {path_str!r}"
+        )
+
+    # Containment check FIRST — cheaper than the writable probe and
+    # catches the most common operator footgun (pointing the cache at
+    # a subdirectory of the library they just configured).
+    p_resolved = p.resolve(strict=False)
+    for root_str in library_roots:
+        try:
+            root_resolved = Path(root_str).resolve(strict=False)
+        except (OSError, ValueError):
+            continue
+        try:
+            p_resolved.relative_to(root_resolved)
+        except ValueError:
+            continue
+        raise ValueError(
+            "transcode_cache_root cannot be inside a library root "
+            f"({root_str!r}) — rescans would loop on transcoded output"
+        )
+
+    # Create parents on first use; mirrors what the worker does at
+    # job-start, so the validation surfaces "path I can never write
+    # to" failures before the operator queues their first job.
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ValueError(
+            f"transcode_cache_root is not creatable: {path_str!r} ({exc})"
+        ) from exc
+
+    # 1-byte writable probe.
+    probe = p / ".fluxora-write-test"
+    try:
+        probe.write_bytes(b"x")
+    except OSError as exc:
+        raise ValueError(
+            f"transcode_cache_root is not writable: {path_str!r} ({exc})"
+        ) from exc
+    finally:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            logger.debug("Could not unlink write-test probe %s", probe, exc_info=True)
+
+
+async def _validate_transcode_cache_root(
+    db: aiosqlite.Connection, path_str: str
+) -> None:
+    """Wrap the sync validator with the per-library lookup.
+
+    Library roots come from the `libraries.root_paths` JSON column;
+    ``library_service.list_libraries`` does the JSON decode for us so
+    we get a clean ``list[str]`` per library.
+    """
+    import json as _json
+
+    async with db.execute("SELECT root_paths FROM libraries") as cur:
+        rows = await cur.fetchall()
+    roots: list[str] = []
+    for r in rows:
+        try:
+            decoded = _json.loads(r["root_paths"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(decoded, list):
+            roots.extend(str(x) for x in decoded if isinstance(x, str))
+    # Run the blocking probe in a thread so a slow / network-mount
+    # cache root doesn't pin the event loop.
+    import asyncio as _asyncio
+
+    await _asyncio.to_thread(_validate_transcode_cache_root_sync, path_str, roots)
 
 # Stream concurrency caps per subscription tier.
 TIER_STREAM_LIMITS: dict[str, int] = {
@@ -40,6 +154,8 @@ async def update_settings(
     transcoding_hwaccel_device: str | None = None,
     transcoding_chain: list[str] | None = None,
     streaming_mode: str | None = None,
+    transcode_storage_mode: str | None = None,
+    transcode_cache_root: str | None = None,
     # General
     language: str | None = None,
     auto_start_on_boot: bool | None = None,
@@ -77,6 +193,12 @@ async def update_settings(
         if tier not in VALID_TIERS:
             valid_tiers = ", ".join(sorted(VALID_TIERS))
             raise ValueError(f"Invalid tier: {tier!r}. Must be one of {valid_tiers}")
+
+    # --- transcode_cache_root validation (Plan 19 §M2) ---
+    # Runs before the dynamic UPDATE so an invalid path never lands in
+    # the DB and the operator sees the failure synchronously on PATCH.
+    if transcode_cache_root is not None:
+        await _validate_transcode_cache_root(db, transcode_cache_root)
 
     # --- transcoding_chain validation + JSON encode ---
     # Reject chains that reference encoders the registry doesn't know
@@ -128,6 +250,8 @@ async def update_settings(
         "transcoding_hwaccel_device": "transcoding_hwaccel_device",
         "transcoding_chain": "transcoding_chain",
         "streaming_mode": "streaming_mode",
+        "transcode_storage_mode": "transcode_storage_mode",
+        "transcode_cache_root": "transcode_cache_root",
         "language": "language",
         "auto_start_on_boot": "auto_start_on_boot",
         "auto_restart_on_crash": "auto_restart_on_crash",
@@ -163,6 +287,8 @@ async def update_settings(
         # serialised form.
         "transcoding_chain": encoded_chain,
         "streaming_mode": streaming_mode,
+        "transcode_storage_mode": transcode_storage_mode,
+        "transcode_cache_root": transcode_cache_root,
         "language": language,
         "auto_start_on_boot": auto_start_on_boot,
         "auto_restart_on_crash": auto_restart_on_crash,
@@ -238,6 +364,8 @@ def _defaults() -> dict:
         "transcoding_hwaccel_device": None,
         "transcoding_chain": None,
         "streaming_mode": "client-decode",
+        "transcode_storage_mode": "dedicated",
+        "transcode_cache_root": None,
         "language": "en",
         "auto_start_on_boot": 0,
         "auto_restart_on_crash": 1,

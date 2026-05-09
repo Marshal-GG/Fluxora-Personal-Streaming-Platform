@@ -1,7 +1,7 @@
 import logging
 
 import aiosqlite
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from config import settings
 from database.db import get_db
@@ -17,7 +17,26 @@ from services import activity_service, group_service, library_service
 
 logger = logging.getLogger(__name__)
 
+# Sentinel marker — distinguishes "PATCH didn't include this field"
+# from "PATCH explicitly set this field to None".  Used by the tri-
+# state `<codec>_stream_copy_override` columns where None is itself a
+# legal value (inherit global setting).  Lives at module scope so the
+# library_service can re-import the same singleton if needed.
+_UNSET: object = object()
+
 router = APIRouter()
+
+
+def _override_to_bool(raw: object | None) -> bool | None:
+    """Plan 19 §M8 — `<codec>_stream_copy_override` is INTEGER NULL.
+
+    NULL inherits the global setting; 0 / 1 pin the behaviour.  Pydantic
+    validates the wire shape (bool | None); this helper only converts
+    SQLite's INTEGER-or-NULL storage into the same shape.
+    """
+    if raw is None:
+        return None
+    return bool(raw)
 
 
 def _parse_library(row: dict) -> LibraryResponse:
@@ -31,6 +50,12 @@ def _parse_library(row: dict) -> LibraryResponse:
         file_count=row.get("file_count", 0),
         total_size_bytes=row.get("total_size_bytes", 0),
         cover_urls=row.get("cover_urls", []),
+        av1_stream_copy_override=_override_to_bool(
+            row.get("av1_stream_copy_override")
+        ),
+        vp9_stream_copy_override=_override_to_bool(
+            row.get("vp9_stream_copy_override")
+        ),
     )
 
 
@@ -111,10 +136,26 @@ async def update_library(
     db: aiosqlite.Connection = Depends(get_db),
     _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> LibraryResponse:
-    if body.name is None and body.root_paths is None:
+    # Plan 19 §M8 — override fields are tri-state (NULL inherits, 0/1
+    # pin).  PATCH semantics make us distinguish "field omitted" from
+    # "field explicitly set to null"; pydantic v2's `model_fields_set`
+    # is the cleanest way.
+    fields_set = body.model_fields_set
+    has_av1_override = "av1_stream_copy_override" in fields_set
+    has_vp9_override = "vp9_stream_copy_override" in fields_set
+
+    if (
+        body.name is None
+        and body.root_paths is None
+        and not has_av1_override
+        and not has_vp9_override
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="At least one field (name or root_paths) must be provided",
+            detail=(
+                "At least one field (name, root_paths, or a codec override) "
+                "must be provided"
+            ),
         )
     if body.name is not None and not body.name.strip():
         raise HTTPException(
@@ -131,6 +172,12 @@ async def update_library(
         library_id,
         name=body.name,
         root_paths=body.root_paths,
+        av1_stream_copy_override=(
+            body.av1_stream_copy_override if has_av1_override else _UNSET
+        ),
+        vp9_stream_copy_override=(
+            body.vp9_stream_copy_override if has_vp9_override else _UNSET
+        ),
     )
     if row is None:
         raise HTTPException(
@@ -158,13 +205,21 @@ async def update_library(
 @router.delete("/{library_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_library(
     library_id: str,
+    delete_sidecars: bool = Query(default=True),
     db: aiosqlite.Connection = Depends(get_db),
     _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> None:
     # Capture the library name before delete so the audit summary is
     # human-readable instead of just an opaque id.
     existing = await library_service.get_library(db, library_id)
-    deleted = await library_service.delete_library(db, library_id)
+    # Plan 19 §M8 — `delete_sidecars=true` (default) unlinks the H.264
+    # transcoded sidecars produced for this library before the row +
+    # CASCADE drops.  Operators with a separate cache mount that they
+    # plan to reattach to a renamed library can pass `false` to
+    # preserve the on-disk files.
+    deleted = await library_service.delete_library(
+        db, library_id, delete_sidecars=delete_sidecars
+    )
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Library not found"

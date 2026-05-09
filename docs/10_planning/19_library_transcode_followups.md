@@ -1,7 +1,7 @@
 # Library Transcode — Phase 2 Follow-ups
 
 > **Category:** Planning
-> **Status:** Drafted 2026-05-09. **Strategy pivot 2026-05-09 (same day):** v1 launches with client-side decoding as the **default streaming mode** — the server stream-copies AV1/VP9 sources directly to clients via fmp4 (the same path HEVC already uses) and the transcode pipeline becomes the legacy / opt-in fallback. **M7 (AV1/VP9 stream-copy + global "Streaming mode" toggle) elevated to launch priority — shipping in one commit. M1-M6 + M8 deferred to v1.1**, executed only after operator demand or live-feedback signal.
+> **Status:** Drafted 2026-05-09. **Strategy pivot 2026-05-09 (same day):** v1 launches with client-side decoding as the **default streaming mode**. M7 shipped same day as launch-priority commit `627cdf1`. **M1, M2, M3, M4, M5, M6, M8 ALL ✅ shipped 2026-05-09** via 2 parallel Opus subagents — full plan 19 scope is closed. Server suite **734 → 775 (+41)**; desktop **104 → 113 (+9)**.
 > **Scope (v1 LAUNCH only):** A single global `Settings → Transcoding → Streaming mode` toggle that switches between `client-decode` (default — server stream-copies AV1/VP9 directly; modern devices hardware-decode) and `server-transcode` (current behaviour — server live-transcodes to H.264 before streaming). Sidecar pickup unchanged: if a transcoded sidecar exists, it always wins regardless of mode.
 > **Scope (v1.1 deferred):** The four pain points originally drafted here — quality preset chooser, storage-location chooser, storage-info UI strip, folder-grouped tree — stay deferred. They're real and worth shipping, just not blocking launch. See §7 milestone table for which are which.
 > **Non-goals (still out for v1.2+):** Multi-job concurrency slider · resolution downscale (4K → 1080p sidecar) · per-device codec capability negotiation · auto-retry on transient failures · "detect orphan sidecars on disk" cleanup tool · re-link by content hash. See §13.
@@ -377,28 +377,28 @@ The AV1 stream-copy path lands as fmp4 segments served from `/api/v1/hls/...`; m
 ## 7 · Sequenced milestones
 
 ```
-M7 — AV1 / VP9 stream-copy path + global "Streaming  │ ~3 h    │ medium risk │ 🟢 LAUNCH PRIORITY (2026-05-09)
+M7 — AV1 / VP9 stream-copy path + global "Streaming  │ ~3 h    │ medium risk │ ✅ shipped 2026-05-09 (commit 627cdf1)
        mode" toggle in encoder settings              │         │             │
 ─────────────────────────────────────────────────────│─────────│─────────────│
-M1 — Quality preset chooser (default → cq=23)        │ ~1 h    │ low risk    │ 🔵 deferred to v1.1
-M2 — Storage mode + cache root setting               │ ~2 h    │ medium risk │ 🔵 deferred to v1.1
-M3 — `/transcode/storage` + _StorageStrip widget     │ ~1.5 h  │ low risk    │ 🔵 deferred to v1.1
-M4 — Folder-grouped tree (Candidates + History)      │ ~2 h    │ medium risk │ 🔵 deferred to v1.1
-M5 — Queue dialog + per-row size + path affordances  │ ~1.5 h  │ low risk    │ 🔵 deferred to v1.1
+M1 — Quality preset chooser (default → cq=23)        │ ~1 h    │ low risk    │ ✅ shipped 2026-05-09
+M2 — Storage mode + cache root setting               │ ~2 h    │ medium risk │ ✅ shipped 2026-05-09
+M3 — `/transcode/storage` + _StorageStrip widget     │ ~1.5 h  │ low risk    │ ✅ shipped 2026-05-09
+M4 — Folder-grouped tree (Candidates + History)      │ ~2 h    │ medium risk │ ✅ shipped 2026-05-09
+M5 — Queue dialog + per-row size + path affordances  │ ~1.5 h  │ low risk    │ ✅ shipped 2026-05-09
 M6 — Edge-case hardening (validation, mtime stale,   │         │             │
-       .webm ext override, partial cleanup on boot)  │ ~1.5 h  │ medium risk │ 🔵 deferred to v1.1
+       .webm ext override, partial cleanup on boot)  │ ~1.5 h  │ medium risk │ ✅ shipped 2026-05-09
 M8 — Per-library override UI + library-delete with   │         │             │
-       sidecar-cleanup confirmation                  │ ~1.5 h  │ low risk    │ 🔵 deferred to v1.1
+       sidecar-cleanup confirmation                  │ ~1.5 h  │ low risk    │ ✅ shipped 2026-05-09
 ─────────────────────────────────────────────────────│─────────│─────────────│
-Total launch (M7 only)                               │ ~3 h                    │
-Total deferred (M1-M6 + M8)                          │ ~10 h                   │
+Total                                                │ ~13 h                   │ all 8 milestones closed
 ```
 
-**Launch reasoning.** v1 ships the lowest-friction streaming experience: server stream-copies whatever the source codec is to clients that can hardware-decode it. The transcode pipeline plan 18 just shipped is the **opt-in fallback** for legacy device pools — it stays exactly as-is, the toggle just changes whether new playback sessions hit it for AV1/VP9 sources by default. Everything else in this plan (M1-M6, M8) is a polish layer on the transcode workflow that's only relevant for operators who actively run that pipeline.
+**Execution.** M7 shipped same-day as the strategy-pivot commit `627cdf1`. M1-M6 + M8 shipped same-day via 2 parallel Opus subagents partitioned along the server / desktop boundary, with the API contract locked in both prompts so they couldn't diverge. Migrations 029, 030, 031 added per §3. Net: server **734 → 775 (+41 tests)**, desktop **104 → 113 (+9 tests)**, ruff + flutter analyze clean across the round.
 
-**Post-launch ordering when we revisit.** M1 (preset chooser, lower default) is highest-priority of the deferred set because operators who DO opt into transcoding hit the 4×-bigger sidecar pain immediately. M3 (storage info strip) is second because operators want visibility before they enable the workflow at all. The rest can be batched whenever an operator round is convenient.
-
-Ship the launch round (M7) in one commit, combined with the **plan-18 sidecar-metadata-override hotfix** that's already uncommitted on top of `191fe44`. Both touch the same `routers/stream.py` and `services/ffmpeg_service.py` paths and ship cleanly together.
+**Sharp edges flagged for follow-up rounds:**
+- The desktop's library-delete confirmation shows a checkbox "Also delete N transcoded sidecars" but **no per-library count** — the storage endpoint surfaces aggregate cache size only. Adding per-library breakdown to the storage endpoint is a small server-side enhancement.
+- Folder-tree memoisation isn't there yet — `buildFolderTree` runs on every Candidates rebuild. Free for ≤17 candidates; at 5000+ it'd want caching keyed by the candidates-list identity hash.
+- `ApiClient.delete` had no query-param hook before this round; the subagent appended `?delete_sidecars=…` to the path string. Worth landing a proper `delete<T>(path, {queryParameters})` overload eventually.
 
 ---
 
@@ -485,7 +485,7 @@ The list from this plan's first draft stays valid for v1.1+ execution. Migration
 
 ## 12 · TL;DR
 
-Plan 18 shipped a working transcode pipeline but the operator's real-device test surfaced **wrong defaults** (4× sized sidecars, side-by-side clutter, no storage controls). Mid-review the strategy reframed: **v1 launches with client-side decoding as the default**, transcoding becomes the legacy / opt-in fallback. **M7 (AV1/VP9 stream-copy + global "Streaming mode" toggle) is the launch-priority milestone — ~3 hours, one commit, default `client-decode`.** Server stream-copies AV1/VP9 sources via fmp4 (same path HEVC already uses), modern devices hardware-decode them, server CPU stays near 0 %. Older device pools toggle to `server-transcode` to restore the legacy live-transcode pipeline. **Sidecar pickup wins regardless of mode** — operators who already ran plan-18 jobs don't lose that work. **M1-M6 + M8 (~10 hours) deferred to v1.1**, executed only after operator demand. The transcode pipeline code from plan 18 stays in the tree untouched — toggle only changes which path new playback sessions hit.
+Plan 18 shipped a working transcode pipeline but the operator's real-device test surfaced **wrong defaults** (4× sized sidecars, side-by-side clutter, no storage controls). Mid-review the strategy reframed: **v1 launches with client-side decoding as the default**, transcoding becomes the legacy / opt-in fallback. **M7 shipped same-day as `627cdf1` with `client-decode` default; M1-M6 + M8 shipped same-day via 2 parallel Opus subagents — full plan 19 closed in a single working day.** Server stream-copies AV1/VP9 sources via fmp4 by default; quality presets (smaller / recommended / mastering) replace the over-aggressive `cq=19` default; cache lives at an operator-configurable root with a mirrored library tree (or `.fluxora-transcodes/` inline subfolder); `/transcode/storage` + storage strip surface usage at the top of the Transcode page; folder-grouped tree replaces the flat candidate list with tri-state checkboxes; per-library AV1/VP9 overrides + library-delete-with-sidecar-cleanup checkbox close the polish surface. Server **734 → 775 tests**; desktop **104 → 113 tests**. The transcode pipeline code from plan 18 stays intact — toggle only changes which path new playback sessions hit by default.
 
 ---
 
