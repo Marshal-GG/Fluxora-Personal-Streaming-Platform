@@ -216,3 +216,78 @@ No test changes this round (docs only). Numbers unchanged from the prior session
 2. **Decide the `Routes.downloads` fate** (Sharp Edge #2). Either wire it into `app_router.dart` for v1.1, or delete `downloads_screen.dart` + ancillary code.
 3. **Address the §9 design questions in plan 18** (carried forward from prior entry).
 4. **Patch `_seekRelative` for `playlistOffsetSec`** (carried forward — double-tap-skip after a forward server-restart still bugged).
+
+---
+
+## [2026-05-09] [server] [mobile] [fix] [tests] — Audit follow-up: TURN env-var, real-IP heartbeat, double-tap-skip, regression tests
+
+**Phase:** Phase 2 — bug fixes surfaced by the 2026-05-09 doc audit
+**Status:** Complete
+**Commits:** uncommitted
+
+### What Was Done
+
+Operator request: "fix all the issues" surfaced by the prior audit round. Worked through the 4 actionable flags from the audit + carried-forward Sharp Edges:
+
+1. **TURN env-var name mismatch (Sharp Edge #1) — fixed.** `apps/server/services/webrtc_service.py::_ice_servers()` was reading `webrtc_turn_url` / `webrtc_turn_username` / `webrtc_turn_password` via `getattr(settings, …, None)` — names that never bound to any declared `Settings` field. Renamed reads to `settings.fluxora_turn_url` / `fluxora_turn_user` / `fluxora_turn_pass` (canonical names per `config.py:76-78`). Direct attribute access (no `getattr` fallback) so a future config-rename would surface as a `AttributeError` at boot rather than silently dropping TURN. Module-level docstring updated to reference the correct env vars.
+
+2. **`Routes.downloads` "orphan" (Sharp Edge #2) — false positive, not deleted.** Re-reading `apps/mobile/lib/shared/widgets/mobile_shell.dart:20-23` shows the Downloads tab is **intentionally** kept as a v1.1 stub — explicit comment: *"`downloads_screen.dart` stays in the tree so re-enabling is a one-line restoration once the offline-storage subsystem lands."* The audit subagent's flag of this as "orphan" was wrong; deletion would force v1.1 to rebuild the screen. Left in place.
+
+3. **Migration 023 IP-tracking limitation (Sharp Edge #3) — fixed at the call site, not just flagged.** Discovered `apps/server/utils/real_ip.py` already exposes a `real_ip_key(request)` helper that reads the trusted `request.state.real_ip` set by `RealIPMiddleware` (CF-Connecting-IP when the immediate peer is a Cloudflare IP and `FLUXORA_TRUST_CF_HEADERS` is on, else peer host). Updated `apps/server/routers/deps.py::validate_token` to call `real_ip_key(request)` instead of `request.client.host`. Tunneled clients are now recorded with their real IP in `clients.last_ip` instead of `127.0.0.1`. The migration's known limitation is closed at its actual call site, where it always belonged.
+
+4. **`_seekRelative` ignores `playlistOffsetSec` (carried-forward Sharp Edge) — fixed.** `apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart::_seekRelative` was using `widget.player.state.position + delta` (player-time) and passing the result to the cubit, which expects source-time. After a forward server-restart with `playlistOffsetSec > 0`, a `+10 s` skip from source-time `5:00` would compute `playerPos + 10 s` and emit it as a source-time target — the cubit subtracted `playlistOffsetSec`, got a negative number, clamped to `0`, and double-tap-skip silently sent the user back to the start of the playlist. Now the helper computes `sourcePos = playerPos + offset` first, applies `delta` in source-time, then clamps to `[0, sourceDur]` before emitting.
+
+5. **Regression tests added.** `apps/server/tests/test_webrtc_ice_servers.py` — 3 tests pinning `_ice_servers` behaviour: STUN-only when no TURN configured, includes TURN entry when all three are set, drops TURN if any of url/user/pass is empty.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|--------|------|-----|
+| Modified | apps/server/services/webrtc_service.py | TURN env-var reads renamed to `settings.fluxora_turn_*`; module docstring updated |
+| Modified | apps/server/routers/deps.py | `last_ip` now read via `real_ip_key()` so tunneled clients are recorded with their real IP, not 127.0.0.1 |
+| Modified | apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart | `_seekRelative` threads `playlistOffsetSec`; double-tap-skip stays in source-time |
+| Created | apps/server/tests/test_webrtc_ice_servers.py | 3 regression tests for the TURN-config behaviour |
+| Modified | docs/00_overview/current_status.md | New "(latest) 2026-05-09" lead paragraph for the audit follow-up; server count 695 → 698 |
+| Modified | docs/02_architecture/02_tech_stack.md | Test count 695 → 698 (×2 occurrences) |
+| Modified | docs/03_data/04_migration_guide.md | Test count 695 → 698 |
+| Modified | docs/05_infrastructure/01_infrastructure.md | Env-vars table TURN row drift caveat removed; "Last Updated" |
+| Modified | docs/05_infrastructure/06_webrtc_and_turn.md | Drift section removed; "Wire it into Fluxora" simplified to canonical names; "Last Updated" |
+| Modified | docs/09_backend/01_backend_architecture.md | Test count tally 695 → 698 |
+| Modified | docs/10_planning/01_roadmap.md | Test count 695 → 698 |
+| Modified | docs/10_planning/05_ship_readiness.md | Test count 695 → 698 |
+| Modified | AGENT_LOG.md | This entry |
+
+### Docs Updated
+
+Same as Files Modified — all 8 owned-doc edits + AGENT_LOG.
+
+### Decisions Made
+
+- **Direct attribute access on `Settings`, not `getattr` with default.** The whole reason the bug existed is that `getattr(settings, "webrtc_turn_url", None)` swallowed the name mismatch silently. The fix uses `settings.fluxora_turn_url` directly so any future rename or removal hits an `AttributeError` at boot — loud, not silent.
+- **Real-IP fix at the call site, not via TODO comment.** The audit subagent suggested adding a `# TODO(real-ip)` marker; investigation revealed the project already had `real_ip_key(request)` available. Added an actual fix to `routers/deps.py`. The marker would have just been technical debt.
+- **Did NOT delete `downloads_screen.dart`.** Explicit "kept-on-purpose" comment in `mobile_shell.dart` overrides the audit's "orphan" flag. The audit subagent didn't read that comment.
+
+### Issues / Sharp Edges Discovered
+
+- **Audit subagents can produce false positives if they don't read every nearby comment.** The Downloads-screen flag is the example: an "unregistered route" looks like dead code unless you read the explicit "stays in tree for v1.1" comment two files over. Future audits should weight existing comments before flagging deletion.
+- **`real_ip_key()` re-implements the peer-fallback inline rather than calling out the existing path.** Not a bug, but the `_peer_host(request)` helper is private to `real_ip.py`. If callers need `real_ip` outside the `RealIPMiddleware`-wrapped path, they currently re-derive the peer host. Consider exporting `_peer_host` if a third caller appears.
+
+### Test Counts (re-baselined)
+
+- **Server: 695 → 698 passing** (+3 from `test_webrtc_ice_servers.py`).
+- **Mobile: 78 passing** (unchanged — `_seekRelative` is a real-device-only path; `flutter analyze lib/features/player` clean, full mobile suite still passes).
+- **Desktop: 90 passing** (untouched).
+- **Core: 8 passing** (untouched).
+
+`flutter analyze lib/features/player` clean. `ruff check` clean. Server suite ran in 115 s.
+
+### Working-Tree Status
+
+Audit-follow-up changes uncommitted on top of `55f9865`. Operator's earlier "fix all the issues, …" implies a single consolidating commit.
+
+### Next Agent Should
+
+1. **Address the §9 design questions in plan 18** (still gating M1 of the library transcode feature).
+2. **Real-device regression test for the scrubber pin** (carried forward from prior entry — fragile surface; symptom is "scrubber paints at end for one frame after a forward seek > 5 s").
+3. **`current_status.md` size — still over the 25k Read-cap.** Use `Grep` + targeted `Read` with offset/limit. Splitting into per-component status files is a candidate refactor when the next non-trivial doc round comes through.
+4. **Watch for the `mobile_settings_remediation_plan` cross-link** — has been moved to `docs/10_planning/archive/15_mobile_settings_remediation_plan.md`. CLAUDE.md and the roadmap reference the archived path; some older docs may still link to the unarchived path.

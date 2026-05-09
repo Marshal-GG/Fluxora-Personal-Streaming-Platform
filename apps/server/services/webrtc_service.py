@@ -18,7 +18,9 @@ Architecture
 STUN/TURN
 ~~~~~~~~~
   Default: Google public STUN servers (no cost, suitable for development).
-  Production: override ``WEBRTC_STUN_URLS`` / ``WEBRTC_TURN_*`` env vars.
+  Production: override ``WEBRTC_STUN_URLS`` / ``FLUXORA_TURN_URL`` /
+  ``FLUXORA_TURN_USER`` / ``FLUXORA_TURN_PASS`` env vars (see
+  ``config.py`` for the canonical names).
 """
 
 from __future__ import annotations
@@ -56,9 +58,16 @@ def _ice_servers() -> list[RTCIceServer]:
     ]
     servers = [RTCIceServer(urls=stun_urls)]
 
-    turn_url = getattr(settings, "webrtc_turn_url", None)
-    turn_user = getattr(settings, "webrtc_turn_username", None)
-    turn_pass = getattr(settings, "webrtc_turn_password", None)
+    # Read these directly off `settings` rather than via `getattr` with a
+    # `None` default: the attribute names must match
+    # `config.py::Settings.fluxora_turn_*` exactly. A typo
+    # (e.g. `webrtc_turn_*`) under `getattr(..., None)` silently disables
+    # TURN regardless of what the operator exported; direct access
+    # surfaces the mismatch as an `AttributeError` instead of a quiet
+    # downgrade to STUN-only.
+    turn_url = settings.fluxora_turn_url
+    turn_user = settings.fluxora_turn_user
+    turn_pass = settings.fluxora_turn_pass
     if turn_url and turn_user and turn_pass:
         servers.append(
             RTCIceServer(urls=[turn_url], username=turn_user, credential=turn_pass)

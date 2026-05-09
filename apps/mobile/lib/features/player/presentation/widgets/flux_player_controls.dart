@@ -268,25 +268,43 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
   // ── Player commands ────────────────────────────────────────────────────────
 
   void _seekRelative(Duration delta) {
-    final pos = widget.player.state.position;
-    final dur = widget.player.state.duration;
-    var target = pos + delta;
+    // Convert player-time to source-time before passing to the cubit:
+    // after a forward server-restart `playlistOffsetSec` is non-zero
+    // and the cubit's `seekTo` expects source-time targets.  Without
+    // this, a `+10 s` skip after a 5:00 forward seek-restart would land
+    // at source-time 0:10 instead of 5:10 (the cubit subtracts the
+    // offset internally and the in-player path clamps the negative
+    // result to 0).
+    final playerPos = widget.player.state.position;
+    final playerDur = widget.player.state.duration;
+    final offset =
+        Duration(milliseconds: (widget.playlistOffsetSec * 1000).toInt());
+    final sourceDur = playerDur + offset;
+    final sourcePos = playerPos + offset;
+    var target = sourcePos + delta;
     if (target < Duration.zero) target = Duration.zero;
-    if (target > dur) target = dur;
+    if (sourceDur > Duration.zero && target > sourceDur) target = sourceDur;
     _emitSeek(target);
     widget.controller.show();
   }
 
   /// Single seek funnel — routes through the cubit when the parent has
-  /// supplied [FluxPlayerControls.onSeek], otherwise falls back to the
-  /// legacy direct call.  Used by the scrubber, the double-tap-skip
-  /// ripple, and the side-rail skip buttons.
+  /// supplied [FluxPlayerControls.onSeek], otherwise falls back to a
+  /// direct `player.seek` call.  Used by the scrubber, the double-tap-
+  /// skip ripple, and the side-rail skip buttons.  Callers emit
+  /// SOURCE-time targets; the fallback path converts back to player-
+  /// time (`target - playlistOffsetSec`, clamped to player-duration)
+  /// because libmpv's `seek` expects playlist-local coordinates.
   void _emitSeek(Duration target) {
     final cb = widget.onSeek;
     if (cb != null) {
       cb(target);
     } else {
-      widget.player.seek(target);
+      final offsetMs = (widget.playlistOffsetSec * 1000).toInt();
+      final playerDurMs = widget.player.state.duration.inMilliseconds;
+      final playerMs = (target.inMilliseconds - offsetMs)
+          .clamp(0, playerDurMs > 0 ? playerDurMs : 1 << 30);
+      widget.player.seek(Duration(milliseconds: playerMs));
     }
   }
 

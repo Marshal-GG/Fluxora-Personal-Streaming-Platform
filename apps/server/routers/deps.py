@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from config import settings
 from database.db import get_db
 from services.auth_service import get_trusted_client_by_token, update_client_heartbeat
+from utils.real_ip import real_ip_key
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,14 @@ async def validate_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    last_ip = request.client.host if request.client else None
+    # Use the trusted real-IP set by `RealIPMiddleware` rather than
+    # `request.client.host`: for traffic arriving via Cloudflare Tunnel
+    # the immediate peer is 127.0.0.1, so recording that as
+    # `clients.last_ip` strips out the actual client IP for every
+    # tunneled mobile session. `real_ip_key` reads the middleware-set
+    # `request.state.real_ip` (CF-Connecting-IP when trustworthy, else
+    # the peer host).
+    last_ip = real_ip_key(request)
     try:
         await update_client_heartbeat(db, client["id"], last_ip=last_ip)
     except Exception:

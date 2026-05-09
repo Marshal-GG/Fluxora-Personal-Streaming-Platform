@@ -24,6 +24,8 @@
 >
 > **AGENT_LOG.md is append-only** — never edit or delete past entries.
 > **Log Rotation Policy:** if `AGENT_LOG.md` exceeds ~1000 lines, archive it to `docs/logs/AGENT_LOG_archive_XX.md`, summarize, and start a fresh log with the summary at the top.
+>
+> **When spawning audit subagents:** if your subagent flags code for deletion (e.g. an "orphaned" screen, an unused export), it MUST first grep the surrounding files for an explicit "kept-on-purpose" / "stays in tree" / "v1.1 stub" comment. False-positive deletions waste a round-trip; the comments tell you whether the code is dead or deliberately gated.
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **Category:** Infrastructure  
 > **Status:** Active  
-> **Last Updated:** 2026-05-09 (deep-audit sync — flagged TURN env-var drift in the env-vars table; webrtc_service reads `WEBRTC_TURN_*` while config declares `FLUXORA_TURN_*`). 2026-05-01 (Flutter version pin + subosito setup-flutter alignment; ruff bumped 0.4 → 0.15.12)
+> **Last Updated:** 2026-05-09 (audit follow-up — TURN env-var drift fixed in `webrtc_service.py`; env-vars table updated to reflect canonical `FLUXORA_TURN_*` names only). 2026-05-01 (Flutter version pin + subosito setup-flutter alignment; ruff bumped 0.4 → 0.15.12)
 
 ---
 
@@ -110,9 +110,9 @@ Settings can also be overridden via environment variables (same names, uppercase
 | `FLUXORA_LIBRARY_ROOTS` | `[]` | Allowed media directories |
 | `FLUXORA_MAX_STREAMS` | `3` | Max concurrent transcodes |
 | `FLUXORA_TMDB_KEY` | `""` | Optional TMDB API key |
-| `FLUXORA_TURN_URL` | `""` | TURN server URL (Phase 3). **Note (2026-05-09 audit):** `webrtc_service.py` currently reads `WEBRTC_TURN_URL` instead — see `06_webrtc_and_turn.md` "Wire it into Fluxora" for the workaround until that drift is reconciled. |
-| `FLUXORA_TURN_USER` | `""` | TURN username (Phase 3). Same drift caveat. |
-| `FLUXORA_TURN_PASS` | `""` | TURN password (Phase 3). Same drift caveat. |
+| `FLUXORA_TURN_URL` | `""` | TURN server URL (Phase 3). All three of `URL` / `USER` / `PASS` must be set for TURN to engage; any one empty → STUN-only (`webrtc_service.py::_ice_servers`). |
+| `FLUXORA_TURN_USER` | `""` | TURN username (Phase 3). |
+| `FLUXORA_TURN_PASS` | `""` | TURN password (Phase 3). |
 | `FLUXORA_LICENSE_SECRET` | `""` | HMAC secret for signing Fluxora license keys |
 | `POLAR_WEBHOOK_SECRET` | `""` | Polar Standard Webhooks secret for `/api/v1/webhook/polar` |
 | `SENTRY_DSN` | `""` | Sentry DSN; empty disables Sentry init entirely (zero overhead). See `runbooks/09_monitoring_and_observability.md` |
