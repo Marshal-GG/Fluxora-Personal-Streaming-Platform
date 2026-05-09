@@ -37,3 +37,11 @@ This folder holds Fluxora's design assets, prototypes, and per-surface redesign 
 
 ---
 
+## Asset workflows
+
+| Doc | Covers |
+|-----|--------|
+| [`brand_asset_workflows.md`](./brand_asset_workflows.md) | Recipes for turning brand masters in `ref images/brand/` into the runtime PNGs under `/assets/`. Covers wordmark background-removal (luminosity-as-alpha) — the canonical technique used to produce `assets/banners/wordmark-h.png`. |
+
+---
+
