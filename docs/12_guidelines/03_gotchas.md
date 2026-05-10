@@ -825,3 +825,28 @@ Distinctive markers (`'group(s)'` parens; `'time window'` two-word phrase) chose
 **Anti-pattern.**  A single `lower.contains('not allowed')` matcher would catch `"Library not allowed for this client's group(s)"` but also any future 403 like `"Operation not allowed"` — broadening the matcher silently.
 
 **Better alternative when feasible.**  Add a structured `error_code: "group_gate_library"` field to the response body and match on that.  We didn't do that here because the server's existing 403 path emits a plain string and the desktop already consumes it directly; adding a structured field would be a wider refactor.  Substring match + pinned tests is acceptable for the size of this surface.
+
+
+## `Process.start("explorer", [path])` returns non-zero on Windows even when the launch succeeded
+
+**Symptom:** an "Open folder" / "Reveal in Finder" affordance using `Process.start("explorer", [path])` (or `start "" "<path>"` via `cmd`) reports failure to the user via SnackBar/snackbar even though Explorer did open and showed the folder. Operator clicks "Open folder", the folder window appears, AND a "Could not open path" toast appears. Confusing.
+
+**Root cause:** Windows `explorer.exe`'s exit code is **non-deterministic** for shell-spawn cases. Even on a successful launch it may return a non-zero code because the spawned process forks the navigation off to a pre-existing Explorer instance and the original `explorer.exe` invocation exits with a status the shell interprets as failure. `Process.start` returns the exit code of *that initial process*, so the success path looks like a failure to Dart's error handling.
+
+**Fix:** prefer `url_launcher` with a `file://` URI — the OS resolves the scheme to its native opener (Explorer / Finder / xdg-open) and `launchUrl` returns a clean `bool` based on whether the URL handler accepted the request, not the spawned process's exit code:
+
+```dart
+import 'package:url_launcher/url_launcher.dart';
+
+Future<void> openPathInFileManager(String path) async {
+  final ok = await launchUrl(Uri.file(path));
+  if (!ok) {
+    // Genuine failure (no handler registered, etc.) — surface to user.
+    // ...
+  }
+}
+```
+
+This works on Windows / macOS / Linux uniformly. Only catch: on Linux desktop without `xdg-utils` installed (`xdg-open` missing), `launchUrl` returns `false`. Pre-existing requirement; just worth noting that the failure path is now genuine ("no handler") rather than spurious ("explorer's exit code lied").
+
+Pattern in `apps/desktop/lib/features/transcode/presentation/widgets/storage_strip.dart::openPathInFileManager`. Migrated from `Process.start` 2026-05-10 after the original implementation surfaced false-failure SnackBars on Windows.

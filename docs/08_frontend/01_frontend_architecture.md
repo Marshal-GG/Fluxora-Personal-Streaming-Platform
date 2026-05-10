@@ -503,14 +503,14 @@ apps/desktop/lib/
     │       ├── screens/transcoding_screen.dart        # 4 StatTiles + Active Sessions card; joins ActivityCubit
     │       └── screens/encoder_settings_screen.dart   # /transcoding/encoder; hardware selector + preset chips + CRF slider
     │
-    ├── transcode/               # ✅ Plan 18 (2026-05-09) — user-driven library transcode
-    │   ├── domain/entities/{transcode_candidate.dart, transcode_job.dart}    # Equatable; TranscodeJobStatus enum (queued/running/done/failed/cancelled)
+    ├── transcode/               # ✅ Plan 18 (2026-05-09) + plan 19 close-out (2026-05-09) + close-out fixes (2026-05-10) — user-driven library transcode
+    │   ├── domain/entities/{transcode_candidate.dart, transcode_job.dart, transcode_storage.dart}    # Equatable; TranscodeJobStatus enum; TranscodeStorage + TranscodeStorageCodecBreakdown + TranscodeStorageLibraryBreakdown (per-library N + GB feeds the library-delete confirmation)
     │   ├── domain/repositories/transcode_repository.dart
-    │   ├── data/repositories/transcode_repository_impl.dart                  # GET /candidates · POST /queue · GET /jobs · DELETE /jobs/{id} · POST /jobs/{id}/retry
+    │   ├── data/repositories/transcode_repository_impl.dart                  # GET /candidates · POST /queue (preset arg) · GET /jobs · DELETE /jobs/{id} · POST /jobs/{id}/retry · GET /storage
     │   └── presentation/
-    │       ├── cubit/{transcode_cubit.dart, transcode_state.dart}            # sealed-union state (Initial/Loaded with candidates+jobs+selectedFileIds/Failure); 2 s `/jobs` polling timer; selection auto-strips ids that left the candidate list (post-queue)
-    │       ├── screens/transcode_screen.dart                                  # 3 TabBar + TabView (Candidates / Queue / History) — entry from FluxSidebar between Library and Clients
-    │       └── widgets/{candidates_tab.dart, queue_tab.dart, history_tab.dart}  # Candidates: multi-select + aggregate disk + runtime estimate (≈) + Start button.  Queue: live FluxProgress bars + per-row Cancel + bulk Cancel-selected.  History: terminal jobs + Retry on failed/cancelled
+    │       ├── cubit/{transcode_cubit.dart, transcode_state.dart}            # sealed-union state (Initial/Loaded with candidates+jobs+selectedFileIds+expandedPaths+queuePreset+storage/Failure); split timers (2 s `/jobs` + 5 s `/storage`); selection auto-strips ids that left the candidate list (post-queue)
+    │       ├── screens/transcode_screen.dart                                  # 3 TabBar + TabView (Candidates / Queue / History) with `_StorageStrip` mounted above the TabBar — entry from FluxSidebar between Library and Clients
+    │       └── widgets/{candidates_tab,queue_tab,history_tab}.dart + {storage_strip,queue_dialog,folder_tree}.dart  # Candidates + History tabs use folder-grouped tree (`buildFolderTree<T>` is `Expando`-memoised on the leaves list reference so 5000+-candidate trees don't recompute per build); `showQueueDialog` opens FluxGlassDialog with 3-radio preset chooser (smaller / recommended (default) / mastering) + live "Estimated total" + cache-root readout; `_StorageStrip` polls `/storage` every 5 s with cache root + free disk + per-codec chips; `openPathInFileManager` uses `url_launcher`'s `launchUrl(Uri.file(path))` (cleaner cross-platform behaviour than the previous `Process.start("explorer", ...)` shape — Windows explorer returned non-zero exit on success in some cases)
     │
     ├── settings/                # ✅ Implemented (Phases 2 + 5)
     │   ├── domain/repositories/settings_repository.dart

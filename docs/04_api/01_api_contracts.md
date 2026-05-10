@@ -2364,6 +2364,55 @@ User-driven, opt-in pre-transcode of AV1 / VP9 sources to H.264 sidecars stored 
 - `404` — unknown job id.
 - `409` — job is `queued` / `running` / `done` (only `failed` / `cancelled` can retry).
 
+### `GET /api/v1/transcode/storage`
+**Description:** Aggregate snapshot of the server's transcoded-sidecar disk usage. Polled by the desktop's `_StorageStrip` widget every 5 s while the Transcode screen is mounted. Cheap query (one SUM, two GROUP BYs, one `shutil.disk_usage` syscall).
+**Auth:** Bearer token **or** localhost — `validate_token_or_local`.
+**Status:** ✅ Implemented (plan 19 §M3, 2026-05-09); `by_library` field added 2026-05-10 (plan-19 close-out followup).
+
+**Response:** `200 OK` (`TranscodeStorageResponse`):
+
+```json
+{
+  "cache_root": "D:\\Fluxora\\transcodes",
+  "storage_mode": "dedicated",
+  "transcoded_size_bytes": 5832019712,
+  "transcoded_file_count": 12,
+  "free_bytes_at_cache_root": 909521817600,
+  "by_codec": {
+    "av1": {"count": 8, "bytes": 4500000000},
+    "vp9": {"count": 4, "bytes": 1300000000}
+  },
+  "by_library": {
+    "lib-uuid-123": {
+      "library_name": "Movies",
+      "count": 8,
+      "bytes": 4500000000
+    },
+    "lib-uuid-456": {
+      "library_name": "TV",
+      "count": 4,
+      "bytes": 1300000000
+    },
+    "(orphaned)": {
+      "library_name": "(orphaned)",
+      "count": 0,
+      "bytes": 0
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `cache_root` | `str` | Resolved absolute path sidecars are landing at. Reflects `user_settings.transcode_cache_root` or the data-dir-default fallback when unset. |
+| `storage_mode` | `Literal['dedicated', 'inline']` | Per `user_settings.transcode_storage_mode`. |
+| `transcoded_size_bytes` / `transcoded_file_count` | `int` | Aggregate sums across all transcoded sidecars (any library). |
+| `free_bytes_at_cache_root` | `int` | `shutil.disk_usage(cache_root).free`. Walks up to the first existing parent if `cache_root` itself isn't on disk yet. `0` on `OSError`. |
+| `by_codec` | `dict[str, {count, bytes}]` | Per-source-codec breakdown. Codec keys arrive lower-cased (`av1`, `vp9`, `hevc`, …). Empty when the cache is empty. |
+| `by_library` | `dict[str, {library_name, count, bytes}]` | Per-library breakdown — feeds the desktop's library-delete confirmation modal so the operator sees the actual N + GB the sidecar-cleanup checkbox is about to wipe. Files whose `library_id` is NULL or points at a previously-deleted library bucket under the synthetic `(orphaned)` key. Empty when the cache is empty. |
+
+**Errors:** none on the success path; standard `401` / `403` from auth.
+
 ---
 
 ### `PATCH /api/v1/settings` — `transcoding_chain` field
