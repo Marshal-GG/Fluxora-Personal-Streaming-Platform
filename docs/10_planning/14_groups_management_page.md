@@ -431,4 +431,3 @@ Page ships when:
 - Existing Groups list page (`/groups`) remains the primary entry point; row tap + Edit button navigate to the new page.
 - Server suite: +4 tests (visible-libraries route + member-PATCH route + 2 activity-emit producers).
 - Desktop analyzer clean.
-- AGENT_LOG entry + plan-doc status flip + cross-doc updates per [`docs/12_guidelines/02_documentation_update_protocol.md`](../12_guidelines/02_documentation_update_protocol.md).

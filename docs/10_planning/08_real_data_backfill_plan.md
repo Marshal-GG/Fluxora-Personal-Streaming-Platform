@@ -116,7 +116,6 @@ Each phase ends with a focused commit pair:
 1. **Server commit:** new endpoint(s) + migration(s) + tests.
 2. **Mobile commit:** cubit(s) wired, mock entries deleted, screens rewired. `flutter analyze` clean × all 3 packages; mobile tests still pass.
 
-After each cutover, append an entry to `AGENT_LOG.md` listing the deleted `MockData.*` symbols. Final cleanup commit (post-Phase F or post-decision-that-F-is-out-of-scope):
 
 3. **`feat(mobile): delete mock_data.dart — all rails on real data`** — removes the file + every remaining import, lifts `MockGradients` to `shared/widgets/gradients.dart` if still needed, updates `frontend_architecture.md` and `folder_structure.md` to drop the mock-data references.
 
