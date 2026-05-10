@@ -114,6 +114,12 @@ class TranscodeStorageResponse(BaseModel):
     rough proxy because each library may live on a different mount).
     ``by_codec`` keys the per-source-codec breakdown
     (``{"av1": {"count": 8, "bytes": ...}, "vp9": {...}}``).
+    ``by_library`` keys the per-library-id breakdown
+    (``{"<lib_id>": {"library_name": "...", "count": N, "bytes": N}, ...}``);
+    feeds the desktop's library-delete confirmation modal so the
+    operator sees the actual N + GB the sidecar-cleanup checkbox is
+    about to wipe.  Files whose ``library_id`` is NULL or points at a
+    deleted library bucket under ``"(orphaned)"``.
     """
 
     cache_root: str
@@ -122,3 +128,4 @@ class TranscodeStorageResponse(BaseModel):
     transcoded_file_count: int
     free_bytes_at_cache_root: int
     by_codec: dict[str, dict[str, int]]
+    by_library: dict[str, dict] = Field(default_factory=dict)

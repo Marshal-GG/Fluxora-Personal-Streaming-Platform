@@ -93,10 +93,34 @@ class FolderNode<T> {
 ///
 /// Returns the synthetic root (its [absolutePath] is `""`); callers
 /// render `root.children` rather than the root itself.
+///
+/// Memoised by the [leaves] reference via an [Expando]: callers that
+/// pass the same `List<T>` on subsequent calls get the cached tree
+/// back in O(1) instead of re-walking and re-sorting.  When the cubit
+/// emits a new state with a fresh list reference, the old cache entry
+/// becomes garbage-collectable (Expando holds weak references).
+/// Caches at 5000+-candidate scale where the recursive sort dominates
+/// build time; cheap and harmless at the typical home-server scale.
+final Expando<FolderNode<dynamic>> _folderTreeCache =
+    Expando<FolderNode<dynamic>>('buildFolderTree');
+
 FolderNode<T> buildFolderTree<T>({
   required Iterable<T> leaves,
   required String Function(T leaf) pathOf,
 }) {
+  // Only memoise when the caller passed a concrete List — Iterables
+  // produced by transient `where`/`map`/`toList()` chains generate a
+  // fresh object per build and would never hit the cache anyway.  The
+  // identity check on the list ref + cast back to FolderNode<T> is
+  // safe because the same list reference can only carry one element
+  // type.
+  if (leaves is List<T>) {
+    final cached = _folderTreeCache[leaves];
+    if (cached is FolderNode<T>) {
+      return cached;
+    }
+  }
+
   final root = FolderNode<T>(
     absolutePath: '',
     displayName: '',
@@ -156,6 +180,9 @@ FolderNode<T> buildFolderTree<T>({
   }
 
   sort(root);
+  if (leaves is List<T>) {
+    _folderTreeCache[leaves] = root;
+  }
   return root;
 }
 

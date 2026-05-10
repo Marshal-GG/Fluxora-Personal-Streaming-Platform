@@ -28,6 +28,40 @@ class TranscodeStorageCodecBreakdown extends Equatable {
   List<Object?> get props => [codec, count, bytes];
 }
 
+/// Per-library breakdown of transcoded sidecars.  Drives the
+/// library-delete confirmation modal: shows the operator the actual N
+/// files + GB the "Also delete transcoded sidecars" checkbox is about
+/// to wipe.  Files whose `library_id` is NULL or points at a
+/// previously-deleted library bucket under the synthetic `(orphaned)`
+/// id — they exist on disk and the operator should still see them.
+class TranscodeStorageLibraryBreakdown extends Equatable {
+  const TranscodeStorageLibraryBreakdown({
+    required this.libraryId,
+    required this.libraryName,
+    required this.count,
+    required this.bytes,
+  });
+
+  final String libraryId;
+  final String libraryName;
+  final int count;
+  final int bytes;
+
+  factory TranscodeStorageLibraryBreakdown.fromJson(
+    String libraryId,
+    Map<String, dynamic> json,
+  ) =>
+      TranscodeStorageLibraryBreakdown(
+        libraryId: libraryId,
+        libraryName: json['library_name'] as String? ?? '(unnamed)',
+        count: (json['count'] as num?)?.toInt() ?? 0,
+        bytes: (json['bytes'] as num?)?.toInt() ?? 0,
+      );
+
+  @override
+  List<Object?> get props => [libraryId, libraryName, count, bytes];
+}
+
 /// Snapshot of the server's transcoded-sidecar storage state, surfaced by
 /// `GET /api/v1/transcode/storage` (plan 19 §M3).  The desktop polls this
 /// every 5 s while the Transcode screen is mounted.
@@ -43,6 +77,7 @@ class TranscodeStorage extends Equatable {
     required this.transcodedFileCount,
     required this.freeBytesAtCacheRoot,
     required this.byCodec,
+    this.byLibrary = const {},
   });
 
   final String cacheRoot;
@@ -60,12 +95,25 @@ class TranscodeStorage extends Equatable {
   /// the cache is empty.
   final Map<String, TranscodeStorageCodecBreakdown> byCodec;
 
+  /// Library-id → breakdown map.  Key is the library UUID (or the
+  /// synthetic `(orphaned)` for files that lost their library row).
+  /// Empty when the cache is empty.
+  final Map<String, TranscodeStorageLibraryBreakdown> byLibrary;
+
   factory TranscodeStorage.fromJson(Map<String, dynamic> json) {
-    final raw = (json['by_codec'] as Map<String, dynamic>? ?? const {});
+    final rawCodec = (json['by_codec'] as Map<String, dynamic>? ?? const {});
     final byCodec = <String, TranscodeStorageCodecBreakdown>{};
-    raw.forEach((codec, data) {
+    rawCodec.forEach((codec, data) {
       byCodec[codec.toLowerCase()] = TranscodeStorageCodecBreakdown.fromJson(
         codec.toLowerCase(),
+        (data as Map<String, dynamic>),
+      );
+    });
+    final rawLib = (json['by_library'] as Map<String, dynamic>? ?? const {});
+    final byLibrary = <String, TranscodeStorageLibraryBreakdown>{};
+    rawLib.forEach((libId, data) {
+      byLibrary[libId] = TranscodeStorageLibraryBreakdown.fromJson(
+        libId,
         (data as Map<String, dynamic>),
       );
     });
@@ -79,6 +127,7 @@ class TranscodeStorage extends Equatable {
       freeBytesAtCacheRoot:
           (json['free_bytes_at_cache_root'] as num?)?.toInt() ?? 0,
       byCodec: byCodec,
+      byLibrary: byLibrary,
     );
   }
 
@@ -90,5 +139,6 @@ class TranscodeStorage extends Equatable {
         transcodedFileCount,
         freeBytesAtCacheRoot,
         byCodec,
+        byLibrary,
       ];
 }

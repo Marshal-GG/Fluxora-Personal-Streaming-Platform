@@ -86,11 +86,9 @@ class LibraryRepositoryImpl implements LibraryRepository {
     String libraryId, {
     bool deleteSidecars = true,
   }) =>
-      // ApiClient.delete doesn't expose a query-param hook so we build the
-      // URL by hand.  The boolean is wire-explicit on the server side
-      // (see plan 19 §M8).
       _apiClient.delete(
-        '${Endpoints.library}/$libraryId?delete_sidecars=$deleteSidecars',
+        '${Endpoints.library}/$libraryId',
+        queryParameters: {'delete_sidecars': deleteSidecars},
       );
 
   @override

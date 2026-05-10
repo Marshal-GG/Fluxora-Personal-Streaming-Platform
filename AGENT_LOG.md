@@ -610,3 +610,89 @@ All plan-19 close-out changes uncommitted on top of `627cdf1`. Operator-asked si
 4. **`_seekRelative` mobile bug** (still carried forward — double-tap-skip after a forward server-restart still bugged; flagged in the prior AGENT_LOG entry but not yet fixed).
 5. **`current_status.md` is over 25 k Read-cap.** Carried forward.
 6. **Add per-library breakdown to `/transcode/storage`** when an operator round comes through — closes Sharp Edge #1 (the missing N in the delete confirmation).
+
+---
+
+## [2026-05-10] [server] [desktop] [core] [fix] [tests] — Plan 19 close-out sharp edges resolved (all 4)
+
+**Phase:** Phase 2 — closing the 4 sharp edges flagged at plan-19 close-out
+**Status:** Complete. All 4 sharp edges from `c175084`'s archive note are fixed.
+**Commits:** uncommitted
+
+### What Was Done
+
+The plan-19 close-out commit (`8efd180`) flagged 4 sharp edges as "follow-up enhancements, not unfinished plan-19 work." Operator scoped them as a single fix-round; all four landed cleanly.
+
+#### 1. `/transcode/storage` — `by_library` breakdown (fix #1)
+
+The library-delete confirmation modal had been showing "Also delete N transcoded sidecars" with no actual N — the storage endpoint surfaced aggregate cache size only. Extended the SQL aggregate in `services/transcode_service.py::storage_aggregate` with a per-library `LEFT JOIN libraries` query (so files orphaned by a previous library-delete still bucket under `(orphaned)` rather than disappearing from the strip). Pydantic `TranscodeStorageResponse` gains `by_library: dict[str, dict] = Field(default_factory=dict)`.
+
+Desktop: `TranscodeStorage` entity gains a `byLibrary: Map<String, TranscodeStorageLibraryBreakdown>` field; `library_screen.dart::_confirmRemove` does a one-shot `getStorage()` fetch on dialog open (best-effort — falls back to the count-less copy if the request fails) and renders the actual N + GB inline:
+
+> *Also delete 12 transcoded sidecars (5.4 GB)*  
+> *Removes any H.264 transcoded files this library produced. Source files are never touched.*
+
+#### 2. Folder-tree memoisation (fix #2)
+
+`buildFolderTree<T>` runs the recursive directory grouping + alphabetical sort on every Candidates / History rebuild. Free at the typical ≤17-candidate scale; quadratic at 5000+ where the children-search at each level becomes an O(N) `firstWhere`. Wrapped the function with an `Expando<FolderNode<dynamic>>` keyed by the leaves list reference: same `List<T>` → cached tree returned in O(1); new list (cubit emitted fresh state) → recompute. Cast back to `FolderNode<T>` is safe because a single list reference can only carry one element type. Iterables that aren't `List<T>` (transient `where`/`map` chains) skip the cache entirely — they'd never hit it anyway.
+
+#### 3. `ApiClient.delete` query-param hook (fix #3)
+
+`packages/fluxora_core/lib/network/api_client.dart::delete` gained a `queryParameters: Map<String, dynamic>?` named param mirroring the GET / POST / PATCH variants. Forwards to dio's existing `queryParameters` arg. Desktop's `library_repository_impl.dart::deleteLibrary` no longer hand-builds `${path}?delete_sidecars=$bool` — passes the boolean via the new param.
+
+#### 4. `Process.start` → `url_launcher` (fix #4)
+
+`storage_strip.dart::openPathInFileManager` was spawning `explorer` / `open` / `xdg-open` via `Process.start` and wrapping in try/catch because Windows `explorer` returns non-zero exit on success in some cases, making the error-handling unreliable. Replaced with `url_launcher`'s `launchUrl(Uri.file(path))` — the OS handles the file:// scheme via its native opener and returns a clean bool, which we surface in the SnackBar on failure. Dropped the `dart:io` `Platform` + `Process` imports.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|--------|------|-----|
+| Modified | apps/server/services/transcode_service.py | `storage_aggregate` adds per-library LEFT JOIN aggregate |
+| Modified | apps/server/models/transcode.py | `TranscodeStorageResponse.by_library` field |
+| Modified | packages/fluxora_core/lib/network/api_client.dart | `delete()` accepts `queryParameters` |
+| Modified | apps/desktop/lib/features/library/data/repositories/library_repository_impl.dart | Use `queryParameters` instead of path-string concat |
+| Modified | apps/desktop/lib/features/transcode/domain/entities/transcode_storage.dart | New `TranscodeStorageLibraryBreakdown` + `byLibrary` field |
+| Modified | apps/desktop/lib/features/library/presentation/screens/library_screen.dart | One-shot `getStorage()` fetch on delete dialog open; renders N + GB; new `_formatBytes` helper |
+| Modified | apps/desktop/lib/features/transcode/presentation/widgets/folder_tree.dart | `Expando`-keyed memoisation on `buildFolderTree` |
+| Modified | apps/desktop/lib/features/transcode/presentation/widgets/storage_strip.dart | `Process.start` → `launchUrl(Uri.file(...))` |
+| Modified | docs/10_planning/archive/19_library_transcode_followups.md | Status banner notes all 4 sharp edges resolved 2026-05-10 |
+| Modified | AGENT_LOG.md | This entry |
+
+### Docs Updated
+
+Plan 19's archive banner refresh + AGENT_LOG. Test counts unchanged (no test file changes — fixes are mechanical and exercise existing test paths).
+
+### Decisions Made
+
+- **`(orphaned)` synthetic library bucket in the storage aggregate.** Files whose `library_id` is NULL or points at a deleted library still exist on disk and the strip should account for them. The desktop's library-delete dialog won't surface this bucket (it queries by the specific library being deleted), but the aggregate strip will. Avoids a hidden discrepancy where total size != sum of per-library sizes.
+- **Best-effort fetch on dialog open, no spinner.** The library-delete dialog calls `getStorage()` once when the user clicks Remove. If the request fails, the dialog renders without the count rather than blocking with a loading state. Operator's intent ("delete this library") shouldn't depend on the storage strip being reachable.
+- **Memoisation is opt-in based on type.** `Expando` requires an Object key; `List<T>` is one but transient `Iterable<T>` chains aren't stable references. The `is List<T>` check skips the cache when the caller passes anything else — no false hits. History tab still rebuilds its sorted list per build (separate caching layer is a follow-up); Candidates tab gets the win immediately because the cubit holds a stable list.
+- **Did NOT consolidate the 4 `_formatBytes` duplicates** in the desktop codebase. There are now 4 (added one in `library_screen.dart`). Eliminating them is a separate refactor — not part of "fix the 4 sharp edges". Comment on the new helper points at the duplicates.
+
+### Issues / Sharp Edges Discovered
+
+1. **`url_launcher` on Linux desktop requires `xdg-utils`.** On a fresh Linux install without `xdg-open` available, `launchUrl` returns false and the operator gets the SnackBar but no action. Pre-existing (the old code had the same dependency); just worth noting that the Linux runtime requirement is now `url_launcher_linux`'s prerequisite list rather than ours.
+2. **History tab's folder-tree still recomputes per build** because it sorts in-place inside the build method (`state.jobs.toList()..sort(...)`). The memoisation only helps when the caller passes a stable list; History creates a fresh sorted list each time. Move the sort into the cubit when an operator round comes through; leave as-is for now since History rarely has 1000+ entries.
+3. **Per-library `(orphaned)` bucket isn't surfaced in the desktop UI yet.** The aggregate strip shows it because the by-codec section folds NULL-library-id files into the totals, but there's no per-library row for the orphaned bucket. Could add a "Cleanup orphaned sidecars" affordance in a future round.
+
+### Test Counts (re-baselined)
+
+- **Server: 775 passing** (unchanged — `by_library` field is additive on an existing endpoint; existing tests still pass; new field rendering is exercised through the desktop).
+- **Mobile: 78 passing** (unchanged).
+- **Desktop: 113 passing** (unchanged — fixes are mechanical and exercise existing test paths; no new tests needed).
+- **Core: 8 passing** (untouched).
+
+`flutter analyze lib` clean (full lib, not just transcode + library subtrees). `ruff check` clean. Server suite ran in 169 s.
+
+### Working-Tree Status
+
+All 4 fixes uncommitted on top of `c175084`. Single consolidating commit covering all 4.
+
+### Next Agent Should
+
+1. **Real-device retest of the library-delete confirmation** — confirm the operator sees "Also delete 12 transcoded sidecars (5.4 GB)" with the actual count + size on a library that has sidecars; confirm the count-less fallback copy renders cleanly when `getStorage()` fails (kill the server while the dialog opens).
+2. **Real-device retest of the folder tree on a 5000+-candidate dataset** — synthetic test would suffice. Confirm scrolling is smooth and the tree doesn't recompute on every parent rebuild (instrumentation: temporary `print` in `buildFolderTree` or wrap with a counter Expando).
+3. **`_seekRelative` mobile bug** (still carried forward — never fixed; double-tap-skip after a forward server-restart bugged).
+4. **History-tab folder-tree sort move into cubit** (Sharp Edge #2 of this round) — small, defer until an operator round.
+5. **`current_status.md` 25 k Read-cap** carried forward.

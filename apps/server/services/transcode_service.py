@@ -1274,6 +1274,34 @@ async def storage_aggregate(db: aiosqlite.Connection) -> dict:
                 "bytes": int(r["bytes"] or 0),
             }
 
+    # Per-library breakdown — feeds the desktop's library-delete
+    # confirmation modal so the operator sees the actual N + GB the
+    # checkbox is about to wipe.  LEFT JOIN so files that lost their
+    # library reference (orphan-after-library-delete edge case) still
+    # show up under the "(orphaned)" bucket — they exist on disk and
+    # the strip should account for them.
+    by_library: dict[str, dict] = {}
+    async with db.execute(
+        """
+        SELECT
+            COALESCE(mf.library_id, '') AS library_id,
+            COALESCE(l.name, '(orphaned)') AS library_name,
+            COUNT(*) AS cnt,
+            COALESCE(SUM(mf.transcoded_size_bytes), 0) AS bytes
+          FROM media_files mf
+          LEFT JOIN libraries l ON l.id = mf.library_id
+         WHERE mf.transcoded_path IS NOT NULL
+         GROUP BY mf.library_id, l.name
+        """
+    ) as cur:
+        async for r in cur:
+            lib_id = r["library_id"] or "(orphaned)"
+            by_library[lib_id] = {
+                "library_name": r["library_name"] or "(orphaned)",
+                "count": int(r["cnt"] or 0),
+                "bytes": int(r["bytes"] or 0),
+            }
+
     return {
         "cache_root": str(cache_root),
         "storage_mode": storage_mode,
@@ -1281,6 +1309,7 @@ async def storage_aggregate(db: aiosqlite.Connection) -> dict:
         "transcoded_file_count": file_count,
         "free_bytes_at_cache_root": int(free_bytes),
         "by_codec": by_codec,
+        "by_library": by_library,
     }
 
 

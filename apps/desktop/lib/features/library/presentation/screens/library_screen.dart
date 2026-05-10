@@ -16,6 +16,8 @@ import 'package:fluxora_desktop/features/library/domain/repositories/library_rep
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_cubit.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_state.dart';
 import 'package:fluxora_desktop/features/storage/domain/repositories/storage_repository.dart';
+import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_storage.dart';
+import 'package:fluxora_desktop/features/transcode/domain/repositories/transcode_repository.dart';
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_cubit.dart';
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_state.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
@@ -394,6 +396,24 @@ class _LibraryViewState extends State<_LibraryView> {
     // common-case "I'm removing this library and don't want orphan
     // transcoded files lying around" is the one-click path.
     bool deleteSidecars = true;
+    // Fetch the per-library sidecar count + size (plan-19 close-out
+    // sharp edge fix) so the operator sees what the checkbox is
+    // actually about to delete.  One-shot, best-effort — if the
+    // request fails we render the checkbox without the count rather
+    // than block the deletion entirely.
+    TranscodeStorageLibraryBreakdown? sidecarSummary;
+    try {
+      final storage =
+          await GetIt.I<TranscodeRepository>().getStorage();
+      sidecarSummary = storage.byLibrary[lib.id];
+    } catch (_) {
+      sidecarSummary = null;
+    }
+    // Guard the BuildContext usage across the async gap above — if
+    // the Library page got disposed while the storage probe was in
+    // flight, abort the dialog cleanly rather than touching a stale
+    // context.
+    if (!context.mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -451,7 +471,12 @@ class _LibraryViewState extends State<_LibraryView> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Also delete transcoded sidecars',
+                              sidecarSummary != null && sidecarSummary.count > 0
+                                  ? 'Also delete ${sidecarSummary.count} '
+                                      'transcoded sidecar'
+                                      '${sidecarSummary.count == 1 ? "" : "s"}'
+                                      ' (${_formatBytes(sidecarSummary.bytes)})'
+                                  : 'Also delete transcoded sidecars',
                               style: AppTypography.body.copyWith(
                                 color: AppColors.textBright,
                                 fontWeight: FontWeight.w600,
@@ -459,8 +484,12 @@ class _LibraryViewState extends State<_LibraryView> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              'Removes any H.264 transcoded files this '
-                              'library produced. Source files are never touched.',
+                              sidecarSummary != null && sidecarSummary.count == 0
+                                  ? 'No transcoded files to delete for this '
+                                      'library.'
+                                  : 'Removes any H.264 transcoded files this '
+                                      'library produced. Source files are '
+                                      'never touched.',
                               style: AppTypography.bodySmall.copyWith(
                                 color: AppColors.textMutedV2,
                               ),
@@ -2767,4 +2796,20 @@ class _SegmentDivider extends StatelessWidget {
       color: const Color(0x0DFFFFFF),
     );
   }
+}
+
+/// Human-readable bytes formatter — duplicates the helper in
+/// `transcode/presentation/widgets/{candidates,history}_tab.dart` and
+/// `folder_tree.dart`.  Worth consolidating into a shared util when
+/// the next desktop refactor round comes through.
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  double v = bytes / 1024;
+  int i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return '${v.toStringAsFixed(v >= 100 ? 0 : 1)} ${units[i]}';
 }

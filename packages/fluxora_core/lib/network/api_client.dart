@@ -278,9 +278,12 @@ class ApiClient {
     }
   }
 
-  Future<void> delete(String path) async {
+  Future<void> delete(
+    String path, {
+    Map<String, dynamic>? queryParameters,
+  }) async {
     try {
-      await _dio.delete<dynamic>(path);
+      await _dio.delete<dynamic>(path, queryParameters: queryParameters);
     } on DioException catch (e) {
       _rethrow(e);
     }

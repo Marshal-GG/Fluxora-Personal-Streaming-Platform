@@ -1,9 +1,8 @@
-import 'dart:io' show Platform, Process;
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_radii.dart';
@@ -219,10 +218,12 @@ final _pathOpenLog = Logger();
 
 /// Open [path] in the platform's native file manager.
 ///
-/// Uses `Process.start` + the native opener for each OS:
-///   - Windows: `explorer "<path>"`
-///   - macOS:   `open "<path>"`
-///   - Linux:   `xdg-open "<path>"`
+/// Uses `url_launcher`'s `file://` URI handler — the OS resolves the
+/// scheme to the native opener (Explorer / Finder / xdg-open) without
+/// us having to spawn a subprocess and decode its exit code.  The
+/// previous `Process.start("explorer", ...)` shape returned non-zero
+/// on Windows even when the launch succeeded, which made our error
+/// handling unreliable; `launchUrl` returns a clean bool we can act on.
 ///
 /// Surfaces a SnackBar via the supplied [messenger] when the launch
 /// fails so the operator gets feedback instead of a silent no-op.
@@ -231,16 +232,12 @@ Future<void> openPathInFileManager(
   ScaffoldMessengerState? messenger,
 }) async {
   try {
-    if (Platform.isWindows) {
-      await Process.start('explorer', [path]);
-    } else if (Platform.isMacOS) {
-      await Process.start('open', [path]);
-    } else if (Platform.isLinux) {
-      await Process.start('xdg-open', [path]);
-    } else {
-      _pathOpenLog.w('Unsupported platform for path open: $path');
+    final uri = Uri.file(path);
+    final ok = await launchUrl(uri);
+    if (!ok) {
+      _pathOpenLog.w('launchUrl returned false for path: $path');
       messenger?.showSnackBar(
-        const SnackBar(content: Text('Cannot open path on this platform')),
+        const SnackBar(content: Text('Could not open path')),
       );
     }
   } catch (e, st) {
