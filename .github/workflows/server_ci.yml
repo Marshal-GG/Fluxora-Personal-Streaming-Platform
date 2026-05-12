@@ -28,6 +28,18 @@ jobs:
           cache: 'pip'
           cache-dependency-path: apps/server/pyproject.toml
 
+      - name: Install FFmpeg
+        # Several tests in test_stream.py call `_build_ffmpeg_cmd` which
+        # invokes `_ffmpeg_bin()` → `shutil.which("ffmpeg")`. The runner
+        # image doesn't include FFmpeg by default. Tests build the
+        # command string only — they don't execute it — but the path
+        # lookup must succeed. Cheaper than mocking `_ffmpeg_bin` across
+        # ~30 test cases. `--no-install-recommends` skips the suggested-
+        # codecs metapackages we don't need (saves ~120 MB).
+        # Path filter on this workflow restricts triggers to
+        # `apps/server/**`, so this install only runs when relevant.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Install dependencies
         run: pip install -e ".[dev]"
 

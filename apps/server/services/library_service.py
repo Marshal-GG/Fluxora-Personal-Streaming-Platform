@@ -148,14 +148,31 @@ def _is_valid_absolute_media_path(path_str: str) -> bool:
 
     Returns False for any of these so ``scan_library`` /
     ``upload_file_to_library`` can refuse the row before INSERT.
+
+    Validation is **platform-agnostic** — a Linux server may legitimately
+    receive Windows-style paths in the DB (cross-platform DB replication,
+    library row originating from a Windows install) and the validator
+    must accept them.  `os.path.isabs` is OS-specific (False for `C:\\…`
+    on Linux), so it's replaced by an explicit prefix check that accepts
+    both Unix (`/…`) and Windows (`C:\\…` or `C:/…`, drive letter + sep)
+    absolute forms.
     """
     if not path_str or not path_str.strip():
         return False
-    if not os.path.isabs(path_str):
-        return False
     if path_str.startswith("[") or "\x00" in path_str:
         return False
-    return True
+    # Unix-style absolute path.
+    if path_str.startswith("/"):
+        return True
+    # Windows-style absolute path: drive letter + colon + separator.
+    if (
+        len(path_str) >= 3
+        and path_str[0].isalpha()
+        and path_str[1] == ":"
+        and path_str[2] in ("\\", "/")
+    ):
+        return True
+    return False
 
 
 _MEDIA_EXTENSIONS = {
