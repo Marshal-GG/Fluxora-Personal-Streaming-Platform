@@ -38,9 +38,9 @@ class EncoderSettingsScreen extends StatelessWidget {
           create: (_) => GetIt.I<SettingsCubit>()..loadSettings(),
         ),
         BlocProvider<TranscodingCubit>(
-          create: (_) => TranscodingCubit(
-            repository: GetIt.I<TranscodingRepository>(),
-          )..start(),
+          create: (_) =>
+              TranscodingCubit(repository: GetIt.I<TranscodingRepository>())
+                ..start(),
         ),
       ],
       child: const _EncoderSettingsView(),
@@ -77,16 +77,8 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
   static const _kConfigTab = 'config';
   static const _kBenchmarkTab = 'benchmark';
   static const _tabs = [
-    FluxTab(
-      id: _kConfigTab,
-      label: 'Configuration',
-      icon: Icons.tune_rounded,
-    ),
-    FluxTab(
-      id: _kBenchmarkTab,
-      label: 'Benchmark',
-      icon: Icons.speed_rounded,
-    ),
+    FluxTab(id: _kConfigTab, label: 'Configuration', icon: Icons.tune_rounded),
+    FluxTab(id: _kBenchmarkTab, label: 'Benchmark', icon: Icons.speed_rounded),
   ];
 
   static const _presets = [
@@ -227,16 +219,14 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
               // Streaming mode card (plan 19 §M7, expanded plan 20)
               _StreamingModeCard(
                 value: _streamingMode ?? 'client-decode',
-                onChanged: (mode) =>
-                    setState(() => _streamingMode = mode),
+                onChanged: (mode) => setState(() => _streamingMode = mode),
               ),
               const SizedBox(height: AppSpacing.s14),
 
               // Hardware acceleration card
               _HardwareAccelCard(
                 currentEncoder: _encoder,
-                onEncoderChanged: (enc) =>
-                    setState(() => _encoder = enc),
+                onEncoderChanged: (enc) => setState(() => _encoder = enc),
               ),
               const SizedBox(height: AppSpacing.s14),
 
@@ -249,8 +239,7 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
                     sub: 'Active encoder for new transcodes',
                     control: _EncoderDropdown(
                       value: _encoder,
-                      onChanged: (v) =>
-                          setState(() => _encoder = v),
+                      onChanged: (v) => setState(() => _encoder = v),
                     ),
                   ),
                   _SettingRow(
@@ -259,8 +248,7 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
                     control: _PresetSelector(
                       value: _preset,
                       presets: _presets,
-                      onChanged: (v) =>
-                          setState(() => _preset = v),
+                      onChanged: (v) => setState(() => _preset = v),
                     ),
                   ),
                 ],
@@ -273,12 +261,10 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
                 children: [
                   _SettingRow(
                     label: 'Constant Rate Factor (CRF)',
-                    sub:
-                        'Lower = higher quality (0–51, default 23)',
+                    sub: 'Lower = higher quality (0–51, default 23)',
                     control: _CrfSlider(
                       value: _crf ?? 23,
-                      onChanged: (v) =>
-                          setState(() => _crf = v),
+                      onChanged: (v) => setState(() => _crf = v),
                     ),
                   ),
                 ],
@@ -313,25 +299,22 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
     // The Settings → General tab is the only place the license can be
     // edited or cleared.
     context.read<SettingsCubit>().saveSettings(
-          serverUrl: state.serverUrl,
-          serverName: state.serverName,
-          tier: state.tier,
-          licenseKey: null,
-          transcodingEncoder: _encoder,
-          transcodingPreset: _preset,
-          transcodingCrf: _crf,
-          streamingMode: _streamingMode,
-        );
+      serverUrl: state.serverUrl,
+      serverName: state.serverName,
+      tier: state.tier,
+      licenseKey: null,
+      transcodingEncoder: _encoder,
+      transcodingPreset: _preset,
+      transcodingCrf: _crf,
+      streamingMode: _streamingMode,
+    );
   }
 }
 
 // ── Streaming mode card (plan 19 §M7) ─────────────────────────────────────────
 
 class _StreamingModeCard extends StatelessWidget {
-  const _StreamingModeCard({
-    required this.value,
-    required this.onChanged,
-  });
+  const _StreamingModeCard({required this.value, required this.onChanged});
 
   final String value;
   final ValueChanged<String> onChanged;
@@ -349,8 +332,7 @@ class _StreamingModeCard extends StatelessWidget {
               'Stream original codec (AV1, VP9, HEVC, H.264) directly to '
               'your devices. Modern phones / tablets / desktops hardware-'
               'decode at near-zero power cost. Server CPU stays near 0 %.',
-          warning:
-              'Devices older than ~2021 may fail to play AV1 sources.',
+          warning: 'Devices older than ~2021 may fail to play AV1 sources.',
           selected: value == 'client-decode',
           onTap: () => onChanged('client-decode'),
         ),
@@ -360,9 +342,9 @@ class _StreamingModeCard extends StatelessWidget {
           subtitle: 'Mixed device pools',
           body:
               'Tries client decoding first for near-zero server load. If a '
-              'device cannot play the original codec, the server transparently '
-              'falls back to transcoding for that session. Future sessions '
-              'for the same device + codec start in transcode mode.',
+              'device cannot play the original video or audio codec, the '
+              'server transparently falls back to transcoding just the '
+              'affected stream for that session.',
           warning: null,
           selected: value == 'auto',
           onTap: () => onChanged('auto'),
@@ -516,21 +498,9 @@ class _HardwareAccelCard extends StatelessWidget {
   final ValueChanged<String?> onEncoderChanged;
 
   static const _knownEncoders = [
-    (
-      id: 'h264_nvenc',
-      name: 'NVIDIA NVENC',
-      color: AppColors.emerald,
-    ),
-    (
-      id: 'h264_qsv',
-      name: 'Intel QuickSync',
-      color: AppColors.blue,
-    ),
-    (
-      id: 'libx264',
-      name: 'Software (libx264)',
-      color: AppColors.textMutedV2,
-    ),
+    (id: 'h264_nvenc', name: 'NVIDIA NVENC', color: AppColors.emerald),
+    (id: 'h264_qsv', name: 'Intel QuickSync', color: AppColors.blue),
+    (id: 'libx264', name: 'Software (libx264)', color: AppColors.textMutedV2),
   ];
 
   @override
@@ -551,13 +521,16 @@ class _HardwareAccelCard extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Hardware Acceleration',
-                        style: AppTypography.h2),
+                    const Text(
+                      'Hardware Acceleration',
+                      style: AppTypography.h2,
+                    ),
                     const SizedBox(height: 2),
                     Text(
                       'Use dedicated GPU/silicon for transcoding',
-                      style: AppTypography.captionV2
-                          .copyWith(color: AppColors.textDim),
+                      style: AppTypography.captionV2.copyWith(
+                        color: AppColors.textDim,
+                      ),
                     ),
                   ],
                 ),
@@ -567,7 +540,11 @@ class _HardwareAccelCard extends StatelessWidget {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(
-                AppSpacing.s18, 0, AppSpacing.s18, AppSpacing.s18),
+              AppSpacing.s18,
+              0,
+              AppSpacing.s18,
+              AppSpacing.s18,
+            ),
             child: Column(
               children: _knownEncoders.map((enc) {
                 final isPrimary = currentEncoder == enc.id;
@@ -580,71 +557,78 @@ class _HardwareAccelCard extends StatelessWidget {
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      margin: const EdgeInsets.only(bottom: AppSpacing.s10),
-                      padding: const EdgeInsets.all(AppSpacing.s14),
-                      decoration: BoxDecoration(
-                        color: isPrimary
-                            ? const Color(0x14A855F7)
-                            : const Color(0x05FFFFFF),
-                        border: Border.all(
+                        duration: const Duration(milliseconds: 150),
+                        margin: const EdgeInsets.only(bottom: AppSpacing.s10),
+                        padding: const EdgeInsets.all(AppSpacing.s14),
+                        decoration: BoxDecoration(
                           color: isPrimary
-                              ? const Color(0x66A855F7)
-                              : const Color(0x0DFFFFFF),
-                          width: isPrimary ? 1.5 : 1,
-                        ),
-                        borderRadius: BorderRadius.circular(AppRadii.md),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: enc.color.withValues(alpha: 0.13),
-                              border: Border.all(
-                                  color: enc.color.withValues(alpha: 0.27)),
-                              borderRadius:
-                                  BorderRadius.circular(AppRadii.sm),
-                            ),
-                            child: Center(
-                              child: Icon(Icons.memory_outlined,
-                                  size: 14, color: enc.color),
-                            ),
-                          ),
-                          const SizedBox(width: AppSpacing.s12),
-                          Expanded(
-                            child: Row(
-                              children: [
-                                Text(
-                                  enc.name,
-                                  style: AppTypography.body.copyWith(
-                                    color: AppColors.textBright,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                if (isPrimary) ...[
-                                  const SizedBox(width: AppSpacing.s8),
-                                  const FluxChip('Primary',
-                                      color: FluxChipColor.purple),
-                                ],
-                              ],
-                            ),
-                          ),
-                          // Selection indicator
-                          Icon(
-                            isPrimary
-                                ? Icons.radio_button_checked_rounded
-                                : Icons.radio_button_unchecked_rounded,
-                            size: 18,
+                              ? const Color(0x14A855F7)
+                              : const Color(0x05FFFFFF),
+                          border: Border.all(
                             color: isPrimary
-                                ? AppColors.violet
-                                : AppColors.textDim,
+                                ? const Color(0x66A855F7)
+                                : const Color(0x0DFFFFFF),
+                            width: isPrimary ? 1.5 : 1,
                           ),
-                        ],
+                          borderRadius: BorderRadius.circular(AppRadii.md),
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 32,
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: enc.color.withValues(alpha: 0.13),
+                                border: Border.all(
+                                  color: enc.color.withValues(alpha: 0.27),
+                                ),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadii.sm,
+                                ),
+                              ),
+                              child: Center(
+                                child: Icon(
+                                  Icons.memory_outlined,
+                                  size: 14,
+                                  color: enc.color,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.s12),
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  Text(
+                                    enc.name,
+                                    style: AppTypography.body.copyWith(
+                                      color: AppColors.textBright,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  if (isPrimary) ...[
+                                    const SizedBox(width: AppSpacing.s8),
+                                    const FluxChip(
+                                      'Primary',
+                                      color: FluxChipColor.purple,
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                            // Selection indicator
+                            Icon(
+                              isPrimary
+                                  ? Icons.radio_button_checked_rounded
+                                  : Icons.radio_button_unchecked_rounded,
+                              size: 18,
+                              color: isPrimary
+                                  ? AppColors.violet
+                                  : AppColors.textDim,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
                   ),
                 );
               }).toList(),
@@ -686,11 +670,7 @@ class _SettingsBlock extends StatelessWidget {
 }
 
 class _SettingRow extends StatelessWidget {
-  const _SettingRow({
-    required this.label,
-    this.sub,
-    required this.control,
-  });
+  const _SettingRow({required this.label, this.sub, required this.control});
 
   final String label;
   final String? sub;
@@ -722,8 +702,9 @@ class _SettingRow extends StatelessWidget {
                 if (sub != null)
                   Text(
                     sub!,
-                    style: AppTypography.captionV2
-                        .copyWith(color: AppColors.textDim),
+                    style: AppTypography.captionV2.copyWith(
+                      color: AppColors.textDim,
+                    ),
                   ),
               ],
             ),
@@ -770,10 +751,7 @@ class _EncoderDropdown extends StatelessWidget {
       style: AppTypography.body.copyWith(color: AppColors.textBody),
       underline: const SizedBox.shrink(),
       items: _encoders
-          .map((e) => DropdownMenuItem(
-                value: e.$1,
-                child: Text(e.$2),
-              ))
+          .map((e) => DropdownMenuItem(value: e.$1, child: Text(e.$2)))
           .toList(),
       onChanged: onChanged,
     );
@@ -806,32 +784,32 @@ class _PresetSelector extends StatelessWidget {
             child: MouseRegion(
               cursor: SystemMouseCursors.click,
               child: AnimatedContainer(
-              duration: const Duration(milliseconds: 120),
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-              decoration: BoxDecoration(
-                color: selected
-                    ? const Color(0x2EA855F7)
-                    : const Color(0x08FFFFFF),
-                border: Border.all(
+                duration: const Duration(milliseconds: 120),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: BoxDecoration(
                   color: selected
-                      ? const Color(0x80A855F7)
-                      : const Color(0x0FFFFFFF),
+                      ? const Color(0x2EA855F7)
+                      : const Color(0x08FFFFFF),
+                  border: Border.all(
+                    color: selected
+                        ? const Color(0x80A855F7)
+                        : const Color(0x0FFFFFFF),
+                  ),
+                  borderRadius: BorderRadius.circular(AppRadii.sm),
                 ),
-                borderRadius: BorderRadius.circular(AppRadii.sm),
-              ),
-              child: Text(
-                p,
-                style: TextStyle(
-                  fontFamily: 'JetBrains Mono',
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: selected
-                      ? AppColors.violetSoft
-                      : AppColors.textMutedV2,
+                child: Text(
+                  p,
+                  style: TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: selected
+                        ? AppColors.violetSoft
+                        : AppColors.textMutedV2,
+                  ),
                 ),
               ),
             ),
-          ),
           ),
         );
       }).toList(),
@@ -938,8 +916,9 @@ class _ResolutionSelector extends StatelessWidget {
                 Text(
                   'Pick one or more — each runs sequentially through every '
                   'encoder',
-                  style: AppTypography.captionV2
-                      .copyWith(color: AppColors.textDim),
+                  style: AppTypography.captionV2.copyWith(
+                    color: AppColors.textDim,
+                  ),
                 ),
               ],
             ),
@@ -948,18 +927,19 @@ class _ResolutionSelector extends StatelessWidget {
           Wrap(
             spacing: 4,
             children: options.map((opt) {
-              final isSelected = selected.contains(
-                (width: opt.width, height: opt.height),
-              );
+              final isSelected = selected.contains((
+                width: opt.width,
+                height: opt.height,
+              ));
               return Semantics(
                 button: true,
                 selected: isSelected,
-                label: '${opt.label}'
+                label:
+                    '${opt.label}'
                     '${isSelected ? ', selected' : ''}',
                 child: GestureDetector(
                   onTap: enabled
-                      ? () => onToggle(
-                          (width: opt.width, height: opt.height))
+                      ? () => onToggle((width: opt.width, height: opt.height))
                       : null,
                   child: MouseRegion(
                     cursor: enabled
@@ -968,7 +948,9 @@ class _ResolutionSelector extends StatelessWidget {
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 120),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 11, vertical: 5),
+                        horizontal: 11,
+                        vertical: 5,
+                      ),
                       decoration: BoxDecoration(
                         color: isSelected
                             ? const Color(0x2EA855F7)
@@ -989,8 +971,8 @@ class _ResolutionSelector extends StatelessWidget {
                           color: !enabled
                               ? AppColors.textDim
                               : isSelected
-                                  ? AppColors.violetSoft
-                                  : AppColors.textMutedV2,
+                              ? AppColors.violetSoft
+                              : AppColors.textMutedV2,
                         ),
                       ),
                     ),
@@ -1087,10 +1069,7 @@ class _BenchmarkTabState extends State<_BenchmarkTab> {
 /// result by selecting an old entry.  Pulls [TranscodingRepository] from
 /// GetIt directly so it doesn't have to be threaded through the parent.
 class _BenchmarkBlock extends StatefulWidget {
-  const _BenchmarkBlock({
-    required this.run,
-    required this.onRunComplete,
-  });
+  const _BenchmarkBlock({required this.run, required this.onRunComplete});
 
   /// The benchmark run currently rendered in the results pane.  Null on
   /// first mount before any run has happened OR after the operator deletes
@@ -1159,8 +1138,12 @@ class _BenchmarkBlockState extends State<_BenchmarkBlock> {
       // a 4K-first run would have the desktop spinning silently for
       // 30+ s before any rows appear.
       final ordered = _resolutionOptions
-          .where((opt) => _selectedResolutions
-              .contains((width: opt.width, height: opt.height)))
+          .where(
+            (opt) => _selectedResolutions.contains((
+              width: opt.width,
+              height: opt.height,
+            )),
+          )
           .map((opt) => Resolution(width: opt.width, height: opt.height))
           .toList();
       final run = await repo.benchmark(
@@ -1239,8 +1222,7 @@ class _BenchmarkBlockState extends State<_BenchmarkBlock> {
       children: [
         _SettingRow(
           label: 'Test Encode',
-          sub:
-              'Runs an 8 s synthetic encode through every available encoder',
+          sub: 'Runs an 8 s synthetic encode through every available encoder',
           control: FluxButton(
             variant: FluxButtonVariant.secondary,
             size: FluxButtonSize.sm,
@@ -1406,8 +1388,7 @@ class _BenchmarkHistorySidebarState extends State<_BenchmarkHistorySidebar> {
       if (!mounted) return;
       widget.onSelect(run);
     } catch (e, st) {
-      _log.w('Benchmark history fetch entry failed',
-          error: e, stackTrace: st);
+      _log.w('Benchmark history fetch entry failed', error: e, stackTrace: st);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1430,8 +1411,9 @@ class _BenchmarkHistorySidebarState extends State<_BenchmarkHistorySidebar> {
       // Also drop it from our local list immediately for snappy feedback;
       // the parent's historyVersion bump will refetch on its own.
       setState(() {
-        _entries =
-            _entries.where((e) => e.id != entry.id).toList(growable: false);
+        _entries = _entries
+            .where((e) => e.id != entry.id)
+            .toList(growable: false);
       });
     } catch (e, st) {
       _log.w('Benchmark history delete failed', error: e, stackTrace: st);
@@ -1477,7 +1459,9 @@ class _BenchmarkHistorySidebarState extends State<_BenchmarkHistorySidebar> {
                       child: Icon(
                         Icons.refresh_rounded,
                         size: 16,
-                        color: _loading ? AppColors.textDim : AppColors.textBody,
+                        color: _loading
+                            ? AppColors.textDim
+                            : AppColors.textBody,
                       ),
                     ),
                   ),
@@ -1579,8 +1563,18 @@ class _HistoryEntryRowState extends State<_HistoryEntryRow> {
     if (delta == 0) return 'Today $hh:$mm';
     if (delta == 1) return 'Yesterday $hh:$mm';
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     final m = months[local.month - 1];
     return '$m ${local.day} $hh:$mm';
@@ -1625,9 +1619,7 @@ class _HistoryEntryRowState extends State<_HistoryEntryRow> {
           ),
           decoration: BoxDecoration(
             color: activeBg,
-            border: const Border(
-              bottom: BorderSide(color: Color(0x06FFFFFF)),
-            ),
+            border: const Border(bottom: BorderSide(color: Color(0x06FFFFFF))),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -1662,8 +1654,9 @@ class _HistoryEntryRowState extends State<_HistoryEntryRow> {
                       '${widget.entry.fps} fps · '
                       '${widget.entry.encoderCount} encoder'
                       '${widget.entry.encoderCount == 1 ? '' : 's'}',
-                      style: AppTypography.captionV2
-                          .copyWith(color: AppColors.textDim),
+                      style: AppTypography.captionV2.copyWith(
+                        color: AppColors.textDim,
+                      ),
                     ),
                   ],
                 ),
@@ -1736,16 +1729,15 @@ class _BenchmarkProgressCard extends StatelessWidget {
     // its current resolution so the operator always knows which tier
     // the row in flight belongs to without checking the caption.
     final inMatrix = (p.totalResolutions ?? 1) > 1;
-    final resTag = inMatrix &&
+    final resTag =
+        inMatrix &&
             p.currentResolutionWidth != null &&
             p.currentResolutionHeight != null
         ? ' [${_tierLabel(p.currentResolutionWidth!, p.currentResolutionHeight!)}]'
         : '';
     switch (step) {
       case 'encoding':
-        return encoder == null
-            ? 'Encoding…'
-            : 'Encoding $encoder$resTag';
+        return encoder == null ? 'Encoding…' : 'Encoding $encoder$resTag';
       case 'verifying_cap':
         return encoder == null
             ? 'Verifying session cap…'
@@ -1945,8 +1937,7 @@ class _GradientProgressBarState extends State<_GradientProgressBar>
                     builder: (context, _) {
                       const stripFrac = 0.35;
                       final stripW = w * stripFrac;
-                      final start =
-                          -stripW + (w + stripW) * _sweep.value;
+                      final start = -stripW + (w + stripW) * _sweep.value;
                       return Stack(
                         children: [
                           Positioned(
@@ -2019,8 +2010,9 @@ class _FpsSelector extends StatelessWidget {
                 ),
                 Text(
                   '24 = cinema · 30 = TV · 60 = sports / games',
-                  style: AppTypography.captionV2
-                      .copyWith(color: AppColors.textDim),
+                  style: AppTypography.captionV2.copyWith(
+                    color: AppColors.textDim,
+                  ),
                 ),
               ],
             ),
@@ -2043,7 +2035,9 @@ class _FpsSelector extends StatelessWidget {
                     child: AnimatedContainer(
                       duration: const Duration(milliseconds: 120),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 11, vertical: 5),
+                        horizontal: 11,
+                        vertical: 5,
+                      ),
                       decoration: BoxDecoration(
                         color: isSelected
                             ? const Color(0x2EA855F7)
@@ -2064,8 +2058,8 @@ class _FpsSelector extends StatelessWidget {
                           color: !enabled
                               ? AppColors.textDim
                               : isSelected
-                                  ? AppColors.violetSoft
-                                  : AppColors.textMutedV2,
+                              ? AppColors.violetSoft
+                              : AppColors.textMutedV2,
                         ),
                       ),
                     ),
@@ -2149,11 +2143,13 @@ class _BenchmarkResultsTable extends StatelessWidget {
       if (list == null || list.isEmpty) continue;
       sections.add(_VendorSectionHeader(label: _vendorLabels[v] ?? v));
       for (final r in list) {
-        sections.add(_BenchmarkResultRow(
-          result: r,
-          sourceFps: run.fps,
-          showResolutionChip: isMatrix,
-        ));
+        sections.add(
+          _BenchmarkResultRow(
+            result: r,
+            sourceFps: run.fps,
+            showResolutionChip: isMatrix,
+          ),
+        );
       }
       sections.add(const SizedBox(height: AppSpacing.s10));
     }
@@ -2162,11 +2158,13 @@ class _BenchmarkResultsTable extends StatelessWidget {
     for (final entry in byVendor.entries) {
       sections.add(_VendorSectionHeader(label: entry.key.toUpperCase()));
       for (final r in entry.value) {
-        sections.add(_BenchmarkResultRow(
-          result: r,
-          sourceFps: run.fps,
-          showResolutionChip: isMatrix,
-        ));
+        sections.add(
+          _BenchmarkResultRow(
+            result: r,
+            sourceFps: run.fps,
+            showResolutionChip: isMatrix,
+          ),
+        );
       }
       sections.add(const SizedBox(height: AppSpacing.s10));
     }
@@ -2210,9 +2208,7 @@ class _SourceWorkloadCaption extends StatelessWidget {
   Widget build(BuildContext context) {
     final size = resolutions.length == 1
         ? '${resolutions.first.width}x${resolutions.first.height}'
-        : resolutions
-            .map((r) => _tierLabel(r.width, r.height))
-            .join(', ');
+        : resolutions.map((r) => _tierLabel(r.width, r.height)).join(', ');
     return Row(
       children: [
         const Icon(Icons.movie_outlined, size: 13, color: AppColors.textDim),
@@ -2332,9 +2328,7 @@ class _BenchmarkResultRow extends StatelessWidget {
   /// cap-probe when "Verify session caps" was enabled).
   String? _concurrentTooltip() {
     if (result.recommendedConcurrent == null) {
-      return result.passed
-          ? null
-          : 'No measurement — encoder did not finish.';
+      return result.passed ? null : 'No measurement — encoder did not finish.';
     }
     final base =
         'Sustained capacity at realtime: ${result.recommendedConcurrent} '
@@ -2349,7 +2343,8 @@ class _BenchmarkResultRow extends StatelessWidget {
       // operator knows their patched / newer-driver setup is being
       // honoured.
       final registry = result.concurrentSessionCap;
-      const probeNote = 'Probed at the same resolution + frame rate as '
+      const probeNote =
+          'Probed at the same resolution + frame rate as '
           'this benchmark.';
       if (registry != null && verified > registry) {
         return '$base\n\nMeasured cap: $verified concurrent sessions '
@@ -2517,7 +2512,8 @@ class _MetricsLine extends StatelessWidget {
           label: 'startup',
           value: '${result.initMs}ms',
           valueStyle: mono.copyWith(color: AppColors.textBright),
-          tooltip: 'Wall-clock from FFmpeg launch to the first encoded '
+          tooltip:
+              'Wall-clock from FFmpeg launch to the first encoded '
               'frame.  Includes hwaccel device init + encoder session '
               'creation — NVENC typically takes ~500 ms here, software '
               'encoders ~50 ms.',
@@ -2526,7 +2522,8 @@ class _MetricsLine extends StatelessWidget {
         label: 'out fps',
         value: _fmtFps(result.fps),
         valueStyle: mono.copyWith(color: AppColors.textBright),
-        tooltip: 'Encoder *output* rate — frames per wall-clock second '
+        tooltip:
+            'Encoder *output* rate — frames per wall-clock second '
             'this encoder produced.  The source clip ran at $sourceFps '
             'fps; values above $sourceFps mean the encoder ran faster '
             'than realtime.',
@@ -2535,7 +2532,8 @@ class _MetricsLine extends StatelessWidget {
         label: 'realtime',
         value: _fmtSpeed(result.speedX),
         valueStyle: mono.copyWith(color: speedColor),
-        tooltip: 'How many seconds of source content the encoder '
+        tooltip:
+            'How many seconds of source content the encoder '
             'processed per second of wall-clock.  ≥ 1.0× sustains a live '
             'stream at the source rate; below 1.0× the encoder lags '
             'behind realtime and a live stream would underrun.',
@@ -2544,7 +2542,8 @@ class _MetricsLine extends StatelessWidget {
         label: 'bitrate',
         value: _fmtBitrate(result.bitrateKbps),
         valueStyle: mono.copyWith(color: AppColors.textBright),
-        tooltip: 'Average encoded output bitrate measured by the muxer '
+        tooltip:
+            'Average encoded output bitrate measured by the muxer '
             'over the run.  Drives bandwidth + storage planning — a 4 Mb/s '
             'stream needs 4 Mb/s of upstream per concurrent viewer.',
       ),
@@ -2553,7 +2552,8 @@ class _MetricsLine extends StatelessWidget {
           label: 'gpu',
           value: '${result.gpuUtilizationPercent!.toStringAsFixed(0)}%',
           valueStyle: mono.copyWith(color: AppColors.textBright),
-          tooltip: 'GPU encoder-engine utilisation sampled once at the '
+          tooltip:
+              'GPU encoder-engine utilisation sampled once at the '
               'midpoint of the run via the vendor probe (nvidia-smi / '
               'intel_gpu_top / radeontop).  High values mean adding more '
               'concurrent streams will saturate the silicon.',
@@ -2563,7 +2563,8 @@ class _MetricsLine extends StatelessWidget {
           label: 'vram',
           value: '${result.vramUsedMb} MB',
           valueStyle: mono.copyWith(color: AppColors.textBright),
-          tooltip: 'Video memory in use during the run.  Each additional '
+          tooltip:
+              'Video memory in use during the run.  Each additional '
               'concurrent encode roughly multiplies this number — useful '
               'for predicting OOM on cards with limited VRAM.',
         ),
@@ -2572,10 +2573,12 @@ class _MetricsLine extends StatelessWidget {
     final children = <Widget>[];
     for (var i = 0; i < tiles.length; i++) {
       if (i > 0) {
-        children.add(Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s10),
-          child: Text('·', style: dim),
-        ));
+        children.add(
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s10),
+            child: Text('·', style: dim),
+          ),
+        );
       }
       children.add(tiles[i]);
     }
@@ -2654,8 +2657,7 @@ class _LiveStatsCard extends StatelessWidget {
     ];
 
     // Progress bar for GPU load
-    final loadValue =
-        (gpuUtil != null ? gpuUtil / 100.0 : 0.0).clamp(0.0, 1.0);
+    final loadValue = (gpuUtil != null ? gpuUtil / 100.0 : 0.0).clamp(0.0, 1.0);
 
     return FluxCard(
       padding: AppSpacing.s18,
@@ -2671,16 +2673,18 @@ class _LiveStatsCard extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
                 border: i < rows.length - 1
-                    ? const Border(
-                        bottom: BorderSide(color: Color(0x0AFFFFFF)))
+                    ? const Border(bottom: BorderSide(color: Color(0x0AFFFFFF)))
                     : null,
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(k,
-                      style: AppTypography.bodySmall
-                          .copyWith(color: AppColors.textDim)),
+                  Text(
+                    k,
+                    style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textDim,
+                    ),
+                  ),
                   Text(
                     v,
                     style: TextStyle(
@@ -2696,9 +2700,10 @@ class _LiveStatsCard extends StatelessWidget {
           }),
           if (gpuUtil != null) ...[
             const SizedBox(height: AppSpacing.s12),
-            Text('Load',
-                style: AppTypography.captionV2
-                    .copyWith(color: AppColors.textDim)),
+            Text(
+              'Load',
+              style: AppTypography.captionV2.copyWith(color: AppColors.textDim),
+            ),
             const SizedBox(height: AppSpacing.s6),
             FluxProgress(value: loadValue, color: AppColors.amber),
           ],

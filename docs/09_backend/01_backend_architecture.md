@@ -58,7 +58,8 @@ server/
 │       ├── 025_groups_v2_content_spaces.sql  # v2: is_public/icon/color/requires_pin/pin_hash/pin_mode/max_concurrent_streams on groups; time_window_override on group_members; group_pin_grants + group_pin_attempts; manufactures Public group; backfills allowed_libraries; auto-adds approved clients to Public
 │       ├── 026_groups_per_client_pins.sql    # M8 hybrid PIN: pin_model on groups + group_member_pins enrollment ledger
 │       ├── 032_streaming_mode_auto.sql       # plan 20: widen streaming_mode CHECK to add 'auto'; default stays 'client-decode'
-│       └── 033_client_codec_blocklist.sql    # plan 20: new client_codec_blocklist table (composite PK client_id+source_codec; FK CASCADE to clients)
+│       ├── 033_client_codec_blocklist.sql    # plan 20: new client_codec_blocklist table (composite PK client_id+source_codec; FK CASCADE to clients)
+│       └── 034_client_audio_codec_blocklist.sql # plan 21: new client_audio_codec_blocklist table (composite PK client_id+audio_codec; FK CASCADE to clients)
 │
 ├── routers/
 │   ├── info.py             # GET /api/v1/info (remote_url precedence: user_settings.custom_server_url > FLUXORA_PUBLIC_URL > null), /info/stats; POST /info/restart, /info/stop, /info/support-bundle ✅
@@ -66,7 +67,7 @@ server/
 │   ├── deps.py             # validate_token, validate_token_or_local, require_local_caller FastAPI dependencies ✅
 │   ├── files.py            # GET/POST(upload)/DELETE /api/v1/files; POST /api/v1/files/{id}/reset-progress (zero last_progress_sec for "Start over" UI — streaming pipeline plan §4.10); validate_token_or_local; bearer callers see 404 not 403 on visibility miss to prevent enumeration ✅
 │   ├── library.py          # GET/POST /api/v1/library, GET/PATCH/DELETE /{id}, POST /{id}/scan, GET /storage-breakdown; validate_token_or_local; emits library.create/update/delete activity events ✅
-│   ├── stream.py           # GET /sessions, POST /start/{id}?tonemap=, PATCH /{id}/progress, POST /{id}/seek?seek_sec=&tonemap= (re-spawn FFmpeg from arbitrary seek + rewrite static playlist with monotonic `#EXT-X-DISCONTINUITY-SEQUENCE`; rate-limited 30/minute; returns `StreamSeekResponse{applied_seek_sec}`), GET/{id}, DELETE/{id} + hls_router; **plan 20: POST /{id}/fallback-transcode** (bearer + rate-limited 10/min; records (client_id, source_codec) in client_codec_blocklist; flips _session_force_transcode; restarts FFmpeg from caller-supplied position; 404/403/409 on not-found/not-owned/mode-not-auto; returns updated playlist_url + forced_transcode=true); start/{id} consults client_codec_service.is_blocked only when streaming_mode='auto'; StreamStartResponse gains streaming_mode field; stream-gate hook calls group_service.reason_to_deny_stream (v2 — replaces v1 reason_to_deny); HLS router 2 s segment-wait for seek-ahead; .m4s/.mp4 served as video/mp4 ✅
+│   ├── stream.py           # GET /sessions, POST /start/{id}?tonemap=, PATCH /{id}/progress, POST /{id}/seek?seek_sec=&tonemap= (re-spawn FFmpeg from arbitrary seek + rewrite static playlist with monotonic `#EXT-X-DISCONTINUITY-SEQUENCE`; rate-limited 30/minute; returns `StreamSeekResponse{applied_seek_sec}`), GET/{id}, DELETE/{id} + hls_router; **plan 20: POST /{id}/fallback-transcode** (bearer + rate-limited 10/min; records (client_id, source_codec) in client_codec_blocklist; flips _session_force_transcode; restarts FFmpeg from caller-supplied position; 404/403/409 on not-found/not-owned/mode-not-auto; returns updated playlist_url + forced_transcode=true); start/{id} consults client_codec_service.is_blocked only when streaming_mode='auto'; StreamStartResponse gains streaming_mode field; **plan 21: POST /{id}/fallback-audio-transcode** (bearer + rate-limited 10/min; records (client_id, audio_codec) in client_audio_codec_blocklist; sets _session_force_audio_transcode; restarts FFmpeg with audio re-encoded to AAC 256 k while keeping video stream-copy; 404/403/409 on not-found/not-owned/mode-not-auto; returns playlist_url + forced_audio_transcode=true); start/{id} also consults client_audio_codec_service.is_blocked for audio codec only when streaming_mode='auto'; StreamStartResponse gains audio_streaming_mode field; stream-gate hook calls group_service.reason_to_deny_stream (v2 — replaces v1 reason_to_deny); HLS router 2 s segment-wait for seek-ahead; .m4s/.mp4 served as video/mp4 ✅
 │   ├── ws.py               # WS /status (token auth + ping/pong + progress), WS /stats (live system stats) ✅
 │   ├── signal.py           # WS /signal: SDP offer/answer + ICE relay ✅
 │   ├── settings.py         # GET/PATCH /api/v1/settings; require_local_caller ✅
@@ -105,14 +106,15 @@ server/
 │   ├── benchmark_history_service.py # persists benchmark runs to `benchmark_runs` (migration 024) — top-level metadata + per-encoder JSON; `save_benchmark_run` prunes to `_HISTORY_LIMIT=50` after each insert; `list_benchmark_runs` / `get_benchmark_run` / `delete_benchmark_run` back the desktop history sidebar ✅
 │   ├── transcode_service.py   # plan 18 — user-driven library transcode worker.  Public surface: `candidates(db)` / `queue(db, file_ids, preset)` / `cancel(db, job_id)` / `list_jobs(db, statuses)` / `get_job(db, id)` / `retry(db, job_id)` / `storage_aggregate(db)` / `start_worker()` / `stop_worker()`.  Single-worker FIFO loop; claims oldest `queued` row, builds an FFmpeg cmd via plan-19 §M1 `QUALITY_PRESETS` map (smaller / recommended (default `cq=23`) / mastering); plan-19 §M2 `_sidecar_path()` rewrite supports both `dedicated` (mirrors library tree under `transcode_cache_root`) and `inline` (`.fluxora-transcodes/` next to source) storage modes; `.webm` sources force `.mkv` sidecar extension.  Parses `-progress pipe:2` to update `progress_pct` + `eta_sec` in DB every ~1.5 s; on success stats the sidecar and writes `media_files.transcoded_path` + `transcoded_size_bytes` + `transcoded_at` + `transcoded_source_mtime`.  Crash-recovery on boot marks orphan `running` rows as `failed` and unlinks any partial output file derived from the row's expected sidecar path.  `storage_aggregate(db)` returns the `/transcode/storage` payload — file_count + total_bytes + per-codec + per-library breakdown (the per-library aggregate uses `LEFT JOIN libraries` so files orphaned by a previous library-delete still appear under `(orphaned)` rather than disappearing) + `shutil.disk_usage(cache_root).free`.  Audio: `-c:a copy` if AAC, else `-c:a aac -b:a 192k` ✅
 │   ├── support_bundle_service.py # operator field-debug bundle generator — gzipped tar with `metadata.json` + `system/stats.json` + `system/encoders.json` + redacted `settings/redacted.json` + `database/schema.sql` (sqlite_master DDL only) + `logs/*` (active rotating log + ≤4 rotated siblings); per-collector try/except → `_collect_error` markers; backs POST /info/support-bundle ✅
-│   ├── client_codec_service.py   # plan 20 — per-client codec fallback blocklist; `is_blocked(db, client_id, source_codec) -> bool` + `add_block(db, client_id, source_codec, reason)` (idempotent INSERT OR IGNORE); consulted ONLY under streaming_mode='auto' ✅
+│   ├── client_codec_service.py   # plan 20 — per-client video codec fallback blocklist; `is_blocked(db, client_id, source_codec) -> bool` + `add_block(db, client_id, source_codec, reason)` (idempotent INSERT OR IGNORE); consulted ONLY under streaming_mode='auto' ✅
+│   ├── client_audio_codec_service.py # plan 21 — per-client audio codec fallback blocklist; `is_blocked(db, client_id, audio_codec) -> bool` + `add_block(db, client_id, audio_codec, reason)` (idempotent INSERT OR IGNORE); consulted ONLY under streaming_mode='auto'; independent of client_codec_service ✅
 │   └── log_service.py              # parse JSON-line log file; filter (level/source/since/until/q); cursor pagination; pubsub for WS /ws/logs ✅
 │
 ├── models/
 │   ├── media_file.py       # MediaFileResponse Pydantic schema ✅
 │   ├── library.py          # LibraryResponse (with file_count + total_size_bytes), CreateLibraryBody, UpdateLibraryBody, StorageByType + StorageBreakdownResponse (Dashboard donut) ✅
 │   ├── client.py           # PairRequestBody, PairResponse, AuthStatusResponse, ActiveSessionInfo (in-flight session attached per client row), GroupSummary (id+name+status chips), ClientListItem, ClientListResponse, ClientMeResponse, UpdateClientMeRequest (Field-validated rename body — strips whitespace, bans control chars), ClientMeStatsResponse ✅
-│   ├── stream_session.py   # StreamStartResponse (+ resume_sec, applied_seek_sec, hdr_format, tonemapped fields; **plan 20:** + `streaming_mode: str` field so mobile knows whether to arm the auto-fallback watcher), StreamSeekResponse{applied_seek_sec}, StreamSessionResponse; **plan 20 body model:** FallbackTranscodeRequest{current_position_sec: float ≥ 0}, FallbackTranscodeResponse{session_id, playlist_url, forced_transcode: true} ✅
+│   ├── stream_session.py   # StreamStartResponse (+ resume_sec, applied_seek_sec, hdr_format, tonemapped fields; **plan 20:** + `streaming_mode: str`; **plan 21:** + `audio_streaming_mode: Literal["stream-copy","transcode"]` default "transcode" — mobile arms audio watcher when both streaming_mode='auto' AND audio_streaming_mode='stream-copy'), StreamSeekResponse{applied_seek_sec}, StreamSessionResponse; **plan 20 body model:** FallbackTranscodeRequest{current_position_sec: float ≥ 0}, FallbackTranscodeResponse{session_id, playlist_url, forced_transcode: true}; **plan 21 body model:** FallbackAudioTranscodeRequest{current_position_sec: float ≥ 0}, FallbackAudioTranscodeResponse{session_id, playlist_url, forced_audio_transcode: true} ✅
 │   ├── settings.py         # ServerInfoResponse, SystemStatsResponse, UserSettingsResponse (incl. license_status, license_tier, transcoding fields), UpdateSettingsBody ✅
 │   ├── notification.py     # NotificationResponse, NotificationCreate; NotificationType, NotificationCategory type aliases ✅
 │   ├── activity.py         # ActivityEventResponse (id, type, actor_kind?, actor_id?, target_kind?, target_id?, summary, payload?, created_at) ✅
@@ -164,9 +166,10 @@ server/
     ├── test_webrtc_ice_servers.py # `_ice_servers()` STUN-only when no TURN, includes TURN entry when all 3 of url/user/pass set, drops TURN if any empty (audit-follow-up regression guard for the env-var rename) ✅
     ├── test_support_bundle.py     # bundle contents + redaction + `_collect_error` partial-bundle path ✅
     ├── test_logs.py               # JSON-line parse, level/source/since/until/q filters, pagination, WS fan-out, localhost + token auth ✅
-    └── test_client_codec_service.py # plan 20 — `is_blocked` / `add_block` round-trip; idempotent insert; cascade delete when client deleted ✅
+    ├── test_client_codec_service.py # plan 20 — `is_blocked` / `add_block` round-trip; idempotent insert; cascade delete when client deleted ✅
+    └── test_client_audio_codec_service.py # plan 21 — `is_blocked` / `add_block` round-trip; idempotent insert; cascade delete when client deleted (6 tests) ✅
 
-Total: **792 tests passing** ✅
+Total: **814 tests passing** ✅
 ```
 
 ---
@@ -193,7 +196,8 @@ Total: **792 tests passing** ✅
 | `hardware_probe` ✅ (Slice B) | Per-OS CPU + GPU enumeration. Linux: `lspci -nn -d ::0300` + `nvidia-smi -L` + walks `/dev/dri/render*`. Windows: `wmic path Win32_VideoController` + supplements NVIDIA rows from `nvidia-smi` (wmic AdapterRAM caps at ~4 GB on 32-bit). macOS: `system_profiler SPDisplaysDataType -json`. Vendor normalisation maps free-form strings to canonical `nvidia` / `intel` / `amd` / `apple` / `unknown`. Lifetime cache; failure returns empty list, never raises. | `detect_hardware()` → `{cpus: [...], gpus: [...]}`, `reset_cache()` |
 | `session_router` ✅ (Slice C) | Multi-encoder priority-chain walker for transcode sessions. `pick_encoder(chain, session_id, *, default_encoder)` walks the chain and returns `(encoder, reason)` where reason ∈ {`configured`, `gpu_session_cap_hit`, `all_encoders_saturated`, `encoder_unknown`}. Reserves a slot against the encoder's `concurrent_session_cap` (NVENC = 3 on consumer cards); `release_session` frees it in `stop_stream`. 50-entry FIFO ring buffer of routing decisions. Stream-copy bypasses the router entirely. | `parse_chain(raw)` / `encode_chain(chain)`, `pick_encoder(chain, session_id, *, default_encoder)`, `release_session(session_id)`, `get_session_encoder(session_id)`, `get_history()` |
 | `log_service` ✅ | Reads the JSON-line log file (`~/.fluxora/logs/server.log`) and provides filtered, cursor-paginated access. Also runs an in-process `BroadcastHandler` attached to the root Python logger at startup that fans every emitted record to subscribed asyncio queues (drop on slow consumers). | `list_logs(*, level?, source?, since?, until?, q?, limit, cursor)` → `LogListResponse`, `subscribe()` → `asyncio.Queue`, `unsubscribe(q)` |
-| `client_codec_service` ✅ (plan 20) | Per-client codec fallback blocklist — records `(client_id, source_codec)` pairs when the auto-fallback endpoint fires. Consulted at `/stream/start` time only when `streaming_mode='auto'`; strict modes ignore it. | `is_blocked(db, client_id, source_codec)` → `bool`, `add_block(db, client_id, source_codec, reason)` (idempotent) |
+| `client_codec_service` ✅ (plan 20) | Per-client video codec fallback blocklist — records `(client_id, source_codec)` pairs when the auto video-fallback endpoint fires. Consulted at `/stream/start` time only when `streaming_mode='auto'`; strict modes ignore it. | `is_blocked(db, client_id, source_codec)` → `bool`, `add_block(db, client_id, source_codec, reason)` (idempotent) |
+| `client_audio_codec_service` ✅ (plan 21) | Per-client audio codec fallback blocklist — records `(client_id, audio_codec)` pairs when the audio auto-fallback endpoint fires. Consulted at `/stream/start` time only when `streaming_mode='auto'`; independent of the video blocklist. | `is_blocked(db, client_id, audio_codec)` → `bool`, `add_block(db, client_id, audio_codec, reason)` (idempotent) |
 | `support_bundle_service` ✅ (2026-05-06) | Operator-side field-debug bundle generator. Builds a gzipped tar in memory containing `metadata.json`, `system/stats.json` (one psutil snapshot via `system_stats.collect`), `system/encoders.json` (snapshot of encoder self-test results from `transcoding_service.get_test_results()`), `settings/redacted.json` (`user_settings` row with `tmdb_api_key` / `license_key` / `email` replaced by `***REDACTED***` sentinel; null stays null), `database/schema.sql` (`sqlite_master` DDL — never row data), and `logs/*` (active rotating log + up to 4 rotated siblings). Each sub-collector wrapped in try/except → ships partial bundle with `_collect_error` markers rather than aborting. Caller delivers via `Response(content=bytes, media_type="application/gzip", headers={"Content-Disposition": ...})`. | `generate_support_bundle(db)` → `(filename, gzipped_tar_bytes)` |
 | `transcoding_service.get_test_results()` ✅ (added 2026-05-06) | Public read-only snapshot of the encoder self-test cache (`_TEST_RESULTS`). Returns a shallow copy so callers can iterate without holding a reference to the live mutable dict. Added to give `support_bundle_service` a stable accessor instead of reaching into private state. | `get_test_results()` → `dict[str, EncoderTestResult]` |
 | `benchmark_service` ✅ | Synthetic FFmpeg encode-per-encoder for performance comparison (desktop "Run Benchmark" button). Sequential — running encodes in parallel would contend for GPU + CPU and produce noise. Generates a `lavfi testsrc` source through each encoder, muxes to `mpegts`, pipes to `-f null -`. Streams stderr (not tempfile) so the first `frame=N≥1` line timestamps `init_ms`. Midpoint GPU probe (at `duration_sec / 2`) samples vendor-specific tools for hardware encoders. Clamps duration `[2, 20]` s, fps `[24, 60]`, resolution; 35 s per-encoder timeout (libx265 on slow CPUs hits this and the operator learns the encoder can't drive a live stream). Live progress snapshot via `get_progress()` for desktop polling. | `run_benchmark(...)` → `list[EncoderBenchmarkResult]`, `clamp_duration()`, `clamp_fps()`, `clamp_resolution()`, `clamp_resolutions()`, `get_progress()` |
@@ -218,21 +222,22 @@ Total: **792 tests passing** ✅
 
 `ffmpeg_service.start_stream` picks one of two pipelines per session by reading `media_files.codec_name` (back-filled at scan time via FFprobe — migration 016). Files that pre-date that migration trigger a one-time lazy probe at stream-start (~200 ms) and the result is persisted; the next play of the same file is constant-time.
 
-### Stream-copy path (h264 / hevc sources)
+### Stream-copy path (h264 / hevc sources; plan 21 extends to audio stream-copy)
 
-When the source video is already h264 or hevc — the typical case for personal libraries — FFmpeg just *remuxes* into HLS without re-encoding, dropping CPU usage by ~95 % vs. a full transcode. Audio is still re-encoded to AAC 128 kb/s because source audio may be AC3/DTS/FLAC and not all HLS clients decode those.
+When the source video is already h264 or hevc — the typical case for personal libraries — FFmpeg just *remuxes* into HLS without re-encoding, dropping CPU usage by ~95 % vs. a full transcode.
+
+**Plan 21 (2026-05-12):** audio is also stream-copied when the source audio codec is in `_AUDIO_STREAM_COPY_ALLOWLIST = frozenset({"aac", "ac3", "eac3", "opus", "flac"})`, HDR tonemap is inactive, and the client does not have a `client_audio_codec_blocklist` row for that audio codec. When audio stream-copy is used with a non-AAC codec (AC3, EAC3, Opus, FLAC), the segment type is forced to **fmp4** because MPEG-TS does not cleanly carry those codecs across all HLS clients; fmp4 (HLSv7+) handles all of them. The `_resolve_audio_passthrough(session_id, source_audio_codec, apply_hdr_tonemap)` helper encodes this decision.
 
 ```
 Input: /media/movies/Inception.mkv  (h264 + AC3)
     │
     └──▶ ffmpeg -i <input>
               -c:v copy               # No re-encode — remux only
-              -c:a aac -b:a 128k      # Re-encode audio (cheap, <3% CPU)
+              -c:a copy               # Audio stream-copy (plan 21: AC3 in allowlist, tonemap OFF)
               -f hls
               -hls_time 10            # bumped from 6 to accommodate long-GOP sources
               -hls_list_size 0
-              -hls_segment_type mpegts          # h264: mpegts
-              -hls_segment_type fmp4            # hevc: fmp4 (Apple HLS spec)
+              -hls_segment_type fmp4  # non-AAC audio stream-copy forces fmp4
               # Note: -hls_flags independent_segments is NOT used for stream-copy.
               # The flag asserts every segment starts with an IDR keyframe — true for
               # transcode (encoder emits IDRs at segment boundaries) but false for
@@ -241,7 +246,15 @@ Input: /media/movies/Inception.mkv  (h264 + AC3)
               /tmp/fluxora/{session_id}/playlist.m3u8
 ```
 
-For hevc the segment type switches to `fmp4` (`.m4s`) and an `init.mp4` is auto-emitted referenced via `EXT-X-MAP` in the playlist. Apple's HLS spec requires fMP4 for hevc — `mpegts` segments don't reliably carry hevc.
+For hevc the segment type also switches to `fmp4` (`.m4s`) and an `init.mp4` is auto-emitted referenced via `EXT-X-MAP` in the playlist. Apple's HLS spec requires fMP4 for hevc — `mpegts` segments don't reliably carry hevc.
+
+**Audio re-encode paths (when stream-copy is not used):** bitrate bumped 128 k → 256 k (plan 21); source channel count preserved via `-ac:a:0 <source_channels>` to prevent silent 5.1 → stereo downmix. Two re-encode sub-paths remain:
+- `aac@48kHz + tonemap ON`: `-c:a aac -b:a 256k -ac <n>` (no `-ar` — source is already 48 kHz under tonemap)
+- other: `-c:a aac -b:a 256k -ar 48000 -ac <n>`
+
+Session-level flags governing the audio pipeline:
+- `_session_force_transcode` (plan 20) — forces full video transcode for the session's lifetime.
+- `_session_force_audio_transcode` (plan 21) — forces audio re-encode for the session's lifetime; orthogonal to `_session_force_transcode`. A session can have audio forced while video continues to stream-copy.
 
 ### Full transcode path (vp9 / av1 / mpeg4 / unknown)
 
@@ -252,7 +265,7 @@ ffmpeg [pre_input_args: -hwaccel cuda -hwaccel_output_format cuda]
        [-c:v av1_cuvid]                    # NVIDIA only + cuvid map match
        -i <input>
        -c:v libx264 -preset veryfast -crf 23
-       -c:a aac -b:a 128k
+       -c:a aac -b:a 256k -ar 48000 -ac <source_channels>   # plan 21: 256k + channel preservation
        -f hls -hls_time 6 -hls_list_size 0
        -hls_segment_type mpegts
        -hls_flags independent_segments
@@ -263,7 +276,12 @@ ffmpeg [pre_input_args: -hwaccel cuda -hwaccel_output_format cuda]
 
 Every session writes FFmpeg's stderr to a per-session temp file (`fluxora-ffmpeg-{session_id}-*.log` under the OS temp dir). On premature exit or playlist-creation timeout, `start_stream` reads the last 4 KB of the file, logs it, and bubbles the first stderr line up through the `RuntimeError` — so the operator notification's exception message names the actual reason ("No NVENC capable devices found" / "Cannot use both -hls_time and …" / etc.) instead of a generic "FFmpeg failed". The temp file is unlinked in `stop_stream`.
 
-The log line `FFmpeg pipeline: session=… mode=stream-copy(h264/mpegts) source_codec=h264` records which path each session took.
+The `stream_decision` log line records which path each session took (plan 20 introduced it; plan 21 extended it):
+```
+stream_decision session=<id> source_codec=<v> audio_codec=<a> mode=<auto|client-decode|server-transcode>
+                video_path=<stream-copy|transcode> audio_path=<stream-copy|transcode>
+                reason=<global|library-override|client-blocklist|forced-fallback|audio-forced-fallback>
+```
 
 ---
 

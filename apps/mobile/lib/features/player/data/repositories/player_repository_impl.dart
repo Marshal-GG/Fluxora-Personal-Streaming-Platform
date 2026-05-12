@@ -5,7 +5,7 @@ import 'package:fluxora_mobile/features/player/domain/repositories/player_reposi
 
 class PlayerRepositoryImpl implements PlayerRepository {
   const PlayerRepositoryImpl({required ApiClient apiClient})
-      : _apiClient = apiClient;
+    : _apiClient = apiClient;
 
   final ApiClient _apiClient;
 
@@ -17,7 +17,8 @@ class PlayerRepositoryImpl implements PlayerRepository {
   }) {
     final qp = <String, String>{
       if (tonemap) 'tonemap': 'true',
-      if (seekSec != null && seekSec > 0) 'seek_sec': seekSec.toStringAsFixed(3),
+      if (seekSec != null && seekSec > 0)
+        'seek_sec': seekSec.toStringAsFixed(3),
     };
     return _apiClient.post<StreamStartResponse>(
       Endpoints.streamStart(fileId),
@@ -62,6 +63,17 @@ class PlayerRepositoryImpl implements PlayerRepository {
   }) {
     return _apiClient.post<void>(
       '/api/v1/stream/$sessionId/fallback-transcode',
+      data: {'current_position_sec': currentPositionSec},
+    );
+  }
+
+  @override
+  Future<void> reportFallbackAudioTranscode({
+    required String sessionId,
+    required double currentPositionSec,
+  }) {
+    return _apiClient.post<void>(
+      '/api/v1/stream/$sessionId/fallback-audio-transcode',
       data: {'current_position_sec': currentPositionSec},
     );
   }

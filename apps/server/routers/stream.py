@@ -13,6 +13,8 @@ from slowapi.util import get_remote_address
 from config import settings
 from database.db import get_db
 from models.stream_session import (
+    FallbackAudioTranscodeRequest,
+    FallbackAudioTranscodeResponse,
     FallbackTranscodeBody,
     FallbackTranscodeResponse,
     StreamSeekResponse,
@@ -22,6 +24,7 @@ from models.stream_session import (
 from routers.deps import LOOPBACK, bearer, require_local_caller, validate_token
 from services import (
     activity_service,
+    client_audio_codec_service,
     client_codec_service,
     ffmpeg_service,
     group_service,
@@ -278,6 +281,45 @@ async def start_stream(
             )
             ffmpeg_service.set_session_force_transcode(session_id, True)
 
+    # Plan 21 — audio-codec blocklist consult.  Independent of the video
+    # blocklist above: a session can hit one, the other, both, or neither.
+    # When the (client_id, normalized_audio_codec) pair has fired the
+    # audio-only fallback before, pre-arm the per-session audio-force
+    # flag so this session starts with audio re-encoded while video
+    # keeps stream-copying.  Only fires under `streaming_mode='auto'`;
+    # strict modes are documented as deterministic.
+    #
+    # Best-effort probe — ffprobe may be unavailable or the source may
+    # have no audio stream; in either case ``audio_info`` is None and
+    # the blocklist consult skips harmlessly (``is_blocked`` short-
+    # circuits on a falsy codec).  We also stash the probed codec so
+    # the response payload's ``audio_streaming_mode`` field can be
+    # computed deterministically below — no second probe needed.
+    source_audio_codec: str | None = None
+    try:
+        audio_info = await ffmpeg_service._probe_audio_params(playback_path)
+        if audio_info is not None:
+            source_audio_codec = audio_info.get("codec_name")
+    except Exception:
+        logger.debug(
+            "router audio probe failed for %s — proceeding without audio codec",
+            playback_path,
+            exc_info=True,
+        )
+    if effective_mode == "auto":
+        audio_codec_norm = (source_audio_codec or "").split("_")[0].lower()
+        if audio_codec_norm and await client_audio_codec_service.is_blocked(
+            db, client["id"], audio_codec_norm
+        ):
+            logger.info(
+                "client-audio-codec blocklist hit: client=%s audio_codec=%s — "
+                "forcing audio re-encode for session=%s",
+                client["id"],
+                audio_codec_norm,
+                session_id,
+            )
+            ffmpeg_service.set_session_force_audio_transcode(session_id, True)
+
     try:
         await ffmpeg_service.start_stream(
             playback_path,
@@ -366,6 +408,25 @@ async def start_stream(
     applied_seek_sec = ffmpeg_service._applied_seek_sec.get(
         session_id, resolved_seek_sec
     )
+
+    # Plan 21 — compute the audio pipeline the server picked for this
+    # session by re-evaluating ``_resolve_audio_passthrough`` with the
+    # same inputs FFmpeg used (probed source audio codec + the
+    # effective tonemap-applied flag + the per-session audio-force
+    # flag).  The resolver is a pure function; the router's re-call
+    # matches the decision ``start_stream`` made internally without
+    # adding a getter to ffmpeg_service.  Defaults to ``"transcode"``
+    # when the probe missed — matches the safe default in the response
+    # model and aligns with the audio re-encode path the cmd builder
+    # falls through to when ``source_audio_codec`` is None.
+    apply_hdr_tonemap = bool(tonemap and hdr_format)
+    audio_passthrough = ffmpeg_service._resolve_audio_passthrough(
+        apply_hdr_tonemap=apply_hdr_tonemap,
+        source_audio_codec=source_audio_codec,
+        session_id=session_id,
+    )
+    audio_streaming_mode = "stream-copy" if audio_passthrough else "transcode"
+
     return StreamStartResponse(
         session_id=session_id,
         file_id=file_id,
@@ -378,6 +439,7 @@ async def start_stream(
         # passes through unchanged, so the badge stays off.
         tonemapped=bool(tonemap and hdr_format),
         streaming_mode=effective_mode,
+        audio_streaming_mode=audio_streaming_mode,
     )
 
 
@@ -736,6 +798,174 @@ async def fallback_transcode(
         session_id=session_id,
         playlist_url=_playlist_url(request, session_id),
         forced_transcode=True,
+    )
+
+
+# ── POST /api/v1/stream/{session_id}/fallback-audio-transcode ──────────────
+# Plan 21.  Mirrors plan-20's /fallback-transcode but for AUDIO ONLY: the
+# server keeps video stream-copying and only flips the audio path to
+# re-encode.  Mobile / desktop player calls this when libmpv emits an
+# audio-related error within the first 6 s of playback (the window where
+# "client physically can't decode this audio codec" is far more likely
+# than any other failure mode).  Server records the (client, source
+# audio codec) pair in `client_audio_codec_blocklist` + flips the
+# per-session audio-force flag + re-spawns FFmpeg from the live
+# playhead.  Independent of the video fallback — both can fire in the
+# same session.
+
+
+@router.post(
+    "/{session_id}/fallback-audio-transcode",
+    response_model=FallbackAudioTranscodeResponse,
+)
+@limiter.limit("10/minute")
+async def fallback_audio_transcode(
+    session_id: str,
+    request: Request,
+    body: FallbackAudioTranscodeRequest,
+    db: aiosqlite.Connection = Depends(get_db),
+    client: aiosqlite.Row = Depends(validate_token),
+) -> FallbackAudioTranscodeResponse:
+    """Switch ``session_id`` from audio stream-copy to audio re-encode."""
+    async with db.execute(
+        "SELECT id, client_id, file_id FROM stream_sessions"
+        " WHERE id = ? AND ended_at IS NULL",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+    if row["client_id"] != client["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not your session"
+        )
+
+    # Plan 21 — audio fallback only fires under `streaming_mode='auto'`.
+    # Strict `client-decode` is "modern devices only" — a player audio
+    # error should surface to the user rather than silently switch
+    # pipelines.  `server-transcode` already re-encodes audio — nothing
+    # to fall back to.
+    settings_row = await settings_service.get_settings(db)
+    effective_mode = settings_row.get("streaming_mode") or "client-decode"
+    if effective_mode != "auto":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="audio fallback only valid in auto streaming mode",
+        )
+
+    file_row = await library_service.get_file(db, row["file_id"])
+    if file_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source file no longer exists",
+        )
+
+    # Per-library override resolution + sidecar handling — mirrors
+    # /start + /seek + /fallback-transcode so the restarted session
+    # keeps every other plan-19 / plan-20 decision intact.
+    library_row: dict | None = None
+    if file_row.get("library_id"):
+        library_row = await library_service.get_library(db, file_row["library_id"])
+
+    playback_path = file_row.get("transcoded_path") or file_row["path"]
+    using_sidecar = False
+    if file_row.get("transcoded_path"):
+        if Path(file_row["transcoded_path"]).exists():
+            using_sidecar = True
+        else:
+            logger.warning(
+                "Transcoded sidecar missing on disk; falling back to source: %s",
+                file_row["transcoded_path"],
+            )
+            playback_path = file_row["path"]
+    sidecar_codec_override = "h264" if using_sidecar else None
+    sidecar_duration_override = (
+        float(file_row["duration_sec"])
+        if using_sidecar and file_row.get("duration_sec")
+        else None
+    )
+
+    # Probe the source's audio codec so we can write the blocklist row
+    # for the (client, audio_codec) pair.  Best-effort — if ffprobe is
+    # unavailable or the source has no audio stream we still honour the
+    # operator's request to force audio re-encode for this session but
+    # skip the persisted blocklist entry (no codec to attribute it to).
+    # Log loud so an operator can see why the blocklist didn't grow.
+    source_audio_codec: str | None = None
+    try:
+        audio_info = await ffmpeg_service._probe_audio_params(playback_path)
+        if audio_info is not None:
+            raw_codec = audio_info.get("codec_name")
+            if raw_codec:
+                source_audio_codec = raw_codec.split("_")[0].lower()
+    except Exception:
+        logger.debug(
+            "fallback-audio-transcode: audio probe failed for %s",
+            playback_path,
+            exc_info=True,
+        )
+    if not source_audio_codec:
+        logger.warning(
+            "fallback-audio-transcode: no source_audio_codec for session=%s "
+            "file=%s — skipping blocklist write (in-session flag still set)",
+            session_id,
+            row["file_id"],
+        )
+
+    # Clamp the caller-supplied position to [0, duration - 1) so the
+    # restart's `-ss` doesn't trip undefined behaviour or land past EOF
+    # (which produces a zero-segment static playlist and breaks the
+    # player).  Pydantic already enforced `>= 0`; this enforces the
+    # upper bound + safe-margin.  Mirrors /fallback-transcode.
+    duration_sec = float(file_row.get("duration_sec") or 0.0)
+    clamped = max(0.0, float(body.current_position_sec))
+    if duration_sec > 0 and clamped >= duration_sec - 1.0:
+        clamped = max(0.0, duration_sec - 1.0)
+
+    if source_audio_codec:
+        await client_audio_codec_service.add_block(
+            db, client["id"], source_audio_codec, "client decode error"
+        )
+        await db.commit()
+
+    ffmpeg_service.set_session_force_audio_transcode(session_id, True)
+
+    try:
+        await ffmpeg_service.restart_stream(
+            playback_path,
+            session_id,
+            settings.hls_tmp_path,
+            seek_sec=clamped,
+            tonemap_hdr=False,
+            source_codec_override=sidecar_codec_override,
+            duration_sec_override=sidecar_duration_override,
+            library_row=library_row,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        ffmpeg_error = str(exc) or exc.__class__.__name__
+        logger.error(
+            "fallback-audio-transcode restart failed: session=%s seek=%.3f error=%s",
+            session_id,
+            clamped,
+            ffmpeg_error,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Fallback audio transcode restart failed: {ffmpeg_error}",
+        ) from exc
+
+    return FallbackAudioTranscodeResponse(
+        session_id=session_id,
+        playlist_url=_playlist_url(request, session_id),
+        forced_audio_transcode=True,
     )
 
 

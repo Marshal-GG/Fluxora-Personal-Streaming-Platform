@@ -907,3 +907,118 @@ All plan-20 implementation + course corrections + plan-21 draft are uncommitted 
 2. **Decide on plan 21 M1 sign-off** — operator owns the green light. The doc at `docs/10_planning/21_client_audio_decoding.md` has the locked decisions + milestone breakdown. If approved, run M1 (migration 034 + `client_audio_codec_service.py` + tests) as a single subagent task; M2+ can follow the plan-20 two-parallel-subagents pattern partitioned along server/mobile.
 3. **Consider a non-auto error UX affordance** — if operators in strict `client-decode` mode hit decode failures and don't know about the Auto toggle, the player should surface "Try Auto mode in Settings → Encoder Settings" alongside the raw error. Could ship as part of plan 21 M4 (mobile error sweep) since plan 21 adds audio-error UX surface anyway.
 4. **Audit comment quality on the audio-passthrough resolver before M2 ships** — plan 21 §M2 introduces `_resolve_audio_passthrough` mirroring plan 20's `_resolve_codec_passthrough`. Make sure the two stay structurally aligned so a future operator can reason about both from one mental model; if the audio one accumulates special cases, factor out the shared shape.
+
+---
+
+## [2026-05-12] [plan-21 shipped] [docs] [server] [mobile] — plan 21 close-out: docs sweep + archive + AGENT_LOG
+
+**Phase:** Phase 2 — streaming pipeline polish
+**Status:** Complete
+**Commits:** uncommitted
+
+### What Was Done
+
+M5 docs sweep for plan 21 (client-side audio decoding). All code (M1-M4) was already shipped by prior subagents. This session performed the documentation update protocol sweep, archived the plan, and wrote this log entry.
+
+#### 1. `docs/00_overview/current_status.md`
+
+Added a new "As of 2026-05-12 (latest)" block describing plan 21's shipped state. Bumped server test count header from 775 → 814. Updated migration range from 001-026 to 001-034. Updated mobile player cubit test count to 25 (was 21). Moved the plan-20 block to "Earlier 2026-05-12" to make room for plan-21.
+
+#### 2. `docs/03_data/02_database_schema.md`
+
+Updated status frontmatter line to include migration 034. Added new `client_audio_codec_blocklist` (Migration 034) section immediately after `client_codec_blocklist`, with full DDL, purpose, and independence note.
+
+#### 3. `docs/03_data/04_migration_guide.md`
+
+Updated last-updated frontmatter and migration range (001-033 → 001-034). Added `034_client_audio_codec_blocklist.sql` to the file-layout tree. Added "Parallel per-client blocklist tables (032–034)" pattern section describing the shared PK+FK shape, the lookup gate (auto-mode only), and why they're separate tables. Bumped test suite reference from 792 → 814.
+
+#### 4. `docs/04_api/01_api_contracts.md`
+
+Extended the `POST /api/v1/stream/start/{file_id}` response section to document `audio_streaming_mode: "stream-copy" | "transcode"` (plan 21 field, default `"transcode"`). Added full documentation for the new `POST /api/v1/stream/{session_id}/fallback-audio-transcode` endpoint (request shape, 200/404/403/409/422/429 status codes, blocklist semantics, relation to the video fallback endpoint).
+
+#### 5. `docs/08_frontend/01_frontend_architecture.md`
+
+Added entity/repository/impl inline comments for `audioStreamingMode` and `reportFallbackAudioTranscode`. Extended the `player_cubit.dart` entry to describe `_scheduleAutoAudioFallbackWatcher` (arming conditions, detection heuristics, 6 s window, cancel on non-empty audioParams). Updated player test file description to mention 25 total tests including plan-21 additions. Added "Desktop Has No Player Feature" section to permanently document that `apps/desktop/lib/features/player/` does not exist.
+
+#### 6. `docs/09_backend/01_backend_architecture.md`
+
+Added `034_client_audio_codec_blocklist.sql` to the migrations tree. Updated `stream.py` router description to include the new fallback-audio-transcode endpoint and audio-mode gate. Added `client_audio_codec_service.py` to the services tree. Updated `stream_session.py` model description to include `audio_streaming_mode` field and `FallbackAudioTranscodeRequest/Response`. Added `client_audio_codec_service` row to the service table. Updated FFmpeg Pipeline Detail to describe the audio stream-copy allowlist, `_resolve_audio_passthrough`, fmp4 trigger extension, 256k bitrate bump, `-ac` channel preservation, and the extended `stream_decision` log format. Bumped test count from 792 → 814.
+
+#### 7. `docs/10_planning/01_roadmap.md`
+
+Changed plan 21 row from "Drafted 2026-05-12 — awaiting M1 sign-off" to "Done 2026-05-12" with shipped feature summary and link to archived plan.
+
+#### 8. `docs/12_guidelines/03_gotchas.md`
+
+Added 6 new gotcha entries (no existing entries modified):
+- Plan 21 audio stream-copy bandwidth uncapped (sharp edge #7)
+- Plan 21 mid-stream audio codec changes (sharp edge #9)
+- Plan 21 audioParams-silence heuristic fragility (sharp edge #1)
+- Plan 21 `_ensure_fmp4_init_segment` audio codec mismatch (M2 agent sharp edge)
+- Plan 21 duplicate `_probe_audio_params` per `/start` (M3 agent sharp edge)
+- Desktop has no player feature (M4 agent finding)
+
+#### 9. Plan archive
+
+Copied `docs/10_planning/21_client_audio_decoding.md` → `docs/10_planning/archive/21_client_audio_decoding.md` with an "Archived 2026-05-12 — all 5 milestones shipped" header block. Deleted original. Updated CLAUDE.md "Where the detail lives" row (path + status label). Grepped docs/ and CLAUDE.md for stale references to the old path — zero found.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Created | apps/server/database/migrations/034_client_audio_codec_blocklist.sql | M1 — new audio blocklist table (done by prior M1 agent) |
+| Created | apps/server/services/client_audio_codec_service.py | M1 — audio blocklist service (done by prior M1 agent) |
+| Created | apps/server/tests/test_client_audio_codec_service.py | M1 — 6 tests for audio blocklist service (done by prior M1 agent) |
+| Modified | apps/server/services/ffmpeg_service.py | M2 — audio allowlist, passthrough resolver, fmp4 extension, 256k bitrate, -ac channels (done by prior M2 agent) |
+| Modified | apps/server/tests/test_stream.py | M2+M3 — 16 new tests for audio pipeline (done by prior M2/M3 agents) |
+| Modified | apps/server/routers/stream.py | M3 — audio blocklist consult + fallback-audio-transcode endpoint (done by prior M3 agent) |
+| Modified | apps/server/models/stream_session.py | M3 — audio_streaming_mode field + new request/response models (done by prior M3 agent) |
+| Modified | apps/mobile/lib/features/player/domain/entities/stream_start_response.dart | M4 — audioStreamingMode entity field (done by prior M4 agent) |
+| Modified | apps/mobile/lib/features/player/domain/repositories/player_repository.dart | M4 — reportFallbackAudioTranscode method (done by prior M4 agent) |
+| Modified | apps/mobile/lib/features/player/data/repositories/player_repository_impl.dart | M4 — POST /fallback-audio-transcode impl (done by prior M4 agent) |
+| Modified | apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart | M4 — audio watcher logic (done by prior M4 agent) |
+| Modified | apps/mobile/test/features/player/player_cubit_test.dart | M4 — 4 new audio watcher tests (done by prior M4 agent) |
+| Modified | apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart | M4 — Auto card body text revised (done by prior M4 agent) |
+| Modified | docs/00_overview/current_status.md | M5 — plan 21 shipped block; test count 814; migration range 001-034 |
+| Modified | docs/03_data/02_database_schema.md | M5 — client_audio_codec_blocklist table section added; status line updated |
+| Modified | docs/03_data/04_migration_guide.md | M5 — 034 entry in tree; parallel-blocklist pattern section; test count 814 |
+| Modified | docs/04_api/01_api_contracts.md | M5 — audio_streaming_mode field + fallback-audio-transcode endpoint documented |
+| Modified | docs/08_frontend/01_frontend_architecture.md | M5 — audio watcher in cubit; desktop-no-player section; test count 25 |
+| Modified | docs/09_backend/01_backend_architecture.md | M5 — 034 migration; stream.py; client_audio_codec_service; model; FFmpeg section; test count 814 |
+| Modified | docs/10_planning/01_roadmap.md | M5 — plan 21 row status flipped to Done; archive link added |
+| Renamed | docs/10_planning/archive/21_client_audio_decoding.md | M5 — plan 21 archived with shipped-status header (moved from 21_client_audio_decoding.md) |
+| Modified | docs/12_guidelines/03_gotchas.md | M5 — 6 new gotcha entries for plan 21 sharp edges |
+| Modified | CLAUDE.md | M5 — plan 21 row path updated to archive; status label updated |
+| Modified | docs/02_architecture/02_tech_stack.md | M5 — server test count 775 → 814 (stale value found in cross-reference sweep) |
+| Modified | AGENT_LOG.md | M5 — this entry |
+
+### Docs Updated
+
+- `docs/00_overview/current_status.md` — plan 21 shipped block; test counts; migration range
+- `docs/03_data/02_database_schema.md` — client_audio_codec_blocklist table section
+- `docs/03_data/04_migration_guide.md` — 034 file tree entry; parallel-blocklist pattern section
+- `docs/04_api/01_api_contracts.md` — audio_streaming_mode field; fallback-audio-transcode endpoint
+- `docs/08_frontend/01_frontend_architecture.md` — audio watcher; desktop-no-player section; cubit description
+- `docs/09_backend/01_backend_architecture.md` — 034 migration; services; models; FFmpeg pipeline detail
+- `docs/10_planning/01_roadmap.md` — plan 21 status + archive link
+- `docs/10_planning/archive/21_client_audio_decoding.md` — new (archived plan 21)
+- `docs/12_guidelines/03_gotchas.md` — 6 new gotcha entries
+- `docs/02_architecture/02_tech_stack.md` — server test count 775 → 814 (stale reference found during cross-reference sweep)
+- `CLAUDE.md` — plan 21 "Where the detail lives" row updated
+
+### Issues / Sharp Edges Discovered
+
+No new issues. All sharp edges from M1-M4 agents were captured in the gotchas entries above. Cross-reference sweep found zero stale links to the old `21_client_audio_decoding.md` path.
+
+### Test Counts (re-baselined)
+
+- **Server: 814 passing** (+22 from plan 21 M1-M3: 6 audio-service tests + 9 ffmpeg-service tests + 7 router/endpoint tests)
+- **Mobile player cubit: 25 passing** (+4 from plan 21 M4 audio watcher tests)
+- **Desktop: 113 passing** (untouched in plan 21)
+- **Core: 8 passing** (untouched)
+
+### Next Agent Should
+
+1. **Real-device audio fallback testing on iOS + Android** — use FLAC and AC3 source content, set `streaming_mode='auto'`, verify: (a) stream starts with `audio_streaming_mode='stream-copy'`; (b) on a device that can't decode FLAC, the 6 s audio watcher fires `POST /fallback-audio-transcode`; (c) the playlist reloads with audio transcoded; (d) subsequent sessions for the same `(client, audio_codec)` start directly in audio-transcode mode; (e) verify `_ensure_fmp4_init_segment` doesn't produce an AAC-config init segment for an AC3 stream-copy session (see gotchas).
+2. **Server-side perf follow-up: deduplicate `_probe_audio_params`** — `routers/stream.py` calls `_probe_audio_params(file_path)` independently of `ffmpeg_service.start_stream`'s own probe; this is ~50-100 ms per session. Fix: pass the probe result through as an optional param to `start_stream`, or persist `audio_codec` + `audio_channels` on `media_files` at scan time. Track in `docs/10_planning/04_manual_tasks.md` as a performance follow-up.
+3. **`_ensure_fmp4_init_segment` audio codec audit** — the helper's hard-coded `-c:a aac -b:a 128k` produces an AAC config box in `init.mp4`; when the session is streaming AC3/Opus/FLAC via stream-copy, the segments' audio box won't match. Fix: pass `audio_passthrough`, `source_audio_codec`, and `source_channels` to the helper and use `-c:a copy` when audio is stream-copied. Verify during real-device testing that this actually manifests (FFmpeg normally emits init.mp4 correctly; the helper only fires as a fallback).

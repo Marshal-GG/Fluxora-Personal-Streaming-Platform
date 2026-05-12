@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-12 (migrations 032 + 033 — plan 20: `streaming_mode` CHECK widened to include `'auto'`; new `client_codec_blocklist` table for per-client fallback decisions. Earlier 2026-05-09: migrations 001-031; all prior history intact below.)
+> **Status:** Active - Updated 2026-05-12 (migration 034 — plan 21: new `client_audio_codec_blocklist` table for per-client audio codec fallback decisions. migrations 032 + 033 — plan 20: `streaming_mode` CHECK widened to include `'auto'`; new `client_codec_blocklist` table for per-client video codec fallback decisions. Earlier 2026-05-09: migrations 001-031; all prior history intact below.)
 
 ---
 
@@ -350,6 +350,29 @@ CREATE TABLE client_codec_blocklist (
     reason      TEXT,           -- 'player_error_within_6s' / future extensions
     created_at  TEXT NOT NULL,
     PRIMARY KEY (client_id, source_codec),
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+);
+```
+
+---
+
+### `client_audio_codec_blocklist` (Migration 034)
+
+```sql
+-- Per-client audio codec fallback blocklist (plan 21).
+-- Written when the mobile player emits an audio decode error within 6 s of
+-- PlayerReady under streaming_mode='auto'.  On the next /stream/start for the
+-- same (client_id, audio_codec), the session starts with audio force-transcoded
+-- to AAC rather than attempting an optimistic audio stream-copy first.
+-- Consulted ONLY when streaming_mode='auto'. Strict modes ignore this table.
+-- Independent of client_codec_blocklist (video blocklist — plan 20); both can
+-- have a row for the same client simultaneously.
+CREATE TABLE client_audio_codec_blocklist (
+    client_id    TEXT NOT NULL,
+    audio_codec  TEXT NOT NULL,
+    reason       TEXT,           -- 'audio_error_within_6s' / future extensions
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (client_id, audio_codec),
     FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
 );
 ```

@@ -44,21 +44,31 @@ void main() {
     when(() => secureStorage.getAuthToken()).thenAnswer((_) async => tToken);
     // Default off so existing startStream tests don't trip the Wi-Fi-only
     // gate (settings remediation §M3 follow-up).
-    when(() => secureStorage.getWifiOnlyStreaming())
-        .thenAnswer((_) async => false);
+    when(
+      () => secureStorage.getWifiOnlyStreaming(),
+    ).thenAnswer((_) async => false);
     // Default stubs — must never throw during cubit.close()
     when(() => repository.stopStream(any())).thenAnswer((_) async {});
-    when(() => repository.updateProgress(any(), any())).thenAnswer((_) async {});
+    when(
+      () => repository.updateProgress(any(), any()),
+    ).thenAnswer((_) async {});
+    // Plan 21 — default no-op so the watcher path can be exercised
+    // without throwing even when a test doesn't override it.
+    when(
+      () => repository.reportFallbackAudioTranscode(
+        sessionId: any(named: 'sessionId'),
+        currentPositionSec: any(named: 'currentPositionSec'),
+      ),
+    ).thenAnswer((_) async {});
   });
 
   PlayerCubit buildCubit({
     Future<List<ConnectivityResult>> Function()? connectivityChecker,
-  }) =>
-      PlayerCubit(
-        repository: repository,
-        secureStorage: secureStorage,
-        connectivityChecker: connectivityChecker,
-      );
+  }) => PlayerCubit(
+    repository: repository,
+    secureStorage: secureStorage,
+    connectivityChecker: connectivityChecker,
+  );
 
   group('PlayerCubit', () {
     test('initial state is PlayerInitial', () {
@@ -67,22 +77,26 @@ void main() {
 
     // NOTE: PlayerReady requires native media_kit libs — cannot be tested in
     // a headless unit-test environment. We verify repository calls instead.
-    test('startStream calls repository.startStream with correct fileId',
-        () async {
-      when(() => repository.startStream(tFileId))
-          .thenAnswer((_) async => tResponse);
+    test(
+      'startStream calls repository.startStream with correct fileId',
+      () async {
+        when(
+          () => repository.startStream(tFileId),
+        ).thenAnswer((_) async => tResponse);
 
-      final cubit = buildCubit();
-      // await so the async body fully completes (errors are caught internally)
-      await cubit.startStream(tFileId, tFileName, 0.0);
+        final cubit = buildCubit();
+        // await so the async body fully completes (errors are caught internally)
+        await cubit.startStream(tFileId, tFileName, 0.0);
 
-      verify(() => repository.startStream(tFileId)).called(1);
-      await cubit.close();
-    });
+        verify(() => repository.startStream(tFileId)).called(1);
+        await cubit.close();
+      },
+    );
 
     test('startStream emits PlayerLoading as first state', () async {
-      when(() => repository.startStream(tFileId))
-          .thenAnswer((_) async => tResponse);
+      when(
+        () => repository.startStream(tFileId),
+      ).thenAnswer((_) async => tResponse);
 
       final cubit = buildCubit();
       final states = <PlayerState>[];
@@ -104,24 +118,19 @@ void main() {
       },
       build: buildCubit,
       act: (cubit) => cubit.startStream(tFileId, tFileName, 0.0),
-      expect: () => [
-        isA<PlayerLoading>(),
-        isA<PlayerFailure>(),
-      ],
+      expect: () => [isA<PlayerLoading>(), isA<PlayerFailure>()],
     );
 
     blocTest<PlayerCubit, PlayerState>(
       'startStream emits [Loading, Failure] on unknown error',
       setUp: () {
-        when(() => repository.startStream(tFileId))
-            .thenThrow(Exception('network failure'));
+        when(
+          () => repository.startStream(tFileId),
+        ).thenThrow(Exception('network failure'));
       },
       build: buildCubit,
       act: (cubit) => cubit.startStream(tFileId, tFileName, 0.0),
-      expect: () => [
-        isA<PlayerLoading>(),
-        isA<PlayerFailure>(),
-      ],
+      expect: () => [isA<PlayerLoading>(), isA<PlayerFailure>()],
     );
 
     // ── Group-gate 403 routing (M5, 2026-05-07) ───────────────────────────
@@ -195,25 +204,25 @@ void main() {
       },
       build: buildCubit,
       act: (cubit) => cubit.startStream(tFileId, tFileName, 0.0),
-      expect: () => [
-        isA<PlayerLoading>(),
-        isA<PlayerFailure>(),
-      ],
+      expect: () => [isA<PlayerLoading>(), isA<PlayerFailure>()],
     );
 
-    test('close calls stopStream when session was set by startStream',
-        () async {
-      when(() => repository.startStream(tFileId))
-          .thenAnswer((_) async => tResponse);
+    test(
+      'close calls stopStream when session was set by startStream',
+      () async {
+        when(
+          () => repository.startStream(tFileId),
+        ).thenAnswer((_) async => tResponse);
 
-      final cubit = buildCubit();
-      // _sessionId is set before Player() — even if Player init fails the
-      // server session exists and must be cleaned up on close
-      await cubit.startStream(tFileId, tFileName, 0.0);
-      await cubit.close();
+        final cubit = buildCubit();
+        // _sessionId is set before Player() — even if Player init fails the
+        // server session exists and must be cleaned up on close
+        await cubit.startStream(tFileId, tFileName, 0.0);
+        await cubit.close();
 
-      verify(() => repository.stopStream(tSessionId)).called(1);
-    });
+        verify(() => repository.stopStream(tSessionId)).called(1);
+      },
+    );
 
     test('close does not call stopStream when stream never started', () async {
       final cubit = buildCubit();
@@ -241,8 +250,10 @@ void main() {
       await cubit.seekTo(const Duration(seconds: 30));
 
       expect(cubit.state, isA<PlayerInitial>());
-      verifyNever(() => repository.seekStream(any(), any(),
-          tonemap: any(named: 'tonemap')));
+      verifyNever(
+        () =>
+            repository.seekStream(any(), any(), tonemap: any(named: 'tonemap')),
+      );
       await cubit.close();
     });
 
@@ -256,15 +267,17 @@ void main() {
 
       await cubit.seekTo(const Duration(seconds: 30));
 
-      verifyNever(() => repository.seekStream(any(), any(),
-          tonemap: any(named: 'tonemap')));
+      verifyNever(
+        () =>
+            repository.seekStream(any(), any(), tonemap: any(named: 'tonemap')),
+      );
       await cubit.close();
     });
 
     test('seekTo no-ops when state is PlayerTierLimit', () async {
-      when(() => repository.startStream(tFileId)).thenThrow(
-        const ApiException(message: 'tier limit', statusCode: 429),
-      );
+      when(
+        () => repository.startStream(tFileId),
+      ).thenThrow(const ApiException(message: 'tier limit', statusCode: 429));
 
       final cubit = buildCubit();
       await cubit.startStream(tFileId, tFileName, 0.0);
@@ -272,8 +285,10 @@ void main() {
 
       await cubit.seekTo(const Duration(seconds: 30));
 
-      verifyNever(() => repository.seekStream(any(), any(),
-          tonemap: any(named: 'tonemap')));
+      verifyNever(
+        () =>
+            repository.seekStream(any(), any(), tonemap: any(named: 'tonemap')),
+      );
       await cubit.close();
     });
 
@@ -285,18 +300,20 @@ void main() {
       await cubit.seekTo(const Duration(seconds: -10));
 
       expect(cubit.state, isA<PlayerInitial>());
-      verifyNever(() => repository.seekStream(any(), any(),
-          tonemap: any(named: 'tonemap')));
+      verifyNever(
+        () =>
+            repository.seekStream(any(), any(), tonemap: any(named: 'tonemap')),
+      );
       await cubit.close();
     });
 
     // ── Wi-Fi-only enforcement (settings remediation §M3 follow-up) ──
 
-    test(
-        'startStream emits PlayerFailure when wifiOnly is on and connectivity '
+    test('startStream emits PlayerFailure when wifiOnly is on and connectivity '
         'is cellular-only', () async {
-      when(() => secureStorage.getWifiOnlyStreaming())
-          .thenAnswer((_) async => true);
+      when(
+        () => secureStorage.getWifiOnlyStreaming(),
+      ).thenAnswer((_) async => true);
       final cubit = buildCubit(
         connectivityChecker: () async => [ConnectivityResult.mobile],
       );
@@ -304,24 +321,29 @@ void main() {
       await cubit.startStream(tFileId, tFileName, 0.0);
 
       expect(cubit.state, isA<PlayerFailure>());
-      expect((cubit.state as PlayerFailure).message,
-          contains('Wi-Fi only mode'));
+      expect(
+        (cubit.state as PlayerFailure).message,
+        contains('Wi-Fi only mode'),
+      );
       // Repository must NOT have been called — the gate fires before
       // the HTTP startStream.
       verifyNever(() => repository.startStream(any()));
       await cubit.close();
     });
 
-    test(
-        'startStream proceeds when wifiOnly is on and connectivity includes '
+    test('startStream proceeds when wifiOnly is on and connectivity includes '
         'wifi alongside mobile (dual-stack)', () async {
-      when(() => secureStorage.getWifiOnlyStreaming())
-          .thenAnswer((_) async => true);
-      when(() => repository.startStream(tFileId))
-          .thenAnswer((_) async => tResponse);
+      when(
+        () => secureStorage.getWifiOnlyStreaming(),
+      ).thenAnswer((_) async => true);
+      when(
+        () => repository.startStream(tFileId),
+      ).thenAnswer((_) async => tResponse);
       final cubit = buildCubit(
-        connectivityChecker: () async =>
-            [ConnectivityResult.wifi, ConnectivityResult.mobile],
+        connectivityChecker: () async => [
+          ConnectivityResult.wifi,
+          ConnectivityResult.mobile,
+        ],
       );
 
       await cubit.startStream(tFileId, tFileName, 0.0);
@@ -331,118 +353,219 @@ void main() {
     });
 
     test(
-        'startStream proceeds when wifiOnly is off even on cellular',
-        () async {
-      // wifiOnly defaults to false in setUp — cellular-only connectivity
-      // should still pass through to the HTTP startStream.
-      when(() => repository.startStream(tFileId))
-          .thenAnswer((_) async => tResponse);
-      final cubit = buildCubit(
-        connectivityChecker: () async => [ConnectivityResult.mobile],
-      );
+      'startStream proceeds when wifiOnly is off even on cellular',
+      () async {
+        // wifiOnly defaults to false in setUp — cellular-only connectivity
+        // should still pass through to the HTTP startStream.
+        when(
+          () => repository.startStream(tFileId),
+        ).thenAnswer((_) async => tResponse);
+        final cubit = buildCubit(
+          connectivityChecker: () async => [ConnectivityResult.mobile],
+        );
 
-      await cubit.startStream(tFileId, tFileName, 0.0);
+        await cubit.startStream(tFileId, tFileName, 0.0);
 
-      verify(() => repository.startStream(tFileId)).called(1);
-      await cubit.close();
-    });
+        verify(() => repository.startStream(tFileId)).called(1);
+        await cubit.close();
+      },
+    );
 
-    test('Wi-Fi-only check fail-opens when connectivity probe throws',
-        () async {
-      when(() => secureStorage.getWifiOnlyStreaming())
-          .thenAnswer((_) async => true);
-      when(() => repository.startStream(tFileId))
-          .thenAnswer((_) async => tResponse);
-      final cubit = buildCubit(
-        connectivityChecker: () async => throw Exception('probe failed'),
-      );
+    test(
+      'Wi-Fi-only check fail-opens when connectivity probe throws',
+      () async {
+        when(
+          () => secureStorage.getWifiOnlyStreaming(),
+        ).thenAnswer((_) async => true);
+        when(
+          () => repository.startStream(tFileId),
+        ).thenAnswer((_) async => tResponse);
+        final cubit = buildCubit(
+          connectivityChecker: () async => throw Exception('probe failed'),
+        );
 
-      await cubit.startStream(tFileId, tFileName, 0.0);
+        await cubit.startStream(tFileId, tFileName, 0.0);
 
-      // A connectivity-probe permission glitch must not trap the user.
-      verify(() => repository.startStream(tFileId)).called(1);
-      await cubit.close();
-    });
+        // A connectivity-probe permission glitch must not trap the user.
+        verify(() => repository.startStream(tFileId)).called(1);
+        await cubit.close();
+      },
+    );
 
     // ── Streaming pipeline plan §16 — M1: server-side resume seek ──
 
-    test(
-        'startStream forwards serverSeekSec to repository when provided '
+    test('startStream forwards serverSeekSec to repository when provided '
         '(HDR-toggle / explicit-resume path)', () async {
-      when(() => repository.startStream(
-            tFileId,
-            tonemap: any(named: 'tonemap'),
-            seekSec: any(named: 'seekSec'),
-          )).thenAnswer((_) async => tResponse);
+      when(
+        () => repository.startStream(
+          tFileId,
+          tonemap: any(named: 'tonemap'),
+          seekSec: any(named: 'seekSec'),
+        ),
+      ).thenAnswer((_) async => tResponse);
 
       final cubit = buildCubit();
-      await cubit.startStream(
-        tFileId,
-        tFileName,
-        0.0,
-        serverSeekSec: 2843.5,
-      );
+      await cubit.startStream(tFileId, tFileName, 0.0, serverSeekSec: 2843.5);
 
       // Server now lands FFmpeg at the right segment via -ss; cubit
       // forwards the live playhead via the new seekSec arg.
-      verify(() => repository.startStream(
-            tFileId,
-            tonemap: false,
-            seekSec: 2843.5,
-          )).called(1);
+      verify(
+        () => repository.startStream(tFileId, tonemap: false, seekSec: 2843.5),
+      ).called(1);
       await cubit.close();
     });
 
-    test(
-        'startStream omits seekSec when no serverSeekSec is provided '
+    test('startStream omits seekSec when no serverSeekSec is provided '
         '(initial-play path defers to server DB fallback)', () async {
-      when(() => repository.startStream(
-            tFileId,
-            tonemap: any(named: 'tonemap'),
-            seekSec: any(named: 'seekSec'),
-          )).thenAnswer((_) async => tResponse);
+      when(
+        () => repository.startStream(
+          tFileId,
+          tonemap: any(named: 'tonemap'),
+          seekSec: any(named: 'seekSec'),
+        ),
+      ).thenAnswer((_) async => tResponse);
 
       final cubit = buildCubit();
       await cubit.startStream(tFileId, tFileName, 0.0);
 
       // No serverSeekSec → seekSec passed as null → server reads
       // last_progress_sec from the DB (the resume-from-progress path).
-      verify(() => repository.startStream(
-            tFileId,
-            tonemap: false,
-            seekSec: null,
-          )).called(1);
+      verify(
+        () => repository.startStream(tFileId, tonemap: false, seekSec: null),
+      ).called(1);
+      await cubit.close();
+    });
+
+    // ── Plan 21 — client-side audio decoding fallback ───────────────────
+    //
+    // The auto-mode audio watcher runs only when BOTH
+    // `streamingMode == 'auto'` AND `audioStreamingMode == 'stream-copy'`.
+    // Like plan 20's video watcher, the watcher arms AFTER `Player(...)`
+    // has been constructed, and the headless test environment cannot
+    // instantiate libmpv — so the cubit never reaches the schedule call
+    // (the catch path emits `PlayerFailure` first).  These tests still
+    // verify two important regression invariants:
+    //   1. The `audioStreamingMode` field round-trips through the entity
+    //      (server contract surface).
+    //   2. `reportFallbackAudioTranscode` is NEVER invoked before
+    //      Player init succeeds — proves the schedule call site is
+    //      properly guarded inside the post-PlayerReady block, so a
+    //      future agent can't accidentally hoist it.
+    // Detector behaviour itself (audio-tagged error matching, the 4 s
+    // audioParams silence-watchdog, the 6 s outer window, cancel-on-
+    // first-non-empty-audioParams) is verified by manual integration
+    // test on real device, matching how plan 20's video watcher is
+    // covered.
+
+    test(
+      'StreamStartResponse.fromJson defaults audioStreamingMode to '
+      '"transcode" when the server omits the field (pre-plan-21 server)',
+      () async {
+        final r = StreamStartResponse.fromJson(<String, dynamic>{
+          'session_id': tSessionId,
+          'file_id': tFileId,
+          'playlist_url': tPlaylistUrl,
+        });
+        expect(r.audioStreamingMode, 'transcode');
+      },
+    );
+
+    test('StreamStartResponse.fromJson reads audio_streaming_mode when the '
+        'server reports stream-copy', () async {
+      final r = StreamStartResponse.fromJson(<String, dynamic>{
+        'session_id': tSessionId,
+        'file_id': tFileId,
+        'playlist_url': tPlaylistUrl,
+        'streaming_mode': 'auto',
+        'audio_streaming_mode': 'stream-copy',
+      });
+      expect(r.streamingMode, 'auto');
+      expect(r.audioStreamingMode, 'stream-copy');
+    });
+
+    test('audio fallback watcher does not POST when audioStreamingMode is '
+        'transcode (gating condition #2 must fail closed)', () async {
+      // Even though the headless cubit never reaches the watcher-
+      // schedule call, this asserts the contract: a transcode-audio
+      // session must never see `reportFallbackAudioTranscode`.  If a
+      // future refactor moves the call before Player init this guard
+      // catches it.
+      const transcodeAudio = StreamStartResponse(
+        sessionId: tSessionId,
+        fileId: tFileId,
+        playlistUrl: tPlaylistUrl,
+        streamingMode: 'auto',
+      );
+      when(
+        () => repository.startStream(tFileId),
+      ).thenAnswer((_) async => transcodeAudio);
+
+      final cubit = buildCubit();
+      await cubit.startStream(tFileId, tFileName, 0.0);
+
+      verifyNever(
+        () => repository.reportFallbackAudioTranscode(
+          sessionId: any(named: 'sessionId'),
+          currentPositionSec: any(named: 'currentPositionSec'),
+        ),
+      );
+      await cubit.close();
+    });
+
+    test('audio fallback watcher does not POST when streamingMode is '
+        'client-decode even if audioStreamingMode is stream-copy '
+        '(both gating conditions are required)', () async {
+      const clientDecode = StreamStartResponse(
+        sessionId: tSessionId,
+        fileId: tFileId,
+        playlistUrl: tPlaylistUrl,
+        audioStreamingMode: 'stream-copy',
+      );
+      when(
+        () => repository.startStream(tFileId),
+      ).thenAnswer((_) async => clientDecode);
+
+      final cubit = buildCubit();
+      await cubit.startStream(tFileId, tFileName, 0.0);
+
+      verifyNever(
+        () => repository.reportFallbackAudioTranscode(
+          sessionId: any(named: 'sessionId'),
+          currentPositionSec: any(named: 'currentPositionSec'),
+        ),
+      );
       await cubit.close();
     });
 
     test(
-        'setTonemap re-invokes startStream against the same file with a '
-        'new tonemap flag (live-position capture happens at runtime)',
-        () async {
-      // Two stubs — first call is the initial startStream, second is
-      // the setTonemap-triggered restart.
-      when(() => repository.startStream(
+      'setTonemap re-invokes startStream against the same file with a '
+      'new tonemap flag (live-position capture happens at runtime)',
+      () async {
+        // Two stubs — first call is the initial startStream, second is
+        // the setTonemap-triggered restart.
+        when(
+          () => repository.startStream(
             tFileId,
             tonemap: any(named: 'tonemap'),
             seekSec: any(named: 'seekSec'),
-          )).thenAnswer((_) async => tResponse);
+          ),
+        ).thenAnswer((_) async => tResponse);
 
-      final cubit = buildCubit();
-      await cubit.startStream(tFileId, tFileName, 0.0);
-      await cubit.setTonemap(true);
+        final cubit = buildCubit();
+        await cubit.startStream(tFileId, tFileName, 0.0);
+        await cubit.setTonemap(true);
 
-      // setTonemap captures live player position; in a headless test
-      // env the Player isn't real so position is 0 and seekSec ends
-      // up null — the SERVER falls back to DB last_progress_sec, which
-      // is the correct safe behaviour when the cubit can't read the
-      // live playhead.  Real-device path passes the live ms via the
-      // same code path (verified by reading the cubit source).
-      verify(() => repository.startStream(
-            tFileId,
-            tonemap: true,
-            seekSec: null,
-          )).called(1);
-      await cubit.close();
-    });
+        // setTonemap captures live player position; in a headless test
+        // env the Player isn't real so position is 0 and seekSec ends
+        // up null — the SERVER falls back to DB last_progress_sec, which
+        // is the correct safe behaviour when the cubit can't read the
+        // live playhead.  Real-device path passes the live ms via the
+        // same code path (verified by reading the cubit source).
+        verify(
+          () => repository.startStream(tFileId, tonemap: true, seekSec: null),
+        ).called(1);
+        await cubit.close();
+      },
+    );
   });
 }

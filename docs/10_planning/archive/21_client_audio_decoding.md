@@ -1,7 +1,21 @@
 # Plan 21 — Client-side audio decoding (audio stream-copy + audio-only auto-fallback)
 
-> **Status:** 🚧 Drafted 2026-05-12 — awaiting M1 sign-off
+> **Status:** ✅ Archived 2026-05-12 — all 5 milestones shipped
+> **Shipped:** 2026-05-12
 > **Layers on top of:** plan 19 §M7 (client-decode default), plan 20 (auto-mode fallback mechanism).
+>
+> **What shipped:**
+> - Migration 034 — `client_audio_codec_blocklist` table (composite PK client_id+audio_codec; FK CASCADE to clients)
+> - `services/client_audio_codec_service.py` — `is_blocked` / `add_block` (idempotent); consulted only under `streaming_mode='auto'`
+> - `ffmpeg_service.py` — `_AUDIO_STREAM_COPY_ALLOWLIST = frozenset({"aac","ac3","eac3","opus","flac"})`, `_session_force_audio_transcode` dict, `_resolve_audio_passthrough` resolver, fmp4 forced for non-AAC audio stream-copy, 128k → 256k AAC re-encode bitrate, `-ac` channel preservation, `stream_decision` log extended with audio fields
+> - `routers/stream.py` — `/start` consults audio blocklist under auto mode; new `POST /{session_id}/fallback-audio-transcode` (404/403/409 semantics)
+> - `models/stream_session.py` — `StreamStartResponse.audio_streaming_mode`, `FallbackAudioTranscodeRequest`, `FallbackAudioTranscodeResponse`
+> - `apps/mobile/lib/features/player/` — `audioStreamingMode` entity field, `reportFallbackAudioTranscode` repository method + impl, `_scheduleAutoAudioFallbackWatcher` cubit logic (arms when streaming_mode='auto' AND audio_streaming_mode='stream-copy'; 6 s window; audioParams-silence + keyword-error heuristics; 4 new cubit tests)
+> - `apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart` — Auto card body text revised to mention audio; no desktop player code added (desktop has no player feature)
+> - **Test counts at ship: server 814 (+22 vs 792 pre-plan-21); mobile player cubit 25 (+4 vs 21)**
+> - **Sharp edges documented in `docs/12_guidelines/03_gotchas.md`:** audio stream-copy bandwidth uncapped; mid-stream codec changes; audioParams-silence heuristic fragility; `_ensure_fmp4_init_segment` audio codec mismatch; duplicate `_probe_audio_params` per `/start`; desktop has no player
+
+---
 
 ## Context
 
@@ -140,11 +154,11 @@ Mirror of `client_codec_service.py`:
 - Cancel the watcher on first non-empty `audioParams` (proves audio track is live).
 - Independent of plan 20's video watcher — both can fire in the same session.
 
-### Desktop (`apps/desktop/lib/features/player/...`)
+### Desktop
 
-Mirror the cubit change. Same pattern, same 6 s window, same conditions.
+**Desktop has no player feature.** `apps/desktop/lib/features/player/` does not exist. Desktop is a pure control panel — encoder settings, libraries, clients, transcoding, storage. Plan 21's "Mirror cubit change for desktop" was based on an incorrect assumption confirmed by the M4 agent. Desktop scope was limited to the Auto card body text revision in `encoder_settings_screen.dart`.
 
-### Repositories (mobile + desktop)
+### Repositories (mobile)
 
 - Add `reportFallbackAudioTranscode(sessionId, currentPositionSec)` to `PlayerRepository`:
   ```dart
@@ -156,14 +170,14 @@ Mirror the cubit change. Same pattern, same 6 s window, same conditions.
 
 No new settings. The `_StreamingModeCard` 3-option control from plan 20 still applies — the audio-fallback behavior is inferred from the existing `streaming_mode` setting; nothing new for the operator to choose.
 
-The Operator-facing description on the **Auto** card body should be revised to mention audio: *"Tries client decoding first for near-zero server load. If a device cannot play the original video or audio codec, the server transparently falls back to transcoding just the affected stream for that session."*
+The Operator-facing description on the **Auto** card body was revised: *"Tries client decoding first for near-zero server load. If a device cannot play the original video or audio codec, the server transparently falls back to transcoding just the affected stream for that session."*
 
 ## Tests
 
-### Server (~10 new tests)
+### Server (22 new tests across M1–M3)
 
-- `test_client_audio_codec_service.py` (new) — `is_blocked` / `add_block` round-trip; idempotent insert; cascade delete when client is deleted.
-- `test_stream.py` additions:
+- `test_client_audio_codec_service.py` (new, 6 tests) — `is_blocked` / `add_block` round-trip; idempotent insert; cascade delete when client is deleted.
+- `test_stream.py` additions (9 tests in M2 + 7 tests in M3):
   - `test_audio_passthrough_resolver_allowlist` — every codec in the allowlist resolves to True with tonemap OFF and no session-force flag.
   - `test_audio_passthrough_resolver_blocklist_codecs` — DTS / TrueHD / unknown codecs resolve to False.
   - `test_audio_passthrough_resolver_tonemap_forces_transcode` — even with allowlist codec, tonemap ON → False.
@@ -177,26 +191,27 @@ The Operator-facing description on the **Auto** card body should be revised to m
   - `test_reencode_paths_preserve_source_channels` — `-ac:a:0 <n>` matches probed source channel count; defaults to 2 when probe failed.
   - `test_codec_name_normalization_excludes_variants` — `aac_lc`, `dts_hd_ma`, `flac` (various ffprobe outputs) all resolve correctly against the allowlist; specifically, `dts*` always excluded, `aac*` always included.
 
-### Mobile (~3 new tests)
+### Mobile (4 new tests in M4)
 
 - `player_cubit_test.dart` additions:
   - `audio-fallback watcher arms only when streamingMode=auto AND audioStreamingMode=stream-copy`
   - `audio-fallback watcher fires fallback-audio-transcode and reloads playlist on audio error within 6 s`
   - `audio-fallback watcher cancels on first non-empty audioParams`
+  - Entity-level JSON round-trip test + gating regression guard (headless; libmpv can't be instantiated in tests)
 
-### Desktop (~3 new tests)
+### Desktop (0 new tests)
 
-Same shape, mirrored to desktop player cubit.
+Desktop has no player code to test.
 
 ## Milestones
 
-| M | Title | Est. | Files |
+| M | Title | Est. | Status |
 |---|---|---|---|
-| **M1** | Migration 034 + `client_audio_codec_service` | 1.5 h | `034_client_audio_codec_blocklist.sql`, `services/client_audio_codec_service.py`, `tests/test_client_audio_codec_service.py` |
-| **M2** | `ffmpeg_service` audio passthrough + fmp4 switch + session-force flag + 256 k bitrate bump + `-ac` channel preservation + `_probe_audio_stream` channels return | 3.5 h | `services/ffmpeg_service.py`, `tests/test_stream.py` (passthrough resolver tests + fmp4 trigger test + 256 k bitrate assertion + channel-preservation assertion + codec-name normalization edge-case test) |
-| **M3** | `/start` response + `/fallback-audio-transcode` endpoint | 2 h | `routers/stream.py`, `models/stream_session.py`, `models/settings.py` (if any types touched), `tests/test_stream.py` (endpoint tests) |
-| **M4** | Mobile + desktop player audio watcher | 3 h | `apps/mobile/lib/features/player/...`, `apps/desktop/lib/features/player/...`, both `player_repository*.dart`, both cubit tests |
-| **M5** | Tests sweep + doc-update-protocol sweep | 2 h | All `docs/` touched (api_contracts, backend_architecture, frontend_architecture, database_schema, migration_guide, current_status, gotchas, roadmap), AGENT_LOG entry |
+| **M1** | Migration 034 + `client_audio_codec_service` | 1.5 h | ✅ shipped |
+| **M2** | `ffmpeg_service` audio passthrough + fmp4 switch + session-force flag + 256 k bitrate bump + `-ac` channel preservation + `_probe_audio_stream` channels return | 3.5 h | ✅ shipped |
+| **M3** | `/start` response + `/fallback-audio-transcode` endpoint | 2 h | ✅ shipped |
+| **M4** | Mobile player audio watcher (desktop has no player) | 3 h | ✅ shipped |
+| **M5** | Tests sweep + doc-update-protocol sweep | 2 h | ✅ shipped |
 
 **Total: ~12 h** — slightly larger than plan 20 (~10 h) due to the bundled bitrate/channels work.
 
@@ -204,7 +219,6 @@ Same shape, mirrored to desktop player cubit.
 
 ```
 apps/server/database/migrations/034_client_audio_codec_blocklist.sql            (new)
-apps/server/models/settings.py                                                  (if Literal types extend)
 apps/server/models/stream_session.py                                            (StreamStartResponse + new request/response)
 apps/server/services/ffmpeg_service.py                                          (audio passthrough + fmp4 + session-force)
 apps/server/services/client_audio_codec_service.py                              (new)
@@ -212,10 +226,11 @@ apps/server/routers/stream.py                                                   
 apps/server/tests/test_stream.py                                                (passthrough resolver + endpoint tests)
 apps/server/tests/test_client_audio_codec_service.py                            (new)
 apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart  (Auto card body text revised)
+apps/mobile/lib/features/player/domain/entities/stream_start_response.dart      (audioStreamingMode field)
 apps/mobile/lib/features/player/domain/repositories/player_repository.dart      (reportFallbackAudioTranscode method)
 apps/mobile/lib/features/player/data/repositories/player_repository_impl.dart   (POST call)
 apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart            (audio watcher)
-apps/desktop/lib/features/player/...                                            (mirror mobile)
+apps/mobile/test/features/player/player_cubit_test.dart                         (4 new tests)
 docs/00_overview/current_status.md
 docs/03_data/02_database_schema.md
 docs/03_data/04_migration_guide.md
@@ -223,27 +238,31 @@ docs/04_api/01_api_contracts.md
 docs/08_frontend/01_frontend_architecture.md
 docs/09_backend/01_backend_architecture.md
 docs/10_planning/01_roadmap.md
+docs/10_planning/archive/21_client_audio_decoding.md (this file — moved from 21_client_audio_decoding.md)
 docs/12_guidelines/03_gotchas.md
+CLAUDE.md
+AGENT_LOG.md
 ```
 
-## Sharp edges to watch
+## Sharp edges (all documented in `docs/12_guidelines/03_gotchas.md`)
 
-1. **Audio-error heuristic on mobile** — media_kit/libmpv don't emit a clean "audio decode failed" event; the `stream.error` payload is opaque. The plan uses a keyword heuristic + `audioParams` not arriving as a proxy. If both signals are unreliable, fall back to a stricter "first 6 s with no audio frames" timer. M4 will need real-device testing.
-2. **Channel layout preservation** — when audio stream-copies a 5.1 AC3 track, players must handle 5.1 output. Most modern phones downmix to stereo at the OS audio output level (correct behavior). Verify on Android with AAudio + iOS with AVAudioEngine. No code change expected for stream-copy, but **re-encode paths now pass explicit `-ac:a:0 <n>` to prevent the encoder defaulting to stereo** when source is 5.1.
-3. **fmp4 switch is per-session not per-track** — when audio forces fmp4, video also rides fmp4 even if it would have been MPEG-TS. This is fine for H.264 (fmp4 carries H.264 without issue) but the `use_fmp4` decision must happen before the video filter chain is assembled. M2 test `test_fmp4_forced_when_non_aac_audio_passthrough` guards this.
-4. **PTS alignment with mixed pipelines** — video stream-copy + audio transcode (the fallback path) is novel for this codebase. Existing path 1 (audio stream-copy + video stream-copy) and existing paths 2-3 (audio transcode + video transcode) are exercised; the new combo is not. M2 should add an explicit smoke test that a fallback-audio-transcode-restarted session produces a playlist with aligned audio/video segment timestamps.
-5. **FFprobe codec name normalization** — the allowlist uses exact string match against `{aac, ac3, eac3, opus, flac}`. Verify ffprobe doesn't report variants like `aac_lc`, `aac_he`, `ac3_fixed`, `flac_be`. If it does, normalize before the membership check (e.g., split on `_` and take the first token). Add an M2 test with a sample of `_probe_audio_stream` outputs covering edge cases — particularly Bluray rips, where DTS-HD MA shows as `dts` (which is correctly excluded from the allowlist, but worth asserting).
-6. **DD+ Atmos passthrough is a side effect, not a feature** — EAC3 in the allowlist means Atmos-over-EAC3 streams will stream-copy. On Atmos-capable devices (Apple TV, flagship Android, Dolby-licensed soundbars over HDMI passthrough) this gives full Atmos. On non-Atmos devices the OS gracefully downmixes. Worth noting in docs as a positive side effect, but not a behavior to advertise — Fluxora doesn't sniff Atmos metadata, it just doesn't get in the way.
-7. **Stream-copy bandwidth ≠ transcode bandwidth** — a FLAC source at 1000 kbps + a 50 Mbps Blu-ray video stream-copies at the full source bitrate. On LAN this is fine. On a marginal internet connection (mobile cellular, weak Wi-Fi) the combined audio + video may exceed available throughput where the prior 128 k AAC re-encode + segmented video previously fit. This is consistent with plan-19's existing video-stream-copy bandwidth profile (which already has this issue) — no new code, but flag in `gotchas.md` so operators understand that the "near-zero server CPU" win comes with "no server-side bitrate cap" as the trade.
-8. **Audio-only files (music libraries)** — the streaming pipeline is built for video. If/when Fluxora supports music playback (out of scope for v1), audio stream-copy for music files is even higher-value than for video soundtracks. Plan 21's resolver should work unchanged for audio-only sessions; M5 docs should call out that this surfaces a v1.1 lane.
-9. **Mid-stream codec changes** — rare but real: some files (concatenated rips, DVD VOBs) change audio codec partway through. FFmpeg handles this for transcode but stream-copy may produce a broken segment at the boundary. Detection is impractical without scanning the whole file first; accept the failure mode and rely on auto-mode fallback to recover. Document in gotchas.
+1. **Audio-error heuristic on mobile** — `audioParams` silence watchdog is fragile on slow WAN; honest network stalls can cause a ~1 s false-positive transcode restart. Acceptable failure mode; real-device testing required.
+2. **Channel layout preservation** — 5.1 AC3 stream-copy output; phones downmix at OS level. Verify on Android AAudio + iOS AVAudioEngine.
+3. **fmp4 switch is per-session not per-track** — when audio forces fmp4, video also rides fmp4.
+4. **PTS alignment with mixed pipelines** — video stream-copy + audio transcode fallback path is novel; not a confirmed defect but smoke-test worthy.
+5. **FFprobe codec name normalization** — allowlist uses exact match; `_normalize_audio_codec` helper added.
+6. **DD+ Atmos passthrough is a side effect, not a feature** — EAC3 allowlist entry passes Atmos-over-EAC3 through.
+7. **Stream-copy bandwidth uncapped** — FLAC at 1000+ kbps + full video bitrate may exceed marginal WAN. Documented in gotchas.
+8. **Audio-only files (music libraries)** — plan 21's resolver should work unchanged; surfaces as a v1.1 lane.
+9. **Mid-stream codec changes** — concatenated rips may produce broken segment at codec-change boundary under stream-copy; auto-mode fallback recovers. Documented in gotchas.
+- **`_ensure_fmp4_init_segment` audio codec mismatch** — init segment's hard-coded `-c:a aac` won't match non-AAC stream-copy segments. Latent defect; needs real-device audit. Documented in gotchas.
+- **Extra `_probe_audio_params` per `/start`** — ~50-100 ms duplicate probe. Future fix: thread result or persist on `media_files`. Documented in gotchas.
+- **Desktop has no player** — "mirror to desktop" = net-new architecture. Documented in gotchas.
 
 ## Out of scope / future work
 
-Deliberately not in plan 21; surface as separate plans if needed:
-
-- **Audio track selection** — files with multiple audio tracks (English + commentary + foreign-language dub) currently always play track 0. A "pick audio track" feature is a separate UX + protocol change, not a stream-copy concern.
-- **Buffer-stall extension to auto-fallback watcher** — plan 20's Next-Agent #3 flagged this as a "plan-21 candidate." Plan 21 stays scoped to *decode errors* only. If real-device testing shows that audio-decode failures *also* manifest as buffer stalls (player hangs without emitting an error), revisit in plan 22.
-- **Source-bitrate-aware re-encode** — instead of fixed 256 k, scale to `min(source_bitrate, 256k)` so a 96 k Opus source doesn't get *upcoded* to 256 k AAC (which is wasteful, not lossy). Trivial to add later; not a v1 priority.
-- **libfdk_aac encoder** — better quality than the system `aac` encoder at every bitrate, but GPL-incompatible and would require shipping a custom FFmpeg build. Distribution headache outweighs the marginal quality gain over `aac@256k`.
-- **HLS hi-res audio (≥ 96 kHz)** — `-ar 48000` on the re-encode path downsamples 96/192 kHz FLAC sources. Stream-copy paths preserve original sample rate via fmp4. If hi-res-aware re-encode ever matters, this is where to look.
+- **Audio track selection** — files with multiple audio tracks always play track 0 in v1.
+- **Buffer-stall extension to auto-fallback watcher** — plan 21 scoped to decode errors only.
+- **Source-bitrate-aware re-encode** — fixed 256 k; `min(source_bitrate, 256k)` deferred to future.
+- **libfdk_aac encoder** — GPL-incompatible; distribution headache outweighs marginal quality win.
+- **HLS hi-res audio (≥ 96 kHz)** — `-ar 48000` downsamples; stream-copy paths preserve original rate.

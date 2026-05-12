@@ -65,6 +65,7 @@ functions/lib/
 *.db-wal
 /tmp/fluxora/
 ~/.fluxora/
+apps/server/tmp/
 
 # FFmpeg HLS init segment that older bundled builds occasionally drop in
 # the server-process cwd before _spawn_ffmpeg_attempt's cwd= override

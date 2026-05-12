@@ -68,6 +68,29 @@ _applied_seek_sec: dict[str, float] = {}
 _session_force_transcode: dict[str, bool] = {}
 
 
+# Plan 21 — audio codecs eligible for stream-copy on the HLS pipeline.
+# DTS / TrueHD / Atmos-over-TrueHD stay on the re-encode path: their
+# decoders are licensed and have spotty mobile support, and the
+# fmp4-CMAF muxer doesn't always handle them cleanly across clients.
+# Membership check uses the normalized first token (split on ``_``) so
+# ffprobe variants like ``aac_lc`` / ``aac_he`` resolve to ``aac``,
+# ``dts_hd_ma`` resolves to ``dts`` (correctly excluded), etc.
+_AUDIO_STREAM_COPY_ALLOWLIST: frozenset[str] = frozenset(
+    {"aac", "ac3", "eac3", "opus", "flac"}
+)
+
+
+# Plan 21 — per-session "force audio re-encode regardless of stream-copy
+# eligibility" flag.  Orthogonal to plan 20's ``_session_force_transcode``
+# (which forces a full server transcode); this only forces the audio
+# pipeline to re-encode while video keeps stream-copying.  Set to True
+# by the ``/fallback-audio-transcode`` endpoint after a client reports
+# an audio decode error in the first 6 s, and by the router pre-spawn
+# when the per-client audio blocklist already matches the
+# (client_id, source_audio_codec) pair.  Cleared on ``stop_stream``.
+_session_force_audio_transcode: dict[str, bool] = {}
+
+
 def set_session_force_transcode(session_id: str, value: bool = True) -> None:
     """Mark / unmark ``session_id`` for forced server-side transcoding.
 
@@ -89,6 +112,82 @@ def clear_session_force_transcode(session_id: str) -> None:
     session ends.  No-op when no entry exists.
     """
     _session_force_transcode.pop(session_id, None)
+
+
+def set_session_force_audio_transcode(session_id: str, value: bool = True) -> None:
+    """Mark / unmark ``session_id`` for forced server-side AUDIO re-encode.
+
+    Plan 21 — public helper for the stream router.  The
+    ``/fallback-audio-transcode`` endpoint flips the bit before kicking
+    ``restart_stream`` so the next spawn forces the audio re-encode
+    path even when the source codec would otherwise be stream-copy
+    eligible.  The ``/start`` endpoint also flips it pre-spawn when the
+    audio blocklist already matches the (client, audio codec) pair.
+    Orthogonal to plan 20's ``set_session_force_transcode`` — both can
+    be True for the same session.
+    """
+    if value:
+        _session_force_audio_transcode[session_id] = True
+    else:
+        _session_force_audio_transcode.pop(session_id, None)
+
+
+def clear_session_force_audio_transcode(session_id: str) -> None:
+    """Drop the session's force-audio-transcode bit, if any.
+
+    Called from ``stop_stream`` so the entry doesn't linger after the
+    session ends.  No-op when no entry exists.
+    """
+    _session_force_audio_transcode.pop(session_id, None)
+
+
+def _normalize_audio_codec(codec: str | None) -> str | None:
+    """Lower-case + split on ``_`` and return the first token.
+
+    ffprobe emits codec names like ``aac_lc`` / ``aac_he`` / ``dts_hd_ma``
+    / ``ac3_fixed`` depending on the encoder profile.  Allowlist
+    membership must be checked against the normalized first token so a
+    ``aac_lc`` source still resolves as ``aac`` (eligible for stream-
+    copy) and ``dts_hd_ma`` still resolves as ``dts`` (correctly
+    excluded — the parent ``dts`` is not in the allowlist either).
+    Returns ``None`` when input is ``None`` / empty.
+    """
+    if not codec:
+        return None
+    return codec.lower().split("_", 1)[0]
+
+
+def _resolve_audio_passthrough(
+    *,
+    apply_hdr_tonemap: bool,
+    source_audio_codec: str | None,
+    session_id: str | None = None,
+) -> bool:
+    """Plan 21 — resolve whether to stream-copy the source audio track.
+
+    Returns ``True`` (stream-copy) only when every signal aligns:
+
+    1. ``apply_hdr_tonemap`` is False.  Tonemap on the video chain
+       regenerates PTS, and stream-copied audio packets do not align
+       cleanly with the re-encoded video timestamps (the 2026-05-08
+       no-audio-on-HDR regression).  Tonemap-on sessions must re-encode
+       audio to get clean PTS.
+    2. The normalized ``source_audio_codec`` is in
+       ``_AUDIO_STREAM_COPY_ALLOWLIST``.  ``None`` / unknown codecs
+       fall to the safer re-encode path.
+    3. ``_session_force_audio_transcode.get(session_id, False)`` is
+       False.  Set by the ``/fallback-audio-transcode`` endpoint after
+       a client reports an audio decode error, and by ``/start`` when
+       the audio blocklist already matches.
+    """
+    if apply_hdr_tonemap:
+        return False
+    normalized = _normalize_audio_codec(source_audio_codec)
+    if normalized is None or normalized not in _AUDIO_STREAM_COPY_ALLOWLIST:
+        return False
+    if session_id is not None and _session_force_audio_transcode.get(session_id, False):
+        return False
+    return True
 
 
 def _get_seek_lock(session_id: str) -> asyncio.Lock:
@@ -497,6 +596,8 @@ def _build_ffmpeg_cmd(
     start_segment_index: int = 0,
     source_audio_codec: str | None = None,
     source_audio_sample_rate: int | None = None,
+    source_audio_channels: int | None = None,
+    audio_passthrough: bool = False,
 ) -> list[str]:
     """Compose the FFmpeg command line.
 
@@ -578,6 +679,23 @@ def _build_ffmpeg_cmd(
 
     cmd.extend(["-i", file_path])
 
+    # Plan 21 — fmp4 trigger now also fires when audio is stream-copied
+    # and the source codec is non-AAC (ac3 / eac3 / opus / flac).
+    # MPEG-TS doesn't carry those audio codecs cleanly across all
+    # clients but fmp4 (CMAF, HLSv7+) handles all of them.  The
+    # decision is hoisted above the video filter chain assembly per
+    # plan 21 §sharp-edges #3 — if a future change makes the encoder's
+    # filter selection use_fmp4-aware, the chain still sees the right
+    # value (today's filters don't, but the contract still holds).
+    normalized_audio_codec = _normalize_audio_codec(source_audio_codec)
+    use_fmp4 = (
+        direct_remux_hevc
+        or direct_remux_av1
+        or direct_remux_vp9
+        or (audio_passthrough and normalized_audio_codec != "aac")
+        or (not direct_remux and meta.segment_fmt == "fmp4")
+    )
+
     if direct_remux:
         # Stream-copy preserves the source's HDR bitstream.  Tonemap
         # cannot apply here — it requires decoded pixels; the caller is
@@ -602,68 +720,70 @@ def _build_ffmpeg_cmd(
         if chains:
             cmd.extend(["-vf", ",".join(chains)])
 
-    # Audio pipeline (streaming pipeline plan §16 M4 fix; tonemap-audio
-    # interaction patch 2026-05-08).
+    # Audio pipeline — plan 21 §Server changes / `services/ffmpeg_service.py`.
     #
-    # Three paths:
+    # Three branches, in priority order:
     #
-    # 1. Source is AAC at 48 kHz AND tonemap is OFF → `-c:a copy`.  Skips
-    #    re-encode entirely.  HLS clients all support AAC + 48 kHz
-    #    directly, and skipping the re-encode eliminates the timestamp
-    #    drift that was the most likely cause of the operator-reported
-    #    "audio is very delayed" symptom.
+    # 1. ``audio_passthrough=True`` → ``-c:a copy``.  Caller has already
+    #    consulted ``_resolve_audio_passthrough`` (allowlist + tonemap
+    #    OFF + no session-force flag).  Source codecs in
+    #    ``_AUDIO_STREAM_COPY_ALLOWLIST`` (aac, ac3, eac3, opus, flac)
+    #    pass through unmodified — preserves source quality (FLAC
+    #    lossless, EAC3 surround / Atmos, Opus efficiency) and drops
+    #    server CPU to near-zero on the audio path.  When the source
+    #    codec is non-AAC, ``use_fmp4`` above flips so the container
+    #    can carry the audio.
     #
-    # 2. Source is AAC at 48 kHz BUT tonemap is ON → `-c:a aac -b:a 128k`
-    #    (resample omitted since source is already 48 kHz).  Operator-
-    #    reported regression 2026-05-08: HDR-with-tonemap sessions showed
-    #    NO AUDIO when the audio path was `-c:a copy`.  Most likely
-    #    cause is mux-timestamp drift from heavy video transcode +
-    #    tonemap filter chain interacting with copied audio packets — the
-    #    audio container's frame timing drifts off the video's re-encoded
-    #    PTS budget and the HLS muxer drops audio rather than emit a
-    #    broken segment.  Forcing audio re-encode regenerates clean PTS
-    #    that aligns with the transcoded video.  CPU cost is negligible
-    #    (audio encode is <3 % vs the tonemap chain's CPU bill).
+    # 2. Source is AAC@48 kHz AND tonemap is ON → ``-c:a aac -b:a 256k
+    #    -ac <n>``.  Operator-reported regression 2026-05-08: HDR-with-
+    #    tonemap sessions showed NO AUDIO with ``-c:a copy``.  Most
+    #    likely cause is mux-timestamp drift from heavy video transcode
+    #    + tonemap filter chain interacting with copied audio packets;
+    #    forcing audio re-encode regenerates clean PTS that aligns
+    #    with the transcoded video.  Resample omitted because source
+    #    is already 48 kHz.
     #
-    # 3. Source is anything else (DTS, AC3, FLAC, AAC at 44.1/96 kHz, etc.)
-    #    → `-c:a aac -b:a 128k -ar 48000`.  Forces resample to 48 kHz so
-    #    the AAC encoder doesn't introduce sample-rate drift on
-    #    non-48 kHz sources, AND remaps non-AAC sources to AAC for HLS
-    #    client compatibility.
+    # 3. Everything else (DTS / TrueHD / non-allowlist codecs / non-
+    #    48 kHz AAC / probe failure) → ``-c:a aac -b:a 256k -ar 48000
+    #    -ac <n>``.  Forces resample to 48 kHz so the AAC encoder
+    #    doesn't introduce sample-rate drift on non-48 kHz sources,
+    #    AND remaps non-AAC sources to AAC for HLS client compat on
+    #    the legacy MPEG-TS path.
     #
-    # Defaults (when audio params aren't known) fall through to path 3 —
-    # the safer of the three, since it always produces valid HLS audio.
+    # Plan 21 — re-encode bitrate bumped from 128 k → 256 k on both
+    # re-encode paths (transparent to most listeners; Apple Music's
+    # high-quality tier).  After plan 21 the re-encode path is only
+    # hit for tonemap-on sessions, DTS/TrueHD sources, and auto-mode
+    # audio fallbacks — but for those the audio should sound as good
+    # as the encoder allows.  ``-ac <n>`` preserves source channel
+    # count instead of letting the system AAC encoder silently downmix
+    # 5.1 to stereo at defaults.  When the probe failed and channels
+    # is None, default to 2 — never worse than today's behaviour.
+    re_encode_channels = source_audio_channels if source_audio_channels else 2
     audio_is_aac_48khz = (
-        source_audio_codec == "aac" and source_audio_sample_rate == 48000
+        normalized_audio_codec == "aac" and source_audio_sample_rate == 48000
     )
-    if audio_is_aac_48khz and not apply_hdr_tonemap:
-        # Path 1 — copy.  Safe only when video is also stream-copy or
-        # transcoded WITHOUT the tonemap filter chain (which is what
-        # caused the audio-drop regression on HDR sessions).
+    if audio_passthrough:
+        # Path 1 — stream-copy.  Bitstream untouched; container is
+        # already switched to fmp4 above when source is non-AAC.
         cmd.extend(["-c:a", "copy"])
     elif audio_is_aac_48khz and apply_hdr_tonemap:
-        # Path 2 — re-encode but skip the resample (source already at
-        # 48 kHz; no drift to worry about, just clean PTS regeneration).
-        cmd.extend(["-c:a", "aac", "-b:a", "128k"])
+        # Path 2 — re-encode but skip the resample.
+        cmd.extend(["-c:a", "aac", "-b:a", "256k", "-ac", str(re_encode_channels)])
     else:
         # Path 3 — full re-encode + resample to 48 kHz.
-        cmd.extend(["-c:a", "aac", "-b:a", "128k", "-ar", "48000"])
-
-    # fmp4 segments for HEVC / AV1 / VP9 stream-copy and for transcode-
-    # mode encoders whose registry says fmp4.  Plan 19 §M7 — AV1 + VP9
-    # ride the same fmp4 segment path HEVC uses; MPEG-TS doesn't carry
-    # those codecs cleanly across all clients but fmp4 (CMAF) is
-    # well-supported.  The bundled FFmpeg's HLS muxer is unreliable
-    # about writing the init segment under stream-copy —
-    # `_ensure_fmp4_init_segment()` generates one ourselves if FFmpeg
-    # skipped it, so the playlist's `#EXT-X-MAP URI` always points at a
-    # real file.
-    use_fmp4 = (
-        direct_remux_hevc
-        or direct_remux_av1
-        or direct_remux_vp9
-        or (not direct_remux and meta.segment_fmt == "fmp4")
-    )
+        cmd.extend(
+            [
+                "-c:a",
+                "aac",
+                "-b:a",
+                "256k",
+                "-ar",
+                "48000",
+                "-ac",
+                str(re_encode_channels),
+            ]
+        )
     hls_time = "10" if direct_remux else "6"
     common_hls = [
         "-f",
@@ -1250,6 +1370,7 @@ async def start_stream(
     # safe re-encode path".  Must not break playback under any failure.
     audio_codec_name: str | None = None
     audio_sample_rate: int | None = None
+    audio_channels: int | None = None
     try:
         audio_info = await _probe_audio_params(file_path)
         if audio_info is not None:
@@ -1260,13 +1381,19 @@ async def start_stream(
                     audio_sample_rate = int(raw_rate)
                 except (TypeError, ValueError):
                     audio_sample_rate = None
+            raw_channels = audio_info.get("channels")
+            if raw_channels is not None:
+                try:
+                    audio_channels = int(raw_channels)
+                except (TypeError, ValueError):
+                    audio_channels = None
             logger.info(
                 "audio_probe session=%s codec=%s sample_rate=%s "
                 "channels=%s bit_rate=%s",
                 session_id,
                 audio_codec_name or "?",
                 raw_rate or "?",
-                audio_info.get("channels") or "?",
+                raw_channels or "?",
                 audio_info.get("bit_rate") or "?",
             )
     except Exception:
@@ -1276,6 +1403,17 @@ async def start_stream(
     # Tonemap is only meaningful when both: (a) the source is HDR and
     # (b) the caller asked for it.  Anything else is a no-op.
     apply_hdr_tonemap = bool(tonemap_hdr and hdr_format)
+
+    # Plan 21 — resolve audio passthrough up front so the diagnostic
+    # log line + downstream cmd builder + fmp4 trigger in this function
+    # all see the same decision.  Mirrors the video direct_remux flag
+    # plan 19/20 introduced.
+    force_audio_transcode: bool = _session_force_audio_transcode.get(session_id, False)
+    audio_passthrough = _resolve_audio_passthrough(
+        apply_hdr_tonemap=apply_hdr_tonemap,
+        source_audio_codec=audio_codec_name,
+        session_id=session_id,
+    )
 
     direct_remux_h264 = source_codec == "h264" and not force_transcode
     direct_remux_hevc = source_codec in ("hevc", "h265") and not force_transcode
@@ -1357,13 +1495,44 @@ async def start_stream(
         else:
             decision_reason = "unsupported-source-codec"
         decision_path = "transcode"
+
+    # Plan 21 — audio decision.  Independent of video: a session can
+    # video-transcode (tonemap on) and still audio-stream-copy?  No —
+    # tonemap forces audio re-encode (see ``_resolve_audio_passthrough``
+    # path 1).  But a session can video-stream-copy and audio-transcode
+    # (auto-mode fallback after audio decode error).  Reason precedence
+    # mirrors the video resolver: forced fallback first, then tonemap,
+    # then allowlist gate.
+    if force_audio_transcode:
+        audio_reason = "audio-forced-fallback"
+    elif apply_hdr_tonemap:
+        # Tonemap forces audio re-encode for clean PTS even when source
+        # is allowlist-eligible.
+        audio_reason = "tonemap-audio-reencode"
+    elif audio_passthrough:
+        audio_reason = "audio-allowlist"
+    else:
+        audio_reason = "audio-not-allowlist"
+    audio_decision_path = "stream-copy" if audio_passthrough else "transcode"
+
+    # Single combined diagnostic line — operator can grep one keyword
+    # (``stream_decision``) to see every signal that shaped the
+    # session's pipeline.  Kept single-line to stay grep-friendly; the
+    # ``reason`` is the *video* decision reason (the field name was
+    # established by plan 20 and any audio-only fallback surfaces via
+    # ``audio_path=transcode``).
     logger.info(
-        "stream_decision session=%s source_codec=%s mode=%s " "path=%s reason=%s",
+        "stream_decision session=%s source_codec=%s audio_codec=%s "
+        "mode=%s video_path=%s audio_path=%s reason=%s "
+        "audio_reason=%s",
         session_id,
         source_codec or "<unknown>",
+        audio_codec_name or "<unknown>",
         global_mode,
         decision_path,
+        audio_decision_path,
         decision_reason,
+        audio_reason,
     )
 
     # Tonemap requires decoded pixels, so it forces transcode mode even
@@ -1423,10 +1592,19 @@ async def start_stream(
     # AV1 + VP9 ride the same fmp4 segment path HEVC uses — MPEG-TS
     # doesn't carry AV1 / VP9 cleanly across all clients, but fmp4
     # (CMAF) is well-supported.  H.264 stays on MPEG-TS for back-compat.
+    #
+    # Plan 21 — also switch to fmp4 when audio is stream-copied and the
+    # source codec is non-AAC (ac3 / eac3 / opus / flac).  MPEG-TS
+    # doesn't carry those cleanly across all clients; fmp4 (HLSv7+)
+    # handles them all.  Keep this calc in sync with the duplicate in
+    # ``_build_ffmpeg_cmd`` — both have to agree on the segment format
+    # because the playlist generator + init-segment writer downstream
+    # both read this local flag.
     use_fmp4 = (
         direct_remux_hevc
         or direct_remux_av1
         or direct_remux_vp9
+        or (audio_passthrough and _normalize_audio_codec(audio_codec_name) != "aac")
         or (not direct_remux and meta.segment_fmt == "fmp4")
     )
     if direct_remux_hevc:
@@ -1523,6 +1701,8 @@ async def start_stream(
         start_segment_index=start_segment_index,
         source_audio_codec=audio_codec_name,
         source_audio_sample_rate=audio_sample_rate,
+        source_audio_channels=audio_channels,
+        audio_passthrough=audio_passthrough,
     )
     succeeded, tail, returncode, killed_after_timeout = await _spawn_ffmpeg_attempt(
         cmd,
@@ -1557,10 +1737,16 @@ async def start_stream(
             source_codec=source_codec,
             direct_remux=direct_remux,
             direct_remux_hevc=direct_remux_hevc,
+            direct_remux_av1=direct_remux_av1,
+            direct_remux_vp9=direct_remux_vp9,
             use_gpu_input=False,
             apply_hdr_tonemap=apply_hdr_tonemap,
             seek_sec=aligned_seek_sec,
             start_segment_index=start_segment_index,
+            source_audio_codec=audio_codec_name,
+            source_audio_sample_rate=audio_sample_rate,
+            source_audio_channels=audio_channels,
+            audio_passthrough=audio_passthrough,
         )
         # Software-decode retry is materially slower than the GPU-input
         # first attempt, so bump the timeout up one tier.  A 10 s budget
@@ -1819,6 +2005,8 @@ async def stop_stream(session_id: str) -> None:
     _applied_seek_sec.pop(session_id, None)
     # Plan 20 — drop the fallback-transcode marker too.
     clear_session_force_transcode(session_id)
+    # Plan 21 — drop the audio-fallback marker alongside the video one.
+    clear_session_force_audio_transcode(session_id)
 
 
 async def restart_stream(

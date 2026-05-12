@@ -58,4 +58,18 @@ abstract class PlayerRepository {
     required String sessionId,
     required double currentPositionSec,
   });
+
+  /// `POST /api/v1/stream/{session_id}/fallback-audio-transcode` (plan
+  /// 21) — tells the server that the client just failed to decode the
+  /// current stream-copied audio track and asks it to re-encode audio
+  /// from [currentPositionSec] onwards.  Video continues stream-copying
+  /// when it was already working; only the audio leg flips.  Returns
+  /// when the server acknowledges (200) — the playlist URL stays the
+  /// same and the caller is expected to re-open it so libmpv re-fetches
+  /// the rewritten segments.  Bubbles errors so the cubit can log and
+  /// continue without crashing the player.
+  Future<void> reportFallbackAudioTranscode({
+    required String sessionId,
+    required double currentPositionSec,
+  });
 }

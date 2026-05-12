@@ -256,7 +256,7 @@ Inherits `fluxora_core`. Adds:
 | `mocktail` | core + desktop + mobile | Mock generation without source-code annotation |
 | `bloc_test` | desktop + mobile | `blocTest()` for cubit emit-order verification |
 | `golden_toolkit` 0.15 | desktop | Pixel-snapshot regression. Wraps `flutter_test`'s `matchesGoldenFile` with viewport + theme defaults. Goldens are tag-gated (`@Tags(['golden'])` per file); run with `flutter test --tags=golden test/goldens/`, regenerate with `--update-goldens`, exclude in CI with `--exclude-tags=golden`. Screens that build their cubits via `GetIt.I<>()` inside `MultiBlocProvider.create` need the GetIt-mock recipe in [`apps/desktop/test/goldens/_README.md`](../../apps/desktop/test/goldens/_README.md). |
-| `pytest` + `pytest-asyncio` | server | 775 passing tests as of 2026-05-09; async-mode auto |
+| `pytest` + `pytest-asyncio` | server | 814 passing tests as of 2026-05-12; async-mode auto |
 | `httpx.AsyncClient` | server | Endpoint integration tests against in-process FastAPI |
 
 ### Lint + format

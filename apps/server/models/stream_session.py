@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -27,6 +29,17 @@ class StreamStartResponse(BaseModel):
     # `"server-transcode"` sessions ignore decode errors and surface them
     # to the user instead.
     streaming_mode: str = "client-decode"
+    # Plan 21 — actual audio pipeline the server picked for this session.
+    # ``"stream-copy"`` means the source audio packets pass through
+    # unmodified (allowlist codec + tonemap off + no force flag);
+    # ``"transcode"`` means the audio is being re-encoded to AAC.  The
+    # mobile / desktop player uses this to decide whether to arm the
+    # audio-decode-error watcher (only stream-copy sessions can fall
+    # back to audio-only transcode; transcode sessions already speak
+    # the lowest-common-denominator AAC).  Defaults to ``"transcode"``
+    # for safety on unknown sessions — a stale client that doesn't yet
+    # understand the field stays on the conservative re-encode path.
+    audio_streaming_mode: Literal["stream-copy", "transcode"] = "transcode"
 
 
 class StreamSeekResponse(BaseModel):
@@ -73,3 +86,32 @@ class FallbackTranscodeResponse(BaseModel):
     session_id: str
     playlist_url: str
     forced_transcode: bool
+
+
+# ── Plan 21 — fallback-audio-transcode endpoint ──────────────────────
+
+
+class FallbackAudioTranscodeRequest(BaseModel):
+    """Caller-supplied current playhead so the server can restart from
+    the live position instead of guessing.  Pydantic enforces
+    ``>= 0``; the router clamps to ``[0, duration_sec - 1)`` before
+    forwarding to FFmpeg so ``-ss`` never lands at EOF.
+
+    Mirrors plan 20's ``FallbackTranscodeBody`` shape exactly — the
+    audio-only fallback uses the same playhead semantics as the video
+    fallback; only the pipeline state the server flips differs.
+    """
+
+    current_position_sec: float = Field(ge=0)
+
+
+class FallbackAudioTranscodeResponse(BaseModel):
+    """200 response.  Playlist URL is the same as the one returned by
+    ``/start`` — the client must re-open the playlist on the same URL
+    to pick up the new (audio-re-encoded) segments.  Video continues
+    stream-copying; only the audio path flipped.
+    """
+
+    session_id: str
+    playlist_url: str
+    forced_audio_transcode: bool

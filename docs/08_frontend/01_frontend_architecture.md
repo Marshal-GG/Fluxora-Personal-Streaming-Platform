@@ -277,16 +277,16 @@ apps/mobile/lib/
     │           └── pin_modals.dart           # PinEntrySheet (single field; copy adapts to pin_model) + PinEnrollmentSheet (two-field set+confirm; M8 first-time enrollment); _kObviousPins mirror of server `_OBVIOUS_PINS` blocklist for snappy client-side feedback
     │
     └── player/
-        ├── domain/entities/stream_start_response.dart
-        ├── domain/repositories/player_repository.dart
-        ├── data/repositories/player_repository_impl.dart
+        ├── domain/entities/stream_start_response.dart  # plan 20: + streamingMode field; plan 21: + audioStreamingMode field (default 'transcode')
+        ├── domain/repositories/player_repository.dart  # plan 20: + reportFallbackTranscode; plan 21: + reportFallbackAudioTranscode(sessionId, currentPositionSec)
+        ├── data/repositories/player_repository_impl.dart  # plan 20: POST /fallback-transcode; plan 21: POST /fallback-audio-transcode with {current_position_sec} body
         ├── data/services/
         │   ├── webrtc_signaling_service.dart
         │   ├── pip_service.dart                          # Player polish — Android PIP method-channel wrapper (isSupported / enter)
         │   └── fluxora_audio_handler.dart                # Player polish — BaseAudioHandler sidecar; bind/detach on a media_kit.Player
         └── presentation/
             ├── controllers/player_controls_controller.dart     # M5 ChangeNotifier — visibility / lockMode / fitCover / 3 s auto-hide / drag-HUD scratchpad
-            ├── cubit/{player_cubit.dart,player_state.dart}     # M7 singleton + restart-safe startStream + _disposeCurrentSession + dismiss(); Player polish: optional FluxoraAudioHandler param + WidgetsBindingObserver auto-pause on background when bg_playback_enabled=false; Phase 6: setTonemap(bool) restarts stream with tonemap flag while preserving position; _lastFileId/_lastFileName/_lastPosterUrl cached; PlayerReady gains hdrFormat/tonemapped/isHdrSource + isSeeking + playlistOffsetSec; 2026-05-09 (commit `f609287`): backward `seekTo` targets that fall below the current playlist start now route through a server restart instead of an unbounded local seek that media_kit would silently floor to 0 — cubit emits `isSeeking: true` immediately so the scrubber pin stays stable across the debounce
+            ├── cubit/{player_cubit.dart,player_state.dart}     # M7 singleton + restart-safe startStream + _disposeCurrentSession + dismiss(); Player polish: optional FluxoraAudioHandler param + WidgetsBindingObserver auto-pause on background when bg_playback_enabled=false; Phase 6: setTonemap(bool) restarts stream with tonemap flag while preserving position; _lastFileId/_lastFileName/_lastPosterUrl cached; PlayerReady gains hdrFormat/tonemapped/isHdrSource + isSeeking + playlistOffsetSec; 2026-05-09 (commit `f609287`): backward `seekTo` targets that fall below the current playlist start now route through a server restart instead of an unbounded local seek that media_kit would silently floor to 0 — cubit emits `isSeeking: true` immediately so the scrubber pin stays stable across the debounce; **plan 20 (2026-05-12):** `_scheduleAutoFallbackWatcher` — arms a 6 s video-error watcher only when `response.streamingMode == 'auto'`; on any player error within 6 s calls `reportFallbackTranscode`, reloads playlist, cancels watcher; strict modes let errors bubble unchanged; **plan 21 (2026-05-12):** `_scheduleAutoAudioFallbackWatcher` — independently arms a 6 s audio-error watcher only when `response.streamingMode == 'auto'` AND `response.audioStreamingMode == 'stream-copy'`; detection heuristic: `player.stream.error` payload mentions audio/aac/codec keywords OR `audioParams` stream emits no non-empty value within 4 s; on trigger calls `reportFallbackAudioTranscode`, reloads playlist; cancels on first non-empty audioParams (proves audio track is live); both watchers can fire in the same session
             ├── widgets/flux_player_controls.dart                # M5 + M6 — top bar / center transport / progress bar / 8-up quick-actions / side rails / lock chip + double-tap ripple / long-press 2× peek / vertical drag brightness+volume / pinch fit / hold-to-unlock progress ring; Player polish — top-bar PIP icon button gated on PipService.isSupported(); Phase 6: hdrFormat/tonemapped/onTonemapChanged props; _HdrChip pill; _showOverflowMenu 3-dot bottom sheet with HDR tonemap Switch tile; M10 X-Ray (✅ 2026-05-08): `onXRay: VoidCallback?` prop + new science-flask icon button in `_TopBar` between the HDR badge and the PIP button — null hides the chip; M10 Group Watch (✅ 2026-05-08): `onGroupWatch: VoidCallback?` prop + new "Group Watch" `ListTile` (groups icon) in `_showOverflowMenu`; empty-menu guard now fires only when both tonemap + group-watch are unavailable.  Scrubber state lives on the stateful `_ProgressBar` (`StatefulWidget` conversion landed 2026-05-08): `_dragValue` follows the user's finger during drag, then on release rolls into `_pendingValue` (added 2026-05-09 commit `f609287`) which holds the released drag value across the seek-commit window so the slider never snaps back to the player's pre-seek position for one paint after the user lifts their finger.  Pin clears once the player's reported position lands within ε of the target, or via the fallback timer
             ├── sheets/{audio_subs_sheet,speed_sheet,sleep_sheet,quality_sheet,cast_sheet}.dart   # M6 — 5 bottom sheets via showFluxBottomSheet
             └── screens/player_screen.dart                       # M7 dual constructors: PlayerScreen({file}) + PlayerScreen.resume(); _MinimizeHandle drag-down → context.pop() ≥ 150 px; Player polish — WidgetsBindingObserver fires _maybeShowBackgroundPlaybackPrompt on first resume after auto-pause + passes file.posterUrl into cubit.startStream so the lockscreen card has artwork; 2026-05-09 cascades the cubit's `isSeeking` flag through to `_ProgressBar` so the bare-`isSeeking` path never clears the `_pendingValue` pin while the cubit is mid-restart
@@ -379,7 +379,7 @@ Mobile test/ (78 tests)
 │   ├── auth/auth_repository_impl_test.dart       # post-pair /info fetch + remote_url persistence
 │   ├── library/library_bloc_test.dart            # LibraryBloc start / refresh
 │   ├── groups/groups_cubit_test.dart             # MobileGroupsCubit load/refresh/enter/enroll/lock
-│   └── player/player_cubit_test.dart             # startStream + restart + dismiss + seekTo routing + tonemap restart + auto-fallback watcher arm/cancel (plan 20)
+│   └── player/player_cubit_test.dart             # startStream + restart + dismiss + seekTo routing + tonemap restart + auto-fallback watcher arm/cancel (plan 20); audio-fallback watcher arm/fire/cancel + entity JSON round-trip (plan 21) — 25 total
 ├── storage/secure_storage_playback_prefs_test.dart   # bg-playback / Wi-Fi-only / max-quality / autoplay-next / subtitles defaults
 └── placeholder_test.dart
 
@@ -403,6 +403,12 @@ Core packages/fluxora_core/test/ (8 tests)
 ```
 
 ---
+
+## Desktop Has No Player Feature
+
+The desktop app (`apps/desktop/`) is a **pure control panel** — it manages libraries, clients, encoder settings, transcoding jobs, and server settings. There is **no `apps/desktop/lib/features/player/` directory and no media playback code on desktop.** Playback is mobile-only by design (plan 20 + plan 21 are both mobile-only).
+
+This is an important architectural note: any future plan that says "mirror the mobile player cubit change for desktop" must be treated as net-new desktop player architecture, not an incremental update. Plan 21's original spec included desktop mirroring — the M4 agent confirmed the directory does not exist and scoped desktop changes to a single UI text update in the encoder settings screen.
 
 ## Flutter Desktop Project Structure (Phases 1–5 — implemented)
 

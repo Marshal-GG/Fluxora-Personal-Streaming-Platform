@@ -5,7 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
 import 'package:media_kit/media_kit.dart'
-    show Media, Player, PlayerConfiguration, VideoParams;
+    show AudioParams, Media, Player, PlayerConfiguration, VideoParams;
 import 'package:media_kit_video/media_kit_video.dart' show VideoController;
 import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
@@ -56,6 +56,16 @@ const _kSeekRestartThresholdSec = 5;
 /// match plan 20's "first 6 s" wording.
 const _kFallbackWatcherSec = 6;
 
+/// Plan 21 — how long the audio watcher waits for the FIRST non-empty
+/// `audioParams` emission before treating silence as a stream-copied
+/// audio decode failure.  libmpv populates `audioParams` after it
+/// successfully decodes the first audio frame; if nothing has arrived
+/// inside this window we assume the source codec is unsupported and
+/// flip to server-side audio transcode.  4 s is tighter than the
+/// outer 6 s watcher window so the silent-audio path can fire before
+/// the watcher disarms.
+const _kAudioParamsTimeoutSec = 4;
+
 /// Debounce window for seek-bar drag events.  Multiple `seekTo` calls
 /// within this window collapse into one server restart at the final
 /// position — without this, the user dragging the scrubber from 0:30 →
@@ -70,12 +80,12 @@ class PlayerCubit extends Cubit<PlayerState> {
     required SecureStorage secureStorage,
     FluxoraAudioHandler? audioHandler,
     ConnectivityChecker? connectivityChecker,
-  })  : _repository = repository,
-        _secureStorage = secureStorage,
-        _audioHandler = audioHandler,
-        _checkConnectivity =
-            connectivityChecker ?? Connectivity().checkConnectivity,
-        super(const PlayerInitial()) {
+  }) : _repository = repository,
+       _secureStorage = secureStorage,
+       _audioHandler = audioHandler,
+       _checkConnectivity =
+           connectivityChecker ?? Connectivity().checkConnectivity,
+       super(const PlayerInitial()) {
     _lifecycleObserver = _PlayerLifecycleObserver(this);
     WidgetsBinding.instance.addObserver(_lifecycleObserver);
   }
@@ -138,6 +148,25 @@ class PlayerCubit extends Cubit<PlayerState> {
   Timer? _fallbackWatcherTimer;
   bool _fallbackTriggered = false;
 
+  // Plan 21 — auto-mode client-side audio fallback watcher.  Runs
+  // INDEPENDENTLY of the video watcher above so a session can recover
+  // a stream-copied audio failure even when the video leg decodes
+  // fine.  Two parallel detectors per plan 21 sharp edge #1:
+  //   1. `_player!.stream.error` payloads containing `audio` / `aac` /
+  //      `codec` (case-insensitive) — libmpv surfaces audio-specific
+  //      decode failures with one of those substrings.
+  //   2. A 4 s silence-watchdog over `_player!.stream.audioParams`:
+  //      if no non-empty AudioParams arrives within the window we
+  //      treat that as proof the audio decoder never came up.
+  // Cancels on first non-empty `audioParams` emission (proves audio
+  // is live).  `_audioFallbackTriggered` is a one-shot latch so a
+  // noisy error stream can't fire the POST twice.
+  StreamSubscription<String>? _audioFallbackWatcherErrorSub;
+  StreamSubscription<AudioParams>? _audioFallbackWatcherParamsSub;
+  Timer? _audioFallbackWatcherTimer;
+  Timer? _audioFallbackParamsTimeoutTimer;
+  bool _audioFallbackTriggered = false;
+
   // ---------------------------------------------------------------------------
   // Public
   // ---------------------------------------------------------------------------
@@ -156,8 +185,11 @@ class PlayerCubit extends Cubit<PlayerState> {
       final hasMobile = results.contains(ConnectivityResult.mobile);
       return hasMobile && !hasWifi;
     } catch (e, st) {
-      _log.w('[Player] Wi-Fi-only check failed — allowing stream',
-          error: e, stackTrace: st);
+      _log.w(
+        '[Player] Wi-Fi-only check failed — allowing stream',
+        error: e,
+        stackTrace: st,
+      );
       return false;
     }
   }
@@ -178,6 +210,11 @@ class PlayerCubit extends Cubit<PlayerState> {
     // Plan 20 — reset the one-shot auto-fallback latch.  Each new stream
     // gets its own 6 s probe window.
     _fallbackTriggered = false;
+    // Plan 21 — same reset for the audio-leg latch.  Independent of the
+    // video latch above so both watchers can fire on the same session
+    // when the source happens to have both an unsupported video codec
+    // AND an unsupported audio codec.
+    _audioFallbackTriggered = false;
 
     // Remember the call args so `setTonemap` can restart with the same
     // file + resume position when the user toggles the HDR option mid-
@@ -193,10 +230,12 @@ class PlayerCubit extends Cubit<PlayerState> {
     // can flip the toggle off and try again — the gate is intentional,
     // not a hard error.
     if (await _shouldRefuseOverCellular()) {
-      emit(const PlayerFailure(
-        'Wi-Fi only mode is on. Connect to Wi-Fi to start streaming, or '
-        'turn it off in Profile → Playback.',
-      ));
+      emit(
+        const PlayerFailure(
+          'Wi-Fi only mode is on. Connect to Wi-Fi to start streaming, or '
+          'turn it off in Profile → Playback.',
+        ),
+      );
       return;
     }
 
@@ -270,21 +309,23 @@ class PlayerCubit extends Cubit<PlayerState> {
         _log.w('AudioHandler.bind failed', error: e, stackTrace: st);
       }
 
-      emit(PlayerReady(
-        sessionId: response.sessionId,
-        fileName: fileName,
-        player: _player!,
-        controller: _controller!,
-        resumeSec: seekSec,
-        // Server-supplied: the segment-snapped source-time at which
-        // the playlist's t=0 sits.  The scrubber adds this to the
-        // player's reported position so the user sees source-time
-        // (streaming pipeline plan §16 scrubber-offset patch).
-        playlistOffsetSec: response.appliedSeekSec,
-        streamPath: path,
-        hdrFormat: response.hdrFormat,
-        tonemapped: response.tonemapped,
-      ));
+      emit(
+        PlayerReady(
+          sessionId: response.sessionId,
+          fileName: fileName,
+          player: _player!,
+          controller: _controller!,
+          resumeSec: seekSec,
+          // Server-supplied: the segment-snapped source-time at which
+          // the playlist's t=0 sits.  The scrubber adds this to the
+          // player's reported position so the user sees source-time
+          // (streaming pipeline plan §16 scrubber-offset patch).
+          playlistOffsetSec: response.appliedSeekSec,
+          streamPath: path,
+          hdrFormat: response.hdrFormat,
+          tonemapped: response.tonemapped,
+        ),
+      );
 
       // Plan 20 — auto-fallback watcher only fires when the operator has
       // opted into `streaming_mode='auto'`.  Strict `'client-decode'` is
@@ -300,6 +341,24 @@ class PlayerCubit extends Cubit<PlayerState> {
         );
       }
 
+      // Plan 21 — audio-leg watcher.  Runs independently of the video
+      // watcher above, but only when BOTH `streamingMode='auto'` AND
+      // `audioStreamingMode='stream-copy'`.  `'transcode'` audio is
+      // already going through the encoder so a client-side audio
+      // decode failure can't happen; `'client-decode'`/
+      // `'server-transcode'` video modes are out of the auto-fallback
+      // contract entirely.  The 6 s outer watcher + 4 s audioParams
+      // silence-watchdog both live inside _scheduleAutoAudioFallback
+      // Watcher.
+      if (response.streamingMode == 'auto' &&
+          response.audioStreamingMode == 'stream-copy') {
+        _scheduleAutoAudioFallbackWatcher(
+          sessionId: response.sessionId,
+          streamPath: response.playlistUrl,
+          headers: headers,
+        );
+      }
+
       // Streaming pipeline plan §16 M4 — diagnostics only.  libmpv
       // populates `audioParams` after the first audio frame decodes
       // (typically a few hundred ms post-open).  Subscribe to the
@@ -308,18 +367,21 @@ class PlayerCubit extends Cubit<PlayerState> {
       // and pair it with the server's `audio_probe` line.  Stream is
       // torn down by `_disposeCurrentSession` so we don't bother
       // canceling the subscription manually.
-      _player!.stream.audioParams.firstWhere(
-        (p) => p.sampleRate != null || p.channelCount != null,
-        orElse: () => _player!.state.audioParams,
-      ).then((p) {
-        _log.i(
-          '[Player] audio_negotiated session=${response.sessionId} '
-          'format=${p.format} sample_rate=${p.sampleRate} '
-          'channels=${p.channels} channel_count=${p.channelCount}',
-        );
-      }).catchError((Object e, StackTrace st) {
-        _log.d('audioParams subscription failed', error: e, stackTrace: st);
-      });
+      _player!.stream.audioParams
+          .firstWhere(
+            (p) => p.sampleRate != null || p.channelCount != null,
+            orElse: () => _player!.state.audioParams,
+          )
+          .then((p) {
+            _log.i(
+              '[Player] audio_negotiated session=${response.sessionId} '
+              'format=${p.format} sample_rate=${p.sampleRate} '
+              'channels=${p.channels} channel_count=${p.channelCount}',
+            );
+          })
+          .catchError((Object e, StackTrace st) {
+            _log.d('audioParams subscription failed', error: e, stackTrace: st);
+          });
 
       _startProgressTimer();
     } on ApiException catch (e, st) {
@@ -354,8 +416,7 @@ class PlayerCubit extends Cubit<PlayerState> {
   /// unrelated 403 responses.
   static bool _isGroupGateMessage(String message) {
     final lower = message.toLowerCase();
-    return lower.contains('group(s)') ||
-        lower.contains('time window');
+    return lower.contains('group(s)') || lower.contains('time window');
   }
 
   /// Toggle server-side HDR → SDR tonemapping for the current session.
@@ -377,7 +438,9 @@ class PlayerCubit extends Cubit<PlayerState> {
     }
     final currentState = state;
     final currentMs = _player?.state.position.inMilliseconds ?? 0;
-    final fallbackSec = currentState is PlayerReady ? currentState.resumeSec : 0.0;
+    final fallbackSec = currentState is PlayerReady
+        ? currentState.resumeSec
+        : 0.0;
     final resumeSec = currentMs > 0 ? currentMs / 1000.0 : fallbackSec;
     // Pass the live playhead as `serverSeekSec` so the new FFmpeg
     // session lands at the toggle's actual position — not the DB's
@@ -448,7 +511,8 @@ class PlayerCubit extends Cubit<PlayerState> {
     // segment boundary at-or-before the requested source-time.
     final playerTargetMs = targetSourceMs - offsetMs;
     final playerDurMs = p.state.duration.inMilliseconds;
-    final inBounds = playerTargetMs >= 0 &&
+    final inBounds =
+        playerTargetMs >= 0 &&
         (playerDurMs <= 0 || playerTargetMs <= playerDurMs);
 
     final smallForward =
@@ -516,7 +580,10 @@ class PlayerCubit extends Cubit<PlayerState> {
     final url = _lastPlaylistUrl;
     final headers = _lastPlaylistHeaders;
     final currentState = state;
-    if (p == null || sid == null || url == null || currentState is! PlayerReady) {
+    if (p == null ||
+        sid == null ||
+        url == null ||
+        currentState is! PlayerReady) {
       return;
     }
 
@@ -539,10 +606,7 @@ class PlayerCubit extends Cubit<PlayerState> {
       // marker); libmpv won't re-fetch on its own because the original
       // load saw `#EXT-X-ENDLIST` and considers VOD playlists immutable.
       // Re-opening the Media forces a fresh GET.
-      await p.open(
-        Media(url, httpHeaders: headers ?? const {}),
-        play: false,
-      );
+      await p.open(Media(url, httpHeaders: headers ?? const {}), play: false);
       // The new playlist starts at `appliedSeekSec` of source-time
       // (segment-snapped by the server).  Seek WITHIN the playlist to
       // the sub-segment offset between the user's exact target and the
@@ -550,18 +614,19 @@ class PlayerCubit extends Cubit<PlayerState> {
       // tried to seek to source-time T inside a playlist whose own
       // timeline runs 0..(N-K)*hls_time — libmpv would either clamp
       // or reset, manifesting as "scrubber jumps back to 0".
-      final withinPlaylistSec =
-          target.inMilliseconds / 1000.0 - appliedSeekSec;
+      final withinPlaylistSec = target.inMilliseconds / 1000.0 - appliedSeekSec;
       if (withinPlaylistSec > 0) {
         await p.seek(
           Duration(milliseconds: (withinPlaylistSec * 1000).toInt()),
         );
       }
       await p.play();
-      emit(currentState.copyWith(
-        isSeeking: false,
-        playlistOffsetSec: appliedSeekSec,
-      ));
+      emit(
+        currentState.copyWith(
+          isSeeking: false,
+          playlistOffsetSec: appliedSeekSec,
+        ),
+      );
     } catch (e, st) {
       _log.w(
         'Server seek-restart failed; falling back to in-player seek',
@@ -572,8 +637,11 @@ class PlayerCubit extends Cubit<PlayerState> {
         await p.seek(target);
         await p.play();
       } catch (e2, st2) {
-        _log.w('In-player fallback seek also failed',
-            error: e2, stackTrace: st2);
+        _log.w(
+          'In-player fallback seek also failed',
+          error: e2,
+          stackTrace: st2,
+        );
       }
       // Drop the seeking flag whether the fallback worked or not — the
       // overlay should not stay up forever on a hard failure.
@@ -635,8 +703,8 @@ class PlayerCubit extends Cubit<PlayerState> {
         .firstWhere((VideoParams p) => (p.w ?? 0) > 0)
         .then((_) => _cancelAutoFallbackWatcher())
         .catchError((Object e, StackTrace st) {
-      _log.d('videoParams watcher unsubscribed', error: e, stackTrace: st);
-    });
+          _log.d('videoParams watcher unsubscribed', error: e, stackTrace: st);
+        });
   }
 
   /// Cancels the auto-fallback watcher's subscription and timer.  Safe
@@ -683,6 +751,151 @@ class PlayerCubit extends Cubit<PlayerState> {
       );
     } finally {
       _cancelAutoFallbackWatcher();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auto-fallback watcher — audio leg (plan 21)
+  // ---------------------------------------------------------------------------
+
+  /// Detects a stream-copied audio decode failure within the
+  /// [_kFallbackWatcherSec]-second window after `PlayerReady` and POSTs
+  /// `/fallback-audio-transcode` so the server flips the audio leg into
+  /// transcode mode while leaving video stream-copy intact.  Mirrors
+  /// the structure of [_scheduleAutoFallbackWatcher] but uses two
+  /// detectors that together cover plan 21 sharp edge #1:
+  ///
+  ///   1. `Player.stream.error` payloads whose lower-case text contains
+  ///      `audio`, `aac`, or `codec` — libmpv tags audio-specific
+  ///      failures with at least one of those substrings.  Generic
+  ///      errors (e.g. network drops) fall through to the video
+  ///      watcher's catch-all.
+  ///   2. A 4 s silence-watchdog over `Player.stream.audioParams`: if
+  ///      no AudioParams emit carries a non-null `sampleRate` or
+  ///      `channelCount` within the window the audio decoder never
+  ///      came up, which on `auto + stream-copy` only happens when
+  ///      the source codec isn't supported on this device.
+  ///
+  /// Cancels early on the first non-empty audioParams emission (proof
+  /// of a working audio decode).  All cleanup goes through
+  /// [_cancelAutoAudioFallbackWatcher] so [_disposeCurrentSession]
+  /// doesn't duplicate the logic.
+  void _scheduleAutoAudioFallbackWatcher({
+    required String sessionId,
+    required String streamPath,
+    required Map<String, String> headers,
+  }) {
+    _cancelAutoAudioFallbackWatcher();
+
+    final player = _player;
+    if (player == null) return;
+
+    void trigger(String reason) {
+      if (_audioFallbackTriggered) return;
+      _audioFallbackTriggered = true;
+      unawaited(
+        _handleAutoAudioFallback(
+          sessionId: sessionId,
+          streamPath: streamPath,
+          headers: headers,
+          reason: reason,
+        ),
+      );
+    }
+
+    // Detector 1 — audio-tagged error events.  We re-use the player's
+    // existing error stream rather than spawning a parallel listener
+    // pipeline; matching on the message substring keeps the audio path
+    // from stealing generic errors that belong to the video watcher.
+    _audioFallbackWatcherErrorSub = player.stream.error.listen((message) {
+      final lower = message.toLowerCase();
+      if (lower.contains('audio') ||
+          lower.contains('aac') ||
+          lower.contains('codec')) {
+        trigger('error="$message"');
+      }
+    });
+
+    // Detector 2 — audioParams silence-watchdog.  The 4 s window fires
+    // BEFORE the outer 6 s watcher disarms so the audio-only fallback
+    // path has a chance to take effect.  Cancelled by the first
+    // non-empty audioParams emission below.
+    _audioFallbackParamsTimeoutTimer = Timer(
+      const Duration(seconds: _kAudioParamsTimeoutSec),
+      () => trigger('no audioParams within ${_kAudioParamsTimeoutSec}s'),
+    );
+
+    _audioFallbackWatcherParamsSub = player.stream.audioParams.listen((
+      AudioParams p,
+    ) {
+      if (p.sampleRate != null || p.channelCount != null) {
+        // Audio decoder is alive — disarm both detectors immediately.
+        _cancelAutoAudioFallbackWatcher();
+      }
+    });
+
+    // Outer 6 s watcher matches the video leg's window so the audio
+    // probe never lingers past the point where the user would have
+    // given up on a stuck stream.
+    _audioFallbackWatcherTimer = Timer(
+      const Duration(seconds: _kFallbackWatcherSec),
+      _cancelAutoAudioFallbackWatcher,
+    );
+  }
+
+  /// Cancels the audio fallback watcher's subscriptions + timers.
+  /// Safe to call multiple times.  Does NOT reset
+  /// [_audioFallbackTriggered] — the latch only resets at the start of
+  /// a brand-new `startStream` so a late error from a previously-
+  /// fallen-back session can't fire a second POST against an already-
+  /// transcoded audio leg.
+  void _cancelAutoAudioFallbackWatcher() {
+    _audioFallbackWatcherErrorSub?.cancel();
+    _audioFallbackWatcherErrorSub = null;
+    _audioFallbackWatcherParamsSub?.cancel();
+    _audioFallbackWatcherParamsSub = null;
+    _audioFallbackWatcherTimer?.cancel();
+    _audioFallbackWatcherTimer = null;
+    _audioFallbackParamsTimeoutTimer?.cancel();
+    _audioFallbackParamsTimeoutTimer = null;
+  }
+
+  /// Reports the client-side audio decode failure to the server (plan
+  /// 21) and re-opens the playlist URL so libmpv re-fetches the
+  /// audio-transcoded segments.  Best-effort — a failure here just
+  /// logs (the player will surface its own error via the existing
+  /// error stream).
+  Future<void> _handleAutoAudioFallback({
+    required String sessionId,
+    required String streamPath,
+    required Map<String, String> headers,
+    required String reason,
+  }) async {
+    final player = _player;
+    if (player == null) return;
+    final positionSec = player.state.position.inMilliseconds / 1000.0;
+    _log.w(
+      '[Player] audio auto-fallback triggered session=$sessionId '
+      'pos=${positionSec.toStringAsFixed(3)}s reason=$reason',
+    );
+    try {
+      await _repository.reportFallbackAudioTranscode(
+        sessionId: sessionId,
+        currentPositionSec: positionSec,
+      );
+      await player.open(Media(streamPath, httpHeaders: headers));
+      _log.i(
+        '[Player] audio auto-fallback to transcode for session=$sessionId',
+      );
+    } catch (e, st) {
+      _log.w(
+        '[Player] audio auto-fallback POST/reopen failed for '
+        'session=$sessionId',
+        error: e,
+        stackTrace: st,
+      );
+    } finally {
+      _cancelAutoAudioFallbackWatcher();
     }
   }
 
@@ -735,7 +948,9 @@ class PlayerCubit extends Cubit<PlayerState> {
     return completer.future.timeout(
       const Duration(seconds: _kWebRtcTimeoutSec),
       onTimeout: () {
-        _log.w('[WebRTC] ICE timeout after ${_kWebRtcTimeoutSec}s — falling back to HLS');
+        _log.w(
+          '[WebRTC] ICE timeout after ${_kWebRtcTimeoutSec}s — falling back to HLS',
+        );
         return StreamPath.hls;
       },
     );
@@ -807,6 +1022,8 @@ class PlayerCubit extends Cubit<PlayerState> {
     // Plan 20 — make sure the watcher subscription doesn't outlive the
     // player.  `_cancelAutoFallbackWatcher` is idempotent.
     _cancelAutoFallbackWatcher();
+    // Plan 21 — same for the audio-leg watcher.
+    _cancelAutoAudioFallbackWatcher();
     if (_sessionId != null) {
       // Best-effort final progress report; swallow per the original
       // close() behaviour.
@@ -861,8 +1078,11 @@ class PlayerCubit extends Cubit<PlayerState> {
     try {
       enabled = await _secureStorage.getBackgroundPlaybackEnabled();
     } catch (e, st) {
-      _log.w('Could not read bg-playback pref — defaulting to disabled',
-          error: e, stackTrace: st);
+      _log.w(
+        'Could not read bg-playback pref — defaulting to disabled',
+        error: e,
+        stackTrace: st,
+      );
       enabled = false;
     }
     if (enabled) return;

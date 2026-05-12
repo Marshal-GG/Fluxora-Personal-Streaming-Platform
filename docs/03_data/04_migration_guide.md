@@ -2,7 +2,7 @@
 
 > **Category:** Data
 > **Status:** Active
-> **Last Updated:** 2026-05-12 (current migration range 001-033; 032 + 033 added by plan 20 — `streaming_mode` CHECK widened to allow `'auto'` + `client_codec_blocklist` table.  Earlier 2026-05-09: migrations 027-031 (plan 18 transcode jobs, plan 19 storage settings / per-library codec passthrough / sidecar mtime).  Migration 025 is the most semantically-loaded migration shipped to date — it flips the meaning of `group_restrictions.allowed_libraries` from subtractive to additive without changing the wire format; landed pre-launch under the [`docs/04_api/02_versioning_policy.md`](../04_api/02_versioning_policy.md) "Pre-v1-launch breaking changes" exception.  Pattern note: `NULLIF(json_group_array(id), '[]')` to handle the empty-list case where v1 read `'[]'` as "block everything" — see [`gotchas.md`](../12_guidelines/03_gotchas.md).)
+> **Last Updated:** 2026-05-12 (current migration range 001-034; 034 added by plan 21 — `client_audio_codec_blocklist` table for per-client audio codec fallback decisions. 032 + 033 added by plan 20 — `streaming_mode` CHECK widened to allow `'auto'` + `client_codec_blocklist` table.  Earlier 2026-05-09: migrations 027-031 (plan 18 transcode jobs, plan 19 storage settings / per-library codec passthrough / sidecar mtime).  Migration 025 is the most semantically-loaded migration shipped to date — it flips the meaning of `group_restrictions.allowed_libraries` from subtractive to additive without changing the wire format; landed pre-launch under the [`docs/04_api/02_versioning_policy.md`](../04_api/02_versioning_policy.md) "Pre-v1-launch breaking changes" exception.  Pattern note: `NULLIF(json_group_array(id), '[]')` to handle the empty-list case where v1 read `'[]'` as "block everything" — see [`gotchas.md`](../12_guidelines/03_gotchas.md).)
 
 How to add, test, and ship SQLite schema changes safely. Read first if you're touching `apps/server/database/`.
 
@@ -57,7 +57,8 @@ apps/server/database/
     ├── 030_per_library_codec_passthrough.sql
     ├── 031_sidecar_source_mtime.sql
     ├── 032_streaming_mode_auto.sql
-    └── 033_client_codec_blocklist.sql
+    ├── 033_client_codec_blocklist.sql
+    └── 034_client_audio_codec_blocklist.sql
 ```
 
 Files are picked up alphabetically by `_run_migrations()` (in `db.py`). The `_migrations` table tracks which have already been applied by filename — re-running the server only executes new files. Each migration is wrapped in `executescript()`, which executes the entire file inside a single implicit transaction; on the next startup the new filename is appended to `_migrations` after a successful `executescript` + commit.
@@ -211,6 +212,17 @@ Do *not* use it when you'll later need to filter, join, or aggregate by the blob
 
 SQLite's `ALTER TABLE ADD COLUMN` does not support `IF NOT EXISTS`. The migration runner's `_migrations` table records the filename of every successfully-applied script, so the script is never re-run on the same DB and the unconditional `ALTER` is safe. Migrations 025 and 026 add this contract explicitly in their headers — copy that pattern when you add columns to existing tables.
 
+### Parallel per-client blocklist tables (032–034)
+
+Plan 20 introduced `client_codec_blocklist` (033) and plan 21 added `client_audio_codec_blocklist` (034). Both use the same composite-PK + FK CASCADE shape:
+
+- Same PK pattern: `(client_id, <codec>)`.
+- Same FK: `REFERENCES clients(id) ON DELETE CASCADE` — when a client is unpaired, all its blocklist rows are cleaned up automatically.
+- Same lookup gate: both tables are **only consulted when `streaming_mode='auto'`**; strict `client-decode` and `server-transcode` modes ignore them entirely.
+- Independent rows: a single client can have a video blocklist row for `hevc` AND an audio blocklist row for `flac` simultaneously; they are never combined.
+
+The separation exists because video and audio decode failures are independent: a device that can't hardware-decode HEVC may still handle FLAC stream-copy perfectly well. Combining them into one table would cause unnecessary audio transcoding on devices that only failed video, and vice versa.
+
 ---
 
 ## Testing a new migration locally
@@ -253,7 +265,7 @@ For settings/data changes: assert the row count or expected values in a fresh DB
 python -m pytest -q
 ```
 
-The full server test suite (792 tests as of 2026-05-12) must still pass. If a previously-passing test breaks, your migration changed something the rest of the code relied on.
+The full server test suite (814 tests as of 2026-05-12) must still pass. If a previously-passing test breaks, your migration changed something the rest of the code relied on.
 
 ---
 

@@ -712,7 +712,7 @@ When `FLUXORA_TMDB_KEY` is not configured, returns zeros + a `detail` field inst
 ### `POST /api/v1/stream/start/{file_id}`
 **Description:** Spawn an FFmpeg HLS process for a file and return the playlist URL.  Server picks one of two pipelines automatically based on the source's video codec (recorded in `media_files.codec_name` per migration 016, lazy-probed at stream-start for files that pre-date that migration):
 
-- **Stream-copy** when source is `h264` (mpegts segments) or `hevc` (fmp4 segments) — FFmpeg just remuxes, dropping CPU usage by ~95% versus a full transcode. Audio still re-encoded to AAC 128 kb/s for HLS-client compatibility.
+- **Stream-copy** when source is `h264` (mpegts segments) or `hevc` (fmp4 segments) — FFmpeg just remuxes, dropping CPU usage by ~95% versus a full transcode. **Plan 21 (2026-05-12):** audio is also stream-copied when the source audio codec is in `{aac, ac3, eac3, opus, flac}` and HDR tonemap is inactive; non-AAC audio stream-copy forces the session to fmp4 segments. Audio is re-encoded to AAC 256 kb/s (bumped from 128 kb/s in plan 21) with source channel count preserved when stream-copy is not applicable.
 - **Full transcode** for everything else — applies the operator's configured `transcoding_encoder` / `preset` / `crf` from `user_settings`.
 
 The decision is invisible to the client — the response shape is identical for both paths. The server log records which pipeline ran (`mode=stream-copy(h264/mpegts)` / `stream-copy(hevc/fmp4)` / `transcode(libx264)`).
@@ -2474,8 +2474,8 @@ Stored on `user_settings.streaming_mode` (migration 028 — two values; widened 
 
 ---
 
-### `POST /api/v1/stream/start/{file_id}` — `streaming_mode` in response
-Plan 20 added a `streaming_mode` field to `StreamStartResponse` so the mobile client knows whether to arm the 6 s auto-fallback watcher.
+### `POST /api/v1/stream/start/{file_id}` — `streaming_mode` + `audio_streaming_mode` in response
+Plan 20 added a `streaming_mode` field to `StreamStartResponse` so the mobile client knows whether to arm the 6 s auto-fallback watcher. Plan 21 added `audio_streaming_mode` so the mobile client also knows whether to arm the audio-specific fallback watcher.
 
 ```json
 {
@@ -2485,11 +2485,58 @@ Plan 20 added a `streaming_mode` field to `StreamStartResponse` so the mobile cl
   "applied_seek_sec": 0,
   "hdr_format": null,
   "tonemapped": false,
-  "streaming_mode": "client-decode"
+  "streaming_mode": "client-decode",
+  "audio_streaming_mode": "stream-copy"
 }
 ```
 
-`streaming_mode` is one of `'auto' | 'client-decode' | 'server-transcode'`. The mobile `PlayerCubit` only arms the 6 s error watcher when `response.streamingMode == 'auto'`; other modes let player errors bubble unchanged.
+`streaming_mode` is one of `'auto' | 'client-decode' | 'server-transcode'`. The mobile `PlayerCubit` only arms the 6 s video error watcher when `response.streamingMode == 'auto'`; other modes let player errors bubble unchanged.
+
+`audio_streaming_mode` is one of `'stream-copy' | 'transcode'`. Default is `'transcode'`. The mobile `PlayerCubit` only arms the 6 s audio fallback watcher when **both** `response.streamingMode == 'auto'` AND `response.audioStreamingMode == 'stream-copy'`; the video and audio watchers are independent and can fire simultaneously in the same session.
+
+Audio stream-copy is attempted when:
+- The source audio codec is in the allowlist `{aac, ac3, eac3, opus, flac}`
+- HDR tonemap is not active for the session (tonemap forces audio re-encode for PTS alignment)
+- The client does not already have a `client_audio_codec_blocklist` row for this `(client_id, audio_codec)` pair
+
+### `POST /api/v1/stream/{session_id}/fallback-audio-transcode`
+**Description:** Opt-in audio-only fallback endpoint. Called by the mobile player when it detects an audio decode error within 6 s of `PlayerReady` under `streaming_mode='auto'` and `audio_streaming_mode='stream-copy'`. Records the `(client_id, audio_codec)` pair in `client_audio_codec_blocklist`, forces audio re-encode for the session, restarts FFmpeg from the caller-supplied playhead position with audio transcoded to AAC 256 k while keeping video unchanged, and returns the (unchanged) playlist URL so the player can reload.
+**Auth:** Bearer token (same as other stream endpoints).
+**Rate limit:** 10 per minute.
+**Status:** ✅ Plan 21.
+
+**Path param:** `session_id` — the active session UUID.
+
+**Request body:**
+```json
+{ "current_position_sec": 42.5 }
+```
+
+`current_position_sec` must be `≥ 0`.
+
+**Response (200):**
+```json
+{
+  "session_id": "abc-...",
+  "playlist_url": "http://…/hls/abc-…/playlist.m3u8",
+  "forced_audio_transcode": true
+}
+```
+
+**Status codes:**
+
+| Code | Condition |
+|------|-----------|
+| 200 | Audio fallback applied; `forced_audio_transcode: true`; playlist URL for `player.open()` |
+| 404 | Session not found or already ended |
+| 403 | Session not owned by the calling client |
+| 409 | `streaming_mode` is not `'auto'`; strict modes never transparently switch audio pipelines |
+| 422 | `current_position_sec` missing / negative |
+| 429 | Rate limit exceeded (10/min) |
+
+**Blocklist semantics:** the `(client_id, audio_codec)` row is written via `INSERT OR IGNORE` — calling this endpoint multiple times for the same pair is idempotent. On the next `/stream/start` for this client + audio codec combination, `client_audio_codec_service.is_blocked(db, client_id, audio_codec)` returns `True` and the session starts with `_session_force_audio_transcode = True` without attempting audio stream-copy.
+
+**Relation to video fallback:** this endpoint is independent of `POST /fallback-transcode`. A session can have both video and audio forced to transcode simultaneously. Video stays stream-copy when only audio failed.
 
 ---
 

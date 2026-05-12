@@ -8,6 +8,7 @@ class StreamStartResponse {
     this.hdrFormat,
     this.tonemapped = false,
     this.streamingMode = 'client-decode',
+    this.audioStreamingMode = 'transcode',
   });
 
   final String sessionId;
@@ -42,17 +43,27 @@ class StreamStartResponse {
   /// decode errors and surface them to the user as a normal failure.
   final String streamingMode;
 
+  /// Plan 21 — server's effective audio-streaming decision for this
+  /// session: `'stream-copy'` when the source audio codec is on the
+  /// client allowlist (`{aac, ac3, eac3, opus, flac}` minus the
+  /// per-client audio-codec blocklist), `'transcode'` otherwise.  Only
+  /// meaningful when [streamingMode] is `'auto'` — the audio fallback
+  /// watcher arms exclusively for `auto + stream-copy`.  Defaults to
+  /// `'transcode'` so older servers (pre-plan-21) and any session that
+  /// already re-encodes audio never trigger an audio-fallback POST.
+  final String audioStreamingMode;
+
   factory StreamStartResponse.fromJson(Map<String, dynamic> json) =>
       StreamStartResponse(
         sessionId: json['session_id'] as String,
         fileId: json['file_id'] as String,
         playlistUrl: json['playlist_url'] as String,
         resumeSec: (json['resume_sec'] as num?)?.toDouble() ?? 0.0,
-        appliedSeekSec:
-            (json['applied_seek_sec'] as num?)?.toDouble() ?? 0.0,
+        appliedSeekSec: (json['applied_seek_sec'] as num?)?.toDouble() ?? 0.0,
         hdrFormat: json['hdr_format'] as String?,
         tonemapped: json['tonemapped'] as bool? ?? false,
-        streamingMode:
-            json['streaming_mode'] as String? ?? 'client-decode',
+        streamingMode: json['streaming_mode'] as String? ?? 'client-decode',
+        audioStreamingMode:
+            json['audio_streaming_mode'] as String? ?? 'transcode',
       );
 }

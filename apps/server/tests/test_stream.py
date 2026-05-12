@@ -2721,6 +2721,11 @@ def test_build_ffmpeg_cmd_uses_c_a_copy_when_source_is_aac_at_48khz(tmp_path):
     the operator-reported audio-delay symptom (streaming pipeline plan
     §16 M4 fix).  `-c:a copy` short-circuits both.
 
+    Plan 21 (2026-05-12): the resolution moved out of ``_build_ffmpeg_cmd``
+    — ``start_stream`` calls ``_resolve_audio_passthrough`` and passes
+    the boolean in.  Test now arms ``audio_passthrough=True`` to
+    exercise the same outcome.
+
     Pinned: -c:a copy is in the cmd; -c:a aac is NOT.  -ar 48000 is
     also absent on the copy path (resample only applies to re-encode)."""
     from services.encoder_registry import ENCODER_REGISTRY
@@ -2740,6 +2745,7 @@ def test_build_ffmpeg_cmd_uses_c_a_copy_when_source_is_aac_at_48khz(tmp_path):
         use_gpu_input=False,
         source_audio_codec="aac",
         source_audio_sample_rate=48000,
+        audio_passthrough=True,
     )
     # -c:a copy expected; -c:a aac MUST be absent.
     ca_idx = cmd.index("-c:a")
@@ -2753,7 +2759,10 @@ def test_build_ffmpeg_cmd_resamples_to_48khz_when_source_is_44100hz_aac(tmp_path
     """AAC source at 44.1 kHz → re-encode at 48 kHz.  Without the
     `-ar 48000` resample, the AAC encoder's default sample rate ≠
     source rate produces sample-rate drift → audio falls behind
-    video over a long stream."""
+    video over a long stream.
+
+    Plan 21 (2026-05-12): re-encode bitrate bumped from 128 k → 256 k
+    on both re-encode paths — assertion below now pins 256k."""
     from services.encoder_registry import ENCODER_REGISTRY
     from services.ffmpeg_service import _build_ffmpeg_cmd
 
@@ -2777,7 +2786,7 @@ def test_build_ffmpeg_cmd_resamples_to_48khz_when_source_is_44100hz_aac(tmp_path
     ar_idx = cmd.index("-ar")
     assert cmd[ar_idx + 1] == "48000"
     ba_idx = cmd.index("-b:a")
-    assert cmd[ba_idx + 1] == "128k"
+    assert cmd[ba_idx + 1] == "256k"
 
 
 def test_build_ffmpeg_cmd_resamples_when_source_is_dts_or_ac3(tmp_path):
@@ -3428,3 +3437,849 @@ async def test_start_stream_does_not_force_transcode_without_blocklist(
         res = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
     assert res.status_code == 201
     assert captured_flag == [False]
+
+
+# ── Plan 21 — audio stream-copy resolver + cmd-builder assertions ───────────
+
+
+def test_audio_passthrough_resolver_allowlist():
+    """Every codec in ``_AUDIO_STREAM_COPY_ALLOWLIST`` resolves to True
+    when tonemap is off and the session has no audio-force flag.  This
+    is the plan-21 happy path: lossless / surround / efficient codecs
+    pass through unmodified to clients that can decode them."""
+    from services.ffmpeg_service import (
+        _AUDIO_STREAM_COPY_ALLOWLIST,
+        _resolve_audio_passthrough,
+    )
+
+    for codec in _AUDIO_STREAM_COPY_ALLOWLIST:
+        assert (
+            _resolve_audio_passthrough(
+                apply_hdr_tonemap=False,
+                source_audio_codec=codec,
+                session_id="session-allowlist",
+            )
+            is True
+        ), f"codec={codec!r} should be stream-copy eligible"
+
+
+def test_audio_passthrough_resolver_blocklist_codecs():
+    """DTS / TrueHD / unknown codecs resolve to False — they're either
+    licensed decoders with spotty mobile support (DTS, TrueHD) or
+    simply outside the curated allowlist (anything not in
+    ``{aac, ac3, eac3, opus, flac}``).  Stays on the safe re-encode
+    path so HLS always produces playable output."""
+    from services.ffmpeg_service import _resolve_audio_passthrough
+
+    for codec in ("dts", "truehd", "mp3", "wmav2", "vorbis", "pcm_s16le"):
+        assert (
+            _resolve_audio_passthrough(
+                apply_hdr_tonemap=False,
+                source_audio_codec=codec,
+                session_id="session-blocklist",
+            )
+            is False
+        ), f"codec={codec!r} must NOT be stream-copy eligible"
+
+    # None / empty source codec falls to the safer re-encode default.
+    assert (
+        _resolve_audio_passthrough(
+            apply_hdr_tonemap=False,
+            source_audio_codec=None,
+            session_id="session-none",
+        )
+        is False
+    )
+    assert (
+        _resolve_audio_passthrough(
+            apply_hdr_tonemap=False,
+            source_audio_codec="",
+            session_id="session-empty",
+        )
+        is False
+    )
+
+
+def test_audio_passthrough_resolver_tonemap_forces_transcode():
+    """Even with an allowlist codec, tonemap ON ⇒ False.  Tonemap
+    regenerates the video PTS; copied audio packets won't align with
+    the new timestamps (the 2026-05-08 HDR-no-audio regression).
+    Audio MUST re-encode to get clean PTS — preserved from the
+    pre-plan-21 path-2 behaviour."""
+    from services.ffmpeg_service import _resolve_audio_passthrough
+
+    for codec in ("aac", "ac3", "eac3", "opus", "flac"):
+        assert (
+            _resolve_audio_passthrough(
+                apply_hdr_tonemap=True,
+                source_audio_codec=codec,
+                session_id="session-tonemap",
+            )
+            is False
+        ), f"tonemap-on must force re-encode even for allowlist codec {codec!r}"
+
+
+def test_audio_passthrough_resolver_session_force_overrides():
+    """When ``_session_force_audio_transcode[sid]=True``, the resolver
+    returns False regardless of tonemap state or allowlist codec.
+    This is the plan-21 fallback contract: a client that couldn't
+    decode the source audio must not be re-served the same stream-
+    copy bytes on the restart."""
+    from services.ffmpeg_service import (
+        _resolve_audio_passthrough,
+        _session_force_audio_transcode,
+    )
+
+    sid = "session-force-audio-fallback"
+    _session_force_audio_transcode[sid] = True
+    try:
+        for codec in ("aac", "ac3", "eac3", "opus", "flac"):
+            assert (
+                _resolve_audio_passthrough(
+                    apply_hdr_tonemap=False,
+                    source_audio_codec=codec,
+                    session_id=sid,
+                )
+                is False
+            ), f"force-audio-transcode flag must override codec {codec!r}"
+
+        # Sanity: clearing the flag restores the allowlist behaviour.
+        _session_force_audio_transcode.pop(sid, None)
+        assert (
+            _resolve_audio_passthrough(
+                apply_hdr_tonemap=False,
+                source_audio_codec="flac",
+                session_id=sid,
+            )
+            is True
+        )
+    finally:
+        _session_force_audio_transcode.pop(sid, None)
+
+
+def test_fmp4_forced_when_non_aac_audio_passthrough(tmp_path):
+    """Plan 21 — when audio is stream-copied AND the source audio codec
+    is non-AAC (ac3 / eac3 / opus / flac), the HLS muxer switches to
+    fmp4 (CMAF) so the segment container can carry the codec.  MPEG-TS
+    doesn't handle AC3 / Opus / FLAC cleanly across all clients;
+    fmp4 (HLSv7+) handles all of them.  Sharp edge #3 — the decision
+    must happen before the video filter chain is assembled."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    for codec in ("ac3", "eac3", "opus", "flac"):
+        cmd = _build_ffmpeg_cmd(
+            file_path="/tmp/source.mkv",
+            session_dir=tmp_path,
+            playlist=tmp_path / "playlist.m3u8",
+            meta=ENCODER_REGISTRY["libx264"],
+            preset="veryfast",
+            crf=23,
+            hwaccel_device=None,
+            source_codec="h264",
+            direct_remux=True,
+            direct_remux_hevc=False,
+            use_gpu_input=False,
+            source_audio_codec=codec,
+            source_audio_sample_rate=48000,
+            source_audio_channels=2,
+            audio_passthrough=True,
+        )
+        assert "-hls_segment_type" in cmd, f"codec={codec!r} missing -hls_segment_type"
+        seg_idx = cmd.index("-hls_segment_type")
+        assert (
+            cmd[seg_idx + 1] == "fmp4"
+        ), f"audio={codec!r} must trigger fmp4 (got {cmd[seg_idx + 1]!r})"
+        # Init segment filename is pinned to init.mp4 on the fmp4 path.
+        assert "-hls_fmp4_init_filename" in cmd
+        # Audio side stayed stream-copy.
+        ca_idx = cmd.index("-c:a")
+        assert cmd[ca_idx + 1] == "copy"
+
+
+def test_fmp4_not_forced_when_aac_audio_passthrough(tmp_path):
+    """Inverse of the prior test: AAC stream-copy on a plain H.264
+    direct-remux session stays on MPEG-TS — the legacy container
+    handles AAC fine and we don't want to flip every H.264+AAC session
+    over to fmp4 for no reason."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="h264",
+        direct_remux=True,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        source_audio_codec="aac",
+        source_audio_sample_rate=48000,
+        source_audio_channels=2,
+        audio_passthrough=True,
+    )
+    seg_idx = cmd.index("-hls_segment_type")
+    assert cmd[seg_idx + 1] == "mpegts"
+
+
+def test_reencode_paths_use_256k_bitrate(tmp_path):
+    """Both re-encode branches (tonemap-on + AAC@48k, and the catch-all
+    full re-encode + resample) emit ``-b:a 256k``.  Plan 21 bumped the
+    bitrate from 128 k — 256 k AAC is transparent for most listeners
+    (Apple Music's high-quality tier) and the re-encode path is now
+    only hit for DTS / TrueHD / tonemap-on / fallback sessions where
+    audio quality matters."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    # Branch A — tonemap-on + AAC@48k (no resample).
+    cmd_a = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mkv",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        apply_hdr_tonemap=True,
+        source_audio_codec="aac",
+        source_audio_sample_rate=48000,
+        source_audio_channels=2,
+        audio_passthrough=False,
+    )
+    ba_idx_a = cmd_a.index("-b:a")
+    assert cmd_a[ba_idx_a + 1] == "256k", "tonemap re-encode path must use 256k"
+    # No resample on this branch.
+    assert "-ar" not in cmd_a
+
+    # Branch B — full re-encode + resample for non-allowlist source.
+    cmd_b = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mkv",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=False,
+        direct_remux_hevc=True,
+        use_gpu_input=False,
+        source_audio_codec="dts",
+        source_audio_sample_rate=48000,
+        source_audio_channels=6,
+        audio_passthrough=False,
+    )
+    ba_idx_b = cmd_b.index("-b:a")
+    assert cmd_b[ba_idx_b + 1] == "256k", "catch-all re-encode path must use 256k"
+    ar_idx_b = cmd_b.index("-ar")
+    assert cmd_b[ar_idx_b + 1] == "48000"
+
+
+def test_reencode_paths_preserve_source_channels(tmp_path):
+    """Both re-encode branches emit ``-ac <n>`` matching probed channel
+    count.  Without this, the system AAC encoder silently downmixes
+    5.1 to stereo at defaults — operator loses surround on every
+    transcoded session.  Plan 21 §sharp-edges #2 + Q5."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    # 5.1 source — channel preservation kicks in.
+    cmd_5_1 = _build_ffmpeg_cmd(
+        file_path="/tmp/surround.mkv",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=False,
+        direct_remux_hevc=True,
+        use_gpu_input=False,
+        source_audio_codec="dts",
+        source_audio_sample_rate=48000,
+        source_audio_channels=6,
+        audio_passthrough=False,
+    )
+    ac_idx = cmd_5_1.index("-ac")
+    assert cmd_5_1[ac_idx + 1] == "6", "5.1 source must produce '-ac 6'"
+
+    # Probe-failed source — channel-count default falls back to stereo.
+    cmd_unknown = _build_ffmpeg_cmd(
+        file_path="/tmp/probe_failed.mkv",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=False,
+        direct_remux_hevc=True,
+        use_gpu_input=False,
+        source_audio_codec="dts",
+        source_audio_sample_rate=48000,
+        source_audio_channels=None,
+        audio_passthrough=False,
+    )
+    ac_idx_u = cmd_unknown.index("-ac")
+    assert cmd_unknown[ac_idx_u + 1] == "2", "probe-failed must default to 2 channels"
+
+    # Tonemap-on AAC@48k re-encode branch — also preserves channels.
+    cmd_tonemap = _build_ffmpeg_cmd(
+        file_path="/tmp/hdr.mkv",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        apply_hdr_tonemap=True,
+        source_audio_codec="aac",
+        source_audio_sample_rate=48000,
+        source_audio_channels=6,
+        audio_passthrough=False,
+    )
+    ac_idx_t = cmd_tonemap.index("-ac")
+    assert cmd_tonemap[ac_idx_t + 1] == "6"
+
+
+def test_codec_name_normalization_excludes_variants():
+    """ffprobe emits codec name variants (``aac_lc`` / ``aac_he`` /
+    ``dts_hd_ma`` / ``ac3_fixed``).  Plan 21 §sharp-edges #5 — the
+    allowlist check must normalize on the first ``_``-split token so
+    ``aac_lc`` resolves like ``aac`` (eligible), ``dts_hd_ma`` resolves
+    like ``dts`` (correctly excluded), etc."""
+    from services.ffmpeg_service import _resolve_audio_passthrough
+
+    # ``aac_lc`` / ``aac_he`` are AAC profile variants — must be eligible.
+    for variant in ("aac_lc", "aac_he", "aac_he_v2"):
+        assert (
+            _resolve_audio_passthrough(
+                apply_hdr_tonemap=False,
+                source_audio_codec=variant,
+                session_id="session-aac-variant",
+            )
+            is True
+        ), f"AAC variant {variant!r} should normalize to 'aac' and pass"
+
+    # ``dts_hd_ma`` / ``dts_es`` are DTS variants — Bluray rips emit
+    # this.  Normalized to ``dts`` which is correctly NOT in allowlist.
+    for variant in ("dts_hd_ma", "dts_es", "dts_express"):
+        assert (
+            _resolve_audio_passthrough(
+                apply_hdr_tonemap=False,
+                source_audio_codec=variant,
+                session_id="session-dts-variant",
+            )
+            is False
+        ), f"DTS variant {variant!r} should normalize to 'dts' and fail"
+
+    # Bare ``flac`` (no underscore) stays eligible.
+    assert (
+        _resolve_audio_passthrough(
+            apply_hdr_tonemap=False,
+            source_audio_codec="flac",
+            session_id="session-flac-bare",
+        )
+        is True
+    )
+
+    # AC3 variant ``ac3_fixed`` normalizes to ``ac3`` (eligible).
+    assert (
+        _resolve_audio_passthrough(
+            apply_hdr_tonemap=False,
+            source_audio_codec="ac3_fixed",
+            session_id="session-ac3-variant",
+        )
+        is True
+    )
+
+    # Case-insensitive: uppercase ``FLAC`` should normalize to ``flac``.
+    assert (
+        _resolve_audio_passthrough(
+            apply_hdr_tonemap=False,
+            source_audio_codec="FLAC",
+            session_id="session-flac-upper",
+        )
+        is True
+    )
+
+
+# ── Plan 21 — M3 router: /start audio blocklist + /fallback-audio-transcode ─
+
+
+@pytest.mark.asyncio
+async def test_start_stream_consults_audio_codec_blocklist(
+    client: AsyncClient,
+    monkeypatch,
+    test_db,
+    tmp_path,
+):
+    """A pre-seeded audio blocklist row for (this client, this audio
+    codec) must cause `start_stream` to set the per-session force-
+    audio-transcode flag *before* spawning FFmpeg.  Mirrors the
+    plan-20 video blocklist consult — only the dict + table differ."""
+    from services.ffmpeg_service import _session_force_audio_transcode
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264' WHERE id = ?", (file_id,)
+    )
+    # Pre-seed the audio blocklist for the test client + flac.
+    await test_db.execute(
+        "INSERT INTO client_audio_codec_blocklist"
+        " (client_id, audio_codec, reason, created_at)"
+        " VALUES ('stream-test-client', 'flac', 'client decode error', ?)",
+        (datetime.now(UTC).isoformat(),),
+    )
+    # Plan 21 — audio blocklist is only consulted under streaming_mode='auto'.
+    await test_db.execute("UPDATE user_settings SET streaming_mode = 'auto'")
+    await test_db.commit()
+
+    # The router probes the source's audio codec via
+    # ``ffmpeg_service._probe_audio_params``; stub it so the test
+    # doesn't depend on a real ffprobe binary or a real file on disk.
+    async def _mock_probe(_path: str) -> dict:
+        return {
+            "codec_name": "flac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "bit_rate": "1000000",
+        }
+
+    flag_at_spawn_time: list[bool] = []
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        flag_at_spawn_time.append(_session_force_audio_transcode.get(session_id, False))
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        res = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+
+    assert res.status_code == 201
+    session_id = res.json()["session_id"]
+    assert flag_at_spawn_time == [True]
+
+    # Cleanup so the module's other tests don't see the flag.
+    _session_force_audio_transcode.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_start_stream_ignores_audio_blocklist_under_client_decode(
+    client: AsyncClient,
+    monkeypatch,
+    test_db,
+    tmp_path,
+):
+    """Strict `client-decode` mode is documented as deterministic — the
+    operator picked it deliberately and an existing audio blocklist row
+    must NOT silently force-re-encode the session.  Inverse of the
+    auto-mode test above; guards against an over-eager router that
+    reads the blocklist regardless of mode."""
+    from services.ffmpeg_service import _session_force_audio_transcode
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264' WHERE id = ?", (file_id,)
+    )
+    await test_db.execute(
+        "INSERT INTO client_audio_codec_blocklist"
+        " (client_id, audio_codec, reason, created_at)"
+        " VALUES ('stream-test-client', 'flac', 'client decode error', ?)",
+        (datetime.now(UTC).isoformat(),),
+    )
+    # Strict mode — blocklist must be ignored.
+    await test_db.execute("UPDATE user_settings SET streaming_mode = 'client-decode'")
+    await test_db.commit()
+
+    async def _mock_probe(_path: str) -> dict:
+        return {
+            "codec_name": "flac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "bit_rate": "1000000",
+        }
+
+    captured_flag: list[bool] = []
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        captured_flag.append(_session_force_audio_transcode.get(session_id, False))
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        res = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    assert res.status_code == 201
+    assert captured_flag == [
+        False
+    ], "client-decode mode must NOT consult the audio blocklist"
+
+
+@pytest.mark.asyncio
+async def test_start_stream_response_includes_audio_streaming_mode(
+    client: AsyncClient,
+    monkeypatch,
+    test_db,
+    tmp_path,
+):
+    """The /start response payload must contain ``audio_streaming_mode``
+    populated from the resolver's decision.  Allowlist codec + tonemap
+    off + no force flag → ``"stream-copy"``; non-allowlist source →
+    ``"transcode"``.  Mobile / desktop use this field to decide
+    whether to arm the audio-error watcher."""
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Case 1 — FLAC source resolves to stream-copy.
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264' WHERE id = ?", (file_id,)
+    )
+    await test_db.commit()
+
+    async def _mock_probe_flac(_path: str) -> dict:
+        return {
+            "codec_name": "flac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "bit_rate": "1000000",
+        }
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe_flac,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        res = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    assert res.status_code == 201
+    assert res.json()["audio_streaming_mode"] == "stream-copy"
+
+    # Case 2 — DTS source resolves to transcode (not in allowlist).
+    # End the first session so the per-client concurrency cap (default
+    # 1) doesn't block the second /start in this same test.  Also reset
+    # the /start rate limiter so the second POST in this same test
+    # isn't 429'd by the 10/minute slowapi limit (the autouse
+    # ``reset_rate_limits`` fixture only fires between tests).
+    session_id_a = res.json()["session_id"]
+    await test_db.execute(
+        "UPDATE stream_sessions SET ended_at = ? WHERE id = ?",
+        (datetime.now(UTC).isoformat(), session_id_a),
+    )
+    await test_db.commit()
+
+    from routers.stream import limiter as _stream_limiter
+
+    _stream_limiter._storage.reset()
+
+    file_id_b = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264' WHERE id = ?", (file_id_b,)
+    )
+    await test_db.commit()
+
+    async def _mock_probe_dts(_path: str) -> dict:
+        return {
+            "codec_name": "dts",
+            "sample_rate": "48000",
+            "channels": 6,
+            "bit_rate": "1500000",
+        }
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe_dts,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        res = await client.post(f"/api/v1/stream/start/{file_id_b}", headers=headers)
+    assert res.status_code == 201, res.json()
+    assert res.json()["audio_streaming_mode"] == "transcode"
+
+
+@pytest.mark.asyncio
+async def test_fallback_audio_transcode_endpoint_records_blocklist_and_restarts(
+    client: AsyncClient,
+    monkeypatch,
+    test_db,
+    tmp_path,
+):
+    """POST /fallback-audio-transcode must:
+    (1) write the (client_id, normalized audio_codec) blocklist row,
+    (2) flip the per-session force-audio-transcode flag,
+    (3) call ffmpeg_service.restart_stream with the supplied seek +
+        tonemap_hdr=False.
+    Mirrors plan-20's video fallback test — only the dict, table and
+    response field differ."""
+    from services.ffmpeg_service import _session_force_audio_transcode
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264', duration_sec = 300.0"
+        " WHERE id = ?",
+        (file_id,),
+    )
+    await test_db.execute("UPDATE user_settings SET streaming_mode = 'auto'")
+    await test_db.commit()
+
+    # ffprobe stub — both /start and /fallback-audio-transcode probe it.
+    async def _mock_probe(_path: str) -> dict:
+        return {
+            "codec_name": "flac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "bit_rate": "1000000",
+        }
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **_kwargs
+    ) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        start = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    assert start.status_code == 201
+    session_id = start.json()["session_id"]
+
+    captured_restart_kwargs: list[dict] = []
+
+    async def _mock_restart(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        captured_restart_kwargs.append(kwargs)
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n#EXT-X-DISCONTINUITY-SEQUENCE:1\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe,
+        ),
+        patch(
+            "routers.stream.ffmpeg_service.restart_stream",
+            side_effect=_mock_restart,
+        ),
+    ):
+        res = await client.post(
+            f"/api/v1/stream/{session_id}/fallback-audio-transcode",
+            headers=headers,
+            json={"current_position_sec": 4.2},
+        )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["session_id"] == session_id
+    assert body["forced_audio_transcode"] is True
+    assert "playlist.m3u8" in body["playlist_url"]
+
+    # Blocklist row written + idempotent (one row only).
+    async with test_db.execute(
+        "SELECT client_id, audio_codec, reason FROM client_audio_codec_blocklist"
+    ) as cur:
+        rows = await cur.fetchall()
+    assert len(rows) == 1
+    assert rows[0]["client_id"] == "stream-test-client"
+    assert rows[0]["audio_codec"] == "flac"
+    assert rows[0]["reason"] == "client decode error"
+
+    # Per-session flag set (will be cleared on stop_stream).
+    assert _session_force_audio_transcode.get(session_id) is True
+
+    # restart_stream was called with the supplied position + tonemap off.
+    assert len(captured_restart_kwargs) == 1
+    assert captured_restart_kwargs[0]["seek_sec"] == pytest.approx(4.2)
+    assert captured_restart_kwargs[0]["tonemap_hdr"] is False
+
+    # Cleanup so subsequent tests don't see the flag.
+    _session_force_audio_transcode.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_fallback_audio_transcode_409_under_strict_mode(
+    client: AsyncClient,
+    monkeypatch,
+    test_db,
+    tmp_path,
+):
+    """Strict `client-decode` and legacy `server-transcode` modes must
+    reject the audio-fallback endpoint with 409 — the operator's pick
+    is documented as deterministic and an audio decode error should
+    surface to the user rather than silently switch pipelines."""
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264' WHERE id = ?", (file_id,)
+    )
+    await test_db.execute("UPDATE user_settings SET streaming_mode = 'client-decode'")
+    await test_db.commit()
+
+    async def _mock_probe(_path: str) -> dict | None:
+        return None
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **_kwargs
+    ) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        start = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    session_id = start.json()["session_id"]
+
+    res = await client.post(
+        f"/api/v1/stream/{session_id}/fallback-audio-transcode",
+        headers=headers,
+        json={"current_position_sec": 1.0},
+    )
+    assert res.status_code == 409
+    assert "audio fallback only valid in auto streaming mode" in res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_audio_transcode_404_for_unknown_session(
+    client: AsyncClient,
+    monkeypatch,
+):
+    """Unknown / ended session → 404 (mirrors /fallback-transcode)."""
+    token = await _get_token(client, monkeypatch)
+    res = await client.post(
+        "/api/v1/stream/nonexistent-session/fallback-audio-transcode",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_position_sec": 0.0},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_fallback_audio_transcode_403_for_wrong_owner(
+    client: AsyncClient,
+    monkeypatch,
+    test_db,
+    tmp_path,
+):
+    """A second client must not be able to fallback another client's
+    session — mirrors the video fallback's cross-client guard."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+
+    # Pair a second client.
+    await client.post(
+        "/api/v1/auth/request-pair",
+        json={
+            "client_id": "other-audio-fallback-client",
+            "device_name": "Other",
+            "platform": "ios",
+            "app_version": "0.1.0",
+        },
+    )
+    await client.post("/api/v1/auth/approve/other-audio-fallback-client")
+    other_status = await client.get("/api/v1/auth/status/other-audio-fallback-client")
+    other_token = other_status.json()["auth_token"]
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264' WHERE id = ?", (file_id,)
+    )
+    await test_db.execute("UPDATE user_settings SET streaming_mode = 'auto'")
+    await test_db.commit()
+
+    async def _mock_probe(_path: str) -> dict | None:
+        return None
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **_kwargs
+    ) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        start = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    session_id = start.json()["session_id"]
+
+    # Different client tries to call audio fallback for that session.
+    res = await client.post(
+        f"/api/v1/stream/{session_id}/fallback-audio-transcode",
+        headers={"Authorization": f"Bearer {other_token}"},
+        json={"current_position_sec": 1.0},
+    )
+    assert res.status_code == 403
