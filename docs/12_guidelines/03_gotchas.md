@@ -246,6 +246,46 @@ The cleanup also handles two adjacent issues that surface together: underscore-s
 
 The two mitigations stack: DoH override is the always-on fallback that handles simple hijack networks at zero ops cost; the Worker proxy is the operator's deliberate setup that handles the harder networks for every Fluxora user under their domain.
 
+---
+
+## Operator reports "server is still using CPU/GPU during client-decode mode"
+
+**Symptom:** the operator set `streaming_mode = 'client-decode'` in Settings → Encoder Settings, but the server's CPU or GPU load remains elevated during playback. The transcoding screen shows an active transcode session. "Why is my server transcoding?"
+
+**Root cause (multiple):** `client-decode` stream-copies h264/hevc/av1/vp9 when the source codec is in the direct-remux whitelist. But several conditions override the whitelist and force a transcode regardless of the global setting:
+
+1. **Source codec outside the whitelist** — `mpeg4`, `prores`, `mjpeg`, `wmv`, `mpeg2video`, and other older codecs are not in `{h264, hevc, av1, vp9}`. The server has no choice but to transcode. This is correct and expected behaviour.
+2. **HDR + tonemap enabled** — when the session is started with `?tonemap=true`, the server forces a full transcode to apply the `zscale + Hable BT.2020 PQ → BT.709 SDR` filter chain. CPU-side decoding (`zscale` requires CPU frames) is the reason.
+3. **Per-library override** — an individual library may have `av1_stream_copy_override = 0` or `vp9_stream_copy_override = 0` (force transcode). Set by the operator on the Library edit form.
+4. **Per-client blocklist hit under `streaming_mode = 'auto'`** — if the mode is `auto` (not `client-decode`), a prior player-error within 6 s may have written a `(client_id, source_codec)` row to `client_codec_blocklist`, causing that session to start directly in transcode. Strict `client-decode` ignores the blocklist.
+
+**Diagnostic:** every session start writes exactly one `stream_decision` INFO log line to the server log:
+
+```
+stream_decision session=<id> source_codec=<codec> mode=<auto|client-decode|server-transcode> path=<stream-copy|transcode> reason=<reason>
+```
+
+`reason` values:
+
+| Reason | Means |
+|--------|-------|
+| `always-passthrough` | Source is h264/hevc and always stream-copies (no override) |
+| `global-client-decode` | AV1/VP9 stream-copy because `streaming_mode='client-decode'` |
+| `global-auto` | AV1/VP9 stream-copy first attempt under `streaming_mode='auto'` |
+| `global-server-transcode` | AV1/VP9 forced transcode because `streaming_mode='server-transcode'` |
+| `unsupported-source-codec` | Codec not in whitelist (mpeg4, prores, etc.) → forced transcode |
+| `hdr-tonemap` | Tonemap requested → forced transcode |
+| `library-override` | Per-library `av1/vp9_stream_copy_override = 0` |
+| `forced-fallback` | `streaming_mode='auto'` + prior blocklist hit for this `(client, codec)` |
+
+**Quick grep to find every session that transcoded unexpectedly:**
+
+```bash
+grep 'stream_decision.*path=transcode' ~/.fluxora/logs/server.log | tail -20
+```
+
+Check the `reason=` field on each line — the first unexpected value tells you which cause applies.
+
 **Diagnostic checklist when a user reports "TMDB doesn't work":**
 
 1. **Confirm the exception class** — log line should now read `ConnectTimeout: ConnectTimeout('...')` (the `repr()` makes the class name explicit; without it the line read `'X': ` with nothing after the colon, masking the cause).

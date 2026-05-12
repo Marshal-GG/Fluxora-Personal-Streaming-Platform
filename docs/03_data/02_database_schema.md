@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-09 (migrations 001-026; TMDB, resume, license_key, tier alignment, Polar orders + customer email, transcoding settings, Groups + stream-gate, Profile fields, Notifications, ActivityEvents, extended settings §7.10, FFprobe + episode aggregation + per-client email/paired_at, hwaccel_device (nullable), encoder sanitiser, license-key sanitiser, encoder priority chain (Slice C), per-session encoder_used, corrupt-path data cleanup, `clients.last_ip` + per-request heartbeat, `benchmark_runs` history table, Groups v2 content-spaces redesign (Public group + PIN gate + grant/attempt ledgers + per-member time-window override + icon/color/concurrent-stream cap), Groups v2 §M8 hybrid PIN model (per-client enrollment ledger). Drift fixes 2026-05-09: stream-session NOT NULL on `bytes_transferred`/`progress_sec`; `language` NOT NULL; `transcoding_hwaccel_device` re-stated as nullable; explicit index names in the index table.)
+> **Status:** Active - Updated 2026-05-12 (migrations 032 + 033 — plan 20: `streaming_mode` CHECK widened to include `'auto'`; new `client_codec_blocklist` table for per-client fallback decisions. Earlier 2026-05-09: migrations 001-031; all prior history intact below.)
 
 ---
 
@@ -126,7 +126,14 @@ CREATE TABLE user_settings (
     -- migration 017: VAAPI device path (nullable; NULL = auto, /dev/dri/renderD128 default)
     transcoding_hwaccel_device TEXT DEFAULT NULL,
     -- migration 020: encoder priority chain (Slice C of GPU UX plan)
-    transcoding_chain          TEXT DEFAULT NULL  -- JSON-encoded list e.g. '["h264_nvenc","h264_qsv","libx264"]'; NULL = use default chain
+    transcoding_chain          TEXT DEFAULT NULL,  -- JSON-encoded list e.g. '["h264_nvenc","h264_qsv","libx264"]'; NULL = use default chain
+    -- migration 028 (plan 19 §M7): global streaming-mode toggle; migration 032 (plan 20) widened CHECK to add 'auto'
+    streaming_mode             TEXT NOT NULL DEFAULT 'client-decode'
+                               CHECK(streaming_mode IN ('auto', 'client-decode', 'server-transcode'))
+    -- 'client-decode' (default/Recommended): stream-copy modern codecs; client hardware-decodes.
+    -- 'auto' (opt-in): stream-copy first; on player error within 6 s → server falls back to transcode for that session
+    --         + writes a (client_id, source_codec) row to client_codec_blocklist so future sessions start in transcode.
+    -- 'server-transcode' (legacy): always transcode AV1/VP9.
 );
 
 -- Polar paid-order idempotency table
@@ -328,6 +335,27 @@ When `media_files.transcoded_path` is non-NULL and the file exists on disk, `rou
 
 ---
 
+### `client_codec_blocklist` (Migrations 032 + 033)
+
+```sql
+-- Per-client codec fallback blocklist (plan 20).
+-- Written when a player emits an error within 6 s of PlayerReady under
+-- streaming_mode='auto'.  On the next /stream/start for the same
+-- (client_id, source_codec), the session starts directly in transcode mode
+-- rather than attempting an optimistic stream-copy first.
+-- Consulted ONLY when streaming_mode='auto'. Strict modes ignore this table.
+CREATE TABLE client_codec_blocklist (
+    client_id   TEXT NOT NULL,
+    source_codec TEXT NOT NULL,
+    reason      TEXT,           -- 'player_error_within_6s' / future extensions
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (client_id, source_codec),
+    FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+);
+```
+
+---
+
 ## Indexes
 
 | Table | Column(s) | Type | Purpose |
@@ -394,3 +422,5 @@ When `media_files.transcoded_path` is non-NULL and the file exists on disk, `rou
 | `029_transcode_storage_settings.sql` | Plan 19 §M2 — transcode storage location chooser on `user_settings`.  Adds `transcode_storage_mode TEXT NOT NULL DEFAULT 'dedicated' CHECK(transcode_storage_mode IN ('dedicated','inline'))` and `transcode_cache_root TEXT` (NULL = use `<server-data-dir>/transcodes/`, never C: drive).  `services/transcode_service.py::_sidecar_path()` reads both at job-start time so mid-queue setting changes apply to the next claim.  Service-layer validation rejects relative paths, unwritable paths, and paths inside any library root (would loop on rescan).  Operator picks via Settings → Encoder Settings → Storage. |
 | `030_per_library_codec_passthrough.sql` | Plan 19 §M8 — per-library AV1/VP9 codec passthrough overrides.  Adds nullable `av1_stream_copy_override INTEGER` and `vp9_stream_copy_override INTEGER` on `libraries`.  Tri-state semantics — NULL = inherit from `user_settings.streaming_mode`, 0 = force off (always transcode this library's AV1/VP9), 1 = force on (always stream-copy this library's AV1/VP9).  Resolved by `services/ffmpeg_service.py::_resolve_codec_passthrough()` per-stream: per-library override beats global setting.  Lets an operator with mostly-modern devices but one legacy-only library carve that library out of the global default.  PATCH'd via `PATCH /api/v1/library/{id}` with the same field names; desktop renders 3-state segmented controls per codec on the library edit form. |
 | `031_sidecar_source_mtime.sql` | Plan 19 §M6 — stale-sidecar detection.  Adds nullable `transcoded_source_mtime INTEGER` on `media_files`.  Worker writes the source file's mtime at transcode-completion time; on every library scan that re-discovers the row, `library_service.scan_library` compares the current source mtime to the stored value.  When `current > stored` (source was overwritten since last transcode) the row's `transcoded_path` is cleared to NULL — playback falls back to the live transcode pipeline rather than continuing to stream the now-out-of-date sidecar.  Sidecar file on disk is preserved (not auto-deleted) so the operator can manually clean up via the Transcode History tab if they want. |
+| `032_streaming_mode_auto.sql` | Plan 20 — widens the `user_settings.streaming_mode` CHECK constraint from `('client-decode','server-transcode')` to `('auto','client-decode','server-transcode')`.  Uses the rename-column pattern (new column + UPDATE + DROP + RENAME) since SQLite's `ALTER TABLE` cannot modify a CHECK constraint in place.  Default stays `'client-decode'`.  Existing rows keep their saved value.  The new `'auto'` value enables the transparent client-error fallback path and per-client codec blocklist (migration 033). |
+| `033_client_codec_blocklist.sql` | Plan 20 — creates the `client_codec_blocklist` table (composite PK `(client_id, source_codec)`; FK CASCADE to `clients`; columns: `client_id TEXT NOT NULL`, `source_codec TEXT NOT NULL`, `reason TEXT`, `created_at TEXT NOT NULL`).  Rows are written by `POST /api/v1/stream/{session_id}/fallback-transcode` when a mobile player emits an error within 6 s of `PlayerReady` under `streaming_mode='auto'`.  Consulted at `/stream/start` time **only when `streaming_mode='auto'`** — strict modes (`client-decode`, `server-transcode`) ignore it entirely. |

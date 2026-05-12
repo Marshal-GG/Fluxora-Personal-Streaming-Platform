@@ -202,8 +202,8 @@ class SettingsCubit extends Cubit<SettingsState> {
     /// chain so the server falls back to the default; a non-empty list
     /// replaces it.
     List<String>? transcodingChain,
-    /// Plan 19 §M7 — `'client-decode'` or `'server-transcode'`. Null
-    /// means "leave the existing mode unchanged".
+    /// `'client-decode'` (Recommended default), `'auto'`, or
+    /// `'server-transcode'`. Null means "leave the existing mode unchanged".
     String? streamingMode,
     // §7.10 extended-settings — every field is optional; omit to leave
     // the server-side value unchanged.

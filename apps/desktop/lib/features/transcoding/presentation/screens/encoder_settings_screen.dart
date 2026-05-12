@@ -61,9 +61,12 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
   String? _encoder;
   String? _preset;
   int? _crf;
-  // Plan 19 §M7 — global streaming mode toggle.  `'client-decode'` (the
-  // launch default) stream-copies AV1 / VP9 sources directly to clients
-  // via fmp4; `'server-transcode'` is the legacy plan-18 behaviour.
+  // Global streaming mode toggle.  `'client-decode'` (the Recommended
+  // default, plan 19 §M7) stream-copies modern codecs unconditionally.
+  // `'auto'` (plan 20) starts with stream-copy and transparently falls
+  // back to transcode when the client reports a decode error within 6 s
+  // — opt-in for mixed device pools.  `'server-transcode'` is the legacy
+  // plan-18 behaviour (always transcode AV1/VP9).
   String? _streamingMode;
 
   // Tab state — Configuration is the default landing tab (operator's most
@@ -221,7 +224,7 @@ class _EncoderSettingsViewState extends State<_EncoderSettingsView> {
         Expanded(
           child: Column(
             children: [
-              // Streaming mode card (plan 19 §M7)
+              // Streaming mode card (plan 19 §M7, expanded plan 20)
               _StreamingModeCard(
                 value: _streamingMode ?? 'client-decode',
                 onChanged: (mode) =>
@@ -352,9 +355,22 @@ class _StreamingModeCard extends StatelessWidget {
           onTap: () => onChanged('client-decode'),
         ),
         _StreamingModeOption(
+          mode: 'auto',
+          title: 'Auto',
+          subtitle: 'Mixed device pools',
+          body:
+              'Tries client decoding first for near-zero server load. If a '
+              'device cannot play the original codec, the server transparently '
+              'falls back to transcoding for that session. Future sessions '
+              'for the same device + codec start in transcode mode.',
+          warning: null,
+          selected: value == 'auto',
+          onTap: () => onChanged('auto'),
+        ),
+        _StreamingModeOption(
           mode: 'server-transcode',
           title: 'Server transcodes',
-          subtitle: 'Legacy / mixed device pools',
+          subtitle: 'Legacy / every device',
           body:
               'Server live-transcodes AV1 / VP9 sources to H.264 before '
               'streaming. Works on every device, but uses significant '

@@ -2425,14 +2425,71 @@ The settings PATCH body gained a `transcoding_chain: list[str] | null` field for
 The response's `transcoding_chain` field decodes back to a list (or null). The desktop's `EncoderPriorityList` widget renders + reorders.
 
 ### `PATCH /api/v1/settings` — `streaming_mode` field
-Plan 19 §M7 — global streaming-mode toggle. Two values, `Literal['client-decode', 'server-transcode']` (Pydantic-validated; 422 outside).
+Plan 19 §M7 + plan 20 — global streaming-mode toggle. Three values, `Literal['auto', 'client-decode', 'server-transcode']` (Pydantic-validated; 422 outside).
 
 | Value | Behaviour | Default |
 |-------|-----------|---------|
-| `client-decode` | Server stream-copies AV1 / VP9 sources via fmp4; modern devices hardware-decode. Server CPU near zero. Older devices may not play AV1 sources. | ✅ v1 launch default |
-| `server-transcode` | Server live-transcodes AV1 / VP9 to H.264 before streaming. Works on every device but uses significant CPU/GPU per active stream. | Legacy / mixed device pools |
+| `client-decode` | Stream-copies h264/hevc/av1/vp9; client hardware-decodes. No fallback. Player error surfaces to the user. **Recommended for modern, uniform device pools.** | ✅ v1 launch default |
+| `auto` | Stream-copies first (same as `client-decode`). Within 6 s of `PlayerReady`, if mobile player emits any error, POSTs `/fallback-transcode` → server transcodes + records `(client_id, source_codec)` in `client_codec_blocklist`. Future sessions for that `(client, codec)` pair start directly in transcode. **Opt-in.** | Mixed device pools |
+| `server-transcode` | Always transcodes AV1/VP9 to H.264. Works on every device but uses significant CPU/GPU per active stream. | Legacy / opt-in |
 
-Stored on `user_settings.streaming_mode` (migration 028). H.264 + HEVC sources stream-copy regardless of mode (the toggle only governs AV1 / VP9). Sidecar pickup wins regardless of mode — files already transcoded via plan 18 keep stream-copying their H.264 sidecar. The desktop's `_StreamingModeCard` (in `EncoderSettingsScreen`) reads + writes this field.
+Stored on `user_settings.streaming_mode` (migration 028 — two values; widened to three by migration 032). H.264 + HEVC sources stream-copy regardless of mode. Sidecar pickup wins regardless of mode. The `client_codec_blocklist` is **only consulted** when `streaming_mode='auto'`; strict modes ignore it. The desktop's 3-option `_StreamingModeCard` (in `EncoderSettingsScreen`) reads + writes this field.
+
+---
+
+### `POST /api/v1/stream/{session_id}/fallback-transcode`
+**Description:** Opt-in auto-fallback endpoint. Called by the mobile player when it emits an error within 6 s of `PlayerReady` under `streaming_mode='auto'`. Records the `(client_id, source_codec)` pair in `client_codec_blocklist`, flips the session to transcode, restarts FFmpeg from the caller-supplied playhead position, and returns the (unchanged) playlist URL so the player can reload.  
+**Auth:** Bearer token (same as other stream endpoints).  
+**Rate limit:** 10 per minute.  
+**Status:** ✅ Plan 20.
+
+**Path param:** `session_id` — the active session UUID.
+
+**Request body:**
+```json
+{ "current_position_sec": 12.5 }
+```
+`current_position_sec` is `float ≥ 0` (required). Caller supplies the current playhead position so the server can restart FFmpeg from that offset rather than guessing.
+
+**Response 200:**
+```json
+{
+  "session_id": "abc-...",
+  "playlist_url": "http://…/hls/abc-…/playlist.m3u8",
+  "forced_transcode": true
+}
+```
+
+**Status codes:**
+| Code | Condition |
+|------|-----------|
+| 200 | Fallback applied; `forced_transcode: true`; new playlist URL for `player.open()` |
+| 404 | Session not found or already ended |
+| 403 | Session not owned by the calling client |
+| 409 | `streaming_mode` is not `'auto'`; strict modes never transparently switch pipelines |
+| 422 | `current_position_sec` missing / negative |
+| 429 | Rate limit exceeded (10/min) |
+
+**Blocklist semantics:** the `(client_id, source_codec)` row is written via `INSERT OR IGNORE` — calling this endpoint multiple times for the same pair is idempotent. On the next `/stream/start` for this client + codec combination, `client_codec_service.is_blocked(db, client_id, source_codec)` returns `True` and the session starts directly in transcode mode without the optimistic stream-copy probe.
+
+---
+
+### `POST /api/v1/stream/start/{file_id}` — `streaming_mode` in response
+Plan 20 added a `streaming_mode` field to `StreamStartResponse` so the mobile client knows whether to arm the 6 s auto-fallback watcher.
+
+```json
+{
+  "session_id": "abc-...",
+  "playlist_url": "http://…/hls/abc-…/playlist.m3u8",
+  "resume_sec": 0,
+  "applied_seek_sec": 0,
+  "hdr_format": null,
+  "tonemapped": false,
+  "streaming_mode": "client-decode"
+}
+```
+
+`streaming_mode` is one of `'auto' | 'client-decode' | 'server-transcode'`. The mobile `PlayerCubit` only arms the 6 s error watcher when `response.streamingMode == 'auto'`; other modes let player errors bubble unchanged.
 
 ---
 

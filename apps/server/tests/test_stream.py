@@ -3013,3 +3013,395 @@ def test_codec_passthrough_no_library_row_falls_back_to_global():
     assert _resolve_codec_passthrough(
         {"streaming_mode": "server-transcode"}, None, "vp9"
     ) is False
+
+
+# ── Plan 20 — `auto` mode + per-session force-transcode + fallback endpoint ──
+
+
+def test_codec_passthrough_session_force_transcode_overrides_all():
+    """When `session_force_transcode=True`, the resolver returns False
+    regardless of the global `streaming_mode`, the per-library override,
+    or the codec — this is the plan-20 fallback contract: a client that
+    couldn't decode must not be re-served the same stream-copy bytes."""
+    from services.ffmpeg_service import _resolve_codec_passthrough
+
+    # Most-permissive baseline: global client-decode + library override
+    # forcing stream-copy.  Without `session_force_transcode` this
+    # returns True for every codec.
+    settings_row = {"streaming_mode": "client-decode"}
+    library_row = {
+        "av1_stream_copy_override": 1,
+        "vp9_stream_copy_override": 1,
+    }
+    assert _resolve_codec_passthrough(
+        settings_row, library_row, "av1",
+        session_force_transcode=True,
+    ) is False
+    assert _resolve_codec_passthrough(
+        settings_row, library_row, "vp9",
+        session_force_transcode=True,
+    ) is False
+
+    # Sanity: same inputs without the flag return True (proves the
+    # override above would otherwise have won).
+    assert _resolve_codec_passthrough(
+        settings_row, library_row, "av1"
+    ) is True
+
+
+def test_codec_passthrough_auto_mode_defaults_to_stream_copy():
+    """Plan 20 — the new `auto` global mode starts optimistically in
+    stream-copy (same first-attempt as `client-decode`); the fallback
+    flag is what differentiates them later."""
+    from services.ffmpeg_service import _resolve_codec_passthrough
+
+    assert _resolve_codec_passthrough(
+        {"streaming_mode": "auto"}, None, "av1"
+    ) is True
+    assert _resolve_codec_passthrough(
+        {"streaming_mode": "auto"}, None, "vp9"
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_fallback_transcode_endpoint_records_blocklist_and_restarts(
+    client: AsyncClient, monkeypatch, test_db, tmp_path,
+):
+    """POST /fallback-transcode must:
+       (1) write the (client_id, source_codec) blocklist row,
+       (2) flip the per-session force-transcode flag,
+       (3) call ffmpeg_service.restart_stream with the supplied seek
+           (clamped) + tonemap_hdr=False.
+    """
+    from services.ffmpeg_service import _session_force_transcode
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+
+    # Stamp the source codec so the blocklist can attribute the row.
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'av1', duration_sec = 300.0"
+        " WHERE id = ?",
+        (file_id,),
+    )
+    # Plan 20 — /fallback-transcode is only honoured under streaming_mode='auto'.
+    await test_db.execute("UPDATE user_settings SET streaming_mode = 'auto'")
+    await test_db.commit()
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        start = await client.post(
+            f"/api/v1/stream/start/{file_id}", headers=headers
+        )
+    assert start.status_code == 201
+    session_id = start.json()["session_id"]
+
+    captured_restart_kwargs: list[dict] = []
+
+    async def _mock_restart(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        captured_restart_kwargs.append(kwargs)
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n#EXT-X-DISCONTINUITY-SEQUENCE:1\n")
+        return playlist
+
+    with patch(
+        "routers.stream.ffmpeg_service.restart_stream", side_effect=_mock_restart,
+    ):
+        res = await client.post(
+            f"/api/v1/stream/{session_id}/fallback-transcode",
+            headers=headers,
+            json={"current_position_sec": 4.2},
+        )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["session_id"] == session_id
+    assert body["forced_transcode"] is True
+    assert "playlist.m3u8" in body["playlist_url"]
+
+    # Blocklist row written + idempotent (one row only).
+    async with test_db.execute(
+        "SELECT client_id, source_codec, reason FROM client_codec_blocklist"
+    ) as cur:
+        rows = await cur.fetchall()
+    assert len(rows) == 1
+    assert rows[0]["client_id"] == "stream-test-client"
+    assert rows[0]["source_codec"] == "av1"
+    assert rows[0]["reason"] == "player_error_within_6s"
+
+    # Per-session flag set (will be cleared on stop_stream).
+    assert _session_force_transcode.get(session_id) is True
+
+    # restart_stream was called with the supplied position + tonemap off.
+    assert len(captured_restart_kwargs) == 1
+    assert captured_restart_kwargs[0]["seek_sec"] == pytest.approx(4.2)
+    assert captured_restart_kwargs[0]["tonemap_hdr"] is False
+
+    # Cleanup so subsequent tests in the same module don't see the flag.
+    _session_force_transcode.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_fallback_transcode_clamps_position_past_duration(
+    client: AsyncClient, monkeypatch, test_db, tmp_path,
+):
+    """A `current_position_sec` past duration-1 must be clamped before
+    being passed to restart_stream — otherwise FFmpeg's -ss lands at
+    EOF and the static playlist gets zero segments."""
+    from services.ffmpeg_service import _session_force_transcode
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'av1', duration_sec = 100.0"
+        " WHERE id = ?",
+        (file_id,),
+    )
+    await test_db.execute("UPDATE user_settings SET streaming_mode = 'auto'")
+    await test_db.commit()
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        start = await client.post(
+            f"/api/v1/stream/start/{file_id}", headers=headers
+        )
+    session_id = start.json()["session_id"]
+
+    captured: list[dict] = []
+
+    async def _mock_restart(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        captured.append(kwargs)
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch(
+        "routers.stream.ffmpeg_service.restart_stream", side_effect=_mock_restart,
+    ):
+        res = await client.post(
+            f"/api/v1/stream/{session_id}/fallback-transcode",
+            headers=headers,
+            # 999 > duration (100) → must clamp to duration - 1 = 99.
+            json={"current_position_sec": 999.0},
+        )
+    assert res.status_code == 200
+    assert captured[0]["seek_sec"] == pytest.approx(99.0)
+
+    _session_force_transcode.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_fallback_transcode_rejects_other_clients_session(
+    client: AsyncClient, monkeypatch, test_db, tmp_path,
+):
+    """A second client must not be able to fallback another client's session."""
+    monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
+
+    # Pair a second client.
+    await client.post(
+        "/api/v1/auth/request-pair",
+        json={
+            "client_id": "other-fallback-client",
+            "device_name": "Other",
+            "platform": "ios",
+            "app_version": "0.1.0",
+        },
+    )
+    await client.post("/api/v1/auth/approve/other-fallback-client")
+    other_status = await client.get(
+        "/api/v1/auth/status/other-fallback-client"
+    )
+    other_token = other_status.json()["auth_token"]
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'av1' WHERE id = ?", (file_id,)
+    )
+    await test_db.commit()
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        start = await client.post(
+            f"/api/v1/stream/start/{file_id}", headers=headers
+        )
+    session_id = start.json()["session_id"]
+
+    # Different client tries to call fallback for that session.
+    res = await client.post(
+        f"/api/v1/stream/{session_id}/fallback-transcode",
+        headers={"Authorization": f"Bearer {other_token}"},
+        json={"current_position_sec": 1.0},
+    )
+    assert res.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_fallback_transcode_404_for_unknown_session(
+    client: AsyncClient, monkeypatch,
+):
+    """Unknown / ended session → 404."""
+    token = await _get_token(client, monkeypatch)
+    res = await client.post(
+        "/api/v1/stream/nonexistent-session/fallback-transcode",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"current_position_sec": 0.0},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_fallback_transcode_returns_409_outside_auto_mode(
+    client: AsyncClient, monkeypatch, test_db, tmp_path,
+):
+    """The fallback endpoint must reject calls when streaming_mode is not
+    'auto' — strict 'client-decode' and legacy 'server-transcode' both
+    surface the player error to the user rather than silently switching
+    pipelines."""
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'av1' WHERE id = ?", (file_id,)
+    )
+    # Default is already 'client-decode' but be explicit so the test
+    # documents what state it exercises.
+    await test_db.execute(
+        "UPDATE user_settings SET streaming_mode = 'client-decode'"
+    )
+    await test_db.commit()
+
+    async def _mock_start(file_path: str, session_id: str, hls_root: Path, **_) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        start = await client.post(
+            f"/api/v1/stream/start/{file_id}", headers=headers
+        )
+    session_id = start.json()["session_id"]
+
+    res = await client.post(
+        f"/api/v1/stream/{session_id}/fallback-transcode",
+        headers=headers,
+        json={"current_position_sec": 1.0},
+    )
+    assert res.status_code == 409
+    assert "auto" in res.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_start_stream_consults_codec_blocklist(
+    client: AsyncClient, monkeypatch, test_db, tmp_path,
+):
+    """A pre-seeded blocklist row for (this client, this source codec)
+    must cause `start_stream` to set the per-session force-transcode
+    flag *before* spawning FFmpeg."""
+    from services.ffmpeg_service import _session_force_transcode
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'av1' WHERE id = ?", (file_id,)
+    )
+    # Pre-seed the blocklist for the test client + av1.
+    await test_db.execute(
+        "INSERT INTO client_codec_blocklist"
+        " (client_id, source_codec, reason, created_at)"
+        " VALUES ('stream-test-client', 'av1', 'player_error_within_6s', ?)",
+        (datetime.now(UTC).isoformat(),),
+    )
+    # Plan 20 — blocklist is only consulted under streaming_mode='auto'.
+    await test_db.execute("UPDATE user_settings SET streaming_mode = 'auto'")
+    await test_db.commit()
+
+    flag_at_spawn_time: list[bool] = []
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **kwargs
+    ) -> Path:
+        # Capture the flag's state at the moment start_stream is
+        # invoked — the router must have set it before this call.
+        flag_at_spawn_time.append(
+            _session_force_transcode.get(session_id, False)
+        )
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        res = await client.post(
+            f"/api/v1/stream/start/{file_id}", headers=headers
+        )
+    assert res.status_code == 201
+    session_id = res.json()["session_id"]
+
+    assert flag_at_spawn_time == [True]
+
+    # Cleanup so the module's other tests don't see the flag.
+    _session_force_transcode.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_start_stream_does_not_force_transcode_without_blocklist(
+    client: AsyncClient, monkeypatch, test_db, tmp_path,
+):
+    """Inverse of the previous test — no blocklist row → no force flag.
+    Guards against an accidental "every session is transcoded" regression."""
+    from services.ffmpeg_service import _session_force_transcode
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'av1' WHERE id = ?", (file_id,)
+    )
+    await test_db.commit()
+
+    captured_flag: list[bool] = []
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **_
+    ) -> Path:
+        captured_flag.append(
+            _session_force_transcode.get(session_id, False)
+        )
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start):
+        res = await client.post(
+            f"/api/v1/stream/start/{file_id}", headers=headers
+        )
+    assert res.status_code == 201
+    assert captured_flag == [False]

@@ -696,3 +696,214 @@ All 4 fixes uncommitted on top of `c175084`. Single consolidating commit coverin
 3. **`_seekRelative` mobile bug** (still carried forward — never fixed; double-tap-skip after a forward server-restart bugged).
 4. **History-tab folder-tree sort move into cubit** (Sharp Edge #2 of this round) — small, defer until an operator round.
 5. **`current_status.md` 25 k Read-cap** carried forward.
+
+---
+
+## [2026-05-12] [feat] [docs] — plan 20 — auto streaming mode + opt-in fallback
+
+**Phase:** Phase 2 — transparent client-error fallback for mixed device pools
+**Status:** Complete (code shipped; this entry covers the doc-update protocol sweep)
+**Commits:** uncommitted
+
+### What Was Done
+
+Doc-update-protocol sweep for plan 20 (`docs/10_planning/20_auto_streaming_mode.md`). Plan 20 adds a third opt-in `streaming_mode='auto'` value that lets the server transparently fall back from stream-copy to transcode if a mobile player emits an error within 6 s of `PlayerReady`. All documentation updated; no code or tests modified in this session.
+
+Key changes implemented:
+
+- **Plan 20 code (already shipped before this session):** `'auto'` mode + per-client codec blocklist + `POST /api/v1/stream/{session_id}/fallback-transcode` + `stream_decision` diagnostic log + mobile auto-fallback watcher + desktop 3-option `_StreamingModeCard` + migrations 032 + 033 + `services/client_codec_service.py`.
+- **`current_status.md`** — new 2026-05-12 lead paragraph with full plan-20 summary; test counts updated (server 775 → 792; mobile 78; desktop 113 unchanged).
+- **`docs/04_api/01_api_contracts.md`** — `streaming_mode` section widened to 3-value table; new `POST /fallback-transcode` endpoint documented in full (body, response, all 6 status codes, blocklist semantics); new `StreamStartResponse` section documenting `streaming_mode` field.
+- **`docs/09_backend/01_backend_architecture.md`** — status header updated; migrations 032 + 033 added to structure; `stream.py` router entry updated with fallback endpoint; `ffmpeg_service.py` entry updated with `_session_force_transcode` + `stream_decision` log; `client_codec_service.py` added to both file tree and Service Map; `stream_session.py` models updated; `test_client_codec_service.py` added to test list; total 775 → 792.
+- **`docs/08_frontend/01_frontend_architecture.md`** — status header updated with plan-20 mobile watcher + desktop 3-option card; `player_cubit_test.dart` entry updated; `encoder_settings_screen.dart` entry updated.
+- **`docs/03_data/02_database_schema.md`** — status header updated; `user_settings.streaming_mode` column updated to 3-value CHECK; `client_codec_blocklist` schema block added; migrations 032 + 033 rows added to Applied Migrations.
+- **`docs/03_data/04_migration_guide.md`** — Last Updated header; file layout extended to 033; test count 775 → 792.
+- **`docs/10_planning/01_roadmap.md`** — new plan-20 row (✅ Done 2026-05-12) added before the plan-19 row.
+- **`docs/12_guidelines/03_gotchas.md`** — new gotcha: "Operator reports 'server is still using CPU/GPU during client-decode mode'" with the `stream_decision` grep workflow + reason enum table.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|--------|------|-----|
+| Modified | docs/00_overview/current_status.md | New 2026-05-12 lead paragraph; test counts 775/78/113 |
+| Modified | docs/04_api/01_api_contracts.md | `streaming_mode` 3-value table; `POST /fallback-transcode` full schema; `StreamStartResponse.streaming_mode` field |
+| Modified | docs/09_backend/01_backend_architecture.md | Migrations 032+033; client_codec_service; ffmpeg_service plan-20 notes; stream.py fallback endpoint; stream_session.py models; test_client_codec_service.py; total 775→792 |
+| Modified | docs/08_frontend/01_frontend_architecture.md | Plan-20 mobile watcher + desktop 3-option card; encoder_settings_screen + player_cubit_test updates |
+| Modified | docs/03_data/02_database_schema.md | streaming_mode 3-value CHECK; client_codec_blocklist table block; migrations 032+033 in Applied Migrations |
+| Modified | docs/03_data/04_migration_guide.md | File layout to 033; Last Updated header; test count 775→792 |
+| Modified | docs/10_planning/01_roadmap.md | Plan-20 row ✅ Done 2026-05-12 |
+| Modified | docs/12_guidelines/03_gotchas.md | New auto-mode / stream_decision gotcha |
+| Modified | AGENT_LOG.md | This entry |
+| (shipped pre-session) | apps/server/database/migrations/032_streaming_mode_auto.sql | Widen streaming_mode CHECK to add 'auto' |
+| (shipped pre-session) | apps/server/database/migrations/033_client_codec_blocklist.sql | New client_codec_blocklist table |
+| (shipped pre-session) | apps/server/models/settings.py | streaming_mode Literal widened to 3 values |
+| (shipped pre-session) | apps/server/models/stream_session.py | StreamStartResponse.streaming_mode field; FallbackTranscodeRequest/Response |
+| (shipped pre-session) | apps/server/services/settings_service.py | _defaults() + kwarg mapping for streaming_mode='auto' |
+| (shipped pre-session) | apps/server/services/ffmpeg_service.py | _session_force_transcode dict; set_session_force_transcode helper; stream_decision log line; _resolve_codec_passthrough session_force_transcode arg |
+| (shipped pre-session) | apps/server/services/client_codec_service.py | New — is_blocked + add_block (idempotent) |
+| (shipped pre-session) | apps/server/routers/stream.py | POST /fallback-transcode endpoint; StreamStartResponse.streaming_mode; client_codec_service.is_blocked consult under auto mode |
+| (shipped pre-session) | apps/server/tests/test_settings.py | Extend default-value asserts to 'auto'; extend Literal accept-list |
+| (shipped pre-session) | apps/server/tests/test_stream.py | test_fallback_transcode_endpoint_*; test_start_stream_consults_codec_blocklist; test_codec_passthrough_session_force_transcode_overrides_all |
+| (shipped pre-session) | apps/server/tests/test_client_codec_service.py | New — is_blocked / add_block round-trip |
+| (shipped pre-session) | apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart | 3-option _StreamingModeCard |
+| (shipped pre-session) | apps/desktop/lib/features/settings/presentation/cubit/settings_cubit.dart | streamingMode load + save wiring |
+| (shipped pre-session) | apps/desktop/lib/features/settings/presentation/cubit/settings_state.dart | streamingMode field; default stays 'client-decode' |
+| (shipped pre-session) | apps/mobile/lib/features/player/domain/repositories/player_repository.dart | reportFallbackTranscode method |
+| (shipped pre-session) | apps/mobile/lib/features/player/data/repositories/player_repository_impl.dart | POST /fallback-transcode API call |
+| (shipped pre-session) | apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart | 6 s auto-fallback watcher (only when streamingMode='auto'); cancel on first successful frame |
+
+### Docs Updated
+
+- `docs/00_overview/current_status.md`
+- `docs/04_api/01_api_contracts.md`
+- `docs/09_backend/01_backend_architecture.md`
+- `docs/08_frontend/01_frontend_architecture.md`
+- `docs/03_data/02_database_schema.md`
+- `docs/03_data/04_migration_guide.md`
+- `docs/10_planning/01_roadmap.md`
+- `docs/12_guidelines/03_gotchas.md`
+
+### Test Counts (re-baselined)
+
+- **Server: 792 passing** (+17 from test_stream.py plan-20 cases + test_client_codec_service.py)
+- **Mobile: 78 passing** (unchanged)
+- **Desktop: 113 passing** (unchanged)
+- **Core: 8 passing** (untouched)
+
+### Next Agent Should
+
+1. **Real-device verification of `auto` mode** — point a real device at an AV1 source with `streaming_mode='auto'`, confirm the player loads, then force a player error (simulate by using a codec the device can't hardware-decode); verify server log shows `stream_decision … path=transcode reason=forced-fallback` on the second start, and that a row now exists in `client_codec_blocklist`; verify that subsequent plays of the same codec on that device start directly in transcode (no second 6 s window).
+2. **Verify blocklist persists across server restarts** — the `client_codec_blocklist` table is DB-persisted (not in-memory), so it should survive a server process restart. Confirm the behaviour holds: start a session under auto, trigger a fallback, restart the server, play the same file on the same device — server should start in transcode from the first attempt.
+3. **Consider extending the fallback watcher to buffer stalls** — the current watcher only fires on hard player errors (`player.stream.error`). Prolonged buffer stalls (e.g. `VideoState.buffering` for > 15 s) are a softer signal that the device is struggling; extending the watcher to cover stalls would catch more client-decode failures in the wild. This is a plan-21 candidate.
+4. **Consider desktop player auto-fallback** — the desktop has a player feature at `apps/desktop/lib/features/player/`; the plan-20 doc notes "mirror mobile" but the desktop player may not be fully wired yet. If desktop can also play media, it should also benefit from the auto-fallback watcher.
+
+---
+
+## [2026-05-12] [docs] — Archive plan 20 (auto streaming mode)
+
+**Phase:** Phase 2 — close-out
+**Status:** Complete
+**Commits:** uncommitted
+
+### What Was Done
+
+Plan 20 was marked ✅ shipped 2026-05-12 in its doc and a doc-update-protocol sweep had already landed earlier the same day. Moved the plan doc into the archive folder and updated the two external references that pointed at the live path.
+
+No code, tests, or data touched. No new design work — this is the close-out file move only.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Renamed | docs/10_planning/20_auto_streaming_mode.md → docs/10_planning/archive/20_auto_streaming_mode.md | Plan complete; move to archive folder per project convention (matches plan 15 / plan 19 archival pattern) |
+| Modified | docs/10_planning/01_roadmap.md | Plan-20 row link updated to `./archive/20_auto_streaming_mode.md`; "archived 2026-05-12" appended |
+| Modified | CLAUDE.md | New "Where the detail lives" row added for archived plan 20, placed after the plan-19 archive row |
+| Modified | AGENT_LOG.md | This entry |
+
+### Docs Updated
+
+- `docs/10_planning/01_roadmap.md`
+- `CLAUDE.md`
+
+### Working-Tree Status
+
+Plan 20's implementation files (migrations 032 + 033, server/mobile/desktop changes from the doc) are **still uncommitted** in the working tree — the original "shipped" plan-20 commit was never made. The archival edits in this entry stack on top of that uncommitted state. When the operator commits, both rounds will land together (or in two commits at their discretion).
+
+### Next Agent Should
+
+1. **Wait for operator's commit decision on plan-20 + archive bundle** — operator owns all git writes per CLAUDE.md Hard Prohibition #1. The current working tree has plan-20 code (server migrations, models, services, router, mobile/desktop player + settings) + this archival doc shuffle, none of it committed.
+2. **Plan 21 (client-side audio decoding) is in the design-question phase** — four design questions surfaced in chat were left unanswered: audio codec allowlist scope (DTS/TrueHD policy), HLS fmp4 switch for non-AAC + H.264 sessions, blocklist granularity (separate audio table vs combined), and fallback scope (audio-only re-encode vs full transcode). Once answered, draft `docs/10_planning/21_client_audio_decoding.md` mirroring plan-20's structure and run the standard milestone cadence (M1 migration → M5 docs sweep). The Next-Agent guidance in the previous log entry called this "a plan-21 candidate" specifically for the buffer-stall extension; the audio-decoding plan would consume the 21 number.
+
+---
+
+## [2026-05-12] [feat] [docs] [server] [mobile] [desktop] — plan 20 course corrections · plan 21 drafted
+
+**Phase:** Phase 2 — close-out
+**Status:** Complete
+**Commits:** uncommitted (bundled with plan-20 implementation + archival from earlier 2026-05-12 entries)
+
+### What Was Done
+
+Operator reviewed shipped plan-20 behavior and requested three course corrections, then a parallel agent drafted plan 21 on top of the corrected baseline.
+
+#### 1. Plan-20 course corrections
+
+The earlier same-day plan-20 shipping made `auto` the new default streaming mode and unconditionally armed the mobile auto-fallback watcher on every session. Operator pushed back: (a) `auto` should be opt-in, not default; (b) fallback should only fire under `auto` — strict `client-decode` must surface errors to the user; (c) the `Recommended` badge on the encoder-settings card should sit on `client-decode`, not `auto`.
+
+Applied corrections:
+
+- **Server default** flipped back to `client-decode` in `models/settings.py` `UserSettingsResponse` Literal default + `services/settings_service.py::_defaults()`.
+- **Migration 032 simplified** — dropped the CASE preserve/bump rule; the rewrite now just widens the CHECK + carries existing values forward. Default in the DDL is now `client-decode` to match the model default.
+- **Fallback endpoint gated on auto** — `POST /api/v1/stream/{session_id}/fallback-transcode` now returns 409 when `streaming_mode != 'auto'` (after the existing 404 + 403 checks). The detail message names the current mode so the operator can act on it without log-spelunking.
+- **Blocklist consult gated on auto** — `routers/stream.py::start_stream` reads `settings_row` once; the `client_codec_blocklist` lookup runs only when `effective_mode == 'auto'`. Strict modes ignore the blocklist entirely.
+- **`StreamStartResponse.streaming_mode` added** — server includes the effective mode in the response so the mobile cubit can decide whether to arm the watcher without a separate settings round-trip. Field added to both `models/stream_session.py` and the mobile entity at `apps/mobile/lib/features/player/domain/entities/stream_start_response.dart` (defaults to `client-decode` for graceful pre-plan-20 server responses).
+- **Mobile watcher gated** — `PlayerCubit.startStream` now only calls `_scheduleAutoFallbackWatcher` when `response.streamingMode == 'auto'`. Strict modes let any `player.stream.error` bubble up unchanged, so the user sees the actual decode error instead of a misleading 409 from the server.
+- **Desktop UI re-ordered + re-badged** — `_StreamingModeCard` order is now: Client decodes (subtitle `Recommended`, first), Auto (subtitle `Mixed device pools`, second), Server transcodes (subtitle `Legacy / every device`, third). `_streamingMode` initial-state fallback flipped from `auto` to `client-decode`. Same fallback in `settings_cubit.dart` and the `SettingsLoaded` constructor default in `settings_state.dart`.
+- **`ffmpeg_service.py` resolver fallback** — both `_resolve_codec_passthrough` and the `stream_decision` log's `global_mode` branch fell back to `auto` when the setting was empty; both now fall back to `client-decode` to match the new default.
+- **Server tests updated** — `test_get_settings_returns_defaults` asserts `streaming_mode == "client-decode"`; the four fallback-endpoint tests + the `start_stream_consults_codec_blocklist` test now seed `UPDATE user_settings SET streaming_mode = 'auto'` because the endpoint + blocklist are now gated on the mode. New test `test_fallback_transcode_returns_409_outside_auto_mode` covers the strict-mode rejection path.
+- **Plan-20 doc rewritten** — the archived `docs/10_planning/archive/20_auto_streaming_mode.md` no longer claims `auto` is the new default. Behavior matrix swapped to show `client-decode` as the Recommended default and `auto` as opt-in. Migration block simplified to match the new SQL. Mobile + desktop sections note the watcher-only-fires-under-auto + the `streaming_mode` response field. Migration numbering also corrected (032/033 — 031 was already taken on main).
+
+#### 2. Plan 21 drafted (separate agent)
+
+While this session ran, a parallel agent answered the four design questions for client-side audio decoding and produced `docs/10_planning/21_client_audio_decoding.md`. Status `Drafted 2026-05-12 — awaiting M1 sign-off`. Locked decisions: allowlist `{aac, ac3, eac3, opus, flac}` (DTS/TrueHD excluded), fmp4 switch when audio codec is non-AAC, separate `client_audio_codec_blocklist` table (not combined with video), audio-only re-encode on fallback (video stays stream-copy), bitrate bump 128k → 256k AAC, source-channel preservation via `-ac` on remaining re-encode paths. ~12h across M1-M5. CLAUDE.md "Where the detail lives" table gained a row pointing at the new plan.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Modified | apps/server/database/migrations/032_streaming_mode_auto.sql | Simplified — dropped the CASE preserve/bump rule; widen CHECK + carry forward existing values; default `client-decode` |
+| Modified | apps/server/models/settings.py | `streaming_mode` Literal default flipped `auto` → `client-decode` |
+| Modified | apps/server/models/stream_session.py | `StreamStartResponse.streaming_mode` field added |
+| Modified | apps/server/services/settings_service.py | `_defaults()["streaming_mode"]` flipped to `client-decode` |
+| Modified | apps/server/services/ffmpeg_service.py | Resolver + `stream_decision` log fall back to `client-decode` when setting empty |
+| Modified | apps/server/routers/stream.py | `/fallback-transcode` 409s outside auto mode; blocklist consult in `/start` gated on auto mode; `/start` response carries `streaming_mode` |
+| Modified | apps/server/tests/test_settings.py | Defaults assert `client-decode`; Literal accept-list tests unchanged |
+| Modified | apps/server/tests/test_stream.py | Auto-mode setup added to 4 fallback tests + blocklist-consult test; new `test_fallback_transcode_returns_409_outside_auto_mode` |
+| Modified | apps/desktop/lib/features/transcoding/presentation/screens/encoder_settings_screen.dart | 3 options re-ordered (client-decode first as Recommended, auto second, server-transcode third); initial-state fallback `client-decode` |
+| Modified | apps/desktop/lib/features/settings/presentation/cubit/settings_cubit.dart | Local fallback default flipped to `client-decode` |
+| Modified | apps/desktop/lib/features/settings/presentation/cubit/settings_state.dart | `SettingsLoaded.streamingMode` default `client-decode` |
+| Modified | apps/mobile/lib/features/player/domain/entities/stream_start_response.dart | New `streamingMode` field |
+| Modified | apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart | Watcher armed only when `response.streamingMode == 'auto'` |
+| Modified | docs/10_planning/archive/20_auto_streaming_mode.md | Doc rewritten — `client-decode` is the Recommended default; auto is opt-in; behavior matrix + migration block updated |
+| Created | docs/10_planning/21_client_audio_decoding.md | Drafted by parallel agent — audio stream-copy plan |
+| Modified | docs/10_planning/01_roadmap.md | Plan-21 row added under plan-20 |
+| Modified | CLAUDE.md | "Where the detail lives" row added for plan 21 (drafted) |
+| Modified | AGENT_LOG.md | This entry |
+
+### Docs Updated
+
+- `docs/10_planning/archive/20_auto_streaming_mode.md` — rewritten per course corrections (no longer claims `auto` is default)
+- `docs/10_planning/21_client_audio_decoding.md` — new drafted plan (separate agent)
+- `docs/10_planning/01_roadmap.md` — plan-21 row added
+- `CLAUDE.md` — plan-21 row in "Where the detail lives"
+
+### Decisions Made
+
+1. **Recommended = `client-decode`, not `auto`** — the operator picked strict modern-device-only mode as the default because the v1 device target is post-2021 mobile + the operator's own dev hardware; auto's transparent-fallback win is real but the cost (one bad session per device/codec combo before the blocklist learns) only matters with mixed device pools. Auto stays one click away in the Settings card for any operator who wants it.
+2. **`StreamStartResponse.streaming_mode`** is the right plumb, not a separate `/api/v1/server/effective-mode` endpoint or a settings-cubit dependency in the mobile player cubit. The mobile cubit already reads the start response; adding a field has zero round-trip cost and keeps the player feature free of a settings cubit dependency.
+3. **Blocklist scoped to auto mode** — strict `client-decode` ignores the blocklist (operator's pick wins). Without this, an operator switching from auto back to strict would still see preemptive transcoding for previously-flagged devices, which defeats the strict-mode contract.
+4. **Migration 032 stays minimal** — earlier draft had a CASE statement preserving `server-transcode` rows and bumping everything else to `auto`. With the default flipping back to `client-decode`, that complexity is gone — we just widen the CHECK + carry forward existing values verbatim.
+
+### Issues / Sharp Edges Discovered
+
+1. **Non-auto error UX is whatever media_kit surfaces today** — in strict `client-decode` mode, a player error bubbles up via the existing `player.stream.error` path with no custom copy. There's no "Could not decode — try Auto in settings" affordance. If real-device testing shows users hit decode failures in strict mode and don't know what to do, add a non-auto error listener that emits `PlayerFailure` with actionable copy. Out of scope for this round; flagged for follow-up.
+2. **Desktop has no player feature** — fallback wiring only exists on mobile. The desktop control panel doesn't play media; no parallel cubit to update. If desktop ever grows playback, mirror the mobile pattern (the repository method already exists).
+3. **Pre-existing broken golden** — `apps/desktop/test/goldens/m3_dashboard_golden_test.dart` fails with a 62.74% pixel diff on `main`, unrelated to plan 20. Confirmed by stashing all session changes and re-running. Run `--exclude-tags=golden` until someone regenerates it.
+
+### Test Counts (re-baselined)
+
+- Server: **792 passing** (775 before plan 20 + 17 new across `test_stream.py`, `test_settings.py`, `test_client_codec_service.py`)
+- Mobile: **78 passing** (unchanged — the player-cubit gating reuses existing tests; no new fallback-watcher gating test added, deferred to plan 21's M4 mobile sweep where the audio watcher needs the same gate)
+- Desktop: **113 passing** (excluding pre-existing-broken golden)
+- `ruff check .` clean; `flutter analyze apps/desktop/lib apps/mobile/lib` clean
+
+### Working-Tree Status
+
+All plan-20 implementation + course corrections + plan-21 draft are uncommitted in one working-tree state. Operator will commit this round as a single chunk (per their instruction). No code stash, no parallel branch.
+
+### Next Agent Should
+
+1. **Real-device verification of auto-mode fallback** — pair a device with a known-broken codec/device combo (10-bit AV1 on an RTX 20-series host targeting a pre-2021 Android), set `streaming_mode='auto'`, start a stream, confirm the 6 s watcher fires the fallback POST + the playlist reloads + the second session for the same (client, codec) starts in transcode directly. The persistent blocklist is the load-bearing piece — verify it survives a server restart.
+2. **Decide on plan 21 M1 sign-off** — operator owns the green light. The doc at `docs/10_planning/21_client_audio_decoding.md` has the locked decisions + milestone breakdown. If approved, run M1 (migration 034 + `client_audio_codec_service.py` + tests) as a single subagent task; M2+ can follow the plan-20 two-parallel-subagents pattern partitioned along server/mobile.
+3. **Consider a non-auto error UX affordance** — if operators in strict `client-decode` mode hit decode failures and don't know about the Auto toggle, the player should surface "Try Auto mode in Settings → Encoder Settings" alongside the raw error. Could ship as part of plan 21 M4 (mobile error sweep) since plan 21 adds audio-error UX surface anyway.
+4. **Audit comment quality on the audio-passthrough resolver before M2 ships** — plan 21 §M2 introduces `_resolve_audio_passthrough` mirroring plan 20's `_resolve_codec_passthrough`. Make sure the two stay structurally aligned so a future operator can reason about both from one mental model; if the audio one accumulates special cases, factor out the shared shape.

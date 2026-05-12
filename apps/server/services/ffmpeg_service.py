@@ -57,6 +57,39 @@ _finalize_watchers: dict[str, asyncio.Task[None]] = {}
 # time.  Cleared on stop_stream alongside the other per-session dicts.
 _applied_seek_sec: dict[str, float] = {}
 
+# Plan 20 — per-session "force transcode regardless of stream-copy
+# eligibility" flag.  Set to True by the ``/fallback-transcode``
+# endpoint after a client reports a decode error in the first 6 s.
+# Read at the top of ``start_stream`` so the next spawn (the restart
+# kicked off by the same endpoint) bypasses every direct-remux gate.
+# Also flipped by ``stream.start_stream`` when the per-client blocklist
+# already contains (client_id, source_codec).  Cleared on
+# ``stop_stream`` so a long-running server doesn't accumulate entries.
+_session_force_transcode: dict[str, bool] = {}
+
+
+def set_session_force_transcode(session_id: str, value: bool = True) -> None:
+    """Mark / unmark ``session_id`` for forced server-side transcoding.
+
+    Public helper for the stream router — the fallback endpoint flips
+    the bit before kicking ``restart_stream``, and the /start endpoint
+    flips it pre-spawn when the blocklist already matches the
+    (client, source codec) pair.
+    """
+    if value:
+        _session_force_transcode[session_id] = True
+    else:
+        _session_force_transcode.pop(session_id, None)
+
+
+def clear_session_force_transcode(session_id: str) -> None:
+    """Drop the session's force-transcode bit, if any.
+
+    Called from ``stop_stream`` so the entry doesn't linger after the
+    session ends.  No-op when no entry exists.
+    """
+    _session_force_transcode.pop(session_id, None)
+
 
 def _get_seek_lock(session_id: str) -> asyncio.Lock:
     """Return the per-session restart lock, creating it on first access."""
@@ -1063,16 +1096,27 @@ def _resolve_codec_passthrough(
     settings_row: dict | None,
     library_row: dict | None,
     codec: str,
+    *,
+    session_force_transcode: bool = False,
 ) -> bool:
-    """Plan 19 §M8 — resolve whether to stream-copy `codec` for this session.
+    """Plan 19 §M8 + plan 20 — resolve whether to stream-copy `codec`.
 
-    Per-library override beats the global `streaming_mode` setting.
-    Tri-state: NULL inherits, 0 forces transcoding, 1 forces stream-
-    copy.  The global toggle's two values are mapped to bool here:
-    `client-decode` ⇒ True (stream-copy modern codecs straight to
-    capable clients), `server-transcode` ⇒ False (run AV1/VP9
-    through the H.264 transcode pipeline).
+    Decision precedence (highest → lowest):
+
+    1. ``session_force_transcode`` — set by the plan-20 fallback path
+       after the client reported a decode error.  Forces False
+       regardless of every other input.
+    2. Per-library tri-state override (``<codec>_stream_copy_override``):
+       NULL inherits, 0 forces transcoding, 1 forces stream-copy.
+    3. Global ``streaming_mode``:
+       * ``client-decode`` ⇒ True (stream-copy AV1/VP9 to capable clients)
+       * ``auto`` ⇒ True (start optimistically; the fallback endpoint
+         flips ``session_force_transcode`` later when the client
+         can't decode)
+       * ``server-transcode`` ⇒ False (legacy plan-18 path).
     """
+    if session_force_transcode:
+        return False
     settings_row = settings_row or {}
     if library_row is not None:
         override_col = f"{codec}_stream_copy_override"
@@ -1080,7 +1124,7 @@ def _resolve_codec_passthrough(
         if override is not None:
             return bool(override)
     mode = settings_row.get("streaming_mode") or "client-decode"
-    return mode == "client-decode"
+    return mode in ("auto", "client-decode")
 
 
 async def start_stream(
@@ -1127,6 +1171,14 @@ async def start_stream(
 
     db = await get_db()
     settings_row = await settings_service.get_settings(db)
+
+    # Plan 20 — pulled near the top so every direct-remux gate below
+    # can short-circuit when the fallback path has armed the flag.
+    # `stream.start_stream` (router) sets this before calling us when
+    # the per-(client, codec) blocklist already matches; the
+    # /fallback-transcode endpoint sets it before calling
+    # `restart_stream`, which threads through here.
+    force_transcode: bool = _session_force_transcode.get(session_id, False)
 
     default_encoder: str = (
         settings_row.get("transcoding_encoder", "libx264") or "libx264"
@@ -1192,22 +1244,93 @@ async def start_stream(
     # (b) the caller asked for it.  Anything else is a no-op.
     apply_hdr_tonemap = bool(tonemap_hdr and hdr_format)
 
-    direct_remux_h264 = source_codec == "h264"
-    direct_remux_hevc = source_codec in ("hevc", "h265")
+    direct_remux_h264 = source_codec == "h264" and not force_transcode
+    direct_remux_hevc = source_codec in ("hevc", "h265") and not force_transcode
     # Plan 19 §M7 — global `streaming_mode` controls AV1/VP9 stream-
     # copy.  M8 layers a per-library tri-state override on top so an
     # operator can pin behaviour for one library without changing
-    # the global default.  The resolver collapses both to a single
-    # bool per codec.
+    # the global default.  Plan 20 adds a third precedence layer:
+    # `_session_force_transcode` (set by the fallback endpoint /
+    # blocklist hit) overrides everything else.  The resolver
+    # collapses all four signals to a single bool per codec.
     direct_remux_av1 = source_codec == "av1" and _resolve_codec_passthrough(
-        settings_row, library_row, "av1"
+        settings_row, library_row, "av1",
+        session_force_transcode=force_transcode,
     )
     direct_remux_vp9 = source_codec == "vp9" and _resolve_codec_passthrough(
-        settings_row, library_row, "vp9"
+        settings_row, library_row, "vp9",
+        session_force_transcode=force_transcode,
     )
     direct_remux = (
         direct_remux_h264 or direct_remux_hevc
         or direct_remux_av1 or direct_remux_vp9
+    )
+
+    # Diagnostic — one INFO line per session-start so the operator can
+    # grep their logs to explain why a session went transcode vs
+    # stream-copy.  Reason precedence mirrors the resolver layers
+    # above: forced fallback > HDR tonemap > unsupported source codec
+    # > per-library override > global setting.  The `path` field is
+    # whatever direct_remux resolves to at this point (before tonemap
+    # may flip it further down — that case logs its own line so the
+    # operator sees both pieces of evidence).
+    global_mode = settings_row.get("streaming_mode") or "client-decode"
+    if force_transcode:
+        # Both code paths that set the flag (per-client blocklist hit
+        # at /start, /fallback-transcode endpoint mid-session) end up
+        # here.  The router distinguishes them via the originating
+        # endpoint; this log is just the post-resolution reason.
+        decision_reason = "forced-fallback"
+        decision_path = "transcode"
+    elif apply_hdr_tonemap and (
+        source_codec in ("h264", "hevc", "h265", "av1", "vp9")
+    ):
+        decision_reason = "hdr-tonemap"
+        decision_path = "transcode"
+    elif direct_remux:
+        # Stream-copy was chosen.  Distinguish which signal won.
+        if library_row is not None and source_codec in ("av1", "vp9"):
+            override = library_row.get(f"{source_codec}_stream_copy_override")
+            if override is not None:
+                decision_reason = "library-override"
+            elif global_mode == "client-decode":
+                decision_reason = "global-client-decode"
+            else:
+                # auto / fallthrough — auto starts optimistically in
+                # stream-copy until the client reports otherwise.
+                decision_reason = "global-auto"
+        elif source_codec in ("h264", "hevc", "h265"):
+            decision_reason = "always-passthrough"
+        elif global_mode == "client-decode":
+            decision_reason = "global-client-decode"
+        else:
+            decision_reason = "global-auto"
+        decision_path = "stream-copy"
+    else:
+        # Transcode chosen but no fallback / tonemap — must be either
+        # the global server-transcode mode, a library override that
+        # closed the gate, or an unsupported source codec.
+        if library_row is not None and source_codec in ("av1", "vp9"):
+            override = library_row.get(f"{source_codec}_stream_copy_override")
+            if override == 0:
+                decision_reason = "library-override"
+            elif global_mode == "server-transcode":
+                decision_reason = "global-server-transcode"
+            else:
+                decision_reason = "unsupported-source-codec"
+        elif global_mode == "server-transcode" and source_codec in ("av1", "vp9"):
+            decision_reason = "global-server-transcode"
+        else:
+            decision_reason = "unsupported-source-codec"
+        decision_path = "transcode"
+    logger.info(
+        "stream_decision session=%s source_codec=%s mode=%s "
+        "path=%s reason=%s",
+        session_id,
+        source_codec or "<unknown>",
+        global_mode,
+        decision_path,
+        decision_reason,
     )
 
     # Tonemap requires decoded pixels, so it forces transcode mode even
@@ -1655,6 +1778,8 @@ async def stop_stream(session_id: str) -> None:
     _seek_locks.pop(session_id, None)
     _discontinuity_seq.pop(session_id, None)
     _applied_seek_sec.pop(session_id, None)
+    # Plan 20 — drop the fallback-transcode marker too.
+    clear_session_force_transcode(session_id)
 
 
 async def restart_stream(

@@ -54,4 +54,15 @@ class PlayerRepositoryImpl implements PlayerRepository {
     );
     return (body['applied_seek_sec'] as num?)?.toDouble() ?? seekSec;
   }
+
+  @override
+  Future<void> reportFallbackTranscode({
+    required String sessionId,
+    required double currentPositionSec,
+  }) {
+    return _apiClient.post<void>(
+      '/api/v1/stream/$sessionId/fallback-transcode',
+      data: {'current_position_sec': currentPositionSec},
+    );
+  }
 }

@@ -38,6 +38,45 @@ async def test_get_settings_returns_defaults(client: AsyncClient) -> None:
     assert body["max_concurrent_streams"] == 1
     assert body["transcoding_enabled"] is True
     assert body["license_key"] is None
+    # `client-decode` is the Recommended default (plan 19 §M7 / plan 20).
+    assert body["streaming_mode"] == "client-decode"
+
+
+@pytest.mark.asyncio
+async def test_patch_settings_accepts_auto_streaming_mode(
+    client: AsyncClient,
+) -> None:
+    """Plan 20 — the `auto` Literal value must round-trip on PATCH."""
+    res = await client.patch(
+        "/api/v1/settings", json={"streaming_mode": "auto"}
+    )
+    assert res.status_code == 200
+    assert res.json()["streaming_mode"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_patch_settings_accepts_client_decode_streaming_mode(
+    client: AsyncClient,
+) -> None:
+    """The pre-existing `client-decode` value still validates after the
+    Literal widened — guards against an accidental drop on the
+    accept-list."""
+    res = await client.patch(
+        "/api/v1/settings", json={"streaming_mode": "client-decode"}
+    )
+    assert res.status_code == 200
+    assert res.json()["streaming_mode"] == "client-decode"
+
+
+@pytest.mark.asyncio
+async def test_patch_settings_rejects_unknown_streaming_mode(
+    client: AsyncClient,
+) -> None:
+    """Anything outside the Literal accept-list must 422."""
+    res = await client.patch(
+        "/api/v1/settings", json={"streaming_mode": "nonsense"}
+    )
+    assert res.status_code == 422
 
 
 @pytest.mark.asyncio

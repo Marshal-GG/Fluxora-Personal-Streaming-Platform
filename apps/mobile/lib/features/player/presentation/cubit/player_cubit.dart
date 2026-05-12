@@ -4,7 +4,8 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
-import 'package:media_kit/media_kit.dart' show Media, Player, PlayerConfiguration;
+import 'package:media_kit/media_kit.dart'
+    show Media, Player, PlayerConfiguration, VideoParams;
 import 'package:media_kit_video/media_kit_video.dart' show VideoController;
 import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
@@ -46,6 +47,14 @@ const _kWebRtcTimeoutSec = 8;
 /// conservative — bumping after field reports is cheap, but a too-large
 /// threshold leaves the user staring at a 404 retry storm.
 const _kSeekRestartThresholdSec = 5;
+
+/// How long (in seconds) the auto-fallback watcher listens for libmpv
+/// `error` events after `PlayerReady` is emitted.  Six seconds covers
+/// the worst-case "device-cannot-decode" window — libmpv typically
+/// emits the error within ~1 s of the first segment download
+/// completing, but slower handsets / WAN paths can lag.  Picked to
+/// match plan 20's "first 6 s" wording.
+const _kFallbackWatcherSec = 6;
 
 /// Debounce window for seek-bar drag events.  Multiple `seekTo` calls
 /// within this window collapse into one server restart at the final
@@ -116,6 +125,19 @@ class PlayerCubit extends Cubit<PlayerState> {
   Timer? _seekDebounceTimer;
   Duration? _pendingSeekTarget;
 
+  // Plan 20 — auto-mode client-error fallback watcher.  When the global
+  // `streaming_mode` is `auto`, the server starts the session in stream-
+  // copy mode.  If the device can't decode the source codec, libmpv
+  // emits an error within the first few seconds; we POST to
+  // `/fallback-transcode` so the server re-spawns FFmpeg in transcode
+  // mode, then re-open the playlist.  Watcher cancels on first non-empty
+  // `videoParams` (proof of a successful decode) OR on the 6 s timer.
+  // `_fallbackTriggered` is a one-shot latch so a noisy error stream
+  // doesn't fire the POST twice.
+  StreamSubscription<String>? _fallbackWatcherSub;
+  Timer? _fallbackWatcherTimer;
+  bool _fallbackTriggered = false;
+
   // ---------------------------------------------------------------------------
   // Public
   // ---------------------------------------------------------------------------
@@ -152,6 +174,10 @@ class PlayerCubit extends Cubit<PlayerState> {
     // must clean up the previous session before opening the next one.
     // First-call (no prior session) is cheap — every dispose is null-guarded.
     await _disposeCurrentSession();
+
+    // Plan 20 — reset the one-shot auto-fallback latch.  Each new stream
+    // gets its own 6 s probe window.
+    _fallbackTriggered = false;
 
     // Remember the call args so `setTonemap` can restart with the same
     // file + resume position when the user toggles the HDR option mid-
@@ -259,6 +285,20 @@ class PlayerCubit extends Cubit<PlayerState> {
         hdrFormat: response.hdrFormat,
         tonemapped: response.tonemapped,
       ));
+
+      // Plan 20 — auto-fallback watcher only fires when the operator has
+      // opted into `streaming_mode='auto'`.  Strict `'client-decode'` is
+      // documented as "modern devices only" and `'server-transcode'` is
+      // already transcoding, so the watcher would be a no-op in both
+      // cases; arming it would race a successful playback against a
+      // misleading fallback POST that the server rejects with 409.
+      if (response.streamingMode == 'auto') {
+        _scheduleAutoFallbackWatcher(
+          sessionId: response.sessionId,
+          streamPath: response.playlistUrl,
+          headers: headers,
+        );
+      }
 
       // Streaming pipeline plan §16 M4 — diagnostics only.  libmpv
       // populates `audioParams` after the first audio frame decodes
@@ -544,6 +584,109 @@ class PlayerCubit extends Cubit<PlayerState> {
   }
 
   // ---------------------------------------------------------------------------
+  // Auto-fallback watcher (plan 20)
+  // ---------------------------------------------------------------------------
+
+  /// Subscribe to [Player.stream.error] for [_kFallbackWatcherSec] and POST
+  /// `/fallback-transcode` on the first error event so the server flips
+  /// the same session into transcode mode.  Cancel the watcher early as
+  /// soon as the first video frame decodes (proof the client can play
+  /// the stream-copied source).  All cleanup is funnelled through
+  /// [_cancelAutoFallbackWatcher] so [_disposeCurrentSession] doesn't
+  /// have to duplicate the logic.
+  void _scheduleAutoFallbackWatcher({
+    required String sessionId,
+    required String streamPath,
+    required Map<String, String> headers,
+  }) {
+    // Cancel any previously-active watcher — defensive, _disposeCurrent
+    // Session already covers the singleton-replay case but this keeps
+    // the contract obvious at the call site.
+    _cancelAutoFallbackWatcher();
+
+    final player = _player;
+    if (player == null) return;
+
+    _fallbackWatcherSub = player.stream.error.listen((message) {
+      if (_fallbackTriggered) return;
+      _fallbackTriggered = true;
+      // Fire-and-forget — `_handleAutoFallback` owns its own try/catch.
+      unawaited(
+        _handleAutoFallback(
+          sessionId: sessionId,
+          streamPath: streamPath,
+          headers: headers,
+          errorMessage: message,
+        ),
+      );
+    });
+
+    _fallbackWatcherTimer = Timer(
+      const Duration(seconds: _kFallbackWatcherSec),
+      _cancelAutoFallbackWatcher,
+    );
+
+    // Cancel early on first decoded frame.  `videoParams` emits as soon
+    // as libmpv negotiates a stream; we treat `w > 0` as proof of a
+    // working decode path.  `firstWhere` resolves at most once; if the
+    // stream closes first (player disposed) the future rejects and
+    // _cancelAutoFallbackWatcher runs anyway via the timer/dispose path.
+    player.stream.videoParams
+        .firstWhere((VideoParams p) => (p.w ?? 0) > 0)
+        .then((_) => _cancelAutoFallbackWatcher())
+        .catchError((Object e, StackTrace st) {
+      _log.d('videoParams watcher unsubscribed', error: e, stackTrace: st);
+    });
+  }
+
+  /// Cancels the auto-fallback watcher's subscription and timer.  Safe
+  /// to call multiple times.  Does NOT reset [_fallbackTriggered] — the
+  /// latch only resets at the start of a brand-new `startStream` so a
+  /// late error from a previously-fallen-back session can't trigger a
+  /// second fallback against an already-transcoded stream.
+  void _cancelAutoFallbackWatcher() {
+    _fallbackWatcherSub?.cancel();
+    _fallbackWatcherSub = null;
+    _fallbackWatcherTimer?.cancel();
+    _fallbackWatcherTimer = null;
+  }
+
+  /// Reports the client-side decode failure to the server (plan 20) and
+  /// re-opens the playlist URL so libmpv re-fetches the now-transcoded
+  /// segments.  Best-effort — a failure here just logs (the player will
+  /// surface its own error via the existing `error` stream).
+  Future<void> _handleAutoFallback({
+    required String sessionId,
+    required String streamPath,
+    required Map<String, String> headers,
+    required String errorMessage,
+  }) async {
+    final player = _player;
+    if (player == null) return;
+    final positionSec = player.state.position.inMilliseconds / 1000.0;
+    _log.w(
+      '[Player] auto-fallback triggered session=$sessionId '
+      'pos=${positionSec.toStringAsFixed(3)}s error="$errorMessage"',
+    );
+    try {
+      await _repository.reportFallbackTranscode(
+        sessionId: sessionId,
+        currentPositionSec: positionSec,
+      );
+      await player.open(Media(streamPath, httpHeaders: headers));
+      _log.i('[Player] auto-fallback to transcode for session=$sessionId');
+    } catch (e, st) {
+      _log.w(
+        '[Player] auto-fallback POST/reopen failed for session=$sessionId',
+        error: e,
+        stackTrace: st,
+      );
+    } finally {
+      _cancelAutoFallbackWatcher();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // WebRTC negotiation
   // ---------------------------------------------------------------------------
 
@@ -661,6 +804,9 @@ class PlayerCubit extends Cubit<PlayerState> {
     _pendingSeekTarget = null;
     _lastPlaylistUrl = null;
     _lastPlaylistHeaders = null;
+    // Plan 20 — make sure the watcher subscription doesn't outlive the
+    // player.  `_cancelAutoFallbackWatcher` is idempotent.
+    _cancelAutoFallbackWatcher();
     if (_sessionId != null) {
       // Best-effort final progress report; swallow per the original
       // close() behaviour.

@@ -42,4 +42,20 @@ abstract class PlayerRepository {
     double seekSec, {
     bool tonemap = false,
   });
+
+  /// `POST /api/v1/stream/{session_id}/fallback-transcode` (plan 20) —
+  /// tells the server that the client just failed to decode the current
+  /// stream-copy session and asks it to flip the same session into
+  /// transcode mode from [currentPositionSec] onwards.  The playlist URL
+  /// is unchanged on success; the caller is expected to re-open it so
+  /// libmpv re-fetches the rewritten segments.
+  ///
+  /// Returns when the server has acknowledged the switch (200) — no
+  /// payload of interest to the caller.  Bubbles errors so the caller
+  /// can decide whether to surface them (the cubit treats this as
+  /// best-effort and logs without crashing the player).
+  Future<void> reportFallbackTranscode({
+    required String sessionId,
+    required double currentPositionSec,
+  });
 }

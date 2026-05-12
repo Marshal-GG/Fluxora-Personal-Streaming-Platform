@@ -13,6 +13,8 @@ from slowapi.util import get_remote_address
 from config import settings
 from database.db import get_db
 from models.stream_session import (
+    FallbackTranscodeBody,
+    FallbackTranscodeResponse,
     StreamSeekResponse,
     StreamSessionResponse,
     StreamStartResponse,
@@ -20,6 +22,7 @@ from models.stream_session import (
 from routers.deps import LOOPBACK, bearer, require_local_caller, validate_token
 from services import (
     activity_service,
+    client_codec_service,
     ffmpeg_service,
     group_service,
     library_service,
@@ -252,6 +255,31 @@ async def start_stream(
     session_id = str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
 
+    # Plan 20 — consult the per-(client, source codec) blocklist before
+    # spawning, but only when the operator is on `streaming_mode='auto'`.
+    # The blocklist is the persistent record of "this client previously
+    # asked us to fall back for this codec".  Strict `client-decode` and
+    # `server-transcode` modes are documented as deterministic — the
+    # operator's pick wins, blocklist is ignored.
+    settings_row = await settings_service.get_settings(db)
+    effective_mode = settings_row.get("streaming_mode") or "client-decode"
+    if effective_mode == "auto":
+        if using_sidecar:
+            source_codec_for_blocklist: str | None = "h264"
+        else:
+            source_codec_for_blocklist = file_row.get("codec_name")
+        if source_codec_for_blocklist and await client_codec_service.is_blocked(
+            db, client["id"], source_codec_for_blocklist
+        ):
+            logger.info(
+                "client-codec blocklist hit: client=%s codec=%s — "
+                "forcing transcode for session=%s",
+                client["id"],
+                source_codec_for_blocklist,
+                session_id,
+            )
+            ffmpeg_service.set_session_force_transcode(session_id, True)
+
     try:
         await ffmpeg_service.start_stream(
             playback_path,
@@ -351,6 +379,7 @@ async def start_stream(
         # operator asked for tonemap.  An SDR file with `tonemap=true`
         # passes through unchanged, so the badge stays off.
         tonemapped=bool(tonemap and hdr_format),
+        streaming_mode=effective_mode,
     )
 
 
@@ -542,6 +571,180 @@ async def seek_stream(
         session_id, seek_sec
     )
     return StreamSeekResponse(applied_seek_sec=applied_seek_sec)
+
+
+# ── POST /api/v1/stream/{session_id}/fallback-transcode ────────────────────
+# Plan 20.  Mobile / desktop player calls this when libmpv emits an error
+# on the active session within the first 6 s of playback (the window where
+# "client physically can't decode this codec" is far more likely than any
+# other failure mode).  Server records the (client, source codec) pair in
+# the blocklist + flips the per-session force-transcode flag + re-spawns
+# FFmpeg from the live playhead with the transcode pipeline.  The
+# playlist URL doesn't change; the client is expected to re-open the
+# Media on the same URL to load the new (transcoded) segments.
+
+
+@router.post(
+    "/{session_id}/fallback-transcode",
+    response_model=FallbackTranscodeResponse,
+)
+@limiter.limit("10/minute")
+async def fallback_transcode(
+    session_id: str,
+    request: Request,
+    body: FallbackTranscodeBody,
+    db: aiosqlite.Connection = Depends(get_db),
+    client: aiosqlite.Row = Depends(validate_token),
+) -> FallbackTranscodeResponse:
+    """Switch ``session_id`` from stream-copy to server-side transcode."""
+    async with db.execute(
+        "SELECT id, client_id, file_id FROM stream_sessions"
+        " WHERE id = ? AND ended_at IS NULL",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+    if row["client_id"] != client["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not your session"
+        )
+
+    # Plan 20 — fallback only fires when the operator has opted in via
+    # `streaming_mode = 'auto'`.  Strict `client-decode` is documented as
+    # "modern devices only"; the operator picked it deliberately and a
+    # client decode failure should surface to the user rather than
+    # silently switch to transcode.  `server-transcode` is already
+    # transcoding — nothing to fall back to.
+    settings_row = await settings_service.get_settings(db)
+    effective_mode = settings_row.get("streaming_mode") or "client-decode"
+    if effective_mode != "auto":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Fallback is only available when streaming_mode='auto'. "
+                f"Current mode: {effective_mode}."
+            ),
+        )
+
+    file_row = await library_service.get_file(db, row["file_id"])
+    if file_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source file no longer exists",
+        )
+
+    # Per-library override resolution — mirrors /start + /seek so the
+    # restarted session keeps every other plan-19 decision intact.
+    library_row: dict | None = None
+    if file_row.get("library_id"):
+        library_row = await library_service.get_library(
+            db, file_row["library_id"]
+        )
+
+    # Sidecar handling — when the session is playing a transcoded sidecar
+    # the FFmpeg input is H.264 by construction.  Mirrors /start + /seek
+    # so blocklist + force-transcode work uniformly across paths.  We
+    # still write the blocklist row against the *source* codec the
+    # client actually saw — for a sidecar that's H.264, which means a
+    # future session for this client + codec will start in transcode
+    # mode even on the source playback path.  This is the conservative
+    # choice: when the device fails on H.264 the next play of the H.264
+    # source should also be transcoded (re-encoded to H.264 via the
+    # configured encoder + audio re-encode), which is a no-op
+    # passthrough for codec but may help with audio decoder failures.
+    playback_path = file_row.get("transcoded_path") or file_row["path"]
+    using_sidecar = False
+    if file_row.get("transcoded_path"):
+        if Path(file_row["transcoded_path"]).exists():
+            using_sidecar = True
+        else:
+            logger.warning(
+                "Transcoded sidecar missing on disk; falling back to source: %s",
+                file_row["transcoded_path"],
+            )
+            playback_path = file_row["path"]
+    sidecar_codec_override = "h264" if using_sidecar else None
+    sidecar_duration_override = (
+        float(file_row["duration_sec"])
+        if using_sidecar and file_row.get("duration_sec")
+        else None
+    )
+
+    if using_sidecar:
+        source_codec: str | None = "h264"
+    else:
+        source_codec = file_row.get("codec_name")
+    if not source_codec:
+        # Lazy-probe never ran + no sidecar — we have no codec to block
+        # on.  Still honour the operator's request to force-transcode
+        # this session, but skip the persisted blocklist entry; the
+        # next session will probe + may hit the same error, which is
+        # a degenerate but acceptable case (a future plan can extend
+        # `add_block` to take a probe-deferred sentinel).  Log loud so
+        # an operator can see why the blocklist didn't get written.
+        logger.warning(
+            "fallback-transcode: no source_codec for session=%s file=%s — "
+            "skipping blocklist write (in-session flag still set)",
+            session_id,
+            row["file_id"],
+        )
+
+    # Clamp the caller-supplied position to [0, duration - 1) so the
+    # restart's `-ss` doesn't trip undefined behaviour or land past EOF
+    # (which produces a zero-segment static playlist and breaks the
+    # player).  Pydantic already enforced `>= 0`; this enforces the
+    # upper bound + safe-margin.
+    duration_sec = float(file_row.get("duration_sec") or 0.0)
+    clamped = max(0.0, float(body.current_position_sec))
+    if duration_sec > 0 and clamped >= duration_sec - 1.0:
+        clamped = max(0.0, duration_sec - 1.0)
+
+    if source_codec:
+        await client_codec_service.add_block(
+            db, client["id"], source_codec, "player_error_within_6s"
+        )
+        await db.commit()
+
+    ffmpeg_service.set_session_force_transcode(session_id, True)
+
+    try:
+        await ffmpeg_service.restart_stream(
+            playback_path,
+            session_id,
+            settings.hls_tmp_path,
+            seek_sec=clamped,
+            tonemap_hdr=False,
+            source_codec_override=sidecar_codec_override,
+            duration_sec_override=sidecar_duration_override,
+            library_row=library_row,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        ffmpeg_error = str(exc) or exc.__class__.__name__
+        logger.error(
+            "fallback-transcode restart failed: session=%s seek=%.3f error=%s",
+            session_id,
+            clamped,
+            ffmpeg_error,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Fallback transcode restart failed: {ffmpeg_error}",
+        ) from exc
+
+    return FallbackTranscodeResponse(
+        session_id=session_id,
+        playlist_url=_playlist_url(request, session_id),
+        forced_transcode=True,
+    )
 
 
 # ── DELETE /api/v1/stream/{session_id} ──────────────────────────────────────

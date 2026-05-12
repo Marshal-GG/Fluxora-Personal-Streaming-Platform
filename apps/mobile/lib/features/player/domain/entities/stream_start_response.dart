@@ -7,6 +7,7 @@ class StreamStartResponse {
     this.appliedSeekSec = 0.0,
     this.hdrFormat,
     this.tonemapped = false,
+    this.streamingMode = 'client-decode',
   });
 
   final String sessionId;
@@ -34,6 +35,13 @@ class StreamStartResponse {
   /// is HDR).  Drives the toggle's on/off state in the player UI.
   final bool tonemapped;
 
+  /// Plan 20 — the operator's effective `streaming_mode` setting for
+  /// this session.  Mobile uses it to decide whether to arm the
+  /// auto-fallback watcher: only `'auto'` may trigger a fallback POST.
+  /// Strict `'client-decode'` and `'server-transcode'` sessions ignore
+  /// decode errors and surface them to the user as a normal failure.
+  final String streamingMode;
+
   factory StreamStartResponse.fromJson(Map<String, dynamic> json) =>
       StreamStartResponse(
         sessionId: json['session_id'] as String,
@@ -44,5 +52,7 @@ class StreamStartResponse {
             (json['applied_seek_sec'] as num?)?.toDouble() ?? 0.0,
         hdrFormat: json['hdr_format'] as String?,
         tonemapped: json['tonemapped'] as bool? ?? false,
+        streamingMode:
+            json['streaming_mode'] as String? ?? 'client-decode',
       );
 }

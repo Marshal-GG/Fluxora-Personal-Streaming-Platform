@@ -57,10 +57,12 @@ final class SettingsLoaded extends SettingsState {
   /// EncoderPriorityList widget.
   final List<String>? transcodingChain;
 
-  /// Plan 19 §M7 — streaming pipeline mode. `'client-decode'` (default)
-  /// stream-copies AV1 / VP9 sources via fmp4 so modern devices
-  /// hardware-decode them. `'server-transcode'` is the legacy plan-18
-  /// behaviour (server live-transcodes to H.264 before streaming).
+  /// Streaming pipeline mode. `'client-decode'` (Recommended default,
+  /// plan 19 §M7) stream-copies modern codecs unconditionally — strict,
+  /// no fallback.  `'auto'` (plan 20) is opt-in: starts with stream-copy
+  /// and falls back to transcode when the client reports a decode error
+  /// within 6 s.  `'server-transcode'` is the legacy plan-18 behaviour
+  /// (server live-transcodes AV1/VP9 to H.264 before streaming).
   final String streamingMode;
 
   // ── §7.10 extended-settings fields (migration 015) ──────────────────────

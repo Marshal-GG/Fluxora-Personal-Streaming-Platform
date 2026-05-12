@@ -81,11 +81,16 @@ class UserSettingsResponse(BaseModel):
     # session_router falls through to the next.  Empty list / None means
     # "use the default chain": [transcoding_encoder, "libx264"].
     transcoding_chain: list[str] | None = None
-    # Plan 19 §M7 — streaming pipeline mode.  `client-decode` (default)
-    # stream-copies AV1 / VP9 sources via fmp4 so modern devices
-    # hardware-decode them.  `server-transcode` is the legacy plan-18
-    # behaviour: server live-transcodes to H.264 before streaming.
-    streaming_mode: Literal["client-decode", "server-transcode"] = "client-decode"
+    # Streaming pipeline mode.  `client-decode` (the Recommended default,
+    # plan 19 §M7) stream-copies AV1/VP9/HEVC/H.264 via fmp4 so modern
+    # devices hardware-decode them.  `auto` (plan 20) is opt-in: starts
+    # in stream-copy and transparently falls back to transcode when the
+    # client reports a decode error within 6 s.  `server-transcode` is
+    # the legacy plan-18 behaviour: server live-transcodes AV1/VP9 to
+    # H.264 before streaming.
+    streaming_mode: Literal[
+        "auto", "client-decode", "server-transcode"
+    ] = "client-decode"
     # Plan 19 §M2 — transcode storage location chooser.  `dedicated`
     # nests sidecars under `transcode_cache_root`; `inline` keeps them
     # next to source under `.fluxora-transcodes/`.  The cache-root
@@ -134,8 +139,10 @@ class UpdateSettingsBody(BaseModel):
     # in the registry (validated at the service layer, not here, because
     # the registry isn't a Pydantic-friendly Literal).
     transcoding_chain: list[str] | None = None
-    # Plan 19 §M7 — streaming pipeline mode.
-    streaming_mode: Literal["client-decode", "server-transcode"] | None = None
+    # Plan 19 §M7 + plan 20 — streaming pipeline mode.
+    streaming_mode: Literal[
+        "auto", "client-decode", "server-transcode"
+    ] | None = None
     # Plan 19 §M2 — transcode storage location chooser.  Service-layer
     # validation enforces `transcode_cache_root` is absolute, writable,
     # and outside every library root before persisting.
