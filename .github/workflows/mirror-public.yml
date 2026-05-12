@@ -28,6 +28,7 @@ jobs:
           rm -f CONTRIBUTING.md
           rm -rf docs/logs
           rm -rf docs/12_guidelines
+          rm -rf .claude
 
           # 2. Remove ALL workflows — public repo is a code mirror only, no CI runs there
           rm -rf .github/workflows/
@@ -57,7 +58,7 @@ jobs:
 
       - name: Stage filtered files
         run: |
-          git rm -r --cached AGENT_LOG.md CLAUDE.md docs/logs docs/12_guidelines .github/workflows/ --ignore-unmatch
+          git rm -r --cached AGENT_LOG.md CLAUDE.md docs/logs docs/12_guidelines .claude .github/workflows/ --ignore-unmatch
           git add -A
 
       - name: Commit clean state

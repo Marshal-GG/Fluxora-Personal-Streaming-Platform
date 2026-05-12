@@ -15,7 +15,8 @@ venv/
 *.iml
 .idea/
 .vscode/*
-.claude/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
 !.vscode/launch.json
 !.vscode/tasks.json
 build/

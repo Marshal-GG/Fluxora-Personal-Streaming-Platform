@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze *)",
+      "Bash(dart fix *)",
+      "Bash(flutter test *)",
+      "Bash(flutter pub *)",
+      "Bash(dart run build_runner *)",
+      "Bash(python -m pytest *)",
+      "Bash(python -m pytest)",
+      "WebFetch(domain:pub.dev)",
+      "WebFetch(domain:api.themoviedb.org)",
+      "Bash(python -m ruff check *)",
+      "Edit(/.claude/skills/archive-plan/**)"
+    ]
+  }
+}
