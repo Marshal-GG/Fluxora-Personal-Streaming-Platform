@@ -88,9 +88,9 @@ class UserSettingsResponse(BaseModel):
     # client reports a decode error within 6 s.  `server-transcode` is
     # the legacy plan-18 behaviour: server live-transcodes AV1/VP9 to
     # H.264 before streaming.
-    streaming_mode: Literal[
-        "auto", "client-decode", "server-transcode"
-    ] = "client-decode"
+    streaming_mode: Literal["auto", "client-decode", "server-transcode"] = (
+        "client-decode"
+    )
     # Plan 19 §M2 — transcode storage location chooser.  `dedicated`
     # nests sidecars under `transcode_cache_root`; `inline` keeps them
     # next to source under `.fluxora-transcodes/`.  The cache-root
@@ -140,9 +140,7 @@ class UpdateSettingsBody(BaseModel):
     # the registry isn't a Pydantic-friendly Literal).
     transcoding_chain: list[str] | None = None
     # Plan 19 §M7 + plan 20 — streaming pipeline mode.
-    streaming_mode: Literal[
-        "auto", "client-decode", "server-transcode"
-    ] | None = None
+    streaming_mode: Literal["auto", "client-decode", "server-transcode"] | None = None
     # Plan 19 §M2 — transcode storage location chooser.  Service-layer
     # validation enforces `transcode_cache_root` is absolute, writable,
     # and outside every library root before persisting.

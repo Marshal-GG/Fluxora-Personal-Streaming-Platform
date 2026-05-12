@@ -59,18 +59,14 @@ def test_encode_chain_round_trips():
 
 
 def test_pick_encoder_returns_first_when_uncapped():
-    chosen, reason = session_router.pick_encoder(
-        ["libx264", "h264_nvenc"], "session-1"
-    )
+    chosen, reason = session_router.pick_encoder(["libx264", "h264_nvenc"], "session-1")
     assert chosen == "libx264"
     assert reason == "configured"
 
 
 def test_pick_encoder_returns_first_when_below_cap():
     """h264_nvenc has a cap of 3; with 0 active, we get it."""
-    chosen, reason = session_router.pick_encoder(
-        ["h264_nvenc", "libx264"], "session-1"
-    )
+    chosen, reason = session_router.pick_encoder(["h264_nvenc", "libx264"], "session-1")
     assert chosen == "h264_nvenc"
     assert reason == "configured"
 
@@ -82,9 +78,7 @@ def test_pick_encoder_falls_through_when_first_at_cap():
             ["h264_nvenc", "libx264"], f"prereq-{i}"
         )
         assert chosen == "h264_nvenc"
-    chosen, reason = session_router.pick_encoder(
-        ["h264_nvenc", "libx264"], "fallback"
-    )
+    chosen, reason = session_router.pick_encoder(["h264_nvenc", "libx264"], "fallback")
     assert chosen == "libx264"
     assert reason == "gpu_session_cap_hit"
 
@@ -130,9 +124,7 @@ def test_release_session_frees_cap_slot():
         session_router.pick_encoder(["h264_nvenc"], f"prereq-{i}")
     # 4th would fall through to default_encoder if no chain alt.
     session_router.release_session("prereq-0")
-    chosen, reason = session_router.pick_encoder(
-        ["h264_nvenc"], "post-release"
-    )
+    chosen, reason = session_router.pick_encoder(["h264_nvenc"], "post-release")
     assert chosen == "h264_nvenc"
     assert reason == "configured"
 

@@ -401,9 +401,7 @@ async def run_benchmark(
     rather than being dropped — operators need to see *why* an encoder
     couldn't be benchmarked, not just that it was missing from the list.
     """
-    duration = benchmark_service.clamp_duration(
-        body.duration_sec if body else None
-    )
+    duration = benchmark_service.clamp_duration(body.duration_sec if body else None)
     fps = benchmark_service.clamp_fps(body.fps if body else None)
 
     # Resolution selection precedence:
@@ -572,9 +570,7 @@ async def get_benchmark_history_entry(
         # always a non-empty list (matrix runs preserve operator selection
         # order, single-resolution runs return one entry, malformed blobs
         # fall back to the run's primary dimensions).
-        resolutions=[
-            ResolutionTuple(width=w, height=h) for w, h in row["resolutions"]
-        ],
+        resolutions=[ResolutionTuple(width=w, height=h) for w, h in row["resolutions"]],
         verify_caps=row["verify_caps"],
         # ``results`` from the JSON blob is already a list of dicts shaped
         # like BenchmarkEncoderResult — Pydantic validates on construction.

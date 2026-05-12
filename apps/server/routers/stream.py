@@ -121,9 +121,7 @@ async def start_stream(
     # data); the resolver falls back cleanly to the global setting.
     library_row: dict | None = None
     if file_row.get("library_id"):
-        library_row = await library_service.get_library(
-            db, file_row["library_id"]
-        )
+        library_row = await library_service.get_library(db, file_row["library_id"])
 
     # Library transcode plan (docs/10_planning/18_library_transcode_plan.md):
     # if a pre-transcoded H.264 sidecar exists for this file, route
@@ -505,9 +503,7 @@ async def seek_stream(
     # restart preserves the per-library codec passthrough decision.
     library_row: dict | None = None
     if file_row.get("library_id"):
-        library_row = await library_service.get_library(
-            db, file_row["library_id"]
-        )
+        library_row = await library_service.get_library(db, file_row["library_id"])
 
     # Library transcode: prefer the H.264 sidecar if one exists.  Mirrors
     # the playback_path resolution in /start so a session that began on
@@ -567,9 +563,7 @@ async def seek_stream(
     # pipeline plan §16 scrubber-offset patch 2026-05-08).  Falls back
     # to the requested value if the dict is empty (defensive — shouldn't
     # happen on the success branch).
-    applied_seek_sec = ffmpeg_service._applied_seek_sec.get(
-        session_id, seek_sec
-    )
+    applied_seek_sec = ffmpeg_service._applied_seek_sec.get(session_id, seek_sec)
     return StreamSeekResponse(applied_seek_sec=applied_seek_sec)
 
 
@@ -640,9 +634,7 @@ async def fallback_transcode(
     # restarted session keeps every other plan-19 decision intact.
     library_row: dict | None = None
     if file_row.get("library_id"):
-        library_row = await library_service.get_library(
-            db, file_row["library_id"]
-        )
+        library_row = await library_service.get_library(db, file_row["library_id"])
 
     # Sidecar handling — when the session is playing a transcoded sidecar
     # the FFmpeg input is H.264 by construction.  Mirrors /start + /seek
@@ -904,9 +896,7 @@ async def serve_hls(
     # mobile player's `_SeekingOverlay` + media_kit's 404-retry loop,
     # which together hammer the segment until FFmpeg catches up.  Three
     # concurrent seekers used to chew 15 worker-seconds; now ≤6.
-    if not resolved.exists() and (
-        filename.startswith("seg") or filename == "init.mp4"
-    ):
+    if not resolved.exists() and (filename.startswith("seg") or filename == "init.mp4"):
         import asyncio as _asyncio
 
         for _ in range(20):  # up to 2 s @ 100 ms

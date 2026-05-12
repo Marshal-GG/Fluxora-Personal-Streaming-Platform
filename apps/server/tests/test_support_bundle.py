@@ -32,9 +32,7 @@ def _open_bundle(payload: bytes) -> dict[str, bytes]:
 
 @pytest.mark.asyncio
 async def test_bundle_contains_expected_top_level_members(test_db):
-    _filename, payload = await support_bundle_service.generate_support_bundle(
-        test_db
-    )
+    _filename, payload = await support_bundle_service.generate_support_bundle(test_db)
     members = _open_bundle(payload)
     assert "metadata.json" in members
     assert "system/stats.json" in members
@@ -45,9 +43,7 @@ async def test_bundle_contains_expected_top_level_members(test_db):
 
 @pytest.mark.asyncio
 async def test_bundle_filename_has_timestamp_prefix(test_db):
-    filename, _payload = await support_bundle_service.generate_support_bundle(
-        test_db
-    )
+    filename, _payload = await support_bundle_service.generate_support_bundle(test_db)
     assert filename.startswith("fluxora-support-")
     assert filename.endswith(".tar.gz")
 
@@ -64,9 +60,7 @@ async def test_bundle_redacts_secret_settings(test_db):
     )
     await test_db.commit()
 
-    _filename, payload = await support_bundle_service.generate_support_bundle(
-        test_db
-    )
+    _filename, payload = await support_bundle_service.generate_support_bundle(test_db)
     members = _open_bundle(payload)
     settings_blob = json.loads(members["settings/redacted.json"])
     assert settings_blob["tmdb_api_key"] == "***REDACTED***"
@@ -83,9 +77,7 @@ async def test_bundle_redacts_secret_settings(test_db):
 async def test_bundle_preserves_null_secrets_as_null(test_db):
     """Unset secrets stay null — operator can tell "never configured"
     apart from "had a value but redacted"."""
-    _filename, payload = await support_bundle_service.generate_support_bundle(
-        test_db
-    )
+    _filename, payload = await support_bundle_service.generate_support_bundle(test_db)
     members = _open_bundle(payload)
     settings_blob = json.loads(members["settings/redacted.json"])
     assert settings_blob["tmdb_api_key"] is None
@@ -105,9 +97,7 @@ async def test_bundle_schema_has_no_row_data(test_db):
     )
     await test_db.commit()
 
-    _filename, payload = await support_bundle_service.generate_support_bundle(
-        test_db
-    )
+    _filename, payload = await support_bundle_service.generate_support_bundle(test_db)
     members = _open_bundle(payload)
     schema = members["database/schema.sql"].decode("utf-8")
     assert "CREATE TABLE" in schema.upper()
@@ -119,9 +109,7 @@ async def test_bundle_schema_has_no_row_data(test_db):
 
 @pytest.mark.asyncio
 async def test_bundle_metadata_has_expected_fields(test_db):
-    _filename, payload = await support_bundle_service.generate_support_bundle(
-        test_db
-    )
+    _filename, payload = await support_bundle_service.generate_support_bundle(test_db)
     members = _open_bundle(payload)
     metadata = json.loads(members["metadata.json"])
     for key in ("generated_at", "server_version", "python_version", "platform"):
@@ -142,9 +130,7 @@ async def test_bundle_stats_collect_failure_is_isolated(test_db, monkeypatch):
 
     monkeypatch.setattr(system_stats_service.system_stats, "collect", boom)
 
-    _filename, payload = await support_bundle_service.generate_support_bundle(
-        test_db
-    )
+    _filename, payload = await support_bundle_service.generate_support_bundle(test_db)
     members = _open_bundle(payload)
     stats = json.loads(members["system/stats.json"])
     assert "_collect_error" in stats

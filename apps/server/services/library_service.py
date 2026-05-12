@@ -157,6 +157,7 @@ def _is_valid_absolute_media_path(path_str: str) -> bool:
         return False
     return True
 
+
 _MEDIA_EXTENSIONS = {
     ".mp4",
     ".mkv",
@@ -405,13 +406,15 @@ async def update_library(
     if has_av1_override:
         sets.append("av1_stream_copy_override = ?")
         params.append(
-            None if av1_stream_copy_override is None
+            None
+            if av1_stream_copy_override is None
             else int(bool(av1_stream_copy_override))
         )
     if has_vp9_override:
         sets.append("vp9_stream_copy_override = ?")
         params.append(
-            None if vp9_stream_copy_override is None
+            None
+            if vp9_stream_copy_override is None
             else int(bool(vp9_stream_copy_override))
         )
 
@@ -771,11 +774,8 @@ async def _scan_library_locked(
                         current_mtime = int(file_path.stat().st_mtime)
                     except OSError:
                         current_mtime = None
-                    if (
-                        current_mtime is not None
-                        and current_mtime > int(
-                            existing["transcoded_source_mtime"]
-                        )
+                    if current_mtime is not None and current_mtime > int(
+                        existing["transcoded_source_mtime"]
                     ):
                         await db.execute(
                             "UPDATE media_files SET transcoded_path = NULL"
@@ -1085,20 +1085,20 @@ async def enrich_library_tmdb(
     if not api_key:
         return {"matched": 0, "enriched": 0, "skipped_dvr": 0}
     async with db.execute(
-        "SELECT id, name FROM media_files"
-        " WHERE library_id = ? AND tmdb_id IS NULL",
+        "SELECT id, name FROM media_files" " WHERE library_id = ? AND tmdb_id IS NULL",
         (library_id,),
     ) as cur:
         rows = await cur.fetchall()
     file_stems = [(r["id"], Path(r["name"]).stem) for r in rows]
     enriched = await _enrich_with_tmdb(
-        db, file_stems, api_key, skip_dvr=not include_dvr,
+        db,
+        file_stems,
+        api_key,
+        skip_dvr=not include_dvr,
     )
     skipped_dvr = 0
     if not include_dvr:
-        skipped_dvr = sum(
-            1 for _, stem in file_stems if _looks_like_dvr_capture(stem)
-        )
+        skipped_dvr = sum(1 for _, stem in file_stems if _looks_like_dvr_capture(stem))
     logger.info(
         "TMDB rescan done: library=%s matched=%d enriched=%d skipped_dvr=%d",
         library_id,
@@ -1166,9 +1166,7 @@ async def upload_file_to_library(
         raise ValueError("Invalid filename: path traversal detected.")
     path_str = str(file_path)
     if not _is_valid_absolute_media_path(path_str):
-        raise ValueError(
-            f"Constructed upload path failed validation: {path_str!r}."
-        )
+        raise ValueError(f"Constructed upload path failed validation: {path_str!r}.")
 
     # Save the file to disk
     def _save_file():

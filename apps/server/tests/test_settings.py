@@ -47,9 +47,7 @@ async def test_patch_settings_accepts_auto_streaming_mode(
     client: AsyncClient,
 ) -> None:
     """Plan 20 — the `auto` Literal value must round-trip on PATCH."""
-    res = await client.patch(
-        "/api/v1/settings", json={"streaming_mode": "auto"}
-    )
+    res = await client.patch("/api/v1/settings", json={"streaming_mode": "auto"})
     assert res.status_code == 200
     assert res.json()["streaming_mode"] == "auto"
 
@@ -73,9 +71,7 @@ async def test_patch_settings_rejects_unknown_streaming_mode(
     client: AsyncClient,
 ) -> None:
     """Anything outside the Literal accept-list must 422."""
-    res = await client.patch(
-        "/api/v1/settings", json={"streaming_mode": "nonsense"}
-    )
+    res = await client.patch("/api/v1/settings", json={"streaming_mode": "nonsense"})
     assert res.status_code == 422
 
 
@@ -208,6 +204,7 @@ async def test_free_tier_blocks_second_stream(client: AsyncClient) -> None:
     # Start a *different* file — concurrency check must reject because
     # the caller already has 1 active session on the free tier.
     res = await client.post(
-        f"/api/v1/stream/start/{new_file_id}", headers=headers,
+        f"/api/v1/stream/start/{new_file_id}",
+        headers=headers,
     )
     assert res.status_code == 429

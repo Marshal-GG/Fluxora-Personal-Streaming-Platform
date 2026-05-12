@@ -58,12 +58,8 @@ def test_ice_servers_drops_turn_when_any_field_empty(monkeypatch):
         ("turn:t.example.com", "user", ""),
     ]
     for url, user, password in cases:
-        monkeypatch.setattr(
-            "services.webrtc_service.settings.fluxora_turn_url", url
-        )
-        monkeypatch.setattr(
-            "services.webrtc_service.settings.fluxora_turn_user", user
-        )
+        monkeypatch.setattr("services.webrtc_service.settings.fluxora_turn_url", url)
+        monkeypatch.setattr("services.webrtc_service.settings.fluxora_turn_user", user)
         monkeypatch.setattr(
             "services.webrtc_service.settings.fluxora_turn_pass", password
         )

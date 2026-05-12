@@ -279,9 +279,7 @@ async def test_list_clients_active_session_null_when_session_ended(
 
 
 @pytest.mark.asyncio
-async def test_list_clients_includes_group_memberships(
-    client: AsyncClient, test_db
-):
+async def test_list_clients_includes_group_memberships(client: AsyncClient, test_db):
     """M3 (2026-05-07): the list_clients query LEFT-JOINs group_members
     via SQLite's `json_group_array` so the desktop Clients screen can
     render group chips on the detail panel without a follow-up fetch.
@@ -291,16 +289,8 @@ async def test_list_clients_includes_group_memberships(
     await client.post("/api/v1/auth/request-pair", json=PAIR_BODY)
 
     # Create two groups + add the paired client to both.
-    g1 = (
-        await client.post(
-            "/api/v1/groups", json={"name": "Family"}
-        )
-    ).json()
-    g2 = (
-        await client.post(
-            "/api/v1/groups", json={"name": "Kids"}
-        )
-    ).json()
+    g1 = (await client.post("/api/v1/groups", json={"name": "Family"})).json()
+    g2 = (await client.post("/api/v1/groups", json={"name": "Kids"})).json()
     await client.post(
         f"/api/v1/groups/{g1['id']}/members",
         json={"client_id": PAIR_BODY["client_id"]},

@@ -13,6 +13,7 @@ Only the version_string + major.minor + a small set of derived feature
 flags are surfaced.  Each flag is a single bool the caller can branch on
 without re-deriving "is this version >= X.Y" math at every call site.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -115,9 +116,7 @@ async def probe_ffmpeg_capabilities() -> FfmpegCapabilities:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout_bytes, _ = await asyncio.wait_for(
-            proc.communicate(), timeout=5.0
-        )
+        stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
     except (OSError, TimeoutError) as exc:
         logger.warning(
             "ffmpeg -version probe failed: %s",

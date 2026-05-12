@@ -76,12 +76,31 @@ _FAILED_BURST_THRESHOLD = 5
 # don't fly, but we don't pretend to enforce real password complexity on
 # a 4-8 digit numeric.  Configurable expansion if a user hits an edge.
 _OBVIOUS_PINS = {
-    '0000', '1111', '2222', '3333', '4444', '5555', '6666', '7777',
-    '8888', '9999',
-    '1234', '2345', '3456', '4567', '5678', '6789',
-    '4321', '5432', '6543', '7654', '8765', '9876', '0987',
-    '0123',
-    '2580',  # phone keypad column
+    "0000",
+    "1111",
+    "2222",
+    "3333",
+    "4444",
+    "5555",
+    "6666",
+    "7777",
+    "8888",
+    "9999",
+    "1234",
+    "2345",
+    "3456",
+    "4567",
+    "5678",
+    "6789",
+    "4321",
+    "5432",
+    "6543",
+    "7654",
+    "8765",
+    "9876",
+    "0987",
+    "0123",
+    "2580",  # phone keypad column
 }
 
 
@@ -164,12 +183,8 @@ async def _hydrate(
         "requires_pin": (
             bool(group_row["requires_pin"]) if "requires_pin" in keys else False
         ),
-        "pin_mode": (
-            group_row["pin_mode"] if "pin_mode" in keys else "session"
-        ),
-        "pin_model": (
-            group_row["pin_model"] if "pin_model" in keys else "shared"
-        ),
+        "pin_mode": (group_row["pin_mode"] if "pin_mode" in keys else "session"),
+        "pin_model": (group_row["pin_model"] if "pin_model" in keys else "shared"),
         "icon": group_row["icon"] if "icon" in keys else None,
         "color": group_row["color"] if "color" in keys else None,
         "max_concurrent_streams": (
@@ -259,9 +274,18 @@ async def create_group(
         VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            group_id, name, description, now, now,
-            requires_pin, pin_hash, pin_mode, pin_model,
-            icon, color, max_concurrent_streams,
+            group_id,
+            name,
+            description,
+            now,
+            now,
+            requires_pin,
+            pin_hash,
+            pin_mode,
+            pin_model,
+            icon,
+            color,
+            max_concurrent_streams,
         ),
     )
     enc = _encode_restrictions(restrictions)
@@ -283,7 +307,9 @@ async def create_group(
     await db.commit()
     logger.info(
         "Group created: %s (%s, pin=%s)",
-        name, group_id, "yes" if pin_hash else "no",
+        name,
+        group_id,
+        "yes" if pin_hash else "no",
     )
 
     hydrated = await get_group(db, group_id)
@@ -415,8 +441,7 @@ async def update_group(
                 raise ValueError("hmac_key required when setting a PIN")
             new_hash = hash_pin(pin, hmac_key)
             await db.execute(
-                "UPDATE groups SET requires_pin = 1, pin_hash = ? "
-                "WHERE id = ?",
+                "UPDATE groups SET requires_pin = 1, pin_hash = ? " "WHERE id = ?",
                 (new_hash, group_id),
             )
             # Reset grants — members must re-PIN under the new PIN.
@@ -521,6 +546,7 @@ async def _emit_group_activity(
     """
     try:
         from services import activity_service  # local import → no cycle
+
         await activity_service.record(
             db,
             type=type,
@@ -534,7 +560,9 @@ async def _emit_group_activity(
     except Exception as e:  # pragma: no cover — defensive
         logger.warning(
             "Failed to emit group activity event %s for group=%s: %s",
-            type, group_id, e,
+            type,
+            group_id,
+            e,
         )
 
 
@@ -564,9 +592,7 @@ async def _maybe_emit_failed_burst(
     missing audit row never breaks the rate-limit response.
     """
     try:
-        cutoff = (
-            now - timedelta(seconds=_FAILED_BURST_WINDOW_SEC)
-        ).isoformat()
+        cutoff = (now - timedelta(seconds=_FAILED_BURST_WINDOW_SEC)).isoformat()
         async with db.execute(
             """
             SELECT COUNT(*) FROM group_pin_attempts
@@ -584,9 +610,7 @@ async def _maybe_emit_failed_burst(
             "SELECT name FROM clients WHERE id = ?", (client_id,)
         ) as cur:
             client_row = await cur.fetchone()
-        client_name = (
-            client_row["name"] if client_row else client_id[:8]
-        )
+        client_name = client_row["name"] if client_row else client_id[:8]
         await _emit_group_activity(
             db,
             type="group.pin.failed-burst",
@@ -604,9 +628,10 @@ async def _maybe_emit_failed_burst(
         )
     except Exception as e:  # pragma: no cover — defensive
         logger.warning(
-            "Failed to emit failed-burst activity event "
-            "(client=%s group=%s): %s",
-            client_id, group_id, e,
+            "Failed to emit failed-burst activity event " "(client=%s group=%s): %s",
+            client_id,
+            group_id,
+            e,
         )
 
 
@@ -673,8 +698,7 @@ async def remove_member(
             db,
             type="group.member.remove",
             summary=(
-                f"{names['client_name']} removed from group "
-                f"{names['group_name']}"
+                f"{names['client_name']} removed from group " f"{names['group_name']}"
             ),
             group_id=group_id,
             actor_id=client_id,
@@ -768,9 +792,7 @@ async def list_members(
 
     moment = now or datetime.now(UTC)
     now_iso = moment.isoformat()
-    rate_window_iso = (
-        moment - timedelta(seconds=_PIN_RATE_WINDOW_SEC)
-    ).isoformat()
+    rate_window_iso = (moment - timedelta(seconds=_PIN_RATE_WINDOW_SEC)).isoformat()
 
     async with db.execute(
         """
@@ -793,7 +815,12 @@ async def list_members(
          ORDER BY m.added_at
         """,
         (
-            group_id, group_id, now_iso, group_id, rate_window_iso, group_id,
+            group_id,
+            group_id,
+            now_iso,
+            group_id,
+            rate_window_iso,
+            group_id,
         ),
     ) as cur:
         rows = await cur.fetchall()
@@ -813,16 +840,10 @@ async def list_members(
             enrollment_state = "not_enrolled"
         out.append(
             {
-                **{
-                    k: v
-                    for k, v in d.items()
-                    if k != "has_enrollment"
-                },
+                **{k: v for k, v in d.items() if k != "has_enrollment"},
                 "enrollment_state": enrollment_state,
                 "has_active_grant": d.get("grant_expires_at") is not None,
-                "recent_failed_attempts": int(
-                    d.get("recent_failed_attempts") or 0
-                ),
+                "recent_failed_attempts": int(d.get("recent_failed_attempts") or 0),
             }
         )
     return out
@@ -942,13 +963,13 @@ class _MembershipState:
     group_id: str
     name: str
     is_public: bool
-    is_active: bool         # group.status == 'active'
+    is_active: bool  # group.status == 'active'
     requires_pin: bool
-    pin_model: str          # 'shared' or 'per-client' (M8)
-    pin_mode: str           # 'session' or 'per-entry'
-    is_enrolled: bool       # per-client mode + enrollment row exists
-    is_pin_unlocked: bool   # requires_pin=False, OR a valid grant exists
-    in_time_window: bool    # group has no window OR `now` satisfies it
+    pin_model: str  # 'shared' or 'per-client' (M8)
+    pin_mode: str  # 'session' or 'per-entry'
+    is_enrolled: bool  # per-client mode + enrollment row exists
+    is_pin_unlocked: bool  # requires_pin=False, OR a valid grant exists
+    in_time_window: bool  # group has no window OR `now` satisfies it
     libraries: frozenset[str]
     icon: str | None
     color: str | None
@@ -1068,8 +1089,7 @@ async def _resolve_membership(
                 in_window = _in_window(window, now)
             except (json.JSONDecodeError, ValueError):
                 logger.warning(
-                    "Malformed time_window for group %s — "
-                    "treating as always-in",
+                    "Malformed time_window for group %s — " "treating as always-in",
                     row["group_id"],
                 )
 
@@ -1088,8 +1108,7 @@ async def _resolve_membership(
                 # group never requires a PIN by convention but the schema
                 # allows it; we honour whatever is set.
                 is_pin_unlocked=(
-                    not bool(row["requires_pin"])
-                    or row["has_grant"] is not None
+                    not bool(row["requires_pin"]) or row["has_grant"] is not None
                 ),
                 in_time_window=in_window,
                 libraries=libs,
@@ -1137,21 +1156,23 @@ async def get_visible_libraries(
         # active / locked / time-window state so the mobile UI can
         # render "Inactive" group rows + "outside the time window"
         # badges + "lock" buttons on already-unlocked groups.
-        groups_meta.append({
-            "id": m.group_id,
-            "name": m.name,
-            "icon": m.icon,
-            "color": m.color,
-            "is_public": m.is_public,
-            "is_active": m.is_active,
-            "requires_pin": m.requires_pin,
-            "pin_model": m.pin_model,
-            "pin_mode": m.pin_mode,
-            "is_enrolled": m.is_enrolled,
-            "in_time_window": m.in_time_window,
-            "is_unlocked": m.is_pin_unlocked,
-            "grant_expires_at": m.grant_expires_at,
-        })
+        groups_meta.append(
+            {
+                "id": m.group_id,
+                "name": m.name,
+                "icon": m.icon,
+                "color": m.color,
+                "is_public": m.is_public,
+                "is_active": m.is_active,
+                "requires_pin": m.requires_pin,
+                "pin_model": m.pin_model,
+                "pin_mode": m.pin_mode,
+                "is_enrolled": m.is_enrolled,
+                "in_time_window": m.in_time_window,
+                "is_unlocked": m.is_pin_unlocked,
+                "grant_expires_at": m.grant_expires_at,
+            }
+        )
         if not m.is_active:
             continue
         if not m.in_time_window:
@@ -1161,11 +1182,7 @@ async def get_visible_libraries(
             # Per-client mode + no enrollment yet → route to enrollment
             # surface, not the entry surface.  Mobile shows "Set up a PIN"
             # CTA instead of "Enter PIN".
-            if (
-                m.requires_pin
-                and m.pin_model == "per-client"
-                and not m.is_enrolled
-            ):
+            if m.requires_pin and m.pin_model == "per-client" and not m.is_enrolled:
                 enrollment_required.add(m.group_id)
             else:
                 pin_locked.add(m.group_id)
@@ -1338,9 +1355,7 @@ async def enter_pin_grant(
         return PinGrantResult(granted=False, error="no_pin_required")
 
     # Rate limit check.
-    fails = await _recent_failed_attempts(
-        db, client_id, group_id, now=moment
-    )
+    fails = await _recent_failed_attempts(db, client_id, group_id, now=moment)
     if fails >= _PIN_RATE_MAX_FAILS:
         return PinGrantResult(
             granted=False,
@@ -1363,18 +1378,13 @@ async def enter_pin_grant(
         ) as cur:
             enroll_row = await cur.fetchone()
         if enroll_row is None:
-            return PinGrantResult(
-                granted=False, error="enrollment_required"
-            )
+            return PinGrantResult(granted=False, error="enrollment_required")
         expected = enroll_row["pin_hash"]
     else:
         expected = group["pin_hash"]
 
     actual = hash_pin(pin, hmac_key)
-    success = (
-        expected is not None
-        and hmac.compare_digest(expected, actual)
-    )
+    success = expected is not None and hmac.compare_digest(expected, actual)
 
     # Log every attempt — the brute-force ledger is the rate limiter's
     # source of truth; success rows are kept for audit (operator can see
@@ -1395,21 +1405,20 @@ async def enter_pin_grant(
         # uses a 60-s window for lockout; this 10-min window catches
         # bursts that drip-feed across multiple lockouts.
         await _maybe_emit_failed_burst(
-            db, client_id=client_id, group_id=group_id, now=moment,
+            db,
+            client_id=client_id,
+            group_id=group_id,
+            now=moment,
         )
         return PinGrantResult(
             granted=False,
             error="incorrect_pin",
-            attempts_remaining=max(
-                0, _PIN_RATE_MAX_FAILS - (fails + 1)
-            ),
+            attempts_remaining=max(0, _PIN_RATE_MAX_FAILS - (fails + 1)),
         )
 
     # Grant TTL by mode.
     ttl = (
-        _GRANT_TTL_PER_ENTRY
-        if group["pin_mode"] == "per-entry"
-        else _GRANT_TTL_SESSION
+        _GRANT_TTL_PER_ENTRY if group["pin_mode"] == "per-entry" else _GRANT_TTL_SESSION
     )
     expires_at = moment + ttl
     await db.execute(
@@ -1438,9 +1447,7 @@ async def enter_pin_grant(
     await _emit_group_activity(
         db,
         type="group.pin.unlock",
-        summary=(
-            f"PIN unlocked (expires {expires_at.isoformat(timespec='seconds')})"
-        ),
+        summary=(f"PIN unlocked (expires {expires_at.isoformat(timespec='seconds')})"),
         group_id=group_id,
         actor_id=client_id,
     )
@@ -1450,9 +1457,7 @@ async def enter_pin_grant(
     )
 
 
-async def revoke_all_grants_for_group(
-    db: aiosqlite.Connection, group_id: str
-) -> int:
+async def revoke_all_grants_for_group(db: aiosqlite.Connection, group_id: str) -> int:
     """Bulk-drop every active PIN grant for a group.  Operator-side
     "Reset all PINs" action — `clear_member_pin` per member is the
     per-client recovery path; this is the shared-mode equivalent.
@@ -1478,7 +1483,8 @@ async def revoke_all_grants_for_group(
     if deleted > 0:
         logger.info(
             "Bulk grant reset on group=%s — %d grant(s) dropped",
-            group_id, deleted,
+            group_id,
+            deleted,
         )
         await _emit_group_activity(
             db,
@@ -1645,7 +1651,8 @@ async def enroll_pin(
     await db.commit()
     logger.info(
         "PIN enrolled (per-client): client=%s group=%s",
-        client_id, group_id,
+        client_id,
+        group_id,
     )
     return PinGrantResult(
         granted=True,
@@ -1700,17 +1707,11 @@ async def change_member_pin(
     if enroll_row is None:
         return PinGrantResult(granted=False, error="not_enrolled")
 
-    fails = await _recent_failed_attempts(
-        db, client_id, group_id, now=moment
-    )
+    fails = await _recent_failed_attempts(db, client_id, group_id, now=moment)
     if fails >= _PIN_RATE_MAX_FAILS:
-        return PinGrantResult(
-            granted=False, error="rate_limited", attempts_remaining=0
-        )
+        return PinGrantResult(granted=False, error="rate_limited", attempts_remaining=0)
 
-    if not hmac.compare_digest(
-        enroll_row["pin_hash"], hash_pin(old_pin, hmac_key)
-    ):
+    if not hmac.compare_digest(enroll_row["pin_hash"], hash_pin(old_pin, hmac_key)):
         await db.execute(
             """
             INSERT INTO group_pin_attempts
@@ -1723,14 +1724,15 @@ async def change_member_pin(
         # Same activity-feed aggregation as `enter_pin_grant` so a
         # brute-force-via-change attempt also surfaces in the audit feed.
         await _maybe_emit_failed_burst(
-            db, client_id=client_id, group_id=group_id, now=moment,
+            db,
+            client_id=client_id,
+            group_id=group_id,
+            now=moment,
         )
         return PinGrantResult(
             granted=False,
             error="incorrect_pin",
-            attempts_remaining=max(
-                0, _PIN_RATE_MAX_FAILS - (fails + 1)
-            ),
+            attempts_remaining=max(0, _PIN_RATE_MAX_FAILS - (fails + 1)),
         )
 
     new_hash = hash_pin(new_pin, hmac_key)
@@ -1746,7 +1748,8 @@ async def change_member_pin(
     await db.commit()
     logger.info(
         "PIN changed (per-client): client=%s group=%s",
-        client_id, group_id,
+        client_id,
+        group_id,
     )
     return PinGrantResult(granted=True)
 
@@ -1782,7 +1785,8 @@ async def clear_member_pin(
     if deleted:
         logger.info(
             "Per-client PIN cleared by operator: client=%s group=%s",
-            client_id, group_id,
+            client_id,
+            group_id,
         )
         await _emit_group_activity(
             db,

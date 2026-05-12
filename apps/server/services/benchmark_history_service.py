@@ -270,16 +270,12 @@ async def get_benchmark_run(
         "height": row["height"],
         "verify_caps": bool(row["verify_caps"]),
         "encoder_count": row["encoder_count"],
-        "resolutions": _distinct_resolutions(
-            row["results_json"], primary_w, primary_h
-        ),
+        "resolutions": _distinct_resolutions(row["results_json"], primary_w, primary_h),
         "results": results,
     }
 
 
-async def delete_benchmark_run(
-    db: aiosqlite.Connection, run_id: int
-) -> bool:
+async def delete_benchmark_run(db: aiosqlite.Connection, run_id: int) -> bool:
     """Delete one run.  Returns True iff a row actually went away."""
     cursor = await db.execute(
         "DELETE FROM benchmark_runs WHERE id = ?",
@@ -289,9 +285,7 @@ async def delete_benchmark_run(
     return (cursor.rowcount or 0) > 0
 
 
-async def prune_history(
-    db: aiosqlite.Connection, *, keep: int = _HISTORY_LIMIT
-) -> int:
+async def prune_history(db: aiosqlite.Connection, *, keep: int = _HISTORY_LIMIT) -> int:
     """Delete all but the ``keep`` most recent runs.  Returns count pruned.
 
     Called automatically after :func:`save_benchmark_run` so the table

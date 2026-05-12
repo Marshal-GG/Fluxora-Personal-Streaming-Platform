@@ -167,6 +167,7 @@ _VTB_PRESETS: dict[str, str] = {k: "default" for k in _SOFTWARE_PRESETS}
 
 # ── quality arg factories ─────────────────────────────────────────────────────
 
+
 def _sw_quality(crf: int) -> list[str]:
     """Software libx264 / libx265 — direct CRF passthrough."""
     return ["-crf", str(crf)]

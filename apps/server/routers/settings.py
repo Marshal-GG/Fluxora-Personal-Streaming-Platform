@@ -110,6 +110,7 @@ async def update_settings(
                 # operator switched hwaccel device and the new path is
                 # broken) surfaces in the bell.
                 from database.db import get_db as _get_db
+
                 _db = await _get_db()
                 await _ts.emit_encoder_failure_notifications(_db)
             except Exception:

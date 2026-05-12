@@ -395,6 +395,7 @@ async def _log_validation_error(request: Request, exc: RequestValidationError):
     )
     return await request_validation_exception_handler(request, exc)
 
+
 # Middleware order: app.add_middleware adds OUTSIDE the existing stack, so
 # the LAST one added runs FIRST on the request. We want:
 #   request -> CORS -> HLSBlock -> RealIP -> route handler
@@ -434,7 +435,5 @@ app.include_router(activity.router, prefix="/api/v1/activity", tags=["activity"]
 app.include_router(
     transcoding.router, prefix="/api/v1/transcoding", tags=["transcoding"]
 )
-app.include_router(
-    transcode.router, prefix="/api/v1/transcode", tags=["transcode"]
-)
+app.include_router(transcode.router, prefix="/api/v1/transcode", tags=["transcode"])
 app.include_router(logs.router, prefix="/api/v1/logs", tags=["logs"])

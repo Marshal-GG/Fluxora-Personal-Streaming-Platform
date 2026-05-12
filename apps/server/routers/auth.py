@@ -116,9 +116,7 @@ async def view_as_visible_libraries(
         enrollment
       * `time_locked_groups`: groups outside their time window now
     """
-    async with db.execute(
-        "SELECT id FROM clients WHERE id = ?", (client_id,)
-    ) as cur:
+    async with db.execute("SELECT id FROM clients WHERE id = ?", (client_id,)) as cur:
         if await cur.fetchone() is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Client not found"
@@ -137,13 +135,10 @@ def _serialize_visible(visible, client_id: str) -> dict:
         "client_id": client_id,
         "library_ids": sorted(visible.library_ids),
         "groups_contributing": {
-            gid: sorted(libs)
-            for gid, libs in visible.groups_contributing.items()
+            gid: sorted(libs) for gid, libs in visible.groups_contributing.items()
         },
         "pin_locked_groups": sorted(visible.pin_locked_groups),
-        "enrollment_required_groups": sorted(
-            visible.enrollment_required_groups
-        ),
+        "enrollment_required_groups": sorted(visible.enrollment_required_groups),
         "time_locked_groups": sorted(visible.time_locked_groups),
         "groups": list(visible.groups),
     }
@@ -443,9 +438,9 @@ async def list_continue_watching(
     # Operator changed access → history follows.
     visible = await group_service.get_visible_libraries(db, me["id"])
     rows = [
-        r for r in rows
-        if r["library_id"] is None
-        or r["library_id"] in visible.library_ids
+        r
+        for r in rows
+        if r["library_id"] is None or r["library_id"] in visible.library_ids
     ]
     return [MediaFileResponse(**row) for row in rows]
 

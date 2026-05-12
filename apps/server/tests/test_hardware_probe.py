@@ -84,10 +84,7 @@ async def test_probe_nvidia_returns_empty_when_smi_missing():
 
 @pytest.mark.asyncio
 async def test_probe_nvidia_handles_multi_gpu_setup():
-    smi_out = (
-        "GeForce RTX 4070, 12288, 535.171.04\n"
-        "Quadro P2000, 5120, 535.171.04\n"
-    )
+    smi_out = "GeForce RTX 4070, 12288, 535.171.04\n" "Quadro P2000, 5120, 535.171.04\n"
     with patch.object(hardware_probe, "_run", AsyncMock(return_value=smi_out)):
         gpus = await hardware_probe._probe_nvidia_gpus()
     assert len(gpus) == 2
@@ -137,9 +134,18 @@ async def test_probe_gpus_windows_handles_wmic_unavailable():
 @pytest.mark.asyncio
 async def test_detect_hardware_caches_result():
     """A second call must not re-invoke any probe."""
-    probe = AsyncMock(return_value=[{"vendor": "nvidia", "model": "x", "vram_mb": None,
-                                      "driver_version": None, "dev_path": None,
-                                      "encoder_support": []}])
+    probe = AsyncMock(
+        return_value=[
+            {
+                "vendor": "nvidia",
+                "model": "x",
+                "vram_mb": None,
+                "driver_version": None,
+                "dev_path": None,
+                "encoder_support": [],
+            }
+        ]
+    )
     cpu_probe = AsyncMock(
         return_value=[{"vendor": "Intel", "model": "x", "threads": 16}]
     )
@@ -180,9 +186,7 @@ async def test_devices_endpoint_returns_probe_result(client: AsyncClient):
             }
         ],
     }
-    with patch.object(
-        hardware_probe, "detect_hardware", AsyncMock(return_value=fake)
-    ):
+    with patch.object(hardware_probe, "detect_hardware", AsyncMock(return_value=fake)):
         resp = await client.get("/api/v1/transcoding/devices")
     assert resp.status_code == 200
     body = resp.json()

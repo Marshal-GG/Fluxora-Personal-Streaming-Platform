@@ -188,7 +188,7 @@ class EncoderBenchmarkResult:
 
     encoder: str
     vendor: str  # software | nvidia | intel | amd | apple
-    codec: str   # h264 | hevc | (future) av1
+    codec: str  # h264 | hevc | (future) av1
     # Source resolution this row was measured at.  Required because matrix-mode
     # runs produce N rows per encoder (one per resolution), and the desktop
     # needs each row to self-describe rather than infer from the parent run's
@@ -386,9 +386,7 @@ async def benchmark_encoder(
                 for line in re.split(r"[\r\n]", text):
                     m = _FRAME_RE.search(line)
                     if m and int(m.group(1)) >= 1:
-                        init_ms_box[0] = int(
-                            (time.monotonic() - started) * 1000
-                        )
+                        init_ms_box[0] = int((time.monotonic() - started) * 1000)
                         break
 
     reader_task = asyncio.create_task(_read_stderr())
@@ -397,6 +395,7 @@ async def benchmark_encoder(
     gpu_box: list[tuple[float | None, int | None]] = [(None, None)]
     probe_task: asyncio.Task[None] | None = None
     if probe_gpu and meta.vendor in _VENDOR_PROBE:
+
         async def _midpoint_probe() -> None:
             try:
                 # Fire halfway through so the encoder is already in steady
@@ -468,9 +467,7 @@ async def benchmark_encoder(
     tail_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")
 
     if proc.returncode != 0:
-        first_err = _pick_error_line(tail_text) or (
-            f"exit code {proc.returncode}"
-        )
+        first_err = _pick_error_line(tail_text) or (f"exit code {proc.returncode}")
         if len(first_err) > 240:
             first_err = first_err[:237] + "..."
         logger.info(
@@ -855,9 +852,7 @@ async def probe_concurrent_cap(
         except OSError:
             return False
         try:
-            await asyncio.wait_for(
-                proc.wait(), timeout=_CAP_PROBE_PER_ATTEMPT_TIMEOUT
-            )
+            await asyncio.wait_for(proc.wait(), timeout=_CAP_PROBE_PER_ATTEMPT_TIMEOUT)
         except TimeoutError:
             try:
                 proc.kill()
@@ -913,15 +908,13 @@ def clamp_fps(value: int | None) -> int:
 # (width × height) drives the snap so non-16:9 inputs map to the nearest
 # tier of similar workload.
 _RESOLUTION_TIERS: tuple[tuple[int, int], ...] = (
-    (1280, 720),    # 720p — default; representative library content
-    (1920, 1080),   # 1080p — live game capture, broadcast TV
-    (3840, 2160),   # 2160p / 4K — HDR sources, high-end captures
+    (1280, 720),  # 720p — default; representative library content
+    (1920, 1080),  # 1080p — live game capture, broadcast TV
+    (3840, 2160),  # 2160p / 4K — HDR sources, high-end captures
 )
 
 
-def clamp_resolution(
-    width: int | None, height: int | None
-) -> tuple[int, int]:
+def clamp_resolution(width: int | None, height: int | None) -> tuple[int, int]:
     """Snap operator-supplied dimensions to the nearest documented tier.
 
     ``(None, None)`` returns the 720p default.  Anything else is mapped

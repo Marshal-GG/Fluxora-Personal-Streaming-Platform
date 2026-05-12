@@ -231,11 +231,14 @@ async def test_search_retries_with_doh_override_on_connect_timeout():
             },
         )()
 
-    with patch("httpx.AsyncClient") as mock_cls, patch.object(
-        dns_override,
-        "register_doh_override",
-        new=AsyncMock(return_value=True),
-    ) as mock_register:
+    with (
+        patch("httpx.AsyncClient") as mock_cls,
+        patch.object(
+            dns_override,
+            "register_doh_override",
+            new=AsyncMock(return_value=True),
+        ) as mock_register,
+    ):
         mock_cls.return_value.__aenter__ = AsyncMock(
             return_value=type(
                 "C",
@@ -277,11 +280,14 @@ async def test_search_does_not_retry_when_override_already_registered():
         call_count["value"] += 1
         raise httpx.ConnectTimeout("still down")
 
-    with patch("httpx.AsyncClient") as mock_cls, patch.object(
-        dns_override,
-        "register_doh_override",
-        new=AsyncMock(return_value=True),
-    ) as mock_register:
+    with (
+        patch("httpx.AsyncClient") as mock_cls,
+        patch.object(
+            dns_override,
+            "register_doh_override",
+            new=AsyncMock(return_value=True),
+        ) as mock_register,
+    ):
         mock_cls.return_value.__aenter__ = AsyncMock(
             return_value=type(
                 "C",
@@ -326,7 +332,9 @@ async def test_search_uses_default_tmdb_url_when_no_override():
     with patch("httpx.AsyncClient") as mock_cls:
         mock_cls.return_value.__aenter__ = AsyncMock(
             return_value=type(
-                "C", (), {"get": AsyncMock(side_effect=_capture_url)},
+                "C",
+                (),
+                {"get": AsyncMock(side_effect=_capture_url)},
             )()
         )
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
@@ -362,17 +370,16 @@ async def test_search_uses_custom_base_url_when_provided():
     with patch("httpx.AsyncClient") as mock_cls:
         mock_cls.return_value.__aenter__ = AsyncMock(
             return_value=type(
-                "C", (), {"get": AsyncMock(side_effect=_capture_url)},
+                "C",
+                (),
+                {"get": AsyncMock(side_effect=_capture_url)},
             )()
         )
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
         await svc.search("Inception")
 
-    assert (
-        captured["url"]
-        == "https://fluxora-api.marshalx.dev/tmdb/3/search/multi"
-    )
+    assert captured["url"] == "https://fluxora-api.marshalx.dev/tmdb/3/search/multi"
 
 
 @pytest.mark.asyncio
@@ -466,11 +473,14 @@ async def test_search_does_not_retry_on_non_connection_errors():
             response=httpx.Response(401, json={"status_message": "Invalid API key"}),
         )
 
-    with patch("httpx.AsyncClient") as mock_cls, patch.object(
-        dns_override,
-        "register_doh_override",
-        new=AsyncMock(return_value=True),
-    ) as mock_register:
+    with (
+        patch("httpx.AsyncClient") as mock_cls,
+        patch.object(
+            dns_override,
+            "register_doh_override",
+            new=AsyncMock(return_value=True),
+        ) as mock_register,
+    ):
         mock_cls.return_value.__aenter__ = AsyncMock(
             return_value=type(
                 "C",

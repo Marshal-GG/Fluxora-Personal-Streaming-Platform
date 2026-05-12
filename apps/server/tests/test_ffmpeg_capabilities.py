@@ -6,6 +6,7 @@ end-to-end, but most tests use the synthetic dataclass + module-level
 cache helpers so we don't depend on what FFmpeg version the CI runner
 happens to have.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -93,12 +94,12 @@ async def test_probe_parses_real_ffmpeg_version():
 
     caps = await probe_ffmpeg_capabilities()
     assert caps.is_known, f"probe failed; got {caps!r}"
-    assert caps.version_string.startswith("ffmpeg version"), (
-        f"unexpected first-line shape: {caps.version_string!r}"
-    )
-    assert caps.major >= 4, (
-        f"FFmpeg < 4 is below Fluxora's HLS minimum; got major={caps.major}"
-    )
+    assert caps.version_string.startswith(
+        "ffmpeg version"
+    ), f"unexpected first-line shape: {caps.version_string!r}"
+    assert (
+        caps.major >= 4
+    ), f"FFmpeg < 4 is below Fluxora's HLS minimum; got major={caps.major}"
 
 
 @pytest.mark.asyncio

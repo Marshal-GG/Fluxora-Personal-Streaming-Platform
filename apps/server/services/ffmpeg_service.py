@@ -591,10 +591,14 @@ def _build_ffmpeg_cmd(
         # — it operates on CPU pixels, then the result feeds into VAAPI
         # upload if needed.
         encoder_vf = meta.vf_chain  # raw string from registry, may be None
-        chains = [c for c in (
-            _HDR_TO_SDR_VF if apply_hdr_tonemap else None,
-            encoder_vf,
-        ) if c]
+        chains = [
+            c
+            for c in (
+                _HDR_TO_SDR_VF if apply_hdr_tonemap else None,
+                encoder_vf,
+            )
+            if c
+        ]
         if chains:
             cmd.extend(["-vf", ",".join(chains)])
 
@@ -630,8 +634,7 @@ def _build_ffmpeg_cmd(
     # Defaults (when audio params aren't known) fall through to path 3 —
     # the safer of the three, since it always produces valid HLS audio.
     audio_is_aac_48khz = (
-        source_audio_codec == "aac"
-        and source_audio_sample_rate == 48000
+        source_audio_codec == "aac" and source_audio_sample_rate == 48000
     )
     if audio_is_aac_48khz and not apply_hdr_tonemap:
         # Path 1 — copy.  Safe only when video is also stream-copy or
@@ -656,14 +659,19 @@ def _build_ffmpeg_cmd(
     # skipped it, so the playlist's `#EXT-X-MAP URI` always points at a
     # real file.
     use_fmp4 = (
-        direct_remux_hevc or direct_remux_av1 or direct_remux_vp9
+        direct_remux_hevc
+        or direct_remux_av1
+        or direct_remux_vp9
         or (not direct_remux and meta.segment_fmt == "fmp4")
     )
     hls_time = "10" if direct_remux else "6"
     common_hls = [
-        "-f", "hls",
-        "-hls_time", hls_time,
-        "-hls_list_size", "0",
+        "-f",
+        "hls",
+        "-hls_time",
+        hls_time,
+        "-hls_list_size",
+        "0",
     ]
     # Continue the segment numbering from where the previous spawn left
     # off (used by `restart_stream`).  For an initial spawn this is 0,
@@ -677,24 +685,35 @@ def _build_ffmpeg_cmd(
         common_hls.extend(["-hls_flags", "independent_segments"])
 
     if use_fmp4:
-        cmd.extend(common_hls + [
-            "-hls_segment_type", "fmp4",
-            # Pin the init-segment filename explicitly so the playlist's
-            # #EXT-X-MAP URI matches what's actually written to disk.
-            # FFmpeg's default for unnamed fmp4 init segments varies between
-            # builds — some produce `init.mp4`, others embed init data into
-            # `seg00000.m4s`.  Without this flag the player gets a playlist
-            # pointing at `init.mp4` but the file doesn't exist → 404.
-            "-hls_fmp4_init_filename", "init.mp4",
-            "-hls_segment_filename", str(session_dir / "seg%05d.m4s"),
-            str(playlist),
-        ])
+        cmd.extend(
+            common_hls
+            + [
+                "-hls_segment_type",
+                "fmp4",
+                # Pin the init-segment filename explicitly so the playlist's
+                # #EXT-X-MAP URI matches what's actually written to disk.
+                # FFmpeg's default for unnamed fmp4 init segments varies between
+                # builds — some produce `init.mp4`, others embed init data into
+                # `seg00000.m4s`.  Without this flag the player gets a playlist
+                # pointing at `init.mp4` but the file doesn't exist → 404.
+                "-hls_fmp4_init_filename",
+                "init.mp4",
+                "-hls_segment_filename",
+                str(session_dir / "seg%05d.m4s"),
+                str(playlist),
+            ]
+        )
     else:
-        cmd.extend(common_hls + [
-            "-hls_segment_type", "mpegts",
-            "-hls_segment_filename", str(session_dir / "seg%05d.ts"),
-            str(playlist),
-        ])
+        cmd.extend(
+            common_hls
+            + [
+                "-hls_segment_type",
+                "mpegts",
+                "-hls_segment_filename",
+                str(session_dir / "seg%05d.ts"),
+                str(playlist),
+            ]
+        )
     return cmd
 
 
@@ -855,9 +874,7 @@ def _finalize_vod_playlist(
         for line in lines:
             out.append(line)
             if not injected and line.startswith("#EXT-X-VERSION"):
-                out.append(
-                    f"#EXT-X-DISCONTINUITY-SEQUENCE:{discontinuity_seq}"
-                )
+                out.append(f"#EXT-X-DISCONTINUITY-SEQUENCE:{discontinuity_seq}")
                 injected = True
         raw = "\n".join(out)
         if not raw.endswith("\n"):
@@ -905,8 +922,7 @@ async def _finalize_vod_playlist_on_exit(
         )
         if ok:
             logger.info(
-                "VOD playlist finalised after natural FFmpeg exit: "
-                "session=%s",
+                "VOD playlist finalised after natural FFmpeg exit: " "session=%s",
                 session_id,
             )
     except Exception:
@@ -958,13 +974,29 @@ async def _ensure_fmp4_init_segment(
     # `-t 0.04` writes ≈1 frame at 25 fps; the moov header is what the
     # player actually reads, the tiny mdat is skipped.
     cmd = [
-        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-        "-i", file_path,
-        "-map", "0:v:0", "-c:v", "copy",
-        "-map", "0:a:0?", "-c:a", "aac", "-b:a", f"{audio_aac_kbps}k",
-        "-t", "0.04",
-        "-movflags", "+empty_moov+default_base_moof+frag_keyframe",
-        "-f", "mp4",
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        file_path,
+        "-map",
+        "0:v:0",
+        "-c:v",
+        "copy",
+        "-map",
+        "0:a:0?",
+        "-c:a",
+        "aac",
+        "-b:a",
+        f"{audio_aac_kbps}k",
+        "-t",
+        "0.04",
+        "-movflags",
+        "+empty_moov+default_base_moof+frag_keyframe",
+        "-f",
+        "mp4",
         str(init_path),
     ]
     try:
@@ -1049,6 +1081,7 @@ async def _spawn_ffmpeg_attempt(
     finally:
         try:
             import os
+
             os.close(stderr_fd)
         except OSError:
             pass
@@ -1254,16 +1287,19 @@ async def start_stream(
     # blocklist hit) overrides everything else.  The resolver
     # collapses all four signals to a single bool per codec.
     direct_remux_av1 = source_codec == "av1" and _resolve_codec_passthrough(
-        settings_row, library_row, "av1",
+        settings_row,
+        library_row,
+        "av1",
         session_force_transcode=force_transcode,
     )
     direct_remux_vp9 = source_codec == "vp9" and _resolve_codec_passthrough(
-        settings_row, library_row, "vp9",
+        settings_row,
+        library_row,
+        "vp9",
         session_force_transcode=force_transcode,
     )
     direct_remux = (
-        direct_remux_h264 or direct_remux_hevc
-        or direct_remux_av1 or direct_remux_vp9
+        direct_remux_h264 or direct_remux_hevc or direct_remux_av1 or direct_remux_vp9
     )
 
     # Diagnostic — one INFO line per session-start so the operator can
@@ -1282,9 +1318,7 @@ async def start_stream(
         # endpoint; this log is just the post-resolution reason.
         decision_reason = "forced-fallback"
         decision_path = "transcode"
-    elif apply_hdr_tonemap and (
-        source_codec in ("h264", "hevc", "h265", "av1", "vp9")
-    ):
+    elif apply_hdr_tonemap and (source_codec in ("h264", "hevc", "h265", "av1", "vp9")):
         decision_reason = "hdr-tonemap"
         decision_path = "transcode"
     elif direct_remux:
@@ -1324,8 +1358,7 @@ async def start_stream(
             decision_reason = "unsupported-source-codec"
         decision_path = "transcode"
     logger.info(
-        "stream_decision session=%s source_codec=%s mode=%s "
-        "path=%s reason=%s",
+        "stream_decision session=%s source_codec=%s mode=%s " "path=%s reason=%s",
         session_id,
         source_codec or "<unknown>",
         global_mode,
@@ -1340,8 +1373,7 @@ async def start_stream(
     # them.  Drop the GPU-input pipeline for tonemap sessions.
     if apply_hdr_tonemap and direct_remux:
         logger.info(
-            "Tonemap requested for HDR source — overriding stream-copy "
-            "for session"
+            "Tonemap requested for HDR source — overriding stream-copy " "for session"
         )
         direct_remux = False
         direct_remux_h264 = False
@@ -1391,8 +1423,11 @@ async def start_stream(
     # AV1 + VP9 ride the same fmp4 segment path HEVC uses — MPEG-TS
     # doesn't carry AV1 / VP9 cleanly across all clients, but fmp4
     # (CMAF) is well-supported.  H.264 stays on MPEG-TS for back-compat.
-    use_fmp4 = direct_remux_hevc or direct_remux_av1 or direct_remux_vp9 or (
-        not direct_remux and meta.segment_fmt == "fmp4"
+    use_fmp4 = (
+        direct_remux_hevc
+        or direct_remux_av1
+        or direct_remux_vp9
+        or (not direct_remux and meta.segment_fmt == "fmp4")
     )
     if direct_remux_hevc:
         mode = "stream-copy(hevc/fmp4)"
@@ -1490,7 +1525,10 @@ async def start_stream(
         source_audio_sample_rate=audio_sample_rate,
     )
     succeeded, tail, returncode, killed_after_timeout = await _spawn_ffmpeg_attempt(
-        cmd, session_id, ff_playlist, playlist_timeout_sec=playlist_timeout_sec,
+        cmd,
+        session_id,
+        ff_playlist,
+        playlist_timeout_sec=playlist_timeout_sec,
     )
 
     # Retry once if the GPU input pipeline failed — software decode
@@ -1499,9 +1537,7 @@ async def start_stream(
     # (transcode mode + non-software encoder + GPU input wasn't already
     # disabled for tonemap).
     used_gpu_input = (
-        first_attempt_gpu_input
-        and not direct_remux
-        and meta.vendor != "software"
+        first_attempt_gpu_input and not direct_remux and meta.vendor != "software"
     )
     if not succeeded and used_gpu_input and _is_cuvid_failure(tail):
         logger.warning(
@@ -1531,7 +1567,10 @@ async def start_stream(
         # would just timeout-kill the retry on slow sources.
         retry_timeout_sec = max(playlist_timeout_sec, 30.0)
         succeeded, tail, returncode, killed_after_timeout = await _spawn_ffmpeg_attempt(
-            cmd, session_id, ff_playlist, playlist_timeout_sec=retry_timeout_sec,
+            cmd,
+            session_id,
+            ff_playlist,
+            playlist_timeout_sec=retry_timeout_sec,
         )
 
     if succeeded:
@@ -1941,6 +1980,7 @@ async def test_encoder(
         finally:
             try:
                 import os
+
                 os.close(stderr_fd)
             except OSError:
                 pass

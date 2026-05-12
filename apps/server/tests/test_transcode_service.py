@@ -97,9 +97,7 @@ async def test_candidates_picks_av1_and_vp9_only(test_db):
 @pytest.mark.asyncio
 async def test_candidates_ignores_already_transcoded(test_db):
     pending = await _insert_file(test_db, codec="av1")
-    await _insert_file(
-        test_db, codec="av1", transcoded_path="/media/already.h264.mkv"
-    )
+    await _insert_file(test_db, codec="av1", transcoded_path="/media/already.h264.mkv")
 
     results = await transcode_service.candidates(test_db)
     ids = {c.file_id for c in results}
@@ -472,9 +470,7 @@ def test_sidecar_path_dedicated_mirrors_library_tree(tmp_path):
     }
 
     out = transcode_service._sidecar_path(file_row, settings_row, library_row)
-    assert out == (
-        tmp_path / "cache" / "Films" / "Movies" / "2024" / "Dune.h264.mkv"
-    )
+    assert out == (tmp_path / "cache" / "Films" / "Movies" / "2024" / "Dune.h264.mkv")
 
 
 def test_sidecar_path_inline_uses_subfolder(tmp_path):
@@ -517,9 +513,7 @@ def test_sidecar_path_dedicated_falls_back_to_default_root_when_unset(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_crash_recovery_unlinks_partial_sidecar(
-    test_db, monkeypatch, tmp_path
-):
+async def test_crash_recovery_unlinks_partial_sidecar(test_db, monkeypatch, tmp_path):
     """A crashed job's partial sidecar must be removed on next boot."""
 
     async def _fake_resolve():
@@ -538,8 +532,13 @@ async def test_crash_recovery_unlinks_partial_sidecar(
     await test_db.execute(
         "INSERT INTO libraries (id, name, type, root_paths, created_at)"
         " VALUES (?, ?, ?, ?, ?)",
-        (lib_id, "L", "movies", json.dumps([str(lib_root)]),
-         datetime.now(UTC).isoformat()),
+        (
+            lib_id,
+            "L",
+            "movies",
+            json.dumps([str(lib_root)]),
+            datetime.now(UTC).isoformat(),
+        ),
     )
     fid = str(_uuid.uuid4())
     now = datetime.now(UTC).isoformat()
@@ -550,8 +549,17 @@ async def test_crash_recovery_unlinks_partial_sidecar(
              library_id, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (fid, str(lib_root / "src.mkv"), "src.mkv", ".mkv", 100, "av1",
-         lib_id, now, now),
+        (
+            fid,
+            str(lib_root / "src.mkv"),
+            "src.mkv",
+            ".mkv",
+            100,
+            "av1",
+            lib_id,
+            now,
+            now,
+        ),
     )
     await test_db.commit()
 
@@ -560,8 +568,7 @@ async def test_crash_recovery_unlinks_partial_sidecar(
     # at the path the resolver computes.  Settings default to dedicated
     # mode + default cache root.
     await test_db.execute(
-        "UPDATE transcode_jobs SET status = 'running', started_at = ?"
-        " WHERE id = ?",
+        "UPDATE transcode_jobs SET status = 'running', started_at = ?" " WHERE id = ?",
         (int(time.time()), job_id),
     )
     await test_db.commit()
@@ -569,8 +576,7 @@ async def test_crash_recovery_unlinks_partial_sidecar(
     # Force an inline cache so the sidecar lands under tmp_path
     # rather than the platform data dir.
     await test_db.execute(
-        "UPDATE user_settings SET transcode_storage_mode = 'inline'"
-        " WHERE id = 1"
+        "UPDATE user_settings SET transcode_storage_mode = 'inline'" " WHERE id = 1"
     )
     await test_db.commit()
 
@@ -611,8 +617,18 @@ async def test_storage_aggregate_groups_by_codec(test_db):
                  created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (fid, f"/m/{fid}.mkv", f"f-{fid[:6]}.mkv", ".mkv", size * 2,
-             codec, f"/sidecar/{fid}.mkv", size, now, now),
+            (
+                fid,
+                f"/m/{fid}.mkv",
+                f"f-{fid[:6]}.mkv",
+                ".mkv",
+                size * 2,
+                codec,
+                f"/sidecar/{fid}.mkv",
+                size,
+                now,
+                now,
+            ),
         )
     await test_db.commit()
 
@@ -629,9 +645,7 @@ async def test_storage_aggregate_groups_by_codec(test_db):
 
 
 @pytest.mark.asyncio
-async def test_stale_sidecar_detection_clears_path_on_mtime_advance(
-    test_db, tmp_path
-):
+async def test_stale_sidecar_detection_clears_path_on_mtime_advance(test_db, tmp_path):
     """Library scan re-discovering a file whose source mtime advanced
     past `transcoded_source_mtime` clears the row's transcoded_path."""
     import json as _json
@@ -647,8 +661,13 @@ async def test_stale_sidecar_detection_clears_path_on_mtime_advance(
     await test_db.execute(
         "INSERT INTO libraries (id, name, type, root_paths, created_at)"
         " VALUES (?, ?, ?, ?, ?)",
-        (lib_id, "L", "movies", _json.dumps([str(src.parent)]),
-         datetime.now(UTC).isoformat()),
+        (
+            lib_id,
+            "L",
+            "movies",
+            _json.dumps([str(src.parent)]),
+            datetime.now(UTC).isoformat(),
+        ),
     )
     fid = str(_uuid.uuid4())
     now = datetime.now(UTC).isoformat()
@@ -663,8 +682,19 @@ async def test_stale_sidecar_detection_clears_path_on_mtime_advance(
              library_id, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (fid, str(src), "movie.mkv", ".mkv", 8, "av1",
-         "/sidecar/movie.h264.mkv", old_mtime, lib_id, now, now),
+        (
+            fid,
+            str(src),
+            "movie.mkv",
+            ".mkv",
+            8,
+            "av1",
+            "/sidecar/movie.h264.mkv",
+            old_mtime,
+            lib_id,
+            now,
+            now,
+        ),
     )
     await test_db.commit()
 

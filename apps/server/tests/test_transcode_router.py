@@ -105,9 +105,7 @@ async def test_candidates_excludes_h264(client: AsyncClient, test_db):
 @pytest.mark.asyncio
 async def test_queue_creates_jobs(client: AsyncClient, test_db):
     fid = await _insert_file(test_db, codec="av1")
-    resp = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": [fid]}
-    )
+    resp = await client.post("/api/v1/transcode/queue", json={"file_ids": [fid]})
     assert resp.status_code == 201
     body = resp.json()
     assert len(body["job_ids"]) == 1
@@ -115,9 +113,7 @@ async def test_queue_creates_jobs(client: AsyncClient, test_db):
 
 @pytest.mark.asyncio
 async def test_queue_empty_list_rejected(client: AsyncClient):
-    resp = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": []}
-    )
+    resp = await client.post("/api/v1/transcode/queue", json={"file_ids": []})
     assert resp.status_code == 422
 
 
@@ -131,18 +127,14 @@ async def test_queue_too_many_rejected(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_queue_unknown_file_returns_400(client: AsyncClient):
-    resp = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": ["bogus-id"]}
-    )
+    resp = await client.post("/api/v1/transcode/queue", json={"file_ids": ["bogus-id"]})
     assert resp.status_code == 400
 
 
 @pytest.mark.asyncio
 async def test_queue_non_candidate_returns_400(client: AsyncClient, test_db):
     fid = await _insert_file(test_db, codec="h264")
-    resp = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": [fid]}
-    )
+    resp = await client.post("/api/v1/transcode/queue", json={"file_ids": [fid]})
     assert resp.status_code == 400
 
 
@@ -152,9 +144,7 @@ async def test_queue_non_candidate_returns_400(client: AsyncClient, test_db):
 @pytest.mark.asyncio
 async def test_list_jobs_no_filter(client: AsyncClient, test_db):
     fid = await _insert_file(test_db, codec="av1")
-    create = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": [fid]}
-    )
+    create = await client.post("/api/v1/transcode/queue", json={"file_ids": [fid]})
     assert create.status_code == 201
 
     resp = await client.get("/api/v1/transcode/jobs")
@@ -170,13 +160,9 @@ async def test_list_jobs_status_filter(client: AsyncClient, test_db):
     fid_a = await _insert_file(test_db, codec="av1")
     fid_b = await _insert_file(test_db, codec="vp9")
 
-    resp_a = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": [fid_a]}
-    )
+    resp_a = await client.post("/api/v1/transcode/queue", json={"file_ids": [fid_a]})
     job_a = resp_a.json()["job_ids"][0]
-    resp_b = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": [fid_b]}
-    )
+    resp_b = await client.post("/api/v1/transcode/queue", json={"file_ids": [fid_b]})
     assert resp_b.status_code == 201
 
     # Mark job_a done so we can filter it out.
@@ -198,9 +184,7 @@ async def test_list_jobs_status_filter(client: AsyncClient, test_db):
 @pytest.mark.asyncio
 async def test_cancel_queued_job(client: AsyncClient, test_db):
     fid = await _insert_file(test_db, codec="av1")
-    create = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": [fid]}
-    )
+    create = await client.post("/api/v1/transcode/queue", json={"file_ids": [fid]})
     job_id = create.json()["job_ids"][0]
 
     resp = await client.delete(f"/api/v1/transcode/jobs/{job_id}")
@@ -216,9 +200,7 @@ async def test_cancel_unknown_job_returns_404(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_cancel_terminal_job_returns_409(client: AsyncClient, test_db):
     fid = await _insert_file(test_db, codec="av1")
-    create = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": [fid]}
-    )
+    create = await client.post("/api/v1/transcode/queue", json={"file_ids": [fid]})
     job_id = create.json()["job_ids"][0]
     await test_db.execute(
         "UPDATE transcode_jobs SET status = 'done' WHERE id = ?", (job_id,)
@@ -235,9 +217,7 @@ async def test_cancel_terminal_job_returns_409(client: AsyncClient, test_db):
 @pytest.mark.asyncio
 async def test_retry_failed_job_returns_201(client: AsyncClient, test_db):
     fid = await _insert_file(test_db, codec="av1")
-    create = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": [fid]}
-    )
+    create = await client.post("/api/v1/transcode/queue", json={"file_ids": [fid]})
     job_id = create.json()["job_ids"][0]
     await test_db.execute(
         "UPDATE transcode_jobs SET status = 'failed', error = ?, finished_at = ?"
@@ -289,9 +269,7 @@ async def test_queue_rejects_unknown_preset_with_422(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_queue_default_preset_is_recommended(client: AsyncClient, test_db):
     fid = await _insert_file(test_db, codec="av1")
-    resp = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": [fid]}
-    )
+    resp = await client.post("/api/v1/transcode/queue", json={"file_ids": [fid]})
     assert resp.status_code == 201
     job_id = resp.json()["job_ids"][0]
     async with test_db.execute(
@@ -337,9 +315,7 @@ async def test_storage_includes_transcoded_rows(client: AsyncClient, test_db):
 @pytest.mark.asyncio
 async def test_retry_running_job_returns_409(client: AsyncClient, test_db):
     fid = await _insert_file(test_db, codec="av1")
-    create = await client.post(
-        "/api/v1/transcode/queue", json={"file_ids": [fid]}
-    )
+    create = await client.post("/api/v1/transcode/queue", json={"file_ids": [fid]})
     job_id = create.json()["job_ids"][0]
     await test_db.execute(
         "UPDATE transcode_jobs SET status = 'running' WHERE id = ?", (job_id,)

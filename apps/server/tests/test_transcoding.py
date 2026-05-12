@@ -307,9 +307,7 @@ async def test_benchmark_accepts_60_fps(client: AsyncClient):
         ),
         patch.object(benchmark_service, "run_benchmark", side_effect=_fake_run),
     ):
-        resp = await client.post(
-            "/api/v1/transcoding/benchmark", json={"fps": 60}
-        )
+        resp = await client.post("/api/v1/transcoding/benchmark", json={"fps": 60})
 
     assert resp.status_code == 200
     body = resp.json()
@@ -618,9 +616,7 @@ async def test_benchmark_rejects_out_of_range_fps(client: AsyncClient):
     """Pydantic validates fps to [24, 60].  120 fps is high-refresh-display
     territory and would tell us nothing useful for media streaming — 422
     fires before the service is ever invoked."""
-    resp = await client.post(
-        "/api/v1/transcoding/benchmark", json={"fps": 120}
-    )
+    resp = await client.post("/api/v1/transcoding/benchmark", json={"fps": 120})
     assert resp.status_code == 422
 
 
@@ -628,9 +624,7 @@ async def test_benchmark_rejects_out_of_range_fps(client: AsyncClient):
 async def test_benchmark_rejects_out_of_range_duration(client: AsyncClient):
     """Pydantic validates the field range — 99 is out of bounds, 422 fires
     before the service is ever invoked."""
-    resp = await client.post(
-        "/api/v1/transcoding/benchmark", json={"duration_sec": 99}
-    )
+    resp = await client.post("/api/v1/transcoding/benchmark", json={"duration_sec": 99})
     assert resp.status_code == 422
 
 

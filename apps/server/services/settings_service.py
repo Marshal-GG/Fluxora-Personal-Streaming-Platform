@@ -122,6 +122,7 @@ async def _validate_transcode_cache_root(
 
     await _asyncio.to_thread(_validate_transcode_cache_root_sync, path_str, roots)
 
+
 # Stream concurrency caps per subscription tier.
 TIER_STREAM_LIMITS: dict[str, int] = {
     "free": 1,

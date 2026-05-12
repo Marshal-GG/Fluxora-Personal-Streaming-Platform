@@ -57,9 +57,7 @@ class TmdbService:
     ) -> None:
         self._key = api_key
         self._base_url = (base_url or _TMDB_DEFAULT_BASE).rstrip("/")
-        self._poster_base_url = (
-            poster_base_url or _POSTER_DEFAULT_BASE
-        ).rstrip("/")
+        self._poster_base_url = (poster_base_url or _POSTER_DEFAULT_BASE).rstrip("/")
         # The DoH-retry hostname follows the search URL — when an
         # operator routes through their own proxy, attempts that hit
         # the proxy hostname may still be DNS-hijacked at the user's
@@ -106,9 +104,7 @@ class TmdbService:
                     overview: str = item.get("overview") or ""
                     poster_path: str | None = item.get("poster_path")
                     poster_url = (
-                        f"{self._poster_base_url}{poster_path}"
-                        if poster_path
-                        else None
+                        f"{self._poster_base_url}{poster_path}" if poster_path else None
                     )
 
                     return TmdbMeta(

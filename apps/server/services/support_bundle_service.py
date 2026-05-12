@@ -142,9 +142,7 @@ async def _collect_encoders() -> dict[str, Any]:
             enc: {
                 "passed": result.passed,
                 "error": result.error,
-                "tested_at": result.tested_at.isoformat()
-                if result.tested_at
-                else None,
+                "tested_at": result.tested_at.isoformat() if result.tested_at else None,
                 "suggestion": result.suggestion,
             }
             for enc, result in results.items()

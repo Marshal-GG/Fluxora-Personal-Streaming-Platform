@@ -265,9 +265,11 @@ async def _probe_gpus_linux() -> list[dict[str, Any]]:
                     "vram_mb": None,
                     "driver_version": None,
                     "dev_path": None,
-                    "encoder_support": _encoder_support_for_vendor(vendor)
-                    if vendor != "unknown"
-                    else [],
+                    "encoder_support": (
+                        _encoder_support_for_vendor(vendor)
+                        if vendor != "unknown"
+                        else []
+                    ),
                 }
             )
 
@@ -354,9 +356,9 @@ async def _probe_gpus_windows() -> list[dict[str, Any]]:
                 "vram_mb": vram_mb,
                 "driver_version": driver or None,
                 "dev_path": None,  # VAAPI doesn't apply on Windows
-                "encoder_support": _encoder_support_for_vendor(vendor)
-                if vendor != "unknown"
-                else [],
+                "encoder_support": (
+                    _encoder_support_for_vendor(vendor) if vendor != "unknown" else []
+                ),
             }
         )
 
@@ -367,8 +369,11 @@ async def _probe_gpus_windows() -> list[dict[str, Any]]:
         for existing in gpus:
             if existing["vendor"] == "nvidia" and (
                 existing["model"] == n["model"]
-                or (existing["model"] and n["model"]
-                    and existing["model"].split()[-1] == n["model"].split()[-1])
+                or (
+                    existing["model"]
+                    and n["model"]
+                    and existing["model"].split()[-1] == n["model"].split()[-1]
+                )
             ):
                 if n["vram_mb"]:
                     existing["vram_mb"] = n["vram_mb"]
@@ -383,9 +388,7 @@ async def _probe_gpus_windows() -> list[dict[str, Any]]:
 
 
 async def _probe_gpus_macos() -> list[dict[str, Any]]:
-    out = await _run(
-        ["system_profiler", "SPDisplaysDataType", "-json"], timeout=4.0
-    )
+    out = await _run(["system_profiler", "SPDisplaysDataType", "-json"], timeout=4.0)
     if not out:
         return []
     try:
@@ -411,9 +414,9 @@ async def _probe_gpus_macos() -> list[dict[str, Any]]:
                 "vram_mb": vram_mb,
                 "driver_version": None,
                 "dev_path": None,
-                "encoder_support": _encoder_support_for_vendor(vendor)
-                if vendor != "unknown"
-                else [],
+                "encoder_support": (
+                    _encoder_support_for_vendor(vendor) if vendor != "unknown" else []
+                ),
             }
         )
     return gpus

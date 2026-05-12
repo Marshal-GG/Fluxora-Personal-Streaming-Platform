@@ -235,9 +235,7 @@ async def patch_member(
         # here without breaking older callers).
         return
     tw = body.time_window_override
-    is_clear_sentinel = (
-        tw.start_h == 0 and tw.end_h == 0 and not tw.days
-    )
+    is_clear_sentinel = tw.start_h == 0 and tw.end_h == 0 and not tw.days
     payload = None if is_clear_sentinel else tw.model_dump()
     ok = await group_service.set_member_time_window_override(
         db, group_id, client_id, time_window=payload
@@ -418,6 +416,7 @@ async def grant_status(
     restart — local cache survives but the server-side grant may have
     expired or the operator may have flipped the group's pin_model."""
     from datetime import UTC, datetime
+
     now_iso = datetime.now(UTC).isoformat()
     async with db.execute(
         """
@@ -484,9 +483,7 @@ def _translate_enroll_error(err: str | None, attempts_remaining: int | None):
     if err == "wrong_mode":
         return HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "This group uses a shared PIN — use /enter, not /enroll"
-            ),
+            detail=("This group uses a shared PIN — use /enter, not /enroll"),
         )
     if err == "not_a_member":
         return HTTPException(
@@ -496,9 +493,7 @@ def _translate_enroll_error(err: str | None, attempts_remaining: int | None):
     if err == "already_enrolled":
         return HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "PIN already enrolled — use /enroll/change to replace it"
-            ),
+            detail=("PIN already enrolled — use /enroll/change to replace it"),
         )
     if err == "not_enrolled":
         return HTTPException(
@@ -513,9 +508,7 @@ def _translate_enroll_error(err: str | None, attempts_remaining: int | None):
     if err == "incorrect_pin":
         return HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                f"Incorrect PIN ({attempts_remaining} attempts remaining)"
-            ),
+            detail=(f"Incorrect PIN ({attempts_remaining} attempts remaining)"),
         )
     # strength-policy reason or unknown — surface as 400 with the raw text
     return HTTPException(
@@ -644,9 +637,7 @@ async def reset_all_grants(
     Errors:
       * 404 — group not found
     """
-    async with db.execute(
-        "SELECT id FROM groups WHERE id = ?", (group_id,)
-    ) as cur:
+    async with db.execute("SELECT id FROM groups WHERE id = ?", (group_id,)) as cur:
         if await cur.fetchone() is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

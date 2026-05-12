@@ -102,8 +102,7 @@ async def list_files(
         return [
             MediaFileResponse(**row)
             for row in rows
-            if row["library_id"] is None
-            or row["library_id"] in visible.library_ids
+            if row["library_id"] is None or row["library_id"] in visible.library_ids
         ]
     rows = await library_service.list_files(db, library_id=library_id)
     return [MediaFileResponse(**row) for row in rows]
@@ -127,9 +126,9 @@ async def list_recent_files(
     if _client is not None:
         visible = await group_service.get_visible_libraries(db, _client["id"])
         rows = [
-            r for r in rows
-            if r["library_id"] is None
-            or r["library_id"] in visible.library_ids
+            r
+            for r in rows
+            if r["library_id"] is None or r["library_id"] in visible.library_ids
         ]
     return [MediaFileResponse(**row) for row in rows]
 
@@ -153,9 +152,9 @@ async def search_files(
     if _client is not None:
         visible = await group_service.get_visible_libraries(db, _client["id"])
         rows = [
-            r for r in rows
-            if r["library_id"] is None
-            or r["library_id"] in visible.library_ids
+            r
+            for r in rows
+            if r["library_id"] is None or r["library_id"] in visible.library_ids
         ]
     return [MediaFileResponse(**row) for row in rows]
 
@@ -266,10 +265,10 @@ async def reset_progress(
             )
 
     from datetime import datetime
+
     now = datetime.now(UTC).isoformat()
     await db.execute(
-        "UPDATE media_files SET last_progress_sec = 0, updated_at = ?"
-        " WHERE id = ?",
+        "UPDATE media_files SET last_progress_sec = 0, updated_at = ?" " WHERE id = ?",
         (now, file_id),
     )
     await db.commit()

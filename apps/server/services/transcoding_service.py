@@ -170,7 +170,8 @@ async def _detect_available_encoders() -> list[str]:
 
     # Filter by platform first — VideoToolbox never appears on Windows, etc.
     platform_candidates = [
-        name for name in ALL_KNOWN_ENCODERS
+        name
+        for name in ALL_KNOWN_ENCODERS
         if ENCODER_REGISTRY[name].is_platform_supported()
     ]
 
@@ -410,9 +411,7 @@ async def get_status(db: aiosqlite.Connection) -> dict[str, Any]:
             "gpu_engine": gpu_engine,
             "encoder_test_passed": result.passed if result else None,
             "encoder_test_error": result.error if result else None,
-            "encoder_tested_at": (
-                result.tested_at.isoformat() if result else None
-            ),
+            "encoder_tested_at": (result.tested_at.isoformat() if result else None),
             "encoder_test_suggestion": result.suggestion if result else None,
         }
 
@@ -461,7 +460,10 @@ async def run_encoder_self_tests(
         passed, error = await test_encoder(enc, hwaccel_device=hwaccel_device)
         suggestion = classify_encoder_failure(enc, error) if not passed else None
         _TEST_RESULTS[enc] = EncoderTestResult(
-            passed=passed, error=error, tested_at=now, suggestion=suggestion,
+            passed=passed,
+            error=error,
+            tested_at=now,
+            suggestion=suggestion,
         )
         if not passed:
             # Known-actionable failures (old Intel driver, no iGPU on the
@@ -471,9 +473,7 @@ async def run_encoder_self_tests(
             # Anything we don't recognise stays at WARNING so unexpected
             # failures still surface in the log.
             if suggestion:
-                logger.info(
-                    "Encoder self-test skipped — %s: %s", enc, suggestion
-                )
+                logger.info("Encoder self-test skipped — %s: %s", enc, suggestion)
             else:
                 logger.warning(
                     "Encoder self-test FAILED — %s: %s",

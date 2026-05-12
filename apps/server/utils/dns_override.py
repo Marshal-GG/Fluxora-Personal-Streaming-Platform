@@ -112,7 +112,9 @@ _DOH_URL = "https://1.1.1.1/dns-query"
 
 
 async def resolve_via_doh(
-    hostname: str, *, timeout: float = 5.0,
+    hostname: str,
+    *,
+    timeout: float = 5.0,
 ) -> str | None:
     """Resolve ``hostname`` via Cloudflare DoH.  Bypasses the system
     resolver entirely so ISP-level DNS hijacking can't affect the

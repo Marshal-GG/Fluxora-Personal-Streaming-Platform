@@ -50,12 +50,8 @@ def _parse_library(row: dict) -> LibraryResponse:
         file_count=row.get("file_count", 0),
         total_size_bytes=row.get("total_size_bytes", 0),
         cover_urls=row.get("cover_urls", []),
-        av1_stream_copy_override=_override_to_bool(
-            row.get("av1_stream_copy_override")
-        ),
-        vp9_stream_copy_override=_override_to_bool(
-            row.get("vp9_stream_copy_override")
-        ),
+        av1_stream_copy_override=_override_to_bool(row.get("av1_stream_copy_override")),
+        vp9_stream_copy_override=_override_to_bool(row.get("vp9_stream_copy_override")),
     )
 
 
@@ -303,11 +299,16 @@ async def enrich_library_tmdb(
         }
     try:
         result = await library_service.enrich_library_tmdb(
-            db, library_id, api_key, include_dvr=include_dvr,
+            db,
+            library_id,
+            api_key,
+            include_dvr=include_dvr,
         )
     except Exception:
         logger.error(
-            "TMDB rescan failed for library %s", library_id, exc_info=True,
+            "TMDB rescan failed for library %s",
+            library_id,
+            exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

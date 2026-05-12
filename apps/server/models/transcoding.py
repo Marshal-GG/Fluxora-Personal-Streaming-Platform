@@ -3,11 +3,16 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 EncoderName = Literal[
-    "libx264", "libx265",
-    "h264_nvenc", "hevc_nvenc",
-    "h264_qsv", "hevc_qsv",
-    "h264_vaapi", "hevc_vaapi",
-    "h264_videotoolbox", "hevc_videotoolbox",
+    "libx264",
+    "libx265",
+    "h264_nvenc",
+    "hevc_nvenc",
+    "h264_qsv",
+    "hevc_qsv",
+    "h264_vaapi",
+    "hevc_vaapi",
+    "h264_videotoolbox",
+    "hevc_videotoolbox",
 ]
 
 

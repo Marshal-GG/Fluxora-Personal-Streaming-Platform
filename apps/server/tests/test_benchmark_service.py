@@ -28,7 +28,7 @@ from services import benchmark_service
     "value,expected",
     [
         (None, 8),  # default when caller passes nothing
-        (0, 2),    # below floor → clamped up
+        (0, 2),  # below floor → clamped up
         (1, 2),
         (2, 2),
         (8, 8),
@@ -44,11 +44,11 @@ def test_clamp_duration_bounds(value: int | None, expected: int) -> None:
     "value,expected",
     [
         (None, 30),  # default
-        (10, 24),    # below floor
+        (10, 24),  # below floor
         (24, 24),
         (30, 30),
         (60, 60),
-        (120, 60),   # above ceiling — high-refresh has no value here
+        (120, 60),  # above ceiling — high-refresh has no value here
     ],
 )
 def test_clamp_fps_bounds(value: int | None, expected: int) -> None:
@@ -58,13 +58,13 @@ def test_clamp_fps_bounds(value: int | None, expected: int) -> None:
 @pytest.mark.parametrize(
     "width,height,expected",
     [
-        (None, None, (1280, 720)),       # default → 720p
-        (1280, 720, (1280, 720)),        # exact 720p tier
-        (1920, 1080, (1920, 1080)),      # exact 1080p tier
-        (3840, 2160, (3840, 2160)),      # exact 4K tier
-        (1366, 768, (1280, 720)),        # nearby SDR-laptop res snaps to 720p
-        (2560, 1440, (1920, 1080)),      # 1440p falls between tiers; 1080p closest
-        (4096, 2304, (3840, 2160)),      # cinema-ish 4K snaps to 4K tier
+        (None, None, (1280, 720)),  # default → 720p
+        (1280, 720, (1280, 720)),  # exact 720p tier
+        (1920, 1080, (1920, 1080)),  # exact 1080p tier
+        (3840, 2160, (3840, 2160)),  # exact 4K tier
+        (1366, 768, (1280, 720)),  # nearby SDR-laptop res snaps to 720p
+        (2560, 1440, (1920, 1080)),  # 1440p falls between tiers; 1080p closest
+        (4096, 2304, (3840, 2160)),  # cinema-ish 4K snaps to 4K tier
     ],
 )
 def test_clamp_resolution_snaps_to_known_tier(
@@ -228,9 +228,9 @@ def _make_proc_with_stderr(
         chunk_list: list[bytes] = [encoded, b""]
     else:
         size = max(1, len(encoded) // chunks)
-        chunk_list = [
-            encoded[i : i + size] for i in range(0, len(encoded), size)
-        ] + [b""]
+        chunk_list = [encoded[i : i + size] for i in range(0, len(encoded), size)] + [
+            b""
+        ]
 
     queue = list(chunk_list)
 
@@ -262,11 +262,12 @@ async def test_benchmark_happy_path_parses_perf_numbers() -> None:
 
     fake = _make_proc_with_stderr(stderr_text, returncode=0)
 
-    with patch.object(
-        benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(return_value=fake),
+    with (
+        patch.object(benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=fake),
+        ),
     ):
         result = await benchmark_service.benchmark_encoder(
             "libx264", duration_sec=8, probe_gpu=False
@@ -302,11 +303,12 @@ async def test_benchmark_init_ms_populated_when_first_frame_seen() -> None:
 
     fake = _make_proc_with_stderr(stderr_text, returncode=0)
 
-    with patch.object(
-        benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(return_value=fake),
+    with (
+        patch.object(benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=fake),
+        ),
     ):
         result = await benchmark_service.benchmark_encoder(
             "libx264", duration_sec=2, probe_gpu=False
@@ -333,15 +335,14 @@ async def test_benchmark_failure_surfaces_actual_error_line() -> None:
 
     fake = _make_proc_with_stderr(stderr_text, returncode=1)
 
-    with patch.object(
-        benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(return_value=fake),
+    with (
+        patch.object(benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=fake),
+        ),
     ):
-        result = await benchmark_service.benchmark_encoder(
-            "hevc_qsv", probe_gpu=False
-        )
+        result = await benchmark_service.benchmark_encoder("hevc_qsv", probe_gpu=False)
 
     assert result.passed is False
     assert result.error is not None
@@ -385,11 +386,12 @@ async def test_benchmark_timeout_returns_killed_marker() -> None:
         proc.stderr.read = AsyncMock(side_effect=_read)
         return proc
 
-    with patch.object(
-        benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(side_effect=_spawn_that_hangs),
+    with (
+        patch.object(benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(side_effect=_spawn_that_hangs),
+        ),
     ):
         t0 = time.perf_counter()
         result = await benchmark_service.benchmark_encoder(
@@ -417,15 +419,14 @@ async def test_benchmark_skips_gpu_probe_for_software_encoders() -> None:
     )
     fake = _make_proc_with_stderr(stderr_text, returncode=0)
 
-    with patch.object(
-        benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(return_value=fake),
+    with (
+        patch.object(benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=fake),
+        ),
     ):
-        result = await benchmark_service.benchmark_encoder(
-            "libx264", probe_gpu=True
-        )
+        result = await benchmark_service.benchmark_encoder("libx264", probe_gpu=True)
 
     assert result.gpu_utilization_percent is None
     assert result.vram_used_mb is None
@@ -454,15 +455,17 @@ async def test_benchmark_runs_midpoint_probe_for_nvidia_encoders() -> None:
 
     from services import transcoding_service
 
-    with patch.object(
-        benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"
-    ), patch.object(
-        transcoding_service,
-        "_probe_nvidia",
-        new=AsyncMock(return_value=(34.0, 580)),
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(return_value=fake),
+    with (
+        patch.object(benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"),
+        patch.object(
+            transcoding_service,
+            "_probe_nvidia",
+            new=AsyncMock(return_value=(34.0, 580)),
+        ),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=fake),
+        ),
     ):
         result = await benchmark_service.benchmark_encoder(
             "h264_nvenc", duration_sec=2, probe_gpu=True
@@ -497,11 +500,12 @@ async def test_probe_concurrent_cap_counts_succeeding_attempts() -> None:
         proc.kill = MagicMock()
         return proc
 
-    with patch.object(
-        benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(side_effect=_spawn),
+    with (
+        patch.object(benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(side_effect=_spawn),
+        ),
     ):
         verified = await benchmark_service.probe_concurrent_cap(
             "h264_nvenc", registry_cap=3
@@ -529,11 +533,12 @@ async def test_probe_concurrent_cap_returns_higher_than_registry_when_unlocked()
         proc.kill = MagicMock()
         return proc
 
-    with patch.object(
-        benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(side_effect=_spawn_all_succeed),
+    with (
+        patch.object(benchmark_service, "_ffmpeg_bin", return_value="ffmpeg"),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(side_effect=_spawn_all_succeed),
+        ),
     ):
         verified = await benchmark_service.probe_concurrent_cap(
             "h264_nvenc", registry_cap=3
@@ -598,12 +603,15 @@ async def test_run_benchmark_with_verify_caps_runs_probe_for_capped_encoders() -
         probe_calls.append(encoder)
         return 7  # measured cap higher than registry default
 
-    with patch.object(
-        benchmark_service, "benchmark_encoder", side_effect=_fake_benchmark
-    ), patch.object(
-        benchmark_service,
-        "probe_concurrent_cap",
-        side_effect=_fake_probe,
+    with (
+        patch.object(
+            benchmark_service, "benchmark_encoder", side_effect=_fake_benchmark
+        ),
+        patch.object(
+            benchmark_service,
+            "probe_concurrent_cap",
+            side_effect=_fake_probe,
+        ),
     ):
         results = await benchmark_service.run_benchmark(
             ["libx264", "h264_nvenc", "h264_qsv"],
@@ -654,12 +662,15 @@ async def test_run_benchmark_threads_fps_into_cap_probe() -> None:
         probe_kwargs["encoder"] = encoder
         return 5
 
-    with patch.object(
-        benchmark_service, "benchmark_encoder", side_effect=_fake_benchmark
-    ), patch.object(
-        benchmark_service,
-        "probe_concurrent_cap",
-        side_effect=_fake_probe,
+    with (
+        patch.object(
+            benchmark_service, "benchmark_encoder", side_effect=_fake_benchmark
+        ),
+        patch.object(
+            benchmark_service,
+            "probe_concurrent_cap",
+            side_effect=_fake_probe,
+        ),
     ):
         await benchmark_service.run_benchmark(
             ["h264_nvenc"],
@@ -704,12 +715,15 @@ async def test_run_benchmark_without_verify_caps_skips_probe() -> None:
         probe_calls.append(encoder)
         return 9
 
-    with patch.object(
-        benchmark_service, "benchmark_encoder", side_effect=_fake_benchmark
-    ), patch.object(
-        benchmark_service,
-        "probe_concurrent_cap",
-        side_effect=_fake_probe,
+    with (
+        patch.object(
+            benchmark_service, "benchmark_encoder", side_effect=_fake_benchmark
+        ),
+        patch.object(
+            benchmark_service,
+            "probe_concurrent_cap",
+            side_effect=_fake_probe,
+        ),
     ):
         results = await benchmark_service.run_benchmark(
             ["h264_nvenc"],
@@ -760,9 +774,7 @@ async def test_run_benchmark_publishes_progress_per_encoder() -> None:
     with patch.object(
         benchmark_service, "benchmark_encoder", side_effect=_capturing_benchmark
     ):
-        await benchmark_service.run_benchmark(
-            ["libx264", "h264_nvenc", "h264_qsv"]
-        )
+        await benchmark_service.run_benchmark(["libx264", "h264_nvenc", "h264_qsv"])
 
     # Should have captured one snapshot per encoder; each snapshot names
     # the encoder being processed at that moment.
@@ -828,17 +840,18 @@ async def test_run_benchmark_progress_step_flips_to_verifying_cap() -> None:
 
     async def _capturing_probe(encoder, **_kwargs):
         snap = benchmark_service.get_progress()
-        captured_steps_during_probe.append(
-            snap["current_step"] if snap else None
-        )
+        captured_steps_during_probe.append(snap["current_step"] if snap else None)
         return 5
 
-    with patch.object(
-        benchmark_service, "benchmark_encoder", side_effect=_fake_benchmark
-    ), patch.object(
-        benchmark_service,
-        "probe_concurrent_cap",
-        side_effect=_capturing_probe,
+    with (
+        patch.object(
+            benchmark_service, "benchmark_encoder", side_effect=_fake_benchmark
+        ),
+        patch.object(
+            benchmark_service,
+            "probe_concurrent_cap",
+            side_effect=_capturing_probe,
+        ),
     ):
         await benchmark_service.run_benchmark(
             ["h264_nvenc"],
@@ -979,9 +992,7 @@ async def test_run_benchmark_matrix_produces_n_times_m_results() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_benchmark_matrix_publishes_resolution_index_in_progress() -> (
-    None
-):
+async def test_run_benchmark_matrix_publishes_resolution_index_in_progress() -> None:
     """In matrix mode the progress snapshot must include
     ``total_resolutions`` and ``current_resolution_index`` so the desktop
     can render "Resolution 2 of 3 · Encoder 4 of 6" instead of just an

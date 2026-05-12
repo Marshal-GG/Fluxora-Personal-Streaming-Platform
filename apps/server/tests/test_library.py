@@ -326,8 +326,17 @@ async def test_delete_library_unlinks_sidecars_by_default(
              library_id, transcoded_path, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (fid, "/src/movie.mkv", "movie.mkv", ".mkv", 1, library_id,
-         str(sidecar), now, now),
+        (
+            fid,
+            "/src/movie.mkv",
+            "movie.mkv",
+            ".mkv",
+            1,
+            library_id,
+            str(sidecar),
+            now,
+            now,
+        ),
     )
     await test_db.commit()
 
@@ -357,13 +366,20 @@ async def test_delete_library_preserves_sidecars_when_query_false(
              library_id, transcoded_path, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (fid, "/src/movie.mkv", "movie.mkv", ".mkv", 1, library_id,
-         str(sidecar), now, now),
+        (
+            fid,
+            "/src/movie.mkv",
+            "movie.mkv",
+            ".mkv",
+            1,
+            library_id,
+            str(sidecar),
+            now,
+            now,
+        ),
     )
     await test_db.commit()
 
-    res = await client.delete(
-        f"/api/v1/library/{library_id}?delete_sidecars=false"
-    )
+    res = await client.delete(f"/api/v1/library/{library_id}?delete_sidecars=false")
     assert res.status_code == 204
     assert sidecar.exists()

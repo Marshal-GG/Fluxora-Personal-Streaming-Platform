@@ -57,8 +57,7 @@ def test_dockerfile_uses_canonical_port(canonical_port: int) -> None:
         f"Update it whenever Settings.fluxora_port changes."
     )
     assert f'"--port", "{canonical_port}"' in text, (
-        f"apps/server/Dockerfile uvicorn CMD must use --port "
-        f"{canonical_port}."
+        f"apps/server/Dockerfile uvicorn CMD must use --port " f"{canonical_port}."
     )
 
 
@@ -85,8 +84,7 @@ def test_desktop_settings_cubit_default_url_uses_canonical_port(
     canonical_port: int,
 ) -> None:
     text = _read(
-        "apps/desktop/lib/features/settings/presentation/cubit/"
-        "settings_cubit.dart"
+        "apps/desktop/lib/features/settings/presentation/cubit/" "settings_cubit.dart"
     )
     assert f"'http://localhost:{canonical_port}'" in text, (
         f"SettingsCubit._defaultUrl must be "
@@ -99,8 +97,7 @@ def test_desktop_settings_cubit_default_url_uses_canonical_port(
 
 def test_mobile_connect_screen_uses_canonical_port(canonical_port: int) -> None:
     text = _read(
-        "apps/mobile/lib/features/connect/presentation/screens/"
-        "connect_screen.dart"
+        "apps/mobile/lib/features/connect/presentation/screens/" "connect_screen.dart"
     )
     assert f"text: '{canonical_port}'" in text, (
         f"apps/mobile/.../connect_screen.dart _portController must "

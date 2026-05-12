@@ -190,20 +190,18 @@ async def test_emit_skips_when_recent_notification_exists(
 
     assert first == 1
     assert second == 0
-    async with test_db.execute(
-        "SELECT COUNT(*) AS n FROM notifications"
-    ) as cur:
+    async with test_db.execute("SELECT COUNT(*) AS n FROM notifications") as cur:
         row = await cur.fetchone()
     assert row["n"] == 1
 
 
 @pytest.mark.asyncio
-async def test_emit_skips_passed_encoders(
-    test_db, reset_test_results
-) -> None:
+async def test_emit_skips_passed_encoders(test_db, reset_test_results) -> None:
     transcoding_service._TEST_RESULTS["h264_nvenc"] = (
         transcoding_service.EncoderTestResult(
-            passed=True, error=None, tested_at=datetime.now(UTC),
+            passed=True,
+            error=None,
+            tested_at=datetime.now(UTC),
         )
     )
 
@@ -230,9 +228,7 @@ async def test_emit_skips_failures_without_suggestion(
     inserted = await transcoding_service.emit_encoder_failure_notifications(test_db)
 
     assert inserted == 0
-    async with test_db.execute(
-        "SELECT COUNT(*) AS n FROM notifications"
-    ) as cur:
+    async with test_db.execute("SELECT COUNT(*) AS n FROM notifications") as cur:
         row = await cur.fetchone()
     assert row["n"] == 0
 
@@ -254,16 +250,12 @@ async def test_emit_re_creates_after_user_dismisses(
     )
 
     await transcoding_service.emit_encoder_failure_notifications(test_db)
-    await test_db.execute(
-        "UPDATE notifications SET dismissed_at = datetime('now')"
-    )
+    await test_db.execute("UPDATE notifications SET dismissed_at = datetime('now')")
     await test_db.commit()
 
     inserted = await transcoding_service.emit_encoder_failure_notifications(test_db)
 
     assert inserted == 1
-    async with test_db.execute(
-        "SELECT COUNT(*) AS n FROM notifications"
-    ) as cur:
+    async with test_db.execute("SELECT COUNT(*) AS n FROM notifications") as cur:
         row = await cur.fetchone()
     assert row["n"] == 2  # one dismissed, one fresh

@@ -365,7 +365,8 @@ async def _set_progress(test_db, file_id: str, sec: float) -> None:
 
 async def _read_progress(test_db, file_id: str) -> float | None:
     async with test_db.execute(
-        "SELECT last_progress_sec FROM media_files WHERE id = ?", (file_id,),
+        "SELECT last_progress_sec FROM media_files WHERE id = ?",
+        (file_id,),
     ) as cur:
         row = await cur.fetchone()
     return row["last_progress_sec"] if row else None
@@ -388,9 +389,7 @@ async def test_reset_progress_zeros_last_progress_sec(
 
 
 @pytest.mark.asyncio
-async def test_reset_progress_404s_on_unknown_file(
-    client: AsyncClient, monkeypatch
-):
+async def test_reset_progress_404s_on_unknown_file(client: AsyncClient, monkeypatch):
     token = await _get_token(client, monkeypatch)
     resp = await client.post(
         "/api/v1/files/no-such-file/reset-progress",
@@ -511,9 +510,7 @@ async def test_get_file_content_streams_bytes_with_correct_mime(
     payload = b"%PDF-1.4 fake-pdf-bytes-for-test"
     on_disk = tmp_path / "doc.pdf"
     on_disk.write_bytes(payload)
-    file_id = await _insert_file_with_path(
-        test_db, path=str(on_disk), name="doc.pdf"
-    )
+    file_id = await _insert_file_with_path(test_db, path=str(on_disk), name="doc.pdf")
 
     resp = await client.get(
         f"/api/v1/files/{file_id}/content",
@@ -548,9 +545,7 @@ async def test_get_file_content_404s_when_path_missing_on_disk(
     token = await _get_token(client, monkeypatch)
     missing = tmp_path / "ghost.pdf"
     # Deliberately do NOT create the file on disk.
-    file_id = await _insert_file_with_path(
-        test_db, path=str(missing), name="ghost.pdf"
-    )
+    file_id = await _insert_file_with_path(test_db, path=str(missing), name="ghost.pdf")
 
     resp = await client.get(
         f"/api/v1/files/{file_id}/content",

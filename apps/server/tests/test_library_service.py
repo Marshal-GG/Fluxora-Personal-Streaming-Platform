@@ -145,9 +145,7 @@ async def test_backfill_persists_duration(test_db, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_backfill_keyset_pagination_does_not_loop(
-    test_db, tmp_path
-) -> None:
+async def test_backfill_keyset_pagination_does_not_loop(test_db, tmp_path) -> None:
     """If a probe call fails to populate duration_sec (e.g. ffprobe
     silently returned no format.duration), the keyset pagination must
     skip past that id rather than re-fetching it forever."""
@@ -280,7 +278,9 @@ async def test_enrich_with_tmdb_uses_cleaned_query() -> None:
 
     with patch.object(library_service, "TmdbService", return_value=fake_svc):
         await library_service._enrich_with_tmdb(
-            fake_db, file_stems, "fake-api-key",
+            fake_db,
+            file_stems,
+            "fake-api-key",
         )
 
     queried = {call.args[0] for call in fake_svc.search.await_args_list}
@@ -309,7 +309,9 @@ async def test_enrich_with_tmdb_skips_when_cleanup_yields_empty() -> None:
 
     with patch.object(library_service, "TmdbService", return_value=fake_svc):
         await library_service._enrich_with_tmdb(
-            fake_db, [("file-empty", "___")], "fake-api-key",
+            fake_db,
+            [("file-empty", "___")],
+            "fake-api-key",
         )
 
     fake_svc.search.assert_not_awaited()
@@ -340,10 +342,14 @@ async def test_enrich_with_tmdb_skips_dvr_pattern_filenames() -> None:
     ]
 
     with patch.object(
-        library_service, "TmdbService", return_value=fake_svc,
+        library_service,
+        "TmdbService",
+        return_value=fake_svc,
     ):
         await library_service._enrich_with_tmdb(
-            fake_db, file_stems, "fake-api-key",
+            fake_db,
+            file_stems,
+            "fake-api-key",
         )
 
     # Only the 2 non-DVR stems were queried.  The 2 DVR-style ones
@@ -372,8 +378,7 @@ async def test_scan_library_serialises_concurrent_calls(test_db) -> None:
     # is independent of what scan does inside.
     library_id = str(uuid.uuid4())
     await test_db.execute(
-        "INSERT INTO libraries (id, name, type, root_paths)"
-        " VALUES (?, ?, ?, ?)",
+        "INSERT INTO libraries (id, name, type, root_paths)" " VALUES (?, ?, ?, ?)",
         (
             library_id,
             "test-library",
@@ -421,8 +426,7 @@ async def test_scan_library_lock_does_not_block_different_libraries(test_db) -> 
     lib_b = str(uuid.uuid4())
     for lid in (lib_a, lib_b):
         await test_db.execute(
-            "INSERT INTO libraries (id, name, type, root_paths)"
-            " VALUES (?, ?, ?, ?)",
+            "INSERT INTO libraries (id, name, type, root_paths)" " VALUES (?, ?, ?, ?)",
             (lid, f"lib-{lid[:4]}", "movies", '["/nonexistent"]'),
         )
     await test_db.commit()
@@ -461,7 +465,9 @@ async def test_enrich_library_tmdb_no_api_key_returns_zeros() -> None:
 
     fake_db = MagicMock()
     result = await library_service.enrich_library_tmdb(
-        fake_db, "lib-1", api_key="",
+        fake_db,
+        "lib-1",
+        api_key="",
     )
     assert result == {"matched": 0, "enriched": 0, "skipped_dvr": 0}
 
@@ -479,8 +485,7 @@ async def test_enrich_library_tmdb_only_targets_unenriched_files(
 
     library_id = str(uuid.uuid4())
     await test_db.execute(
-        "INSERT INTO libraries (id, name, type, root_paths)"
-        " VALUES (?, ?, ?, ?)",
+        "INSERT INTO libraries (id, name, type, root_paths)" " VALUES (?, ?, ?, ?)",
         (library_id, "test-lib", "movies", '["/x"]'),
     )
 
@@ -488,8 +493,7 @@ async def test_enrich_library_tmdb_only_targets_unenriched_files(
     # different library (must be ignored).
     other_lib = str(uuid.uuid4())
     await test_db.execute(
-        "INSERT INTO libraries (id, name, type, root_paths)"
-        " VALUES (?, ?, ?, ?)",
+        "INSERT INTO libraries (id, name, type, root_paths)" " VALUES (?, ?, ?, ?)",
         (other_lib, "other", "movies", '["/y"]'),
     )
 
@@ -500,12 +504,29 @@ async def test_enrich_library_tmdb_only_targets_unenriched_files(
         "  library_id, tmdb_id, created_at, updated_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            ("f-needs", "/x/inception.mkv", "Inception.mkv", ".mkv",
-             1, library_id, None, now, now),
-            ("f-done", "/x/matrix.mkv", "The Matrix.mkv", ".mkv",
-             1, library_id, 603, now, now),
-            ("f-other", "/y/ali.mkv", "Ali.mkv", ".mkv",
-             1, other_lib, None, now, now),
+            (
+                "f-needs",
+                "/x/inception.mkv",
+                "Inception.mkv",
+                ".mkv",
+                1,
+                library_id,
+                None,
+                now,
+                now,
+            ),
+            (
+                "f-done",
+                "/x/matrix.mkv",
+                "The Matrix.mkv",
+                ".mkv",
+                1,
+                library_id,
+                603,
+                now,
+                now,
+            ),
+            ("f-other", "/y/ali.mkv", "Ali.mkv", ".mkv", 1, other_lib, None, now, now),
         ],
     )
     await test_db.commit()
@@ -514,7 +535,9 @@ async def test_enrich_library_tmdb_only_targets_unenriched_files(
     fake_svc.search = AsyncMock(return_value=None)
     with patch.object(library_service, "TmdbService", return_value=fake_svc):
         result = await library_service.enrich_library_tmdb(
-            test_db, library_id, api_key="dummy",
+            test_db,
+            library_id,
+            api_key="dummy",
         )
 
     # Only the unenriched file in the target library was queried.
@@ -536,8 +559,7 @@ async def test_enrich_library_tmdb_skips_dvr_pattern_by_default(
 
     library_id = str(uuid.uuid4())
     await test_db.execute(
-        "INSERT INTO libraries (id, name, type, root_paths)"
-        " VALUES (?, ?, ?, ?)",
+        "INSERT INTO libraries (id, name, type, root_paths)" " VALUES (?, ?, ?, ?)",
         (library_id, "test-lib", "movies", '["/x"]'),
     )
     now = "2026-05-05T00:00:00+00:00"
@@ -547,11 +569,28 @@ async def test_enrich_library_tmdb_skips_dvr_pattern_by_default(
         "  library_id, tmdb_id, created_at, updated_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            ("f-real", "/x/inception.mkv", "Inception.mkv", ".mkv",
-             1, library_id, None, now, now),
-            ("f-dvr", "/x/cap.ts",
-             "Genshin Impact 2026.04.09 - 21.16.23.02.ts", ".ts",
-             1, library_id, None, now, now),
+            (
+                "f-real",
+                "/x/inception.mkv",
+                "Inception.mkv",
+                ".mkv",
+                1,
+                library_id,
+                None,
+                now,
+                now,
+            ),
+            (
+                "f-dvr",
+                "/x/cap.ts",
+                "Genshin Impact 2026.04.09 - 21.16.23.02.ts",
+                ".ts",
+                1,
+                library_id,
+                None,
+                now,
+                now,
+            ),
         ],
     )
     await test_db.commit()
@@ -560,7 +599,9 @@ async def test_enrich_library_tmdb_skips_dvr_pattern_by_default(
     fake_svc.search = AsyncMock(return_value=None)
     with patch.object(library_service, "TmdbService", return_value=fake_svc):
         result = await library_service.enrich_library_tmdb(
-            test_db, library_id, api_key="dummy",
+            test_db,
+            library_id,
+            api_key="dummy",
         )
 
     # The DVR-style stem must NOT have been queried.
@@ -582,8 +623,7 @@ async def test_enrich_library_tmdb_include_dvr_overrides_skip(
 
     library_id = str(uuid.uuid4())
     await test_db.execute(
-        "INSERT INTO libraries (id, name, type, root_paths)"
-        " VALUES (?, ?, ?, ?)",
+        "INSERT INTO libraries (id, name, type, root_paths)" " VALUES (?, ?, ?, ?)",
         (library_id, "test-lib", "movies", '["/x"]'),
     )
     now = "2026-05-05T00:00:00+00:00"
@@ -592,9 +632,17 @@ async def test_enrich_library_tmdb_include_dvr_overrides_skip(
         " (id, path, name, extension, size_bytes,"
         "  library_id, tmdb_id, created_at, updated_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        ("f-dvr", "/x/cap.ts",
-         "Some Show 2025.05.01 - 18.30.00.ts", ".ts",
-         1, library_id, None, now, now),
+        (
+            "f-dvr",
+            "/x/cap.ts",
+            "Some Show 2025.05.01 - 18.30.00.ts",
+            ".ts",
+            1,
+            library_id,
+            None,
+            now,
+            now,
+        ),
     )
     await test_db.commit()
 
@@ -602,7 +650,10 @@ async def test_enrich_library_tmdb_include_dvr_overrides_skip(
     fake_svc.search = AsyncMock(return_value=None)
     with patch.object(library_service, "TmdbService", return_value=fake_svc):
         result = await library_service.enrich_library_tmdb(
-            test_db, library_id, api_key="dummy", include_dvr=True,
+            test_db,
+            library_id,
+            api_key="dummy",
+            include_dvr=True,
         )
 
     assert fake_svc.search.await_count == 1

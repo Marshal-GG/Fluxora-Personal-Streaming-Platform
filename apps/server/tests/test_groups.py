@@ -156,9 +156,7 @@ async def test_update_group_status_to_inactive(client: AsyncClient):
     enforcement immediately for new streams.  Pins the round-trip — a
     regression where status is silently dropped from the PATCH body
     would re-enable a paused group without the operator noticing."""
-    created = (
-        await client.post("/api/v1/groups", json={"name": "Paused"})
-    ).json()
+    created = (await client.post("/api/v1/groups", json={"name": "Paused"})).json()
     gid = created["id"]
     assert created["status"] == "active"
 
@@ -768,12 +766,8 @@ async def test_visibility_multi_group_unions_libraries(test_db):
     await _add_to_group(test_db, "kids", cid)
 
     visible = await group_service.get_visible_libraries(test_db, cid)
-    assert visible.library_ids == frozenset(
-        {"lib-movies", "lib-tv", "lib-cartoons"}
-    )
-    assert set(visible.groups_contributing.keys()) == {
-        "public", "family", "kids"
-    }
+    assert visible.library_ids == frozenset({"lib-movies", "lib-tv", "lib-cartoons"})
+    assert set(visible.groups_contributing.keys()) == {"public", "family", "kids"}
 
 
 @pytest.mark.asyncio
@@ -784,7 +778,8 @@ async def test_visibility_inactive_group_skipped(test_db):
     cid = await _make_paired_client(test_db)
     await _make_library(test_db, "lib-movies")
     await _make_group(
-        test_db, "off",
+        test_db,
+        "off",
         status="inactive",
         libraries=["lib-movies"],
     )
@@ -805,7 +800,8 @@ async def test_visibility_pin_locked_group_hidden_until_grant(test_db):
     await _make_library(test_db, "lib-adults")
     pin_hash = group_service.hash_pin("4827", "test-hmac-key")
     await _make_group(
-        test_db, "adults",
+        test_db,
+        "adults",
         libraries=["lib-adults"],
         requires_pin=True,
         pin_hash=pin_hash,
@@ -838,27 +834,26 @@ async def test_visibility_time_window_outside_hides_group(test_db):
     cid = await _make_paired_client(test_db)
     await _make_library(test_db, "lib-cartoons")
     await _make_group(
-        test_db, "kids",
+        test_db,
+        "kids",
         libraries=["lib-cartoons"],
         time_window={
-            "start_h": 18, "end_h": 22, "days": [0, 1, 2, 3, 4],
+            "start_h": 18,
+            "end_h": 22,
+            "days": [0, 1, 2, 3, 4],
         },
     )
     await _add_to_group(test_db, "kids", cid)
 
     # Friday 23:00 → outside the window.
     friday_late = datetime(2026, 5, 8, 23, 0, tzinfo=UTC)
-    visible = await group_service.get_visible_libraries(
-        test_db, cid, now=friday_late
-    )
+    visible = await group_service.get_visible_libraries(test_db, cid, now=friday_late)
     assert visible.library_ids == frozenset()
     assert visible.time_locked_groups == frozenset({"kids"})
 
     # Friday 19:00 → inside the window.
     friday_eve = datetime(2026, 5, 8, 19, 0, tzinfo=UTC)
-    visible = await group_service.get_visible_libraries(
-        test_db, cid, now=friday_eve
-    )
+    visible = await group_service.get_visible_libraries(test_db, cid, now=friday_eve)
     assert visible.library_ids == frozenset({"lib-cartoons"})
 
 
@@ -871,7 +866,8 @@ async def test_visibility_member_time_window_override_wins(test_db):
     await _make_library(test_db, "lib-cartoons")
     # Group window: 18-22.  Member override: 18-23.
     await _make_group(
-        test_db, "kids",
+        test_db,
+        "kids",
         libraries=["lib-cartoons"],
         time_window={"start_h": 18, "end_h": 22, "days": [0, 1, 2, 3, 4, 5, 6]},
     )
@@ -885,19 +881,20 @@ async def test_visibility_member_time_window_override_wins(test_db):
             "kids",
             "older-kid",
             datetime.now(UTC).isoformat(),
-            json.dumps({
-                "start_h": 18, "end_h": 23,
-                "days": [0, 1, 2, 3, 4, 5, 6],
-            }),
+            json.dumps(
+                {
+                    "start_h": 18,
+                    "end_h": 23,
+                    "days": [0, 1, 2, 3, 4, 5, 6],
+                }
+            ),
         ),
     )
     await test_db.commit()
 
     # 22:30 — outside group window, inside override.
     moment = datetime(2026, 5, 8, 22, 30, tzinfo=UTC)
-    visible = await group_service.get_visible_libraries(
-        test_db, cid, now=moment
-    )
+    visible = await group_service.get_visible_libraries(test_db, cid, now=moment)
     assert visible.library_ids == frozenset({"lib-cartoons"})
 
 
@@ -931,10 +928,13 @@ async def test_reason_to_deny_picks_time_window_message_when_specific(test_db):
     cid = await _make_paired_client(test_db)
     await _make_library(test_db, "lib-cartoons")
     await _make_group(
-        test_db, "kids",
+        test_db,
+        "kids",
         libraries=["lib-cartoons"],
         time_window={
-            "start_h": 18, "end_h": 22, "days": [0, 1, 2, 3, 4],
+            "start_h": 18,
+            "end_h": 22,
+            "days": [0, 1, 2, 3, 4],
         },
     )
     await _add_to_group(test_db, "kids", cid)
@@ -957,7 +957,8 @@ async def test_reason_to_deny_pin_locked_does_not_leak_existence(test_db):
     await _make_library(test_db, "lib-adults")
     pin_hash = group_service.hash_pin("4827", "test-hmac-key")
     await _make_group(
-        test_db, "adults",
+        test_db,
+        "adults",
         libraries=["lib-adults"],
         requires_pin=True,
         pin_hash=pin_hash,
@@ -981,7 +982,8 @@ async def test_enter_pin_grant_happy_path_inserts_grant(test_db):
     cid = await _make_paired_client(test_db)
     pin_hash = group_service.hash_pin("4827", "test-hmac-key")
     await _make_group(
-        test_db, "adults",
+        test_db,
+        "adults",
         requires_pin=True,
         pin_hash=pin_hash,
     )
@@ -995,8 +997,7 @@ async def test_enter_pin_grant_happy_path_inserts_grant(test_db):
 
     # Grant row exists.
     async with test_db.execute(
-        "SELECT 1 FROM group_pin_grants "
-        "WHERE client_id = ? AND group_id = ?",
+        "SELECT 1 FROM group_pin_grants " "WHERE client_id = ? AND group_id = ?",
         (cid, "adults"),
     ) as cur:
         assert await cur.fetchone() is not None
@@ -1007,7 +1008,8 @@ async def test_enter_pin_grant_wrong_pin_logs_attempt(test_db):
     cid = await _make_paired_client(test_db)
     pin_hash = group_service.hash_pin("4827", "test-hmac-key")
     await _make_group(
-        test_db, "adults",
+        test_db,
+        "adults",
         requires_pin=True,
         pin_hash=pin_hash,
     )
@@ -1038,7 +1040,8 @@ async def test_enter_pin_grant_rate_limit_after_5_failures(test_db):
     cid = await _make_paired_client(test_db)
     pin_hash = group_service.hash_pin("4827", "test-hmac-key")
     await _make_group(
-        test_db, "adults",
+        test_db,
+        "adults",
         requires_pin=True,
         pin_hash=pin_hash,
     )
@@ -1063,13 +1066,13 @@ async def test_enter_pin_grant_rate_limit_after_5_failures(test_db):
 async def test_pin_strength_rejects_obvious_pins():
     """Server-side strength policy — `1234` and friends are out."""
     for bad in ("1234", "0000", "1111", "5678", "0123"):
-        assert group_service.validate_pin_strength(bad) is not None, (
-            f"PIN {bad!r} should have been rejected"
-        )
+        assert (
+            group_service.validate_pin_strength(bad) is not None
+        ), f"PIN {bad!r} should have been rejected"
     for good in ("4827", "13579", "84219670"):
-        assert group_service.validate_pin_strength(good) is None, (
-            f"PIN {good!r} should have been accepted"
-        )
+        assert (
+            group_service.validate_pin_strength(good) is None
+        ), f"PIN {good!r} should have been accepted"
 
 
 @pytest.mark.asyncio
@@ -1088,7 +1091,8 @@ async def test_revoke_pin_grant_drops_row(test_db):
     cid = await _make_paired_client(test_db)
     pin_hash = group_service.hash_pin("4827", "test-hmac-key")
     await _make_group(
-        test_db, "adults",
+        test_db,
+        "adults",
         requires_pin=True,
         pin_hash=pin_hash,
     )
@@ -1101,9 +1105,7 @@ async def test_revoke_pin_grant_drops_row(test_db):
     assert deleted is True
 
     # Second revoke -> returns False (already gone).
-    deleted_again = await group_service.revoke_pin_grant(
-        test_db, cid, "adults"
-    )
+    deleted_again = await group_service.revoke_pin_grant(test_db, cid, "adults")
     assert deleted_again is False
 
 
@@ -1114,9 +1116,7 @@ async def test_housekeep_prunes_expired_grants(test_db):
     cid = await _make_paired_client(test_db)
     await _make_group(test_db, "adults", requires_pin=True, pin_hash="x")
     # Insert an already-expired grant directly.
-    expired_at = (
-        datetime.now(UTC) - timedelta(hours=1)
-    ).isoformat()
+    expired_at = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
     await test_db.execute(
         """
         INSERT INTO group_pin_grants
@@ -1153,9 +1153,7 @@ async def test_approve_client_auto_adds_to_public_group(client, monkeypatch):
     )
     await client.post("/api/v1/auth/approve/auto-public-client")
 
-    listing = await client.get(
-        "/api/v1/groups/public/members"
-    )
+    listing = await client.get("/api/v1/groups/public/members")
     assert listing.status_code == 200
     members = listing.json()
     member_ids = {m.get("client_id") or m.get("id") for m in members}
@@ -1173,9 +1171,7 @@ async def test_post_enter_unlocks_group_with_correct_pin(
     grants → grant-status confirms → libraries become visible (covered
     indirectly via the visibility tests above)."""
     monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
-    monkeypatch.setattr(
-        "routers.groups.settings.token_hmac_key", HMAC_KEY
-    )
+    monkeypatch.setattr("routers.groups.settings.token_hmac_key", HMAC_KEY)
     token = await _get_token(client, monkeypatch, "pin-client")
 
     pin_hash = group_service.hash_pin("4827", HMAC_KEY)
@@ -1245,16 +1241,12 @@ async def test_post_enter_unlocks_group_with_correct_pin(
 
 
 @pytest.mark.asyncio
-async def test_post_enter_400_on_bad_pin_strength(
-    client: AsyncClient, monkeypatch
-):
+async def test_post_enter_400_on_bad_pin_strength(client: AsyncClient, monkeypatch):
     """Strength policy fires before the rate limiter — junk PINs don't
     burn budget.  Pinned: a future agent loosening the policy
     accidentally exposing rate-limit-only protection breaks here."""
     monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
-    monkeypatch.setattr(
-        "routers.groups.settings.token_hmac_key", HMAC_KEY
-    )
+    monkeypatch.setattr("routers.groups.settings.token_hmac_key", HMAC_KEY)
     token = await _get_token(client, monkeypatch, "pin-strength-client")
 
     grp = (await client.post("/api/v1/groups", json={"name": "G"})).json()
@@ -1277,9 +1269,7 @@ async def test_post_enter_400_on_bad_pin_strength(
 @pytest.mark.asyncio
 async def test_post_enter_404_unknown_group(client: AsyncClient, monkeypatch):
     monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
-    monkeypatch.setattr(
-        "routers.groups.settings.token_hmac_key", HMAC_KEY
-    )
+    monkeypatch.setattr("routers.groups.settings.token_hmac_key", HMAC_KEY)
     token = await _get_token(client, monkeypatch, "404-client")
 
     headers = {"Authorization": f"Bearer {token}"}
@@ -1299,14 +1289,10 @@ async def test_post_enter_400_when_group_not_pin_required(
     silent success — distinguishes "you don't need to enter a PIN here"
     from "PIN was right" so mobile UI doesn't show a fake unlock."""
     monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
-    monkeypatch.setattr(
-        "routers.groups.settings.token_hmac_key", HMAC_KEY
-    )
+    monkeypatch.setattr("routers.groups.settings.token_hmac_key", HMAC_KEY)
     token = await _get_token(client, monkeypatch, "no-pin-client")
 
-    grp = (
-        await client.post("/api/v1/groups", json={"name": "Open"})
-    ).json()
+    grp = (await client.post("/api/v1/groups", json={"name": "Open"})).json()
 
     headers = {"Authorization": f"Bearer {token}"}
     await client.post(
@@ -1328,9 +1314,7 @@ async def test_delete_grant_locks_group(client: AsyncClient, monkeypatch):
     """Mobile lock button → DELETE /grant → grant-status flips to
     unlocked=False.  Idempotent: double-DELETE doesn't 404."""
     monkeypatch.setattr("routers.auth.settings.token_hmac_key", HMAC_KEY)
-    monkeypatch.setattr(
-        "routers.groups.settings.token_hmac_key", HMAC_KEY
-    )
+    monkeypatch.setattr("routers.groups.settings.token_hmac_key", HMAC_KEY)
     token = await _get_token(client, monkeypatch, "lock-client")
 
     pin_hash = group_service.hash_pin("4827", HMAC_KEY)
@@ -1379,9 +1363,7 @@ async def test_delete_grant_locks_group(client: AsyncClient, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_master_override_unlocks_without_pin(
-    client: AsyncClient, monkeypatch
-):
+async def test_master_override_unlocks_without_pin(client: AsyncClient, monkeypatch):
     """Operator master override: localhost POST issues a 12 h grant on
     behalf of any client without supplying the PIN.  Forgot-PIN
     recovery + always-available admin path."""
@@ -1414,8 +1396,7 @@ async def test_master_override_unlocks_without_pin(
 
     # Verify the grant is in the DB.
     async with db.execute(
-        "SELECT 1 FROM group_pin_grants "
-        "WHERE client_id = ? AND group_id = ?",
+        "SELECT 1 FROM group_pin_grants " "WHERE client_id = ? AND group_id = ?",
         ("override-client", grp["id"]),
     ) as cur:
         assert await cur.fetchone() is not None
@@ -1459,7 +1440,8 @@ async def test_enroll_pin_happy_path(test_db):
     issued immediately so the user isn't asked to re-type."""
     cid = await _make_paired_client(test_db, "enroll-client")
     await _make_group(
-        test_db, "adults",
+        test_db,
+        "adults",
         requires_pin=True,
         pin_model="per-client",
         libraries=["lib-adult"],
@@ -1486,8 +1468,11 @@ async def test_enroll_rejected_in_shared_mode(test_db):
     cid = await _make_paired_client(test_db, "shared-client")
     pin_hash = group_service.hash_pin("8472", HMAC_KEY)
     await _make_group(
-        test_db, "shared-grp",
-        requires_pin=True, pin_hash=pin_hash, pin_model="shared",
+        test_db,
+        "shared-grp",
+        requires_pin=True,
+        pin_hash=pin_hash,
+        pin_model="shared",
     )
     await _add_to_group(test_db, "shared-grp", cid)
 
@@ -1504,8 +1489,10 @@ async def test_enroll_already_enrolled_returns_conflict(test_db):
     Caller should use /enroll/change instead."""
     cid = await _make_paired_client(test_db, "double-enroll")
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_model="per-client",
     )
     await _add_to_group(test_db, "perclient-grp", cid)
 
@@ -1527,8 +1514,10 @@ async def test_enroll_rejected_for_non_member(test_db):
     membership is the prerequisite."""
     cid = await _make_paired_client(test_db, "outsider")
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_model="per-client",
     )
     # No _add_to_group call — outsider isn't a member.
 
@@ -1551,8 +1540,11 @@ async def test_enter_per_client_uses_member_hash_not_group_hash(test_db):
     # via the per-client path.
     decoy_hash = group_service.hash_pin("0000", HMAC_KEY)
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_hash=decoy_hash, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_hash=decoy_hash,
+        pin_model="per-client",
     )
     await _add_to_group(test_db, "perclient-grp", cid_a)
     await _add_to_group(test_db, "perclient-grp", cid_b)
@@ -1586,8 +1578,10 @@ async def test_enter_per_client_without_enrollment_returns_enrollment_required(t
     doesn't exist."""
     cid = await _make_paired_client(test_db, "fresh-client")
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_model="per-client",
     )
     await _add_to_group(test_db, "perclient-grp", cid)
 
@@ -1603,8 +1597,10 @@ async def test_change_member_pin_happy_path(test_db):
     """Enrolled client changes their own PIN — old verifies, new replaces."""
     cid = await _make_paired_client(test_db, "rotate-client")
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_model="per-client",
     )
     await _add_to_group(test_db, "perclient-grp", cid)
     await group_service.enroll_pin(
@@ -1612,8 +1608,11 @@ async def test_change_member_pin_happy_path(test_db):
     )
 
     result = await group_service.change_member_pin(
-        test_db, cid, "perclient-grp",
-        old_pin="5283", new_pin="9182",
+        test_db,
+        cid,
+        "perclient-grp",
+        old_pin="5283",
+        new_pin="9182",
         hmac_key=HMAC_KEY,
     )
     assert result.granted is True
@@ -1637,8 +1636,10 @@ async def test_change_member_pin_wrong_old_charges_attempt(test_db):
     bypass for the existing PIN."""
     cid = await _make_paired_client(test_db, "wrong-old-client")
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_model="per-client",
     )
     await _add_to_group(test_db, "perclient-grp", cid)
     await group_service.enroll_pin(
@@ -1646,8 +1647,11 @@ async def test_change_member_pin_wrong_old_charges_attempt(test_db):
     )
 
     result = await group_service.change_member_pin(
-        test_db, cid, "perclient-grp",
-        old_pin="9182", new_pin="3157",
+        test_db,
+        cid,
+        "perclient-grp",
+        old_pin="9182",
+        new_pin="3157",
         hmac_key=HMAC_KEY,
     )
     assert result.granted is False
@@ -1661,17 +1665,17 @@ async def test_clear_member_pin_forces_re_enrollment(test_db):
     → next /enter returns enrollment_required."""
     cid = await _make_paired_client(test_db, "cleared-client")
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_model="per-client",
     )
     await _add_to_group(test_db, "perclient-grp", cid)
     await group_service.enroll_pin(
         test_db, cid, "perclient-grp", "5283", hmac_key=HMAC_KEY
     )
 
-    deleted = await group_service.clear_member_pin(
-        test_db, cid, "perclient-grp"
-    )
+    deleted = await group_service.clear_member_pin(test_db, cid, "perclient-grp")
     assert deleted is True
 
     # /enter now demands re-enrollment instead of just a PIN.
@@ -1690,8 +1694,10 @@ async def test_visibility_per_client_unenrolled_lands_in_enrollment_required(tes
     cid = await _make_paired_client(test_db, "unenrolled-client")
     await _make_library(test_db, "lib-adult")
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_model="per-client",
         libraries=["lib-adult"],
     )
     await _add_to_group(test_db, "perclient-grp", cid)
@@ -1709,12 +1715,19 @@ async def test_mode_switch_shared_to_per_client_clears_hash(test_db):
     re-enroll on next access."""
     pin_hash = group_service.hash_pin("8472", HMAC_KEY)
     await _make_group(
-        test_db, "rotating-grp",
-        requires_pin=True, pin_hash=pin_hash, pin_model="shared",
+        test_db,
+        "rotating-grp",
+        requires_pin=True,
+        pin_hash=pin_hash,
+        pin_model="shared",
     )
     updated = await group_service.update_group(
-        test_db, "rotating-grp",
-        name=None, description=None, status=None, restrictions=None,
+        test_db,
+        "rotating-grp",
+        name=None,
+        description=None,
+        status=None,
+        restrictions=None,
         pin_model="per-client",
         hmac_key=HMAC_KEY,
     )
@@ -1736,13 +1749,19 @@ async def test_mode_switch_per_client_to_shared_requires_pin(test_db):
     is rejected — otherwise the group would end up gated with no
     secret to enter."""
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_model="per-client",
     )
     with pytest.raises(ValueError, match="shared mode requires a new shared PIN"):
         await group_service.update_group(
-            test_db, "perclient-grp",
-            name=None, description=None, status=None, restrictions=None,
+            test_db,
+            "perclient-grp",
+            name=None,
+            description=None,
+            status=None,
+            restrictions=None,
             pin_model="shared",
             hmac_key=HMAC_KEY,
         )
@@ -1754,8 +1773,10 @@ async def test_mode_switch_per_client_to_shared_with_pin_succeeds(test_db):
     completes cleanly — enrollment rows are dropped, hash is set."""
     cid = await _make_paired_client(test_db, "transition-client")
     await _make_group(
-        test_db, "transition-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "transition-grp",
+        requires_pin=True,
+        pin_model="per-client",
     )
     await _add_to_group(test_db, "transition-grp", cid)
     await group_service.enroll_pin(
@@ -1763,9 +1784,14 @@ async def test_mode_switch_per_client_to_shared_with_pin_succeeds(test_db):
     )
 
     updated = await group_service.update_group(
-        test_db, "transition-grp",
-        name=None, description=None, status=None, restrictions=None,
-        pin_model="shared", pin="8472",
+        test_db,
+        "transition-grp",
+        name=None,
+        description=None,
+        status=None,
+        restrictions=None,
+        pin_model="shared",
+        pin="8472",
         hmac_key=HMAC_KEY,
     )
     assert updated is not None
@@ -1791,8 +1817,10 @@ async def test_master_override_works_for_per_client_groups(test_db):
     on the target client regardless of how the group authenticates."""
     cid = await _make_paired_client(test_db, "override-client")
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_model="per-client",
     )
     await _add_to_group(test_db, "perclient-grp", cid)
     # Note: client is *not* enrolled — this is the recovery path
@@ -1827,8 +1855,10 @@ async def test_list_members_default_shape_unchanged(test_db):
     must not break."""
     cid = await _make_paired_client(test_db, "vintage-client")
     await _make_group(
-        test_db, "shared-grp",
-        requires_pin=True, pin_model="shared",
+        test_db,
+        "shared-grp",
+        requires_pin=True,
+        pin_model="shared",
         pin_hash=group_service.hash_pin("8472", HMAC_KEY),
     )
     await _add_to_group(test_db, "shared-grp", cid)
@@ -1853,8 +1883,10 @@ async def test_list_members_pin_state_per_client_branches(test_db):
     enrolled_no_grant = await _make_paired_client(test_db, "have-pin")
     not_enrolled = await _make_paired_client(test_db, "fresh-device")
     await _make_group(
-        test_db, "perclient-grp",
-        requires_pin=True, pin_model="per-client",
+        test_db,
+        "perclient-grp",
+        requires_pin=True,
+        pin_model="per-client",
     )
     await _add_to_group(test_db, "perclient-grp", enrolled_with_grant)
     await _add_to_group(test_db, "perclient-grp", enrolled_no_grant)
@@ -1863,16 +1895,20 @@ async def test_list_members_pin_state_per_client_branches(test_db):
     # First two enroll; first one keeps its session-length grant; second
     # has its grant revoked so we observe the "enrolled but locked" state.
     await group_service.enroll_pin(
-        test_db, enrolled_with_grant, "perclient-grp", "5283",
+        test_db,
+        enrolled_with_grant,
+        "perclient-grp",
+        "5283",
         hmac_key=HMAC_KEY,
     )
     await group_service.enroll_pin(
-        test_db, enrolled_no_grant, "perclient-grp", "9182",
+        test_db,
+        enrolled_no_grant,
+        "perclient-grp",
+        "9182",
         hmac_key=HMAC_KEY,
     )
-    await group_service.revoke_pin_grant(
-        test_db, enrolled_no_grant, "perclient-grp"
-    )
+    await group_service.revoke_pin_grant(test_db, enrolled_no_grant, "perclient-grp")
 
     rows = await group_service.list_members(
         test_db, "perclient-grp", include_pin_state=True
@@ -1900,8 +1936,11 @@ async def test_list_members_pin_state_shared_mode_skips_enrollment(test_db):
     cid = await _make_paired_client(test_db, "shared-member")
     pin_hash = group_service.hash_pin("4827", HMAC_KEY)
     await _make_group(
-        test_db, "shared-grp",
-        requires_pin=True, pin_hash=pin_hash, pin_model="shared",
+        test_db,
+        "shared-grp",
+        requires_pin=True,
+        pin_hash=pin_hash,
+        pin_model="shared",
     )
     await _add_to_group(test_db, "shared-grp", cid)
     # Successful entry → grant should appear in the response.
@@ -1934,8 +1973,11 @@ async def test_list_members_pin_state_counts_recent_failed_attempts(test_db):
     cid = await _make_paired_client(test_db, "fail-counter")
     pin_hash = group_service.hash_pin("4827", HMAC_KEY)
     await _make_group(
-        test_db, "shared-grp",
-        requires_pin=True, pin_hash=pin_hash, pin_model="shared",
+        test_db,
+        "shared-grp",
+        requires_pin=True,
+        pin_hash=pin_hash,
+        pin_model="shared",
     )
     await _add_to_group(test_db, "shared-grp", cid)
 
@@ -1971,7 +2013,8 @@ async def test_view_as_visible_libraries_localhost_only(test_db):
     cid = await _make_paired_client(test_db, "view-as-target")
     async with AsyncClient(
         transport=ASGITransport(
-            app=app, client=("198.51.100.5", 51000),
+            app=app,
+            client=("198.51.100.5", 51000),
         ),
         base_url="http://test",
     ) as remote:
@@ -2007,7 +2050,8 @@ async def test_view_as_visible_libraries_known_client(test_db):
     cid = await _make_paired_client(test_db, "shape-test-client")
     await _make_library(test_db, "lib-films")
     await _make_group(
-        test_db, "grp-public",
+        test_db,
+        "grp-public",
         libraries=["lib-films"],
     )
     await _add_to_group(test_db, "grp-public", cid)
@@ -2041,9 +2085,13 @@ async def test_member_time_window_override_set_and_clear(test_db):
     await _add_to_group(test_db, "kids", cid)
 
     ok = await group_service.set_member_time_window_override(
-        test_db, "kids", cid,
+        test_db,
+        "kids",
+        cid,
         time_window={
-            "start_h": 18, "end_h": 23, "days": [0, 1, 2, 3, 4, 5, 6],
+            "start_h": 18,
+            "end_h": 23,
+            "days": [0, 1, 2, 3, 4, 5, 6],
         },
     )
     assert ok is True
@@ -2059,7 +2107,10 @@ async def test_member_time_window_override_set_and_clear(test_db):
     assert parsed["end_h"] == 23
 
     cleared = await group_service.set_member_time_window_override(
-        test_db, "kids", cid, time_window=None,
+        test_db,
+        "kids",
+        cid,
+        time_window=None,
     )
     assert cleared is True
 
@@ -2081,7 +2132,9 @@ async def test_member_time_window_override_404_on_non_member(test_db):
     # No add_to_group — client isn't a member.
 
     ok = await group_service.set_member_time_window_override(
-        test_db, "kids", cid,
+        test_db,
+        "kids",
+        cid,
         time_window={"start_h": 18, "end_h": 22, "days": [0]},
     )
     assert ok is False
@@ -2096,7 +2149,8 @@ async def test_member_patch_route_localhost_only(test_db):
 
     async with AsyncClient(
         transport=ASGITransport(
-            app=app, client=("198.51.100.6", 51000),
+            app=app,
+            client=("198.51.100.6", 51000),
         ),
         base_url="http://test",
     ) as remote:
@@ -2104,7 +2158,8 @@ async def test_member_patch_route_localhost_only(test_db):
             f"/api/v1/groups/grp/members/{cid}",
             json={
                 "time_window_override": {
-                    "start_h": 18, "end_h": 22,
+                    "start_h": 18,
+                    "end_h": 22,
                     "days": [0, 1, 2, 3, 4],
                 }
             },
@@ -2123,7 +2178,9 @@ async def test_member_patch_route_clear_sentinel(test_db):
 
     # Pre-seed an override.
     await group_service.set_member_time_window_override(
-        test_db, "grp", cid,
+        test_db,
+        "grp",
+        cid,
         time_window={"start_h": 18, "end_h": 22, "days": [0]},
     )
 
@@ -2135,7 +2192,9 @@ async def test_member_patch_route_clear_sentinel(test_db):
             f"/api/v1/groups/grp/members/{cid}",
             json={
                 "time_window_override": {
-                    "start_h": 0, "end_h": 0, "days": [],
+                    "start_h": 0,
+                    "end_h": 0,
+                    "days": [],
                 }
             },
         )
@@ -2160,8 +2219,11 @@ async def test_failed_burst_emits_single_event_at_threshold(test_db):
     cid = await _make_paired_client(test_db, "burst-client")
     pin_hash = group_service.hash_pin("4827", HMAC_KEY)
     await _make_group(
-        test_db, "burst-grp",
-        requires_pin=True, pin_hash=pin_hash, pin_model="shared",
+        test_db,
+        "burst-grp",
+        requires_pin=True,
+        pin_hash=pin_hash,
+        pin_model="shared",
     )
     await _add_to_group(test_db, "burst-grp", cid)
 
@@ -2169,7 +2231,11 @@ async def test_failed_burst_emits_single_event_at_threshold(test_db):
     # 5th is the one that crosses the threshold.
     for _ in range(5):
         await group_service.enter_pin_grant(
-            test_db, cid, "burst-grp", "9182", hmac_key=HMAC_KEY,
+            test_db,
+            cid,
+            "burst-grp",
+            "9182",
+            hmac_key=HMAC_KEY,
         )
 
     # Activity table should carry exactly one failed-burst event.
@@ -2193,14 +2259,21 @@ async def test_failed_burst_below_threshold_does_not_emit(test_db):
     cid = await _make_paired_client(test_db, "fat-finger")
     pin_hash = group_service.hash_pin("4827", HMAC_KEY)
     await _make_group(
-        test_db, "below-thresh-grp",
-        requires_pin=True, pin_hash=pin_hash, pin_model="shared",
+        test_db,
+        "below-thresh-grp",
+        requires_pin=True,
+        pin_hash=pin_hash,
+        pin_model="shared",
     )
     await _add_to_group(test_db, "below-thresh-grp", cid)
 
     for _ in range(4):
         await group_service.enter_pin_grant(
-            test_db, cid, "below-thresh-grp", "9182", hmac_key=HMAC_KEY,
+            test_db,
+            cid,
+            "below-thresh-grp",
+            "9182",
+            hmac_key=HMAC_KEY,
         )
 
     async with test_db.execute(
@@ -2226,8 +2299,11 @@ async def test_failed_burst_does_not_re_emit_above_threshold(test_db):
     cid = await _make_paired_client(test_db, "rapid-fire")
     pin_hash = group_service.hash_pin("4827", HMAC_KEY)
     await _make_group(
-        test_db, "dedup-grp",
-        requires_pin=True, pin_hash=pin_hash, pin_model="shared",
+        test_db,
+        "dedup-grp",
+        requires_pin=True,
+        pin_hash=pin_hash,
+        pin_model="shared",
     )
     await _add_to_group(test_db, "dedup-grp", cid)
 
@@ -2238,8 +2314,7 @@ async def test_failed_burst_does_not_re_emit_above_threshold(test_db):
         await test_db.execute(
             "INSERT INTO group_pin_attempts "
             "(client_id, group_id, attempted_at, success) VALUES (?, ?, ?, 0)",
-            (cid, "dedup-grp",
-             (now - timedelta(seconds=120 * (6 - i))).isoformat()),
+            (cid, "dedup-grp", (now - timedelta(seconds=120 * (6 - i))).isoformat()),
         )
     await test_db.commit()
 
@@ -2247,7 +2322,10 @@ async def test_failed_burst_does_not_re_emit_above_threshold(test_db):
     # emit), once at "count == 6" (should be a no-op).  Simulates two
     # consecutive failed attempts.
     await group_service._maybe_emit_failed_burst(
-        test_db, client_id=cid, group_id="dedup-grp", now=now,
+        test_db,
+        client_id=cid,
+        group_id="dedup-grp",
+        now=now,
     )
 
     async with test_db.execute(
@@ -2269,21 +2347,33 @@ async def test_revoke_all_grants_for_group_drops_every_grant(test_db):
     cid_b = await _make_paired_client(test_db, "reset-b")
     pin_hash = group_service.hash_pin("4827", HMAC_KEY)
     await _make_group(
-        test_db, "reset-grp",
-        requires_pin=True, pin_hash=pin_hash, pin_model="shared",
+        test_db,
+        "reset-grp",
+        requires_pin=True,
+        pin_hash=pin_hash,
+        pin_model="shared",
     )
     await _add_to_group(test_db, "reset-grp", cid_a)
     await _add_to_group(test_db, "reset-grp", cid_b)
     # Each member unlocks → grant row each.
     await group_service.enter_pin_grant(
-        test_db, cid_a, "reset-grp", "4827", hmac_key=HMAC_KEY,
+        test_db,
+        cid_a,
+        "reset-grp",
+        "4827",
+        hmac_key=HMAC_KEY,
     )
     await group_service.enter_pin_grant(
-        test_db, cid_b, "reset-grp", "4827", hmac_key=HMAC_KEY,
+        test_db,
+        cid_b,
+        "reset-grp",
+        "4827",
+        hmac_key=HMAC_KEY,
     )
 
     deleted = await group_service.revoke_all_grants_for_group(
-        test_db, "reset-grp",
+        test_db,
+        "reset-grp",
     )
     assert deleted == 2
 
@@ -2309,12 +2399,12 @@ async def test_revoke_all_grants_idempotent_on_empty(test_db):
     no activity event (no-op)."""
     await _make_group(test_db, "empty-grp")
     deleted = await group_service.revoke_all_grants_for_group(
-        test_db, "empty-grp",
+        test_db,
+        "empty-grp",
     )
     assert deleted == 0
     async with test_db.execute(
-        "SELECT COUNT(*) FROM activity_events "
-        "WHERE type = 'group.pin.grants-reset'",
+        "SELECT COUNT(*) FROM activity_events " "WHERE type = 'group.pin.grants-reset'",
     ) as cur:
         row = await cur.fetchone()
     assert row[0] == 0
@@ -2326,7 +2416,8 @@ async def test_grants_reset_route_localhost_only(test_db):
     await _make_group(test_db, "off-lo-grp")
     async with AsyncClient(
         transport=ASGITransport(
-            app=app, client=("198.51.100.7", 51000),
+            app=app,
+            client=("198.51.100.7", 51000),
         ),
         base_url="http://test",
     ) as remote:
@@ -2355,12 +2446,19 @@ async def test_grants_reset_route_returns_dropped_count(test_db):
     cid = await _make_paired_client(test_db, "snackbar-client")
     pin_hash = group_service.hash_pin("4827", HMAC_KEY)
     await _make_group(
-        test_db, "snackbar-grp",
-        requires_pin=True, pin_hash=pin_hash, pin_model="shared",
+        test_db,
+        "snackbar-grp",
+        requires_pin=True,
+        pin_hash=pin_hash,
+        pin_model="shared",
     )
     await _add_to_group(test_db, "snackbar-grp", cid)
     await group_service.enter_pin_grant(
-        test_db, cid, "snackbar-grp", "4827", hmac_key=HMAC_KEY,
+        test_db,
+        cid,
+        "snackbar-grp",
+        "4827",
+        hmac_key=HMAC_KEY,
     )
 
     async with AsyncClient(

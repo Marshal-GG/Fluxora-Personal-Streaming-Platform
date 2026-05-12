@@ -55,17 +55,17 @@ logger = logging.getLogger(__name__)
 # transparent in normal viewing).
 QUALITY_PRESETS: dict[str, dict[str, object]] = {
     "smaller": {
-        "nvenc_args":   ["-preset", "p4",     "-cq",  "28"],
+        "nvenc_args": ["-preset", "p4", "-cq", "28"],
         "libx264_args": ["-preset", "medium", "-crf", "28"],
         "size_multiplier": 1.2,
     },
     "recommended": {  # ← plan 19 default
-        "nvenc_args":   ["-preset", "slow", "-cq",  "23"],
+        "nvenc_args": ["-preset", "slow", "-cq", "23"],
         "libx264_args": ["-preset", "slow", "-crf", "23"],
         "size_multiplier": 2.0,
     },
     "mastering": {
-        "nvenc_args":   ["-preset", "slow", "-cq",  "19"],
+        "nvenc_args": ["-preset", "slow", "-cq", "19"],
         "libx264_args": ["-preset", "slow", "-crf", "19"],
         "size_multiplier": 4.0,
     },
@@ -237,9 +237,7 @@ def _sidecar_path(
                     break
                 except ValueError:
                     continue
-        lib_name = (
-            library_row.get("name") if library_row else None
-        ) or "library"
+        lib_name = (library_row.get("name") if library_row else None) or "library"
         cache_dir = cache_root / lib_name / rel
 
     return cache_dir / f"{basename}.h264{ext}"
@@ -481,9 +479,7 @@ async def list_jobs(
     return [_row_to_job(r) for r in rows]
 
 
-async def get_job(
-    db: aiosqlite.Connection, job_id: int
-) -> TranscodeJobResponse | None:
+async def get_job(db: aiosqlite.Connection, job_id: int) -> TranscodeJobResponse | None:
     async with db.execute(
         "SELECT j.*, f.name AS file_name FROM transcode_jobs j"
         " LEFT JOIN media_files f ON f.id = j.file_id"
@@ -555,9 +551,7 @@ def _row_to_job(row: aiosqlite.Row) -> TranscodeJobResponse:
         output_path=row["output_path"],
         encoder=row["encoder"],
         created_at=int(row["created_at"]),
-        started_at=(
-            int(row["started_at"]) if row["started_at"] is not None else None
-        ),
+        started_at=(int(row["started_at"]) if row["started_at"] is not None else None),
         finished_at=(
             int(row["finished_at"]) if row["finished_at"] is not None else None
         ),
@@ -692,9 +686,7 @@ async def _recover_orphan_running_jobs(db: aiosqlite.Connection) -> int:
             continue
         library_row: dict | None = None
         if file_row["library_id"]:
-            library_row = await library_service.get_library(
-                db, file_row["library_id"]
-            )
+            library_row = await library_service.get_library(db, file_row["library_id"])
         try:
             partial = _sidecar_path(file_row, settings_row, library_row)
         except Exception:
@@ -839,14 +831,10 @@ async def _run_job(db: aiosqlite.Connection, job_row: aiosqlite.Row) -> None:
     file_id = job_row["file_id"]
     encoder = job_row["encoder"]
     preset_name = (
-        job_row["quality_preset"]
-        if "quality_preset" in job_row.keys()
-        else None
+        job_row["quality_preset"] if "quality_preset" in job_row.keys() else None
     )
 
-    async with db.execute(
-        "SELECT * FROM media_files WHERE id = ?", (file_id,)
-    ) as cur:
+    async with db.execute("SELECT * FROM media_files WHERE id = ?", (file_id,)) as cur:
         file_row = await cur.fetchone()
     if file_row is None:
         await _mark_failed(db, job_id, error="source file row missing")
@@ -868,9 +856,7 @@ async def _run_job(db: aiosqlite.Connection, job_row: aiosqlite.Row) -> None:
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        await _mark_failed(
-            db, job_id, error=f"cannot create sidecar parent dir: {exc}"
-        )
+        await _mark_failed(db, job_id, error=f"cannot create sidecar parent dir: {exc}")
         return
 
     # output_path_collision — fail loudly rather than overwrite a
@@ -891,9 +877,7 @@ async def _run_job(db: aiosqlite.Connection, job_row: aiosqlite.Row) -> None:
                 audio_codec_name = raw.lower()
     except Exception:
         # Diagnostic only; default to re-encode if probe fails.
-        logger.debug(
-            "transcode audio probe failed for %s", source_path, exc_info=True
-        )
+        logger.debug("transcode audio probe failed for %s", source_path, exc_info=True)
 
     cmd = _build_ffmpeg_cmd(
         source_path=source_path,
@@ -1164,9 +1148,7 @@ def _cleanup_partial(output_path: Path) -> None:
         )
 
 
-async def _mark_failed(
-    db: aiosqlite.Connection, job_id: int, *, error: str
-) -> None:
+async def _mark_failed(db: aiosqlite.Connection, job_id: int, *, error: str) -> None:
     now = int(time.time())
     await db.execute(
         "UPDATE transcode_jobs SET status = 'failed', error = ?,"
@@ -1227,9 +1209,7 @@ async def storage_aggregate(db: aiosqlite.Connection) -> dict:
     settings_row = await settings_service.get_settings(db)
     storage_mode = settings_row.get("transcode_storage_mode") or "dedicated"
     cache_root_str = settings_row.get("transcode_cache_root")
-    cache_root = (
-        Path(cache_root_str) if cache_root_str else _default_cache_root()
-    )
+    cache_root = Path(cache_root_str) if cache_root_str else _default_cache_root()
     # Don't fail the response if the cache root isn't yet on disk —
     # the strip should render zeros and a "click to create" affordance,
     # not a 500.  Walk up to the first existing parent for the

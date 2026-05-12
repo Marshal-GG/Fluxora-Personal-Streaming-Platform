@@ -80,9 +80,7 @@ async def queue_jobs(
       created ids.
     """
     try:
-        job_ids = await transcode_service.queue(
-            db, body.file_ids, preset=body.preset
-        )
+        job_ids = await transcode_service.queue(db, body.file_ids, preset=body.preset)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
@@ -131,9 +129,7 @@ async def list_jobs(
     statuses: list[str] | None = None
     if status_filter:
         statuses = [
-            s.strip()
-            for s in status_filter.split(",")
-            if s.strip() in _VALID_STATUSES
+            s.strip() for s in status_filter.split(",") if s.strip() in _VALID_STATUSES
         ]
         if not statuses:
             # Caller asked to filter but every value was unknown — return

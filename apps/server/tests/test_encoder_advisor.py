@@ -17,8 +17,7 @@ _NOW = datetime(2026, 5, 4, 12, 0, 0, tzinfo=UTC)
 
 def _passing(*encoders: str) -> dict[str, EncoderTestResult]:
     return {
-        e: EncoderTestResult(passed=True, error=None, tested_at=_NOW)
-        for e in encoders
+        e: EncoderTestResult(passed=True, error=None, tested_at=_NOW) for e in encoders
     }
 
 
@@ -218,9 +217,7 @@ async def test_advisor_endpoint_recommends_gpu_when_software_active(
     transcoding_service._TEST_RESULTS.update(
         {
             "libx264": EncoderTestResult(passed=True, error=None, tested_at=_NOW),
-            "h264_nvenc": EncoderTestResult(
-                passed=True, error=None, tested_at=_NOW
-            ),
+            "h264_nvenc": EncoderTestResult(passed=True, error=None, tested_at=_NOW),
         }
     )
     with patch.object(
@@ -265,9 +262,7 @@ async def test_encoder_load_includes_test_error_and_tested_at(client: AsyncClien
             "_detect_available_encoders",
             return_value=["libx264", "h264_nvenc"],
         ),
-        patch.object(
-            transcoding_service, "_probe_nvidia", return_value=(None, None)
-        ),
+        patch.object(transcoding_service, "_probe_nvidia", return_value=(None, None)),
     ):
         resp = await client.get("/api/v1/transcoding/status")
     assert resp.status_code == 200

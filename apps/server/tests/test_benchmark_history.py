@@ -132,9 +132,7 @@ async def test_delete_benchmark_run_removes_row(test_db) -> None:
         verify_caps=False,
         results=[_result("libx264")],
     )
-    assert (
-        await benchmark_history_service.delete_benchmark_run(test_db, run_id) is True
-    )
+    assert await benchmark_history_service.delete_benchmark_run(test_db, run_id) is True
     # Second delete on the same id is a no-op (row already gone).
     assert (
         await benchmark_history_service.delete_benchmark_run(test_db, run_id) is False
@@ -253,9 +251,7 @@ async def test_delete_benchmark_history_entry(client: AsyncClient) -> None:
     run_id = await _seed_run(client)
     resp = await client.delete(f"/api/v1/transcoding/benchmark/history/{run_id}")
     assert resp.status_code == 204
-    follow = await client.get(
-        f"/api/v1/transcoding/benchmark/history/{run_id}"
-    )
+    follow = await client.get(f"/api/v1/transcoding/benchmark/history/{run_id}")
     assert follow.status_code == 404
 
 

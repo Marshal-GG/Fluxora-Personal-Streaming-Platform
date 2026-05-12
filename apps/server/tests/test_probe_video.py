@@ -38,11 +38,12 @@ async def test_probe_video_extracts_duration_from_format() -> None:
         "format": {"duration": "142.512"},
     }
 
-    with patch.object(
-        ffmpeg_service, "_ffprobe_bin", return_value="ffprobe"
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(return_value=_fake_proc(payload)),
+    with (
+        patch.object(ffmpeg_service, "_ffprobe_bin", return_value="ffprobe"),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=_fake_proc(payload)),
+        ),
     ):
         info = await ffmpeg_service.probe_video("/fake/movie.mkv")
 
@@ -59,11 +60,12 @@ async def test_probe_video_returns_none_duration_when_format_missing() -> None:
         # no "format" key — some unusual containers
     }
 
-    with patch.object(
-        ffmpeg_service, "_ffprobe_bin", return_value="ffprobe"
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(return_value=_fake_proc(payload)),
+    with (
+        patch.object(ffmpeg_service, "_ffprobe_bin", return_value="ffprobe"),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=_fake_proc(payload)),
+        ),
     ):
         info = await ffmpeg_service.probe_video("/fake/movie.mkv")
 
@@ -82,11 +84,12 @@ async def test_probe_video_treats_zero_duration_as_unknown() -> None:
         "format": {"duration": "0.000000"},
     }
 
-    with patch.object(
-        ffmpeg_service, "_ffprobe_bin", return_value="ffprobe"
-    ), patch(
-        "asyncio.create_subprocess_exec",
-        new=AsyncMock(return_value=_fake_proc(payload)),
+    with (
+        patch.object(ffmpeg_service, "_ffprobe_bin", return_value="ffprobe"),
+        patch(
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=_fake_proc(payload)),
+        ),
     ):
         info = await ffmpeg_service.probe_video("/fake/movie.mkv")
 
