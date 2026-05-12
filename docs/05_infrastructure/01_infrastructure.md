@@ -367,6 +367,14 @@ unnecessary builds (e.g., a Python change does not trigger a Flutter build).
 
 *All workflows use `actions/checkout@v5`. The Flutter workflows use `subosito/flutter-action@v2` with `flutter-version: 3.32.0` (Dart 3.8.x — required for the null-aware map literal syntax used in `apps/desktop`). All workflows declare a `concurrency` group on `${{ github.workflow }}-${{ github.ref }}` with `cancel-in-progress: true` so a fast push over a slow CI run replaces the old one (exception: `mirror-public.yml` queues instead of cancelling, since the mirror force-pushes; `web_landing_ci.yml` only cancels on non-`main` to protect production deploys).*
 
+**Inspecting CI runs from the shell:** the `gh` CLI is installed and auth'd against the private repo (`Marshal-GG/Fluxora-Private`). Common patterns + permission-allowlist details live at [`docs/12_guidelines/05_gh_cli_usage.md`](../12_guidelines/05_gh_cli_usage.md). Quick reference:
+
+```bash
+gh run list --limit 15                          # recent runs across all workflows
+gh run list --workflow="Server CI" --limit 5    # filter to one workflow
+gh run view <id> --log-failed | head -50        # failing log without runner-setup noise
+```
+
 ### Dependabot
 
 `.github/dependabot.yml` opens weekly grouped PRs for:

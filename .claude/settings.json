@@ -11,7 +11,17 @@
       "WebFetch(domain:pub.dev)",
       "WebFetch(domain:api.themoviedb.org)",
       "Bash(python -m ruff check *)",
-      "Edit(/.claude/skills/archive-plan/**)"
+      "Edit(/.claude/skills/archive-plan/**)",
+      "Bash(gh run *)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr list*)",
+      "Bash(gh pr checks*)",
+      "Bash(gh pr diff*)",
+      "Bash(gh issue view*)",
+      "Bash(gh issue list*)",
+      "Bash(gh repo view*)",
+      "Bash(gh auth status*)",
+      "Bash(gh api *)"
     ]
   }
 }
