@@ -10,9 +10,13 @@
 > 1. Read `AGENT_LOG.md` to understand what's been done and what comes next.
 > 2. Read the relevant `docs/` files for the area you're working in (see "Key files" below).
 > 3. If you need current shipped state (test counts, migration ranges, milestone status), read `docs/00_overview/current_status.md`.
+> 4. **Check CI status on main.** Run `gh run list --limit 5 --branch=main` (or invoke the `/ci-status` skill). If the most recent run on `main` is a `failure`, surface it to the operator before doing anything else — main may be broken from the last push, and starting new work on a red main wastes effort. See `docs/12_guidelines/05_gh_cli_usage.md` for the triage pattern.
 >
 > **While writing code — keep code and docs in sync:**
 > Follow `docs/12_guidelines/02_documentation_update_protocol.md`. Never stop after updating just the obvious file.
+>
+> **After the operator pushes commits:**
+> Re-run `gh run list --limit 5 --branch=main` ~30 seconds after the push to confirm CI is green. If any run is `failure`, pull the failing log with `gh run view <id> --log-failed | grep -iE "(error|fail|fatal|assertionerror|exception)" | head -40` and surface the cause to the operator. Don't end the session with a red CI run silently sitting on `main`.
 >
 > **Before ending your session:**
 > 1. Append a new entry to `AGENT_LOG.md` following the canonical entry format spec in `docs/12_guidelines/04_agent_log_format.md`.
