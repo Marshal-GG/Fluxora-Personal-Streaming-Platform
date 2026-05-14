@@ -2755,6 +2755,44 @@ def test_build_ffmpeg_cmd_uses_c_a_copy_when_source_is_aac_at_48khz(tmp_path):
     assert "-ar" not in cmd
 
 
+def test_build_ffmpeg_cmd_pins_first_video_and_audio_track(tmp_path):
+    """Multi-audio-track sources (NVIDIA Game Bar dual-track captures,
+    multi-language movie rips) include every audio stream when FFmpeg
+    has no explicit `-map`. The `_ensure_fmp4_init_segment` fallback
+    only declares `0:a:0?` in its moov, so segments with N audio
+    tracks against an init.mp4 declaring 1 audio track cause
+    media_kit on Android to drop audio entirely. Pin `-map 0:v:0
+    -map 0:a:0?` here so the segments match the init contract.
+
+    Full multi-track support (operator-facing audio picker, all
+    tracks multiplexed into fmp4 with client-side switching) is
+    tracked in plan 22."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mp4",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=True,
+        direct_remux_hevc=True,
+        use_gpu_input=False,
+        source_audio_codec="aac",
+        source_audio_sample_rate=48000,
+        audio_passthrough=True,
+    )
+    # Both -map flags present, in this order, immediately after -i.
+    map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
+    assert len(map_indices) >= 2
+    assert cmd[map_indices[0] + 1] == "0:v:0"
+    assert cmd[map_indices[1] + 1] == "0:a:0?"
+
+
 def test_build_ffmpeg_cmd_resamples_to_48khz_when_source_is_44100hz_aac(tmp_path):
     """AAC source at 44.1 kHz → re-encode at 48 kHz.  Without the
     `-ar 48000` resample, the AAC encoder's default sample rate ≠

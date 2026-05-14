@@ -679,6 +679,19 @@ def _build_ffmpeg_cmd(
 
     cmd.extend(["-i", file_path])
 
+    # Pin stream selection to the first video + first audio track. Without
+    # an explicit `-map`, FFmpeg's HLS muxer includes every audio stream
+    # from the source — fine for the segments themselves, but the
+    # `_ensure_fmp4_init_segment` fallback only declares `0:a:0?` in its
+    # moov, so on multi-audio-track sources (NVIDIA Game Bar dual-track
+    # captures, multi-language movie rips) the init segment claims one
+    # audio decoder while the segments deliver several. media_kit on
+    # Android then silently drops all audio. Pinning to `0:a:0?` here
+    # matches the init.mp4 contract; the trailing `?` keeps silent video
+    # files (no audio stream at index 0) from failing the spawn.
+    # Multi-track playback with operator selection is tracked in plan 22.
+    cmd.extend(["-map", "0:v:0", "-map", "0:a:0?"])
+
     # Plan 21 — fmp4 trigger now also fires when audio is stream-copied
     # and the source codec is non-AAC (ac3 / eac3 / opus / flac).
     # MPEG-TS doesn't carry those audio codecs cleanly across all
