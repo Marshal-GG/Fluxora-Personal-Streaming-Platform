@@ -1,8 +1,25 @@
 # Plan 22 — Multi-audio-track support (multiplex all + client-side picker)
 
-> **Status:** 🚧 Drafted 2026-05-14 — awaiting M1 sign-off
+> **Status:** ✅ Archived 2026-05-14 — all 5 milestones shipped
+> **Shipped:** 2026-05-14
 > **Layers on top of:** plan 21 (audio stream-copy allowlist + auto-fallback). Builds on the same fmp4 + stream-copy pipeline.
-> **Bandaid landed 2026-05-14** ahead of this plan — `_build_ffmpeg_cmd` was pinned to `-map 0:v:0 -map 0:a:0?` so segments match the init.mp4 fallback's single-audio-track contract. Multi-track files play their first track but the operator has no way to pick. This plan removes the bandaid and adds the picker.
+>
+> **What shipped:**
+> - Migration 035 — `media_files.audio_tracks TEXT` (JSON list of `{index, codec, language, title, channels, sample_rate, bit_rate}` dicts; NULL on legacy rows; populated at scan time by `library_service._persist_probe`)
+> - `services/ffmpeg_service._probe_audio_tracks(file_path)` — new helper returning per-track metadata; `_session_audio_tracks[session_id]` module-level cache populated by `start_stream` and cleared by `stop_stream`
+> - `services/ffmpeg_service._build_ffmpeg_cmd` — conditional `-map` flags: `audio_passthrough=True` → `-map 0:v:0 -map 0:a?` (all tracks); else `-map 0:v:0 -map 0:a:0?` (single track for re-encode paths)
+> - `services/ffmpeg_service._ensure_fmp4_init_segment` — `-map 0:a?` so the init segment declares every audio track in its moov; matches the segments produced by the main pipeline
+> - `services/ffmpeg_service._resolve_audio_passthrough` — new optional `source_audio_tracks` param forces re-encode when any track has a non-allowlist codec (mixed AAC + DTS sources); new `audio_reason=audio-mixed-codec-fallback`
+> - `models/stream_session.py` — new `AudioTrackInfo` Pydantic model; `StreamStartResponse.audio_tracks: list[AudioTrackInfo] = Field(default_factory=list)`
+> - `routers/stream.py` `/start` — cache-then-DB-then-empty lookup populates `audio_tracks` defensively (malformed dicts dropped, Pydantic ValidationError logged at debug)
+> - `apps/mobile/lib/features/player/domain/entities/stream_start_response.dart` — `audioTracks: List<AudioTrackInfo>` with hand-rolled `==`/`hashCode`/`toString` + `labelFor` rendering "<LANG|Title|Track N> · <ch> · <CODEC>" (e.g. `ENG · 5.1 · AC3`)
+> - `apps/mobile/lib/features/player/presentation/cubit/{player_cubit,player_state}.dart` — `availableAudioTracks` + `selectedAudioTrackIndex` on `PlayerReady`; `selectAudioTrack(int)` method swaps tracks via media_kit `Player.setAudioTrack` (dropping synthetic `auto`/`no` entries)
+> - `apps/mobile/lib/features/player/presentation/sheets/audio_subs_sheet.dart` — Audio tab uses `BlocBuilder<PlayerCubit>`: cubit-driven `_AudioTrackList` when `availableAudioTracks` non-empty, legacy media_kit-driven `_TrackList` fallback
+> - `apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart` — Audio quick-action greys out + shows tooltip "Only one audio track in this file" when `audioTrackCount ≤ 1`
+> - **Test counts at ship: server 814 → 827 (+13); mobile 87 → 97 (+10).  Migrations 001-035.**
+> - **Sharp edges documented in `docs/12_guidelines/03_gotchas.md`:** multi-track init.mp4 must declare every track; DTS/TrueHD mixed-codec forces single-track re-encode; media_kit `auto`/`no` synthetic entries; track-index instability across re-scans; `equatable` not added (hand-rolled equality)
+>
+> **Bandaid landed earlier same day** ahead of M1 — `_build_ffmpeg_cmd` pinned to `-map 0:v:0 -map 0:a:0?` so segments matched the pre-plan-22 init.mp4 single-track contract. Multi-track files played their first track but the operator had no way to pick. Plan 22 M1 removed the pin and replaced it with the conditional shape above.
 
 ## Context
 

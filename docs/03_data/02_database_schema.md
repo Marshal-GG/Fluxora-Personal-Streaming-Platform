@@ -333,6 +333,25 @@ ALTER TABLE media_files ADD COLUMN transcoded_at INTEGER;           -- epoch sec
 
 When `media_files.transcoded_path` is non-NULL and the file exists on disk, `routers/stream.py::POST /stream/start` reads from that path instead of `media_files.path` — playback then takes the H.264 stream-copy fast path. If the sidecar row is set but the file is missing on disk (operator deleted it manually), playback falls back to the source and logs a warning (orphan-row case, deliberate; rescan would relink under §10 of plan 18 once §10 ships).
 
+Migration 035 adds one more column to `media_files` for the multi-audio-track picker (plan 22):
+
+```sql
+ALTER TABLE media_files ADD COLUMN audio_tracks TEXT;               -- JSON list per below; NULL on legacy rows (M3 lazy-backfill key)
+```
+
+JSON shape:
+
+```json
+[
+  {"index": 0, "codec": "aac", "language": "eng", "title": null,
+   "channels": 2, "sample_rate": 48000, "bit_rate": 256000},
+  {"index": 1, "codec": "aac", "language": null, "title": "Mic",
+   "channels": 2, "sample_rate": 48000, "bit_rate": null}
+]
+```
+
+`services/library_service.py::_persist_probe` calls `services/ffmpeg_service.py::_probe_audio_tracks(file_path)` alongside the existing `probe_video` and writes the JSON inside the same UPDATE that lands width/height/codec/hdr/duration — atomic per file. NULL is reserved for "never probed" / "ffprobe failed" / "no audio streams"; `routers/stream.py::POST /stream/start` lazy-backfills NULL rows by reading the M1 session cache (`_session_audio_tracks[session_id]`), falling back to the DB column, falling back to `[]`. JSON over a relational `media_audio_tracks` table because the read pattern is "all tracks for one file at once" and per-track query needs (e.g. "all files with a German track") haven't surfaced — easy to normalise later if they do.
+
 ---
 
 ### `client_codec_blocklist` (Migrations 032 + 033)

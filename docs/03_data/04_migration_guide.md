@@ -2,7 +2,7 @@
 
 > **Category:** Data
 > **Status:** Active
-> **Last Updated:** 2026-05-12 (current migration range 001-034; 034 added by plan 21 — `client_audio_codec_blocklist` table for per-client audio codec fallback decisions. 032 + 033 added by plan 20 — `streaming_mode` CHECK widened to allow `'auto'` + `client_codec_blocklist` table.  Earlier 2026-05-09: migrations 027-031 (plan 18 transcode jobs, plan 19 storage settings / per-library codec passthrough / sidecar mtime).  Migration 025 is the most semantically-loaded migration shipped to date — it flips the meaning of `group_restrictions.allowed_libraries` from subtractive to additive without changing the wire format; landed pre-launch under the [`docs/04_api/02_versioning_policy.md`](../04_api/02_versioning_policy.md) "Pre-v1-launch breaking changes" exception.  Pattern note: `NULLIF(json_group_array(id), '[]')` to handle the empty-list case where v1 read `'[]'` as "block everything" — see [`gotchas.md`](../12_guidelines/03_gotchas.md).)
+> **Last Updated:** 2026-05-14 (current migration range 001-035; 035 added by plan 22 — `ALTER TABLE media_files ADD COLUMN audio_tracks TEXT` (JSON list of audio-track metadata per source file; NULL on legacy rows, lazy-backfilled on first `/stream/start` from `_probe_audio_tracks`).  Earlier 2026-05-12: 034 added by plan 21 — `client_audio_codec_blocklist` table for per-client audio codec fallback decisions. 032 + 033 added by plan 20 — `streaming_mode` CHECK widened to allow `'auto'` + `client_codec_blocklist` table.  Earlier 2026-05-09: migrations 027-031 (plan 18 transcode jobs, plan 19 storage settings / per-library codec passthrough / sidecar mtime).  Migration 025 is the most semantically-loaded migration shipped to date — it flips the meaning of `group_restrictions.allowed_libraries` from subtractive to additive without changing the wire format; landed pre-launch under the [`docs/04_api/02_versioning_policy.md`](../04_api/02_versioning_policy.md) "Pre-v1-launch breaking changes" exception.  Pattern note: `NULLIF(json_group_array(id), '[]')` to handle the empty-list case where v1 read `'[]'` as "block everything" — see [`gotchas.md`](../12_guidelines/03_gotchas.md).)
 
 How to add, test, and ship SQLite schema changes safely. Read first if you're touching `apps/server/database/`.
 
@@ -58,7 +58,8 @@ apps/server/database/
     ├── 031_sidecar_source_mtime.sql
     ├── 032_streaming_mode_auto.sql
     ├── 033_client_codec_blocklist.sql
-    └── 034_client_audio_codec_blocklist.sql
+    ├── 034_client_audio_codec_blocklist.sql
+    └── 035_media_files_audio_tracks.sql
 ```
 
 Files are picked up alphabetically by `_run_migrations()` (in `db.py`). The `_migrations` table tracks which have already been applied by filename — re-running the server only executes new files. Each migration is wrapped in `executescript()`, which executes the entire file inside a single implicit transaction; on the next startup the new filename is appended to `_migrations` after a successful `executescript` + commit.
@@ -222,6 +223,14 @@ Plan 20 introduced `client_codec_blocklist` (033) and plan 21 added `client_audi
 - Independent rows: a single client can have a video blocklist row for `hevc` AND an audio blocklist row for `flac` simultaneously; they are never combined.
 
 The separation exists because video and audio decode failures are independent: a device that can't hardware-decode HEVC may still handle FLAC stream-copy perfectly well. Combining them into one table would cause unnecessary audio transcoding on devices that only failed video, and vice versa.
+
+### Plan 22 — `media_files.audio_tracks` JSON column (035)
+
+`ALTER TABLE media_files ADD COLUMN audio_tracks TEXT;` — JSON-encoded list of audio-track metadata `{index, codec, language, title, channels, sample_rate, bit_rate}` per stream in the source. NULL on legacy rows and on probe failure / no-audio sources; populated at scan time by `library_service._persist_probe` via the new `ffmpeg_service._probe_audio_tracks` helper.
+
+`POST /api/v1/stream/start` reads in priority order: (1) the M1 module-level cache `ffmpeg_service._session_audio_tracks[session_id]`, (2) `media_files.audio_tracks` JSON parsed defensively, (3) `[]`. The cache is the fast path for in-flight sessions; the DB column is the resume / restart fallback. Result is converted to `list[AudioTrackInfo]` for the `/stream/start` response payload, with malformed dicts skipped silently (Pydantic `ValidationError` logged at `debug`).
+
+JSON over a relational `media_audio_tracks` table because the read pattern is "fetch every track for one file at once" (the picker UI), cardinality is bounded (1-5 tracks typical, cap at 8 per source per plan §sharp-edges), and no per-track-property queries have surfaced. Easy to normalise into a real table in a later migration if those needs emerge.
 
 ---
 

@@ -950,6 +950,51 @@ Pattern in `apps/desktop/lib/features/transcode/presentation/widgets/storage_str
 
 **Flagged in:** plan 21 M3 agent sharp edge.
 
+**Partially mitigated 2026-05-14 (plan 22 M2):** scan time now persists `audio_tracks` JSON on `media_files` (migration 035), so the router can read track metadata for the `audio_tracks` response field without re-probing — but the `_probe_audio_params` and `_probe_audio_tracks` parallel probes in `start_stream` itself are still independent subprocesses. The two-probes-per-`start_stream` cost survives plan 22; a future merge into one `ffprobe -show_streams` invocation remains v1.1.
+
+
+## Plan 22 — Multi-audio-track sources need init.mp4 to declare every track
+
+**Context:** When source has 2+ audio tracks (NVIDIA Game Bar dual-track captures, multi-language movie rips), FFmpeg's HLS muxer with no explicit `-map` includes every audio stream in the segments. The pre-plan-22 `_ensure_fmp4_init_segment` fallback only declared `0:a:0?` in its moov. **media_kit on Android** then sees the init segment claim one audio track, the segments deliver several, fails to bind any of them, and silently plays muted — first reported as "HDR on mobile not playing any audio" (the user's HDR test file happened to be an NVIDIA Game Bar capture with game + mic tracks; SDR multi-track files broke the same way).
+
+**Fix (plan 22 M1):** `_ensure_fmp4_init_segment` now maps `-map 0:a?` (all audio tracks) so the moov declares every track; `_build_ffmpeg_cmd` emits `-map 0:v:0 -map 0:a?` under `audio_passthrough=True` so segments and init segment agree. Re-encode paths still pin `-map 0:a:0?` (single track) because multi-track re-encode is v1.1.
+
+**Sharp edge to remember:** if a future change ever reverts to a per-track-pinned init segment (e.g. to silence a Pylance warning or to "simplify" the helper), the multi-track regression returns silently. The bandaid commit `682bc3e` shows the failure mode in detail; the test `test_ensure_fmp4_init_segment_uses_open_audio_map` guards against the regression.
+
+
+## Plan 22 — DTS / TrueHD mixed-codec multi-track sources force single-track re-encode
+
+**Context:** HLS fmp4 cannot carry DTS or TrueHD (no codec mapping in the spec). A Bluray rip with `AAC commentary + DTS-HD MA surround` previously would have triggered a runtime FFmpeg failure with `-c:a copy -map 0:a?` because DTS can't go into fmp4. The plan-22 `_resolve_audio_passthrough` adds a 4th condition: when the optional `source_audio_tracks` list is supplied and **any** track has a non-allowlist codec, the resolver returns False and the session falls through to single-track re-encode (track 0 → AAC).
+
+**Surfaced via:** new `audio_reason=audio-mixed-codec-fallback` in the `stream_decision` log line. Operators can grep for this when investigating why an all-DTS or mixed-codec source isn't picking up the multi-track picker.
+
+**Why single-track re-encode and not multi-track re-encode:** re-encoding N tracks to N AAC outputs in one FFmpeg run doubles cmd-builder complexity (separate `-c:a:N` flag groups per track). Deferred to v1.1; flagged in plan 22 §Out of scope.
+
+
+## Plan 22 — media_kit's `Player.state.tracks.audio` includes synthetic `auto`/`no` entries
+
+**Context:** media_kit (libmpv on Android / mpv on desktop) exposes audio tracks via `Player.state.tracks.audio`. The list is **not** a bare array of source tracks — it always includes two synthetic entries at the head: `auto` (mpv picks based on language preference) and `no` (no audio). Real source tracks live at positions 2..N. `PlayerCubit.selectAudioTrack(sourceIndex)` drops these synthetic entries before mapping the cubit's `sourceIndex` to a media_kit `AudioTrack` (by list position, with id-substring fallback).
+
+**Sharp edge to remember:** if you ever index media_kit's `tracks.audio` directly with a source-stream index, you'll hit `auto` or `no` and `setAudioTrack` will be a no-op or worse. Always filter out tracks whose id is `"auto"` or `"no"` first.
+
+**Where this lives:** `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart::selectAudioTrack`.
+
+
+## Plan 22 — Track-index stability across library re-scans
+
+**Context:** The cubit's `selectedAudioTrackIndex` is the FFmpeg stream index. If the operator re-scans the library and FFmpeg's stream ordering changes (rare but possible on MKV files with non-deterministic stream order), the previously-selected index now points at a different track.
+
+**Accepted in v1:** playback defaults `selectedAudioTrackIndex = 0` on every new session, so a re-scan only affects an in-flight session (the user can re-select). No persistent "last-picked track per file" memory yet.
+
+**v1.1 candidate:** persist by `(language, codec, channels)` tuple instead of raw index, or expose a "remember my audio choice for this file" toggle.
+
+
+## Plan 22 — `equatable` package not added; entities use hand-rolled `==` / `hashCode`
+
+**Context:** The plan-22 draft referenced `Equatable` for the new `AudioTrackInfo` entity. Implementation found `equatable` isn't in mobile's `pubspec.yaml` and CLAUDE.md Hard Prohibition #6 ("Never add a new dependency without justification") gates the add. M4 hand-rolled `==`, `hashCode`, and `toString` instead — functionally equivalent but more verbose.
+
+**Recommendation:** if a follow-up plan adopts more value-objects on mobile (e.g. for the eventual track-language-preference feature), hoist `equatable` into the mobile pubspec in one PR and convert the affected entities in the same commit. Doing it for one entity in isolation isn't worth the dep churn.
+
 
 ## Desktop has no player feature — "mirror player to desktop" is net-new architecture
 

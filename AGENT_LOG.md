@@ -183,3 +183,101 @@ Two opus subagents ran in parallel on disjoint file sets (Wave 1a player chrome 
 1. **End-of-episode resolver** (audit §17.3 #9) — only remaining open functional item in the mobile redesign. ~2-3 hours: next-episode lookup endpoint, cubit state, `Player.onComplete` listener, auto-advance hook.
 2. **iOS PIP** (audit §17.3 #1) — gated on a physical iOS test device; track in `docs/10_planning/04_manual_tasks.md` until device available.
 3. **06 Installer plan** (`docs/10_planning/06_installer_plan.md`) — the actual ship blocker for v1. Payload-staging build pipeline + Squirrel.Windows auto-update + Win 10 / Win 11 VM smoke matrix. ~1 day of wall time.
+
+---
+
+## [2026-05-14] [plan-22] [server] [mobile] [audio] — Multi-audio-track support shipped
+
+**Phase:** Multi-audio-track support — operator-facing track picker for stream-copy sessions
+**Status:** Complete
+**Commits:** uncommitted (this session)
+
+### What Was Done
+
+Operator reported "HDR on mobile not playing any audio" against an NVIDIA Game Bar capture (HEVC Main 10 HDR + 2× AAC stereo tracks). Investigation found the bug wasn't HDR-specific — it was multi-audio-track: FFmpeg's HLS muxer with no explicit `-map` includes every audio stream, but `_ensure_fmp4_init_segment` (the fallback init.mp4 generator) only declared `0:a:0?` in its moov. media_kit on Android saw the init claim one audio track, the segments deliver several, failed to bind any, and silently played muted.
+
+Bandaid landed first (commit `682bc3e`, pinned `-map 0:v:0 -map 0:a:0?` in `_build_ffmpeg_cmd`) to restore single-track playback. Plan 22 then shipped full multi-audio-track support across 4 milestones in one session.
+
+**M1 — Server `-map` relaxation + `_ensure_fmp4_init_segment` fix + `_probe_audio_tracks` helper.** `_build_ffmpeg_cmd` emits `-map 0:v:0 -map 0:a?` (all audio tracks) when `audio_passthrough=True`; pins `-map 0:a:0?` (single track) when audio is being re-encoded. `_ensure_fmp4_init_segment` swapped to `-map 0:a?`. New `_probe_audio_tracks(file_path) -> list[dict]` returns `[{index, codec, language, title, channels, sample_rate, bit_rate}, ...]`. Module-level cache `_session_audio_tracks: dict[str, list[dict]]` populated by `start_stream`, cleared by `stop_stream`. `_resolve_audio_passthrough` gains optional `source_audio_tracks` param that forces re-encode when any track has a non-allowlist codec; surfaced as `audio_reason=audio-mixed-codec-fallback` in the `stream_decision` log line. +5 new tests, 1 bandaid test replaced.
+
+**M2 — Migration 035 + scan-time `audio_tracks` JSON persistence.** New SQL migration `ALTER TABLE media_files ADD COLUMN audio_tracks TEXT`. `library_service._persist_probe` calls `_probe_audio_tracks` alongside `probe_video`; writes `json.dumps(tracks) if tracks else None` inside the same UPDATE that lands width/height/codec — atomic per file. NULL reserved for legacy / probe-failed / no-audio rows (M3's lazy-backfill key). +3 new tests.
+
+**M3 — `/stream/start` response field + `AudioTrackInfo` model + cache-then-DB fallback.** New Pydantic `AudioTrackInfo` in `models/stream_session.py`. `StreamStartResponse.audio_tracks: list[AudioTrackInfo] = Field(default_factory=list)`. Router reads in priority: `_session_audio_tracks[session_id]` (cache) → `media_files.audio_tracks` JSON (DB column) → `[]`. Defensive per-entry conversion: non-dicts skipped silently; Pydantic `ValidationError` per malformed track logged at debug and skipped. +4 new tests.
+
+**M4 — Mobile entity + cubit state + Audio sheet picker.** New `AudioTrackInfo` Dart entity with hand-rolled `==`/`hashCode`/`toString` (no `equatable` dep added per CLAUDE.md #6) + `labelFor` rendering `<LANG|Title|Track N> · <ch> · <CODEC>` (e.g. `ENG · 5.1 · AC3`, `Director Commentary · 2.0 · AAC`, `Track 3 · 2.0 · AAC`). `PlayerReady` state gains `availableAudioTracks: List<AudioTrackInfo>` + `selectedAudioTrackIndex: int` (default `[]` + `0`). New cubit method `selectAudioTrack(int sourceIndex)` maps the source FFmpeg stream index to a media_kit `AudioTrack` (dropping synthetic `auto`/`no` entries, then matching by list position with id-substring fallback), dispatches `Player.setAudioTrack` — purely client-side, no server roundtrip. `audio_subs_sheet.dart`'s Audio tab uses `BlocBuilder<PlayerCubit>`: cubit-driven `_AudioTrackList` when `availableAudioTracks.length >= 1`; legacy media_kit-driven `_TrackList` fallback for pre-plan-22 servers. `PlayerQuickActions` gets `audioTrackCount` param; Audio action greys out + tooltip "Only one audio track in this file" when count ≤ 1. +5 new tests.
+
+**Pylance sweep alongside.** Operator surfaced ~20 Pylance `reportArgumentType` / `reportReturnType` / `reportOptionalMemberAccess` warnings across `auth_service.py`, `tests/test_stream.py`, `transcode_service.py`, `webrtc_service.py`, `tests/test_library_service.py`. Applied targeted fixes: `list(...)` wrap on `aiosqlite.Row.fetchall()`, `assert cur.lastrowid is not None` before INSERT-id reads, `# type: ignore[arg-type]` on `httpx.ASGITransport(app=fastapi_app)` and aiortc `RTCIceServer(urls=[...])` (both type-stub bugs in the libraries, not runtime issues), `assert answer is not None` before `setLocalDescription(answer)`. The broader pre-existing `FastAPI not assignable to _ASGIApp` warnings across test files were left as-is — they're cosmetic, every test passes, fix is upstream-blocked by httpx's narrow stub.
+
+**Closeout.** Doc sweep covering 9 docs; plan 22 archived; CLAUDE.md "Where the detail lives" row added; roadmap row flipped to ✅ Done.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|--------|------|-----|
+| Modified | apps/server/services/ffmpeg_service.py | M1 — `_probe_audio_tracks` helper, `_session_audio_tracks` cache, `_resolve_audio_passthrough` mixed-codec gate, conditional `-map` flags, `_ensure_fmp4_init_segment` declares all tracks, new `audio-mixed-codec-fallback` reason |
+| Modified | apps/server/services/library_service.py | M2 — call `_probe_audio_tracks` in `_persist_probe`, persist JSON column |
+| Created | apps/server/database/migrations/035_media_files_audio_tracks.sql | M2 — `ALTER TABLE media_files ADD COLUMN audio_tracks TEXT` |
+| Modified | apps/server/models/stream_session.py | M3 — new `AudioTrackInfo` model, `StreamStartResponse.audio_tracks` field |
+| Modified | apps/server/routers/stream.py | M3 — cache-then-DB-then-empty lookup, defensive Pydantic conversion, populate `audio_tracks` in `/start` response |
+| Modified | apps/server/services/auth_service.py | Pylance — wrap `cur.fetchall()` in `list(...)` to satisfy declared `list[Row]` return type |
+| Modified | apps/server/services/transcode_service.py | Pylance — `assert cur.lastrowid is not None` before INSERT-id reads (2 sites) |
+| Modified | apps/server/services/webrtc_service.py | Pylance — `# type: ignore[arg-type]` on `RTCIceServer(urls=[...])`, `assert answer is not None` before `setLocalDescription` |
+| Modified | apps/server/tests/test_stream.py | M1 — replaced bandaid `pins_first_video_and_audio_track` test with `maps_all_audio_under_stream_copy` + `pins_single_audio_under_reencode`; +5 M1 helpers + resolver tests; +4 M3 response-field tests; Pylance `# type: ignore` on one ASGITransport call |
+| Modified | apps/server/tests/test_library_service.py | M2 — 3 scan-persistence tests (multi-track, single-track, probe-failure → NULL); black reformatted |
+| Modified | apps/mobile/lib/features/player/domain/entities/stream_start_response.dart | M4 — new `AudioTrackInfo` entity with `fromJson` + `labelFor` + hand-rolled equality; `audioTracks` field on `StreamStartResponse` |
+| Modified | apps/mobile/lib/features/player/presentation/cubit/player_state.dart | M4 — `PlayerReady` gains `availableAudioTracks` + `selectedAudioTrackIndex` |
+| Modified | apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart | M4 — populate state on PlayerReady emission, new `selectAudioTrack(int)` method dispatching media_kit `Player.setAudioTrack` |
+| Modified | apps/mobile/lib/features/player/presentation/sheets/audio_subs_sheet.dart | M4 — cubit-driven `_AudioTrackList` Audio tab with `BlocBuilder<PlayerCubit>`; legacy `_TrackList` fallback |
+| Modified | apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart | M4 — `PlayerQuickActions.audioTrackCount` prop; `_Action.disabled` + `tooltip` props; Audio action greys out when count ≤ 1 |
+| Modified | apps/mobile/test/features/player/player_cubit_test.dart | M4 — 5 new tests (audio_tracks JSON parse, default empty, 3× labelFor outputs, repository forwards audioTracks, selectAudioTrack no-op safety) |
+| Modified | docs/00_overview/current_status.md | M5 — plan 22 shipped block at top; server 814 → 827, mobile 87 → 97 |
+| Modified | docs/03_data/02_database_schema.md | M5 — migration 035 + `audio_tracks` JSON column documentation alongside the migration-027 sidecar columns |
+| Modified | docs/03_data/04_migration_guide.md | M5 — migration range 001-035; 035 file in tree; new §"Plan 22 — `media_files.audio_tracks` JSON column" explaining the cache-then-DB lookup contract |
+| Modified | docs/04_api/01_api_contracts.md | M5 — `StreamStartResponse.audio_tracks` field + `AudioTrackInfo` shape table + 4th condition for audio stream-copy (mixed-codec gate) |
+| Modified | docs/08_frontend/01_frontend_architecture.md | M5 — cubit `availableAudioTracks` + `selectAudioTrack`; `_AudioTrackList` in audio_subs_sheet; mobile test count 25 → 30 |
+| Modified | docs/09_backend/01_backend_architecture.md | M5 — conditional `-map` flags, `_probe_audio_tracks` helper, mixed-codec resolver gate paragraph |
+| Modified | docs/12_guidelines/03_gotchas.md | M5 — 4 new entries (multi-track init.mp4 contract; DTS/TrueHD mixed-codec re-encode; media_kit `auto`/`no` synthetic entries; `equatable` not added) + partial-mitigation note on the plan-21 duplicate-probe gotcha |
+| Modified | docs/10_planning/01_roadmap.md | M5 — plan 22 row flipped to ✅ Done 2026-05-14 with archive link |
+| Renamed | docs/10_planning/22_multi_audio_track_support.md → docs/10_planning/archive/22_multi_audio_track_support.md | M5 — plan archive move; header rewritten to ✅ Archived with full "What shipped" block |
+| Modified | CLAUDE.md | M5 — "Where the detail lives" gains plan-22 row pointing at the archive |
+| Modified | AGENT_LOG.md | M5 — this entry |
+| Modified | .claude/settings.json | Operator-approved during M2-M3 — added `mcp__fluxora-db__query` to allowlist for live DB inspection during the multi-track bug investigation |
+
+### Docs Updated
+
+- `docs/00_overview/current_status.md`
+- `docs/03_data/02_database_schema.md`
+- `docs/03_data/04_migration_guide.md`
+- `docs/04_api/01_api_contracts.md`
+- `docs/08_frontend/01_frontend_architecture.md`
+- `docs/09_backend/01_backend_architecture.md`
+- `docs/10_planning/01_roadmap.md`
+- `docs/10_planning/archive/22_multi_audio_track_support.md` (renamed from active)
+- `docs/12_guidelines/03_gotchas.md`
+- `CLAUDE.md`
+
+### Test Counts (re-baselined)
+
+- **Server: 827 passing** (814 → 827, +13 across M1 +5 + M2 +3 + M3 +4 + 1 bandaid-test replacement)
+- **Mobile: 97 passing** (87 → 97; 92 from M14 + 5 from plan 22 M4)
+- **Desktop: 113 passing** (untouched)
+- **Core: 8 passing** (untouched)
+
+`flutter analyze` mobile + core clean. `ruff check apps/server/` clean. `black --check apps/server/` clean (112 files left unchanged).
+
+### Issues / Sharp Edges Discovered
+
+1. **Multi-audio-track files broke under the pre-plan-22 init.mp4 contract** — root cause of the operator's "HDR on mobile not playing any audio" report. HDR was incidental; the trigger was NVIDIA Game Bar's dual-track audio. Fix landed in M1; init segment now declares every track. Documented in gotchas.
+2. **HLS fmp4 cannot carry DTS / TrueHD** — mixed-codec sources (AAC + DTS, common on Bluray rips) would have failed at FFmpeg runtime with `-c:a copy -map 0:a?`. Resolver gates on this via the new optional `source_audio_tracks` param; falls through to single-track AAC re-encode with `audio_reason=audio-mixed-codec-fallback`. Operators can grep for this when investigating why a multi-track picker doesn't appear. Documented in gotchas.
+3. **media_kit exposes synthetic `auto`/`no` entries** in `Player.state.tracks.audio`. Any future code that indexes the list with a source FFmpeg stream index must filter these first or `setAudioTrack` becomes a no-op. Documented in gotchas.
+4. **Track-index instability across re-scans** — if FFmpeg's stream ordering changes on a re-scan (rare; some MKV files), the cubit's `selectedAudioTrackIndex` points at a different track. Accepted in v1 (defaults to 0 per new session); v1.1 candidate to persist by `(language, codec, channels)` tuple. Documented in gotchas.
+5. **`equatable` not added to mobile pubspec** — plan 22 draft assumed Equatable; implementation found it wasn't a dep and CLAUDE.md #6 gates the add. Hand-rolled `==`/`hashCode`/`toString` instead. If a follow-up plan adopts more value-objects, hoist `equatable` in one PR. Documented in gotchas.
+6. **`_probe_audio_params` and `_probe_audio_tracks` are two separate subprocesses in `start_stream`** — plan 21's duplicate-probe gotcha got worse, not better, in plan 22. Both probes hit the same file via subprocess launch. Future merge into one `ffprobe -show_streams` call is straightforward but invasive — deferred to v1.1. Updated the plan-21 gotcha entry with this partial-mitigation note.
+7. **Pylance noise** — ~20 third-party type-stub mismatches surfaced during the session (httpx `ASGITransport(app=FastAPI)`, aiortc `RTCIceServer(urls=[...])`, aiosqlite `Row.fetchall() -> Iterable[Row]`). All cosmetic — no runtime impact; `ruff` + `pytest` + `flutter analyze` all clean. Fixed the ones in actively-touched code paths (`auth_service`, `transcode_service`, `webrtc_service`, `tests/test_stream.py:359`); left the broader test-file `FastAPI not assignable to _ASGIApp` set alone — fix is upstream-blocked by httpx's stub. A future `pyrightconfig.json` to relax test-folder strictness could kill ~30 warnings in one go if the noise becomes a problem.
+
+### Next Agent Should
+
+1. **Multi-track real-device QA** — verify the new Audio sheet picker on an Android device with the operator's NVIDIA Game Bar capture (`Genshin Impact 2026.04.28 - 01.15.53.01.mp4`, HEVC HDR10 + 2× AAC stereo). Expected: video plays, audio plays from track 0 by default, opening the Audio quick-action shows two rows ("Track 1 · 2.0 · AAC" + "Track 2 · 2.0 · AAC" or whatever the source title tags say), tapping the second row switches audio without server roundtrip. If track 2 sounds quiet (game vs mic level mismatch), that's plan §sharp edges #2 — accepted UX, no fix.
+2. **Multi-language file QA** — test a multi-language movie rip (e.g. anime with `eng + jpn + commentary`). Expected: picker shows three rows with language tags; switching is instant.
+3. **End-of-episode resolver** (audit §17.3 #9) — still the only open functional item in the mobile redesign post-M14. ~2-3 hours.
+4. **06 Installer plan** (`docs/10_planning/06_installer_plan.md`) — the ship-readiness blocker for v1; payload-staging build pipeline + Squirrel.Windows + Win 10 / Win 11 VM smoke matrix. ~1 day.

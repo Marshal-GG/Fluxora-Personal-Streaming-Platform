@@ -2486,7 +2486,13 @@ Plan 20 added a `streaming_mode` field to `StreamStartResponse` so the mobile cl
   "hdr_format": null,
   "tonemapped": false,
   "streaming_mode": "client-decode",
-  "audio_streaming_mode": "stream-copy"
+  "audio_streaming_mode": "stream-copy",
+  "audio_tracks": [
+    {"index": 0, "codec": "aac", "language": "eng", "title": null,
+     "channels": 2, "sample_rate": 48000, "bit_rate": 256000},
+    {"index": 1, "codec": "aac", "language": null, "title": "Mic",
+     "channels": 2, "sample_rate": 48000, "bit_rate": null}
+  ]
 }
 ```
 
@@ -2494,10 +2500,23 @@ Plan 20 added a `streaming_mode` field to `StreamStartResponse` so the mobile cl
 
 `audio_streaming_mode` is one of `'stream-copy' | 'transcode'`. Default is `'transcode'`. The mobile `PlayerCubit` only arms the 6 s audio fallback watcher when **both** `response.streamingMode == 'auto'` AND `response.audioStreamingMode == 'stream-copy'`; the video and audio watchers are independent and can fire simultaneously in the same session.
 
+`audio_tracks` (plan 22) is a list of `AudioTrackInfo` dicts — one per audio stream in the source file. Mobile uses this to populate the Audio sheet picker; track switching is purely client-side via media_kit's `Player.setAudioTrack` (no server roundtrip). Default `[]` — pre-plan-22 servers and probe failures both produce empty list; mobile renders no picker (Audio quick-action greys out with tooltip "Only one audio track in this file"). Field shape:
+
+| Field | Type | Notes |
+|---|---|---|
+| `index` | int | FFmpeg stream index — NOT track-relative; lets the picker map cubit selections to media_kit's track list. |
+| `codec` | str | Normalized (lowercase, split on `_` first token: `aac_lc` → `aac`). |
+| `language` | str \| null | ISO 639-2 tag from `tags.language` (e.g. `"eng"`, `"jpn"`). |
+| `title` | str \| null | From `tags.title` (e.g. `"Director Commentary"`, `"Mic"`). |
+| `channels` | int | 2 / 6 / 8 → rendered as `2.0` / `5.1` / `7.1` in the picker label. |
+| `sample_rate` | int | Hz (typically 48000). |
+| `bit_rate` | int \| null | Per-track bitrate in bps; null for lossless / packed-VBR sources. |
+
 Audio stream-copy is attempted when:
 - The source audio codec is in the allowlist `{aac, ac3, eac3, opus, flac}`
 - HDR tonemap is not active for the session (tonemap forces audio re-encode for PTS alignment)
 - The client does not already have a `client_audio_codec_blocklist` row for this `(client_id, audio_codec)` pair
+- **No audio track in the source has a non-allowlist codec** (plan 22: when source has e.g. AAC + DTS tracks, all tracks must be re-encoded because HLS fmp4 cannot carry DTS; surfaced via the `audio-mixed-codec-fallback` reason in the `stream_decision` log line)
 
 ### `POST /api/v1/stream/{session_id}/fallback-audio-transcode`
 **Description:** Opt-in audio-only fallback endpoint. Called by the mobile player when it detects an audio decode error within 6 s of `PlayerReady` under `streaming_mode='auto'` and `audio_streaming_mode='stream-copy'`. Records the `(client_id, audio_codec)` pair in `client_audio_codec_blocklist`, forces audio re-encode for the session, restarts FFmpeg from the caller-supplied playhead position with audio transcoded to AAC 256 k while keeping video unchanged, and returns the (unchanged) playlist URL so the player can reload.
