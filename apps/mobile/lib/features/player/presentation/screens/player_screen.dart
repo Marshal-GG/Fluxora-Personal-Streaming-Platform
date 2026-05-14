@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:media_kit_video/media_kit_video.dart' show Video, VideoController;
+import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:fluxora_core/fluxora_core.dart';
 import 'package:fluxora_mobile/core/router/app_router.dart';
 import 'package:fluxora_mobile/features/player/presentation/controllers/player_controls_controller.dart';
@@ -86,6 +87,15 @@ class _PlayerViewState extends State<_PlayerView>
       DeviceOrientation.portraitUp,
     ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // Hold KEEP_SCREEN_ON for the entire player-screen lifetime
+    // instead of letting `media_kit_video`'s `Video` widget toggle it
+    // on every play/pause.  See `Video(wakelock: false)` below — that
+    // turns off the per-play-state toggle which was triggering an
+    // Oplus surface-recreation cascade (AudioTrack + MediaCodec
+    // teardown → audio dies after ~32 ms).  Fire-and-forget; failures
+    // mean the screen may dim under no-input timeout but playback is
+    // unaffected.
+    WakelockPlus.enable().catchError((_) => null);
   }
 
   @override
@@ -94,6 +104,7 @@ class _PlayerViewState extends State<_PlayerView>
     _controlsController.dispose();
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    WakelockPlus.disable().catchError((_) => null);
     super.dispose();
   }
 
@@ -387,6 +398,14 @@ class _VideoView extends StatelessWidget {
           child: Video(
             controller: controller,
             controls: (state) => const SizedBox.shrink(),
+            // Disable media_kit_video's per-play-state wakelock
+            // toggling — we hold KEEP_SCREEN_ON for the entire player-
+            // screen lifetime in `_PlayerViewState.initState` instead.
+            // The toggle on play/pause was triggering Oplus's window
+            // manager to recreate the surface every time, which tore
+            // down the AudioTrack mid-playback and produced the "audio
+            // dies after ~32 ms" pattern.
+            wakelock: false,
           ),
         ),
         FluxPlayerControls(

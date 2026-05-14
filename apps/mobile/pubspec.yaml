@@ -35,6 +35,13 @@ dependencies:
   path_provider: ^2.1.5
   share_plus: ^12.0.2
   connectivity_plus: ^7.1.1
+  # Used directly (not just transitively via media_kit_video) so we can
+  # hold KEEP_SCREEN_ON for the entire player-screen lifetime instead
+  # of toggling it on every play/pause.  On Oplus/OnePlus skins the
+  # play/pause toggle triggers a `relayoutWindow` → surface recreation
+  # → AudioTrack + MediaCodec teardown, producing the "audio plays
+  # 32ms then silence" pattern observed 2026-05-14 on a 5.1 AC3 file.
+  wakelock_plus: ^1.2.8
 
 dev_dependencies:
   flutter_test:

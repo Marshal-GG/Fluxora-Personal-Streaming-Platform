@@ -168,20 +168,31 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
     widget.controller.hide();
   }
 
-  /// Bottom sheet wired to the 3-dot icon in the top bar.  Hosts options
-  /// that don't deserve a permanent button — currently the HDR → SDR
-  /// tonemap toggle (only shown when the source is HDR).  Future
-  /// additions like a quality / speed picker live here too.
+  /// Bottom sheet wired to the 3-dot icon in the top bar.  Hosts the
+  /// "secondary" controls — pickers (Audio / Subs / Speed / Quality /
+  /// Sleep / Cast) plus the HDR tonemap toggle (when the source is HDR)
+  /// and Group Watch (when the player_screen wired the callback).
+  /// Replaces the pre-2026-05-14 4x2 bottom-of-player grid which was
+  /// crowding the playback area on small phones.
   Future<void> _showOverflowMenu() async {
     final isHdr = widget.hdrFormat != null;
     final canTonemap = isHdr && widget.onTonemapChanged != null;
     final canGroupWatch = widget.onGroupWatch != null;
-    if (!canTonemap && !canGroupWatch) {
-      // Nothing to show yet — the menu would be an empty sheet.  Don't
-      // open it; gives the operator a hint that the icon is reserved
-      // for future controls without making it look broken.
-      return;
+    // Audio is disabled when the source has 0-or-1 tracks — picker
+    // would be empty / single-row.  Read the cubit at open-time so we
+    // catch the latest state (the menu mounts once per open).
+    var audioTrackCount = 0;
+    try {
+      final cubitState = context.read<PlayerCubit>().state;
+      if (cubitState is PlayerReady) {
+        audioTrackCount = cubitState.availableAudioTracks.length;
+      }
+    } catch (_) {
+      // No cubit above us (golden tests / widget previews) — keep
+      // audio disabled.
     }
+    final audioDisabled = audioTrackCount <= 1;
+
     await showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF1A1626),
@@ -201,29 +212,72 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            _OverflowTile(
+              icon: Icons.audiotrack_outlined,
+              label: 'Audio tracks',
+              subtitle: audioDisabled
+                  ? 'Only one audio track in this file'
+                  : '$audioTrackCount tracks available',
+              disabled: audioDisabled,
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _openSheet(Sheet.audioSubs);
+              },
+            ),
+            _OverflowTile(
+              icon: Icons.subtitles_outlined,
+              label: 'Subtitles',
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _openSheet(Sheet.audioSubs);
+              },
+            ),
+            _OverflowTile(
+              icon: Icons.speed,
+              label: 'Playback speed',
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _openSheet(Sheet.speed);
+              },
+            ),
+            _OverflowTile(
+              icon: Icons.high_quality_outlined,
+              label: 'Quality',
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _openSheet(Sheet.quality);
+              },
+            ),
+            _OverflowTile(
+              icon: _sleepDuration != null
+                  ? Icons.bedtime
+                  : Icons.bedtime_outlined,
+              label: 'Sleep timer',
+              subtitle: _sleepDuration != null ? 'Active' : null,
+              highlight: _sleepDuration != null,
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _openSheet(Sheet.sleep);
+              },
+            ),
+            _OverflowTile(
+              icon: Icons.cast,
+              label: 'Cast to device',
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _openSheet(Sheet.cast);
+              },
+            ),
             if (canTonemap)
-              ListTile(
-                leading: Icon(
-                  widget.tonemapped
-                      ? Icons.hdr_off_rounded
-                      : Icons.hdr_on_rounded,
-                  color: Colors.white,
-                ),
-                title: const Text(
-                  'Tone-map HDR to SDR',
-                  style: TextStyle(color: Colors.white),
-                ),
-                subtitle: Text(
-                  widget.tonemapped
-                      ? 'Server is converting BT.2020 PQ to BT.709 (slower).'
-                      : 'Source is ${widget.hdrFormat}; tap to convert if '
-                            'colours look washed.',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
-                    fontSize: 12,
-                  ),
-                ),
+              _OverflowTile(
+                icon: widget.tonemapped
+                    ? Icons.hdr_off_rounded
+                    : Icons.hdr_on_rounded,
+                label: 'Tone-map HDR to SDR',
+                subtitle: widget.tonemapped
+                    ? 'Server is converting BT.2020 PQ to BT.709 (slower)'
+                    : 'Source is ${widget.hdrFormat}; tap if colours look washed',
                 trailing: Switch(
                   value: widget.tonemapped,
                   onChanged: (v) {
@@ -237,19 +291,10 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                 },
               ),
             if (canGroupWatch)
-              ListTile(
-                leading: const Icon(Icons.groups_rounded, color: Colors.white),
-                title: const Text(
-                  'Group Watch',
-                  style: TextStyle(color: Colors.white),
-                ),
-                subtitle: Text(
-                  'Co-watch with friends — UI shell, sync ships in v1.1.',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
-                    fontSize: 12,
-                  ),
-                ),
+              _OverflowTile(
+                icon: Icons.groups_rounded,
+                label: 'Group Watch',
+                subtitle: 'Co-watch with friends — UI shell, sync ships in v1.1',
                 onTap: () {
                   Navigator.of(ctx).pop();
                   widget.onGroupWatch?.call();
@@ -463,9 +508,19 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
     widget.controller.show();
     switch (which) {
       case Sheet.audioSubs:
+        // `showFluxBottomSheet` builds in a separate overlay route whose
+        // BuildContext doesn't include the PlayerCubit provider above
+        // this widget — plan 22 M4's `BlocBuilder<PlayerCubit>` inside
+        // the sheet threw ProviderNotFoundException on first open.
+        // Capture the cubit here (where it IS in scope) and pass it
+        // down via BlocProvider.value so the sheet's tree can read it.
+        final playerCubit = context.read<PlayerCubit>();
         await showFluxBottomSheet<void>(
           context: context,
-          builder: (_) => AudioSubsSheet(player: widget.player),
+          builder: (_) => BlocProvider<PlayerCubit>.value(
+            value: playerCubit,
+            child: AudioSubsSheet(player: widget.player),
+          ),
         );
       case Sheet.speed:
         await showFluxBottomSheet<void>(
@@ -605,6 +660,9 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                             onPip: _pipSupported == true ? _enterPip : null,
                             onXRay: widget.onXRay,
                             sleepActive: _sleepDuration != null,
+                            onLock: c.lock,
+                            onFit: c.toggleFit,
+                            fitCover: c.fitCover,
                             hdrFormat: widget.hdrFormat,
                             tonemapped: widget.tonemapped,
                           ),
@@ -615,13 +673,30 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                       child: Center(
                         child: FocusTraversalOrder(
                           order: const NumericFocusOrder(2),
-                          child: PlayerCenterTransport(
-                            isPlaying: widget.player.state.playing,
-                            onRewind: () =>
-                                _seekRelative(const Duration(seconds: -10)),
-                            onPlayPause: _togglePlay,
-                            onForward: () =>
-                                _seekRelative(const Duration(seconds: 10)),
+                          // Stream `player.stream.playing` so the
+                          // play/pause icon flips the instant libmpv
+                          // toggles state, instead of waiting for the
+                          // next ambient setState (controller auto-hide
+                          // tick).  Pre-2026-05-14 the icon read
+                          // `widget.player.state.playing` once per
+                          // build, so a tap looked unresponsive until
+                          // an unrelated rebuild caught up.
+                          child: StreamBuilder<bool>(
+                            stream: widget.player.stream.playing,
+                            initialData: widget.player.state.playing,
+                            builder: (context, snap) {
+                              final isPlaying = snap.data ?? false;
+                              return PlayerCenterTransport(
+                                isPlaying: isPlaying,
+                                onRewind: () => _seekRelative(
+                                  const Duration(seconds: -10),
+                                ),
+                                onPlayPause: _togglePlay,
+                                onForward: () => _seekRelative(
+                                  const Duration(seconds: 10),
+                                ),
+                              );
+                            },
                           ),
                         ),
                       ),
@@ -662,54 +737,20 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                       right: 0,
                       child: SafeArea(
                         top: false,
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            FocusTraversalOrder(
-                              order: const NumericFocusOrder(5),
-                              child: PlayerProgressBar(
-                                player: widget.player,
-                                onSeekCommit: _emitSeek,
-                                playlistOffsetSec: widget.playlistOffsetSec,
-                                isSeeking: widget.isSeeking,
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            FocusTraversalOrder(
-                              order: const NumericFocusOrder(6),
-                              // Plan 22 — wrap the quick-action row in a
-                              // BlocBuilder so the Audio action's
-                              // disabled state tracks the cubit's
-                              // `availableAudioTracks` count.  Greyed
-                              // when 0-or-1 tracks (no point in opening
-                              // a picker with nothing to pick).
-                              child: BlocBuilder<PlayerCubit, PlayerState>(
-                                buildWhen: (prev, next) {
-                                  final prevCount = prev is PlayerReady
-                                      ? prev.availableAudioTracks.length
-                                      : 0;
-                                  final nextCount = next is PlayerReady
-                                      ? next.availableAudioTracks.length
-                                      : 0;
-                                  return prevCount != nextCount;
-                                },
-                                builder: (context, state) {
-                                  final audioTrackCount = state is PlayerReady
-                                      ? state.availableAudioTracks.length
-                                      : 0;
-                                  return PlayerQuickActions(
-                                    onLock: c.lock,
-                                    onFit: c.toggleFit,
-                                    fitCover: c.fitCover,
-                                    onOpenSheet: _openSheet,
-                                    sleepActive: _sleepDuration != null,
-                                    audioTrackCount: audioTrackCount,
-                                  );
-                                },
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                          ],
+                        // Bottom chrome now hosts only the scrubber —
+                        // the 4x2 quick-action grid was moved up into
+                        // the top-bar (Lock + Fit) and the 3-dot
+                        // overflow menu (Audio / Subs / Speed / Quality
+                        // / Sleep / Cast) on 2026-05-14 to keep the
+                        // playback surface visible on small phones.
+                        child: FocusTraversalOrder(
+                          order: const NumericFocusOrder(5),
+                          child: PlayerProgressBar(
+                            player: widget.player,
+                            onSeekCommit: _emitSeek,
+                            playlistOffsetSec: widget.playlistOffsetSec,
+                            isSeeking: widget.isSeeking,
+                          ),
                         ),
                       ),
                     ),
@@ -831,6 +872,9 @@ class PlayerTopBar extends StatelessWidget {
     required this.onPip,
     required this.onXRay,
     required this.sleepActive,
+    required this.onLock,
+    required this.onFit,
+    required this.fitCover,
     this.hdrFormat,
     this.tonemapped = false,
   });
@@ -849,6 +893,21 @@ class PlayerTopBar extends StatelessWidget {
   final VoidCallback? onXRay;
 
   final bool sleepActive;
+
+  /// Lock-controls entry point — moved here from the (now removed) 4x2
+  /// quick-action grid on 2026-05-14 to free up bottom screen real
+  /// estate during playback.  Locks chrome until the operator does a
+  /// 1.2 s hold-to-unlock at the bottom of the lock-mode overlay.
+  final VoidCallback onLock;
+
+  /// Fit / Fill toggle entry point — same provenance as [onLock].
+  /// Drives the aspect-ratio fit mode (letterbox vs. cover).
+  final VoidCallback onFit;
+
+  /// True when the player is currently in "fill" (cover) mode; flips
+  /// the icon between `Icons.fit_screen` and `Icons.aspect_ratio` so
+  /// the affordance hints at the *destination* state after a tap.
+  final bool fitCover;
 
   /// HDR format of the source — drives the `HDR10` / `HLG` / `DV` chip
   /// next to the PIP icon.  Null hides the chip entirely (SDR sources).
@@ -912,6 +971,31 @@ class PlayerTopBar extends StatelessWidget {
               padding: const EdgeInsets.only(right: 4),
               child: _HdrChip(format: hdrFormat!, tonemapped: tonemapped),
             ),
+          Semantics(
+            label: 'Lock controls',
+            button: true,
+            child: IconButton(
+              tooltip: 'Lock',
+              icon: const Icon(Icons.lock_outline, color: Colors.white),
+              onPressed: onLock,
+              splashRadius: 22,
+            ),
+          ),
+          Semantics(
+            label: fitCover
+                ? 'Switch to fit (letterbox) mode'
+                : 'Switch to fill (cover) mode',
+            button: true,
+            child: IconButton(
+              tooltip: fitCover ? 'Fit' : 'Fill',
+              icon: Icon(
+                fitCover ? Icons.fit_screen : Icons.aspect_ratio,
+                color: Colors.white,
+              ),
+              onPressed: onFit,
+              splashRadius: 22,
+            ),
+          ),
           if (onXRay != null)
             Semantics(
               label: 'X-Ray: cast and scene details',
@@ -1820,6 +1904,67 @@ class _DragHud extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Single row in the 3-dot overflow menu — icon + label (+ optional
+/// subtitle / trailing widget) with a tap target that matches the
+/// ListTile defaults.  Centralises the styling so the menu reads as
+/// one cohesive list instead of a mix of bespoke ListTile invocations.
+class _OverflowTile extends StatelessWidget {
+  const _OverflowTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.subtitle,
+    this.trailing,
+    this.highlight = false,
+    this.disabled = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final String? subtitle;
+  final Widget? trailing;
+
+  /// True when the entry is in an "active" state worth surfacing
+  /// (e.g. Sleep timer currently running).  Switches the icon + label
+  /// to violet so the operator can see at-a-glance which entries are
+  /// engaged without opening the picker.
+  final bool highlight;
+
+  /// True when the entry is non-actionable (e.g. Audio with ≤ 1 track).
+  /// Dims the icon + text, keeps the row mounted so the subtitle
+  /// explains the reason rather than the row just disappearing.
+  final bool disabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color fg;
+    if (disabled) {
+      fg = Colors.white.withValues(alpha: 0.4);
+    } else if (highlight) {
+      fg = AppColors.violetTint;
+    } else {
+      fg = Colors.white;
+    }
+    return ListTile(
+      enabled: !disabled,
+      leading: Icon(icon, color: fg),
+      title: Text(label, style: TextStyle(color: fg)),
+      subtitle: subtitle == null
+          ? null
+          : Text(
+              subtitle!,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.6),
+                fontSize: 12,
+              ),
+            ),
+      trailing: trailing,
+      onTap: disabled ? null : onTap,
     );
   }
 }
