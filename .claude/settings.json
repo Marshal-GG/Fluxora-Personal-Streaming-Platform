@@ -33,7 +33,8 @@
       "mcp__dart__pub_dev_search",
       "mcp__dart__dart_format",
       "Bash(powershell.exe -NoProfile -File scripts/get-dtd-uri.ps1)",
-      "Read(//c/Users/marsh/AppData/Local/Pub/Cache/hosted/pub.dev/**)"
+      "Read(//c/Users/marsh/AppData/Local/Pub/Cache/hosted/pub.dev/**)",
+      "mcp__fluxora-db__query"
     ]
   }
 }
