@@ -34,7 +34,9 @@
       "mcp__dart__dart_format",
       "Bash(powershell.exe -NoProfile -File scripts/get-dtd-uri.ps1)",
       "Read(//c/Users/marsh/AppData/Local/Pub/Cache/hosted/pub.dev/**)",
-      "mcp__fluxora-db__query"
+      "mcp__fluxora-db__query",
+      "Bash(python -m black --check services/ffmpeg_service.py tests/test_stream.py)",
+      "Bash(python -m black services/ffmpeg_service.py tests/test_stream.py)"
     ]
   }
 }
