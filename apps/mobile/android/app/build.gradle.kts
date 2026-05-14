@@ -66,4 +66,11 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
+
+    // Plan 24 M4 — JUnit unit tests for the rendition→source-index
+    // mapping helper in FluxoraExoPlayer.  Host-JVM only; we don't
+    // mock the full ExoPlayer — the test exercises pure helper
+    // functions over Media3's public Format/TrackGroup/Tracks types
+    // which are already on the implementation classpath.
+    testImplementation("junit:junit:4.13.2")
 }
