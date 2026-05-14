@@ -18,6 +18,7 @@ export 'entities/server_info.dart';
 export 'entities/stream_session.dart';
 export 'entities/system_stats.dart';
 export 'player/engine_error.dart';
+export 'player/exo_player_engine.dart';
 export 'player/media_kit_engine.dart';
 export 'player/player_engine.dart';
 export 'player/player_engine_factory.dart';
