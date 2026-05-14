@@ -6,6 +6,7 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.util.Rational
 import com.ryanheise.audioservice.AudioServicePlugin
+import dev.marshalx.fluxora_mobile.exo.ExoPlayerPlugin
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -31,8 +32,31 @@ class MainActivity : FlutterFragmentActivity() {
 
     private var multicastLock: WifiManager.MulticastLock? = null
 
+    // Plan 24 M1 — ExoPlayer spike plugin held for lifecycle parity with
+    // the Activity.  Attached during configureFlutterEngine so it owns
+    // its MethodChannel before any Dart code can call it; detached in
+    // onDestroy so the SurfaceProducer + ExoPlayer release cleanly when
+    // the Activity tears down (e.g. user backgrounds for long enough to
+    // hit Android's process trim).  M4 moves this to plugin auto-
+    // registration once we add the standard FlutterPlugin entry point.
+    private var exoPlayerPlugin: ExoPlayerPlugin? = null
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        // ── ExoPlayer spike (Plan 24 M1) ─────────────────────────────────────
+        // Manual registration so the plugin can read the engine's
+        // BinaryMessenger + TextureRegistry without us spinning up the
+        // full FlutterPlugin auto-discovery path (which would require
+        // an entry under META-INF or a plugin manifest).  Same approach
+        // the multicast + PIP channels above use.
+        exoPlayerPlugin = ExoPlayerPlugin().also {
+            it.attachToEngine(
+                applicationContext,
+                flutterEngine.dartExecutor.binaryMessenger,
+                flutterEngine.renderer,
+            )
+        }
 
         // ── mDNS multicast lock ─────────────────────────────────────────────
         // Phase 1 server-discovery support (existing).  ConnectCubit acquires
@@ -128,6 +152,25 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onDestroy() {
         multicastLock?.takeIf { it.isHeld }?.release()
+        // Plan 24 M1 — release ExoPlayer + SurfaceProducer when the
+        // Activity is destroyed so the Surface doesn't outlive the
+        // engine's renderer.  Without this the spike can leak a
+        // MediaCodec instance after every player exit on debug builds.
+        exoPlayerPlugin?.let {
+            try {
+                it.onMethodCall(
+                    io.flutter.plugin.common.MethodCall("dispose", null),
+                    object : MethodChannel.Result {
+                        override fun success(result: Any?) {}
+                        override fun error(code: String, message: String?, details: Any?) {}
+                        override fun notImplemented() {}
+                    },
+                )
+            } catch (_: Throwable) {
+                // Best-effort teardown — the Activity is going away.
+            }
+        }
+        exoPlayerPlugin = null
         super.onDestroy()
     }
 }

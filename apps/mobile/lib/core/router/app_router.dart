@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:fluxora_core/entities/media_file.dart';
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
+import 'package:fluxora_mobile/dev/exo_spike_page.dart';
 import 'package:fluxora_mobile/features/auth/presentation/screens/pairing_screen.dart';
 import 'package:fluxora_mobile/features/auth/presentation/screens/reconnect_screen.dart';
 import 'package:fluxora_mobile/features/connect/domain/entities/discovered_server.dart';
@@ -136,6 +137,12 @@ abstract class Routes {
 
   static String detail(String id) => '/detail/$id';
   static String episodes(String id) => '/episodes/$id';
+
+  /// Plan 24 M1 — hidden ExoPlayer spike route.  Not surfaced in any
+  /// visible navigation; the operator pushes it via
+  /// `context.go('/dev/exo-spike')` (or a future hidden long-press
+  /// affordance).  Deleted in M9 along with the spike page itself.
+  static const String devExoSpike = kExoSpikeRoute;
 }
 
 /// Listens to [ApiClient.unauthorizedStream] so a dead token triggered by
@@ -418,6 +425,16 @@ final GoRouter appRouter = GoRouter(
         child: DetailScreen(id: state.pathParameters['id']!),
       ),
     ),
+    // Plan 24 M1 — hidden ExoPlayer spike.  Not referenced from any
+    // visible UI; the operator navigates by `go('/dev/exo-spike')`
+    // from a debug console or hot-reload hook.  Removed in M9.
+    GoRoute(
+      path: Routes.devExoSpike,
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const ExoSpikePage(),
+      ),
+    ),
     GoRoute(
       path: '/episodes/:id',
       pageBuilder: (context, state) => _fadePage(
@@ -440,7 +457,10 @@ Future<String?> _guardRedirect(
       state.matchedLocation == Routes.connect ||
       state.matchedLocation == Routes.pairing ||
       state.matchedLocation == Routes.reconnect ||
-      state.matchedLocation == Routes.scanQr;
+      state.matchedLocation == Routes.scanQr ||
+      // Plan 24 M1 — hidden dev spike route bypasses auth so the
+      // operator can reach it from a fresh install.  Removed in M9.
+      state.matchedLocation == Routes.devExoSpike;
   final isAuthenticated = token != null && serverUrl != null;
 
   // Authenticated users hitting /splash, /connect or /pairing get bounced

@@ -795,10 +795,23 @@ Future<void> _showAboutSheet(BuildContext context) async {
           FutureBuilder<String>(
             future: _readAppVersion(),
             builder: (_, snap) => Center(
-              child: Text(
-                snap.data ?? '—',
-                style: AppTypography.captionV2
-                    .copyWith(color: AppColors.textMutedV2),
+              // Plan 24 M1 — hidden long-press on the About-sheet
+              // version label routes to the ExoPlayer spike page.
+              // Invisible affordance: there's no ripple, no tooltip,
+              // no UI hint — the operator knows it exists because
+              // they (the human author of plan 24) put it here.
+              // Removed in M9.
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onLongPress: () {
+                  Navigator.of(sheetCtx).maybePop();
+                  sheetCtx.go(Routes.devExoSpike);
+                },
+                child: Text(
+                  snap.data ?? '—',
+                  style: AppTypography.captionV2
+                      .copyWith(color: AppColors.textMutedV2),
+                ),
               ),
             ),
           ),
