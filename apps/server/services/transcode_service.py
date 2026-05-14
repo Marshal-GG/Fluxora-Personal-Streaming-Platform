@@ -391,7 +391,8 @@ async def queue(
             """,
             (fid, chosen_encoder, chosen_preset, now),
         )
-        job_ids.append(int(cur.lastrowid))
+        assert cur.lastrowid is not None
+        job_ids.append(cur.lastrowid)
     if job_ids:
         await db.commit()
 
@@ -533,7 +534,8 @@ async def retry(db: aiosqlite.Connection, job_id: int) -> int:
         """,
         (row["file_id"], row["encoder"], row["quality_preset"], now),
     )
-    new_id = int(cur.lastrowid)
+    assert cur.lastrowid is not None
+    new_id = cur.lastrowid
     await db.commit()
     _wake_worker()
     return new_id

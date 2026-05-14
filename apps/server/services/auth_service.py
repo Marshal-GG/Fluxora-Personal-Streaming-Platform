@@ -300,7 +300,7 @@ async def list_clients(db: aiosqlite.Connection) -> list[aiosqlite.Row]:
          ORDER BY c.last_seen DESC
         """
     ) as cur:
-        return await cur.fetchall()
+        return list(await cur.fetchall())
 
 
 async def update_client_heartbeat(

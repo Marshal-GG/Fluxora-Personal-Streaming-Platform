@@ -56,7 +56,7 @@ def _ice_servers() -> list[RTCIceServer]:
         "stun:stun.l.google.com:19302",
         "stun:stun1.l.google.com:19302",
     ]
-    servers = [RTCIceServer(urls=stun_urls)]
+    servers = [RTCIceServer(urls=stun_urls)]  # type: ignore[arg-type]  # aiortc stub says str, accepts list[str] at runtime
 
     # Read these directly off `settings` rather than via `getattr` with a
     # `None` default: the attribute names must match
@@ -69,8 +69,9 @@ def _ice_servers() -> list[RTCIceServer]:
     turn_user = settings.fluxora_turn_user
     turn_pass = settings.fluxora_turn_pass
     if turn_url and turn_user and turn_pass:
+        # aiortc stub says urls: str, accepts list[str] at runtime per WebRTC spec.
         servers.append(
-            RTCIceServer(urls=[turn_url], username=turn_user, credential=turn_pass)
+            RTCIceServer(urls=[turn_url], username=turn_user, credential=turn_pass)  # type: ignore[arg-type]
         )
         logger.info("TURN server configured: %s", turn_url)
     else:
@@ -141,6 +142,7 @@ async def handle_offer(client_id: str, sdp: str) -> str:
     session.pending_candidates.clear()
 
     answer = await pc.createAnswer()
+    assert answer is not None, "createAnswer returned None"
     await pc.setLocalDescription(answer)
     logger.debug("Local description set (answer): client=%s", client_id)
     return pc.localDescription.sdp
