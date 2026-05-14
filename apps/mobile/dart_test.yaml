@@ -1,16 +1,17 @@
-# Test configuration for apps/desktop.
+# Test configuration for apps/mobile.
 #
 # Golden tests are tagged 'golden' via the `@Tags(['golden'])` annotation
 # at the top of each golden test file. They run only when explicitly
 # requested; CI excludes them to avoid platform subpixel-rendering
-# false negatives.
+# false negatives (Windows baselines vs Linux CI runner).
 #
 # To run goldens:    flutter test --tags=golden test/goldens/
 # To regenerate:     flutter test --tags=golden --update-goldens test/goldens/
 # To skip in CI:     flutter test --exclude-tags=golden
 #
-# The GetIt mock-registration recipe used by golden tests lives in
-# test/goldens/_README.md.
+# The Player-mock recipe used by golden tests lives in
+# test/goldens/_README.md (along with the private-widget exposure
+# pattern: _FooBar -> PlayerFooBar + @visibleForTesting).
 
 tags:
   golden: {}

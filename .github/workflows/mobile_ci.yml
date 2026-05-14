@@ -29,5 +29,5 @@ jobs:
         working-directory: apps/mobile
       - run: flutter analyze
         working-directory: apps/mobile
-      - run: flutter test
+      - run: flutter test --exclude-tags=golden
         working-directory: apps/mobile
