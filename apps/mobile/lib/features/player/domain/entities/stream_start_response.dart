@@ -80,23 +80,38 @@ class AudioTrackInfo {
   /// The `BuildContext` parameter is accepted (and ignored today) so a
   /// future agent can switch to a localized language-name lookup
   /// without changing every call site.
-  String labelFor(Object _) {
-    final identifier = _resolveIdentifier();
+  /// Render the picker row label.  [audioOrdinal] is the 1-based
+  /// position of this track within the file's audio streams (NOT
+  /// the FFmpeg stream index, which counts video streams too).  VLC
+  /// numbers audio tracks "Track 1 / Track 2 / …" ordinally; we
+  /// match that so the labels are recognisable cross-tool.
+  String labelFor(int audioOrdinal) {
+    final identifier = _resolveIdentifier(audioOrdinal);
     final channelLabel = _formatChannelLayout(channels);
     final codecUpper = codec.toUpperCase();
     return '$identifier · $channelLabel · $codecUpper';
   }
 
-  String _resolveIdentifier() {
+  /// ISO 639-2 codes that mean "no language information" rather than a
+  /// real language tag.  NVIDIA Game Bar captures stamp every audio
+  /// track with `tags.language = "und"`; without this filter the
+  /// picker would render two identical "UND · 2.0 · AAC" rows that
+  /// the operator can't tell apart from each other or from what VLC
+  /// shows (VLC similarly ignores "und" and falls back to "Track N").
+  static const _undefinedLanguageTags = {'und', 'unk', 'mis', 'zxx', ''};
+
+  String _resolveIdentifier(int audioOrdinal) {
     final lang = language;
-    if (lang != null && lang.isNotEmpty) {
+    if (lang != null &&
+        lang.isNotEmpty &&
+        !_undefinedLanguageTags.contains(lang.toLowerCase())) {
       return lang.toUpperCase();
     }
     final t = title;
     if (t != null && t.isNotEmpty) {
       return t;
     }
-    return 'Track ${index + 1}';
+    return 'Track $audioOrdinal';
   }
 
   static String _formatChannelLayout(int channels) {

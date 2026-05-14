@@ -160,7 +160,7 @@ class _AudioTrackList extends StatelessWidget {
             size: 20,
           ),
           title: Text(
-            t.labelFor(context),
+            t.labelFor(i + 1),
             style: AppTypography.body.copyWith(
               color: isSelected ? AppColors.textBright : AppColors.textBody,
               fontSize: 14,
