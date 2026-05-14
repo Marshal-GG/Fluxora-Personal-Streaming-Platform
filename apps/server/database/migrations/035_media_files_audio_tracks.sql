@@ -1,0 +1,29 @@
+-- Plan 22 M2 — per-file list of audio-track metadata, populated at
+-- scan time by `library_service.scan_library` and read by the
+-- `/stream/start` router so the response payload can advertise every
+-- track to the mobile player without re-running ffprobe on each call.
+--
+-- Stored as JSON in a single TEXT column rather than a normalised
+-- `media_audio_tracks` table because:
+--   • read pattern is "fetch all tracks for one file" — JSON = one row
+--     read; relational table = N+1 or join,
+--   • cardinality is bounded (typical files have 1-5 audio tracks; the
+--     fmp4 cap is 8 per plan 22 §sharp-edges #6),
+--   • we never query across files by a track property (e.g. "all files
+--     with a German track").  If that changes we can normalise in a
+--     follow-up migration.
+--
+-- Schema of the JSON value:
+--   [{"index": int, "codec": str, "language": str | null,
+--     "title": str | null, "channels": int, "sample_rate": int,
+--     "bit_rate": int | null}, ...]
+--
+-- NULL is the sentinel for "never probed" — legacy rows scanned before
+-- this migration carry NULL, and the stream router (plan 22 M3) lazily
+-- backfills via `ffmpeg_service._probe_audio_tracks` at /start time.
+-- An empty JSON array (`[]`) would mean "probed and found no audio
+-- streams" — semantically distinct from "never probed".  The scan
+-- path persists NULL on probe failure / no streams so the lazy
+-- backfill gets a chance on first playback.
+
+ALTER TABLE media_files ADD COLUMN audio_tracks TEXT;

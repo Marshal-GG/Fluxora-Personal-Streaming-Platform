@@ -3,6 +3,29 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class AudioTrackInfo(BaseModel):
+    """Plan 22 — per-track metadata exposed in /stream/start response.
+
+    Mobile uses this to populate the Audio sheet picker; track switching
+    is purely client-side via media_kit's setAudioTrack (no server
+    roundtrip).  Each entry mirrors one element of the cached
+    ``ffmpeg_service._session_audio_tracks[session_id]`` list (which in
+    turn comes from ``_probe_audio_tracks``) or one element of the
+    JSON-decoded ``media_files.audio_tracks`` column when the cache
+    missed.
+    """
+
+    index: int = Field(ge=0)
+    codec: str
+    language: str | None = None
+    title: str | None = None
+    channels: int = Field(ge=1)
+    sample_rate: int = Field(ge=1)
+    bit_rate: int | None = Field(default=None, ge=0)
+
+    model_config = {"extra": "ignore"}
+
+
 class StreamStartResponse(BaseModel):
     session_id: str
     file_id: str
@@ -40,6 +63,14 @@ class StreamStartResponse(BaseModel):
     # for safety on unknown sessions — a stale client that doesn't yet
     # understand the field stays on the conservative re-encode path.
     audio_streaming_mode: Literal["stream-copy", "transcode"] = "transcode"
+    # Plan 22 — every audio track the source advertises, in FFmpeg
+    # stream-index order.  Mobile renders this as the Audio bottom-sheet
+    # picker (track switching is purely client-side via media_kit's
+    # ``setAudioTrack``).  Default ``[]`` preserves backward compat:
+    # pre-plan-22 mobile clients tolerate the new field and just ignore
+    # it; pre-plan-22 servers return responses without the field and
+    # mobile sees ``[]`` → no picker rendered.
+    audio_tracks: list[AudioTrackInfo] = Field(default_factory=list)
 
 
 class StreamSeekResponse(BaseModel):

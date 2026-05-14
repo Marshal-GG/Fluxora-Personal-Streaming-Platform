@@ -356,7 +356,7 @@ async def test_stop_stream_wrong_client(
     session_id = start.json()["session_id"]
 
     async with AsyncClient(
-        transport=ASGITransport(app=app, client=("192.168.1.100", 50000)),
+        transport=ASGITransport(app=app, client=("192.168.1.100", 50000)),  # type: ignore[arg-type]
         base_url="http://test",
     ) as lan:
         response = await lan.delete(
@@ -2755,18 +2755,15 @@ def test_build_ffmpeg_cmd_uses_c_a_copy_when_source_is_aac_at_48khz(tmp_path):
     assert "-ar" not in cmd
 
 
-def test_build_ffmpeg_cmd_pins_first_video_and_audio_track(tmp_path):
-    """Multi-audio-track sources (NVIDIA Game Bar dual-track captures,
-    multi-language movie rips) include every audio stream when FFmpeg
-    has no explicit `-map`. The `_ensure_fmp4_init_segment` fallback
-    only declares `0:a:0?` in its moov, so segments with N audio
-    tracks against an init.mp4 declaring 1 audio track cause
-    media_kit on Android to drop audio entirely. Pin `-map 0:v:0
-    -map 0:a:0?` here so the segments match the init contract.
+def test_build_ffmpeg_cmd_maps_all_audio_under_stream_copy(tmp_path):
+    """Plan 22 M1 — stream-copy audio uses `-map 0:a?` (no index) so
+    every source audio track lands in the fmp4 output.  The init
+    segment (`_ensure_fmp4_init_segment`) is generated with the same
+    open map, so the segments' track count agrees with the moov and
+    media_kit can expose each track via ``Player.state.tracks.audio``.
 
-    Full multi-track support (operator-facing audio picker, all
-    tracks multiplexed into fmp4 with client-side switching) is
-    tracked in plan 22."""
+    Order matters: `-map 0:v:0` must precede `-map 0:a?` so the video
+    track ends up at index 0 in the output."""
     from services.encoder_registry import ENCODER_REGISTRY
     from services.ffmpeg_service import _build_ffmpeg_cmd
 
@@ -2790,7 +2787,43 @@ def test_build_ffmpeg_cmd_pins_first_video_and_audio_track(tmp_path):
     map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
     assert len(map_indices) >= 2
     assert cmd[map_indices[0] + 1] == "0:v:0"
+    assert cmd[map_indices[1] + 1] == "0:a?"
+    # The single-track form must NOT appear under stream-copy.
+    assert "0:a:0?" not in cmd
+
+
+def test_build_ffmpeg_cmd_pins_single_audio_under_reencode(tmp_path):
+    """Plan 22 M1 — re-encode paths (tonemap, DTS/TrueHD, audio
+    fallback, mixed-codec fallback) stay single-track.  Multi-track
+    re-encode would need N separate `-c:a` flag groups; deferred to
+    v1.1 per the plan's behaviour matrix.  Test pins
+    `-map 0:v:0 -map 0:a:0?` (with index) when audio_passthrough=False."""
+    from services.encoder_registry import ENCODER_REGISTRY
+    from services.ffmpeg_service import _build_ffmpeg_cmd
+
+    cmd = _build_ffmpeg_cmd(
+        file_path="/tmp/source.mkv",
+        session_dir=tmp_path,
+        playlist=tmp_path / "playlist.m3u8",
+        meta=ENCODER_REGISTRY["libx264"],
+        preset="veryfast",
+        crf=23,
+        hwaccel_device=None,
+        source_codec="hevc",
+        direct_remux=False,
+        direct_remux_hevc=False,
+        use_gpu_input=False,
+        source_audio_codec="dts",
+        source_audio_sample_rate=48000,
+        source_audio_channels=6,
+        audio_passthrough=False,
+    )
+    map_indices = [i for i, v in enumerate(cmd) if v == "-map"]
+    assert len(map_indices) >= 2
+    assert cmd[map_indices[0] + 1] == "0:v:0"
     assert cmd[map_indices[1] + 1] == "0:a:0?"
+    # The open form must NOT appear under re-encode.
+    assert "0:a?" not in cmd
 
 
 def test_build_ffmpeg_cmd_resamples_to_48khz_when_source_is_44100hz_aac(tmp_path):
@@ -3857,6 +3890,193 @@ def test_codec_name_normalization_excludes_variants():
     )
 
 
+# ── Plan 22 M1 — multi-audio-track helpers ─────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_probe_audio_tracks_returns_empty_on_missing_file(tmp_path):
+    """Plan 22 M1 sharp edge: ffprobe failure / missing file must NOT
+    raise — playback never blocks on this probe.  An empty list is the
+    explicit "no track metadata available" sentinel; downstream code
+    treats it as "fall back to the legacy single-track decision"."""
+    from services.ffmpeg_service import _probe_audio_tracks
+
+    missing = tmp_path / "does-not-exist.mp4"
+    tracks = await _probe_audio_tracks(str(missing))
+    assert tracks == []
+
+
+@pytest.mark.asyncio
+async def test_probe_audio_tracks_normalizes_codec_name(tmp_path):
+    """ffprobe emits codec variants like ``aac_lc`` / ``dts_hd_ma``;
+    plan 22 M1 stores the normalized first token so the resolver and
+    the mobile picker see consistent names.  Stub ffprobe's stdout
+    with a multi-track payload covering one AAC profile variant + one
+    plain Opus track, and assert the returned dicts are normalized."""
+    import json as _json
+    from unittest.mock import AsyncMock, patch
+
+    from services.ffmpeg_service import _probe_audio_tracks
+
+    payload = {
+        "streams": [
+            {
+                "index": 1,
+                "codec_name": "aac_lc",
+                "channels": 2,
+                "sample_rate": "48000",
+                "bit_rate": "192000",
+                "tags": {"language": "eng", "title": "Game Audio"},
+            },
+            {
+                "index": 2,
+                "codec_name": "opus",
+                "channels": 1,
+                "sample_rate": "48000",
+                # No tags.language / tags.title on this track.
+            },
+        ]
+    }
+
+    fake_proc = AsyncMock()
+    fake_proc.communicate = AsyncMock(
+        return_value=(_json.dumps(payload).encode("utf-8"), b"")
+    )
+    fake_proc.returncode = 0
+
+    async def fake_create(*args, **kwargs):
+        return fake_proc
+
+    with (
+        patch(
+            "services.ffmpeg_service.asyncio.create_subprocess_exec",
+            side_effect=fake_create,
+        ),
+        patch("services.ffmpeg_service._ffprobe_bin", return_value="ffprobe"),
+    ):
+        tracks = await _probe_audio_tracks("/tmp/multi.mkv")
+
+    assert len(tracks) == 2
+
+    aac = tracks[0]
+    assert aac["index"] == 1
+    assert aac["codec"] == "aac"  # normalized from aac_lc
+    assert aac["language"] == "eng"
+    assert aac["title"] == "Game Audio"
+    assert aac["channels"] == 2
+    assert aac["sample_rate"] == 48000
+    assert aac["bit_rate"] == 192000
+
+    opus = tracks[1]
+    assert opus["index"] == 2
+    assert opus["codec"] == "opus"
+    assert opus["language"] is None
+    assert opus["title"] is None
+    assert opus["channels"] == 1
+    assert opus["bit_rate"] is None
+
+
+def test_audio_passthrough_resolver_forces_reencode_on_mixed_codec_tracks():
+    """Plan 22 M1 sharp edge #5 — a multi-track source with AT LEAST
+    one allowlist track (typically the AAC director track) AND at
+    least one non-allowlist track (DTS surround, TrueHD Atmos) would
+    pass the legacy single-track resolver, then explode at runtime
+    when ``-map 0:a?`` tries to stream-copy the DTS track into fmp4.
+
+    When the caller supplies the full track list, the resolver must
+    force the whole pipeline onto the single-track re-encode path
+    instead.  The single-track form (no ``source_audio_tracks``)
+    keeps the legacy decision so back-compat callers don't change."""
+    from services.ffmpeg_service import _resolve_audio_passthrough
+
+    mixed_tracks = [
+        {"index": 0, "codec": "aac"},
+        {"index": 1, "codec": "dts"},
+    ]
+    assert (
+        _resolve_audio_passthrough(
+            apply_hdr_tonemap=False,
+            source_audio_codec="aac",
+            session_id="session-mixed",
+            source_audio_tracks=mixed_tracks,
+        )
+        is False
+    )
+
+    # All allowlist: still True.
+    all_allowlist = [
+        {"index": 0, "codec": "aac"},
+        {"index": 1, "codec": "ac3"},
+        {"index": 2, "codec": "flac"},
+    ]
+    assert (
+        _resolve_audio_passthrough(
+            apply_hdr_tonemap=False,
+            source_audio_codec="aac",
+            session_id="session-all-allowlist",
+            source_audio_tracks=all_allowlist,
+        )
+        is True
+    )
+
+    # Back-compat: omit the track list, single-track decision wins
+    # (would have been True under the old resolver — the mixed-codec
+    # check only fires when callers opt in by passing the list).
+    assert (
+        _resolve_audio_passthrough(
+            apply_hdr_tonemap=False,
+            source_audio_codec="aac",
+            session_id="session-no-tracks",
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_fmp4_init_segment_uses_open_audio_map(tmp_path):
+    """Plan 22 M1 — the init.mp4 generator must declare every audio
+    track in the source's moov so the segments (also `-map 0:a?`
+    under stream-copy) line up in track count.  Intercept the
+    subprocess spawn, capture the argv FFmpeg would have been
+    invoked with, and assert it contains `-map 0:a?` and NOT the
+    legacy single-track `-map 0:a:0?` pin."""
+    from unittest.mock import AsyncMock, patch
+
+    from services.ffmpeg_service import _ensure_fmp4_init_segment
+
+    captured_argv: list[list[str]] = []
+
+    fake_proc = AsyncMock()
+    fake_proc.wait = AsyncMock(return_value=0)
+    fake_proc.returncode = 0
+
+    async def fake_create(*args, **kwargs):
+        captured_argv.append(list(args))
+        # Simulate FFmpeg writing real bytes so the post-spawn size
+        # check passes.
+        (tmp_path / "init.mp4").write_bytes(b"new init data")
+        return fake_proc
+
+    with (
+        patch(
+            "services.ffmpeg_service.asyncio.create_subprocess_exec",
+            side_effect=fake_create,
+        ),
+        patch("services.ffmpeg_service._ffmpeg_bin", return_value="ffmpeg"),
+    ):
+        ok = await _ensure_fmp4_init_segment(tmp_path, "/tmp/src.mkv")
+
+    assert ok is True
+    assert captured_argv, "subprocess was not spawned"
+    argv = captured_argv[0]
+    # `-map 0:a?` present (open form, declares all audio tracks).
+    assert "0:a?" in argv
+    # Legacy single-track form MUST NOT be there.
+    assert "0:a:0?" not in argv
+    # Video map still pinned to the first video track.
+    assert "0:v:0" in argv
+
+
 # ── Plan 21 — M3 router: /start audio blocklist + /fallback-audio-transcode ─
 
 
@@ -4321,3 +4541,321 @@ async def test_fallback_audio_transcode_403_for_wrong_owner(
         json={"current_position_sec": 1.0},
     )
     assert res.status_code == 403
+
+
+# ── Plan 22 §M3 — /stream/start response advertises audio_tracks ───────
+
+
+async def _ensure_audio_tracks_column(test_db) -> None:
+    """Idempotent add of the ``media_files.audio_tracks`` column.
+
+    Plan 22 M2 ships the column via migration 035.  This M3 test suite
+    must work whether or not M2 has landed yet — when M3 lands first the
+    ALTER TABLE creates the column; when M2 has already shipped the
+    sqlite "duplicate column name" error is harmless.  ``OperationalError``
+    is the specific exception sqlite raises in both cases.
+    """
+    try:
+        await test_db.execute("ALTER TABLE media_files ADD COLUMN audio_tracks TEXT")
+        await test_db.commit()
+    except Exception:
+        # Column already present (M2 landed) — nothing to do.
+        pass
+
+
+def _reset_audio_tracks_cache() -> None:
+    """Clear the per-session audio-tracks cache.
+
+    The cache is module-level on ``ffmpeg_service`` so a prior test's
+    ``start_stream`` mock could leak entries.  M3 tests pre-seed or
+    explicitly clear depending on the scenario being exercised.
+    """
+    from services import ffmpeg_service
+
+    ffmpeg_service._session_audio_tracks.clear()
+
+
+@pytest.mark.asyncio
+async def test_start_stream_response_includes_audio_tracks_from_cache(
+    client: AsyncClient,
+    monkeypatch,
+    test_db,
+    tmp_path,
+):
+    """Plan 22 §M3 — when ``_session_audio_tracks`` is populated for the
+    new session_id, the /start response must surface every track."""
+    from services import ffmpeg_service
+
+    _reset_audio_tracks_cache()
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264' WHERE id = ?", (file_id,)
+    )
+    await test_db.commit()
+
+    seeded_tracks = [
+        {
+            "index": 0,
+            "codec": "aac",
+            "language": "eng",
+            "title": "English",
+            "channels": 6,
+            "sample_rate": 48000,
+            "bit_rate": 384000,
+        },
+        {
+            "index": 1,
+            "codec": "ac3",
+            "language": "jpn",
+            "title": None,
+            "channels": 2,
+            "sample_rate": 48000,
+            "bit_rate": 192000,
+        },
+    ]
+
+    async def _mock_probe(_path: str) -> dict:
+        return {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 6,
+            "bit_rate": "384000",
+        }
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **_kwargs
+    ) -> Path:
+        # Mimic the real start_stream's M1 contract: populate the cache
+        # under the session_id the router just generated.
+        ffmpeg_service._session_audio_tracks[session_id] = list(seeded_tracks)
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        res = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    assert res.status_code == 201, res.json()
+    body = res.json()
+    assert "audio_tracks" in body
+    assert len(body["audio_tracks"]) == 2
+    track0, track1 = body["audio_tracks"]
+    assert track0["index"] == 0
+    assert track0["codec"] == "aac"
+    assert track0["language"] == "eng"
+    assert track0["title"] == "English"
+    assert track0["channels"] == 6
+    assert track0["sample_rate"] == 48000
+    assert track0["bit_rate"] == 384000
+    assert track1["index"] == 1
+    assert track1["codec"] == "ac3"
+    assert track1["language"] == "jpn"
+    assert track1["title"] is None
+
+
+@pytest.mark.asyncio
+async def test_start_stream_response_falls_back_to_db_audio_tracks_when_cache_empty(
+    client: AsyncClient,
+    monkeypatch,
+    test_db,
+    tmp_path,
+):
+    """Plan 22 §M3 — when the per-session cache miss is empty, the
+    router must consult the ``media_files.audio_tracks`` JSON column
+    (M2 backfill path)."""
+    _reset_audio_tracks_cache()
+    await _ensure_audio_tracks_column(test_db)
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    db_tracks = [
+        {
+            "index": 0,
+            "codec": "aac",
+            "language": "eng",
+            "title": None,
+            "channels": 2,
+            "sample_rate": 48000,
+            "bit_rate": 192000,
+        },
+        {
+            "index": 1,
+            "codec": "opus",
+            "language": None,
+            "title": "Commentary",
+            "channels": 2,
+            "sample_rate": 48000,
+            "bit_rate": 128000,
+        },
+    ]
+    import json as _json
+
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264', audio_tracks = ? WHERE id = ?",
+        (_json.dumps(db_tracks), file_id),
+    )
+    await test_db.commit()
+
+    async def _mock_probe(_path: str) -> dict:
+        return {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "bit_rate": "192000",
+        }
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **_kwargs
+    ) -> Path:
+        # Deliberately do NOT seed the cache — this exercises the DB
+        # fallback branch.
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        res = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    assert res.status_code == 201, res.json()
+    body = res.json()
+    assert len(body["audio_tracks"]) == 2
+    assert body["audio_tracks"][1]["codec"] == "opus"
+    assert body["audio_tracks"][1]["title"] == "Commentary"
+    assert body["audio_tracks"][1]["language"] is None
+
+
+@pytest.mark.asyncio
+async def test_start_stream_response_audio_tracks_empty_when_cache_and_db_both_missing(
+    client: AsyncClient,
+    monkeypatch,
+    test_db,
+    tmp_path,
+):
+    """Plan 22 §M3 — cache miss AND DB column NULL/absent must return
+    an empty list so the mobile picker renders nothing.  Pre-plan-22
+    rows have ``audio_tracks IS NULL`` (M2 lazy-backfills on next scan)."""
+    _reset_audio_tracks_cache()
+    # Don't add the column at all if M2 hasn't landed — the file_row
+    # dict will simply lack the key and the router's ``.get()`` returns
+    # None.  If M2 already shipped the column is present but the row's
+    # value remains NULL by default for a fresh _insert_file.
+
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264' WHERE id = ?", (file_id,)
+    )
+    await test_db.commit()
+
+    async def _mock_probe(_path: str) -> dict:
+        return {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "bit_rate": "192000",
+        }
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **_kwargs
+    ) -> Path:
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        res = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    assert res.status_code == 201, res.json()
+    body = res.json()
+    assert body["audio_tracks"] == []
+
+
+@pytest.mark.asyncio
+async def test_start_stream_response_audio_tracks_skips_malformed_track_dict(
+    client: AsyncClient,
+    monkeypatch,
+    test_db,
+    tmp_path,
+):
+    """Plan 22 §M3 — a malformed entry in the cache (missing required
+    keys, wrong types) must be skipped without 500'ing the response.
+    A valid entry alongside it must still come through."""
+    from services import ffmpeg_service
+
+    _reset_audio_tracks_cache()
+    token = await _get_token(client, monkeypatch)
+    headers = {"Authorization": f"Bearer {token}"}
+    file_id = await _insert_file(test_db)
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = 'h264' WHERE id = ?", (file_id,)
+    )
+    await test_db.commit()
+
+    seeded_tracks = [
+        {
+            "index": 0,
+            "codec": "aac",
+            "language": "eng",
+            "title": "English",
+            "channels": 2,
+            "sample_rate": 48000,
+            "bit_rate": 192000,
+        },
+        # Missing required keys (no index / codec / channels / sample_rate).
+        {"not_a_track": True},
+        # Non-dict — must be skipped before reaching Pydantic.
+        "garbage",  # type: ignore[list-item]
+    ]
+
+    async def _mock_probe(_path: str) -> dict:
+        return {
+            "codec_name": "aac",
+            "sample_rate": "48000",
+            "channels": 2,
+            "bit_rate": "192000",
+        }
+
+    async def _mock_start(
+        file_path: str, session_id: str, hls_root: Path, **_kwargs
+    ) -> Path:
+        ffmpeg_service._session_audio_tracks[session_id] = list(seeded_tracks)
+        playlist = tmp_path / session_id / "playlist.m3u8"
+        playlist.parent.mkdir(parents=True, exist_ok=True)
+        playlist.write_text("#EXTM3U\n")
+        return playlist
+
+    with (
+        patch(
+            "routers.stream.ffmpeg_service._probe_audio_params",
+            side_effect=_mock_probe,
+        ),
+        patch("routers.stream.ffmpeg_service.start_stream", side_effect=_mock_start),
+    ):
+        res = await client.post(f"/api/v1/stream/start/{file_id}", headers=headers)
+    assert res.status_code == 201, res.json()
+    body = res.json()
+    assert len(body["audio_tracks"]) == 1
+    assert body["audio_tracks"][0]["codec"] == "aac"
+    assert body["audio_tracks"][0]["index"] == 0

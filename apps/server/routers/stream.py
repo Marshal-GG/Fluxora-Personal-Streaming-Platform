@@ -1,3 +1,4 @@
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -7,12 +8,14 @@ import aiosqlite
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials
+from pydantic import ValidationError
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from config import settings
 from database.db import get_db
 from models.stream_session import (
+    AudioTrackInfo,
     FallbackAudioTranscodeRequest,
     FallbackAudioTranscodeResponse,
     FallbackTranscodeBody,
@@ -427,6 +430,55 @@ async def start_stream(
     )
     audio_streaming_mode = "stream-copy" if audio_passthrough else "transcode"
 
+    # Plan 22 — assemble the per-track list the mobile Audio sheet will
+    # render.  Lookup priority:
+    #   1. Per-session cache populated by ``ffmpeg_service.start_stream``
+    #      via ``_probe_audio_tracks``.  Fast, authoritative for the
+    #      in-flight session, and survives the FFmpeg cmd build that
+    #      just completed above.
+    #   2. ``media_files.audio_tracks`` JSON column (M2 backfill) when
+    #      the cache miss returns ``[]``.  Matters for code paths where
+    #      the cache may have been cleared between start and response
+    #      (e.g. plan 16 seek-restart re-entering ``start_stream``) and
+    #      for the row-was-scanned-then-server-restarted case.  JSON
+    #      parse failure is treated as a missing column — playback
+    #      doesn't block on a corrupt row.
+    #   3. ``[]`` — both miss → mobile renders no picker (pre-plan-22
+    #      servers returned no field at all; the empty default preserves
+    #      that UX path).
+    raw_tracks: list = ffmpeg_service._session_audio_tracks.get(session_id, [])
+    if not raw_tracks:
+        db_audio_tracks = file_row.get("audio_tracks")
+        if db_audio_tracks:
+            try:
+                parsed = json.loads(db_audio_tracks)
+                if isinstance(parsed, list):
+                    raw_tracks = parsed
+            except (json.JSONDecodeError, TypeError):
+                logger.debug(
+                    "Failed to parse media_files.audio_tracks JSON for file=%s",
+                    file_id,
+                    exc_info=True,
+                )
+
+    # Defensive conversion: a single malformed track dict (missing a
+    # required field, unexpected type) must not poison the whole
+    # response.  Skip non-dicts up front; let Pydantic
+    # ``ValidationError`` filter the rest per-entry.
+    audio_tracks_resp: list[AudioTrackInfo] = []
+    for track in raw_tracks:
+        if not isinstance(track, dict):
+            continue
+        try:
+            audio_tracks_resp.append(AudioTrackInfo(**track))
+        except ValidationError:
+            logger.debug(
+                "Skipping malformed audio track entry for session=%s: %r",
+                session_id,
+                track,
+                exc_info=True,
+            )
+
     return StreamStartResponse(
         session_id=session_id,
         file_id=file_id,
@@ -440,6 +492,7 @@ async def start_stream(
         tonemapped=bool(tonemap and hdr_format),
         streaming_mode=effective_mode,
         audio_streaming_mode=audio_streaming_mode,
+        audio_tracks=audio_tracks_resp,
     )
 
 

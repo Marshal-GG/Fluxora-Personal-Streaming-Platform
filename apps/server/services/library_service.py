@@ -10,7 +10,7 @@ from pathlib import Path
 import aiosqlite
 from fastapi import UploadFile
 
-from services.ffmpeg_service import probe_video
+from services.ffmpeg_service import _probe_audio_tracks, probe_video
 from services.tmdb_service import TmdbService
 
 logger = logging.getLogger(__name__)
@@ -871,7 +871,8 @@ async def _scan_library_locked(
 async def _persist_probe(
     db: aiosqlite.Connection, file_id: str, file_path: Path
 ) -> None:
-    """Probe the file via ffprobe and persist width/height/codec/hdr/duration.
+    """Probe the file via ffprobe and persist width/height/codec/hdr/duration
+    plus the full audio-track list (plan 22 M2).
 
     No-op for non-video extensions or when ffprobe returns nothing useful.
     Best-effort — failures are logged and swallowed so they cannot abort a
@@ -880,6 +881,15 @@ async def _persist_probe(
     ``duration_sec`` is required by the static VOD playlist generator in
     ``ffmpeg_service.start_stream``; without it the mobile/desktop seek bar
     grows segment-by-segment instead of spanning the full file immediately.
+
+    ``audio_tracks`` is a JSON-encoded list of per-track metadata produced
+    by ``ffmpeg_service._probe_audio_tracks``.  The column is set to NULL
+    when the probe returns ``[]`` (ffprobe failure / no audio streams) so
+    that the ``/stream/start`` router's lazy-backfill path (plan 22 M3)
+    can distinguish "never probed" from "probed and found nothing".  Two
+    ffprobe subprocesses run per probeable file at scan time — the video
+    probe (``probe_video``) and the audio-tracks probe; merging them is a
+    plan-22-follow-up if scan latency becomes a problem.
     """
     if file_path.suffix.lower() not in _PROBEABLE_EXTENSIONS:
         return
@@ -890,11 +900,25 @@ async def _persist_probe(
         return
     if info is None:
         return
+
+    try:
+        audio_tracks = await _probe_audio_tracks(str(file_path))
+    except Exception:
+        # _probe_audio_tracks already swallows ffprobe failures and
+        # returns []; the try/except here is belt-and-braces against
+        # an unforeseen synchronous raise (e.g. permission error
+        # building the argv) and matches the swallow-and-log
+        # discipline of the video-probe path immediately above.
+        logger.warning("audio-track ffprobe raised for %s", file_path, exc_info=True)
+        audio_tracks = []
+    audio_tracks_json = json.dumps(audio_tracks) if audio_tracks else None
+
     await db.execute(
         """
         UPDATE media_files
            SET width = ?, height = ?, codec_name = ?, hdr_format = ?,
                duration_sec = COALESCE(?, duration_sec),
+               audio_tracks = ?,
                updated_at = ?
          WHERE id = ?
         """,
@@ -904,6 +928,7 @@ async def _persist_probe(
             info["codec_name"],
             info["hdr_format"],
             info.get("duration_sec"),
+            audio_tracks_json,
             datetime.now(UTC).isoformat(),
             file_id,
         ),

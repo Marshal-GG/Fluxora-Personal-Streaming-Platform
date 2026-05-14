@@ -162,8 +162,9 @@ def _resolve_audio_passthrough(
     apply_hdr_tonemap: bool,
     source_audio_codec: str | None,
     session_id: str | None = None,
+    source_audio_tracks: list[dict] | None = None,
 ) -> bool:
-    """Plan 21 — resolve whether to stream-copy the source audio track.
+    """Plan 21 / 22 — resolve whether to stream-copy the source audio.
 
     Returns ``True`` (stream-copy) only when every signal aligns:
 
@@ -179,6 +180,16 @@ def _resolve_audio_passthrough(
        False.  Set by the ``/fallback-audio-transcode`` endpoint after
        a client reports an audio decode error, and by ``/start`` when
        the audio blocklist already matches.
+    4. (Plan 22 sharp edge #5) When ``source_audio_tracks`` is supplied,
+       *every* track's codec must be in the allowlist.  Multi-track
+       sources can legitimately mix codecs (e.g. AAC director track +
+       DTS surround track from a Bluray rip); under the new
+       ``-map 0:a?`` plumbing FFmpeg would otherwise try to stream-copy
+       the DTS track into fmp4 and fail at runtime.  When at least one
+       track is non-allowlist we force the whole pipeline onto the
+       single-track re-encode path.  ``None`` (back-compat callers that
+       didn't probe the full track list) falls through to the legacy
+       single-track decision based on ``source_audio_codec``.
     """
     if apply_hdr_tonemap:
         return False
@@ -187,6 +198,11 @@ def _resolve_audio_passthrough(
         return False
     if session_id is not None and _session_force_audio_transcode.get(session_id, False):
         return False
+    if source_audio_tracks:
+        for track in source_audio_tracks:
+            track_codec = _normalize_audio_codec(track.get("codec"))
+            if track_codec is None or track_codec not in _AUDIO_STREAM_COPY_ALLOWLIST:
+                return False
     return True
 
 
@@ -356,6 +372,16 @@ async def probe_video(file_path: str) -> dict | None:
     }
 
 
+# Plan 22 — per-session cache of the full audio-track list probed at
+# session-start.  Populated by ``start_stream`` (via
+# ``_probe_audio_tracks``) and read by the ``/stream/start`` router (M3)
+# so the response payload can advertise every track to the mobile player
+# without re-running ffprobe.  Cleared on ``stop_stream`` alongside the
+# other per-session dicts so a long-running server doesn't accumulate
+# entries.
+_session_audio_tracks: dict[str, list[dict]] = {}
+
+
 async def _probe_audio_params(file_path: str) -> dict | None:
     """Run ffprobe on the first audio stream.  Returns
     ``{codec_name, sample_rate, channels, bit_rate}`` or ``None`` when
@@ -406,6 +432,121 @@ async def _probe_audio_params(file_path: str) -> dict | None:
         "channels": s.get("channels"),
         "bit_rate": s.get("bit_rate"),
     }
+
+
+async def _probe_audio_tracks(file_path: str) -> list[dict]:
+    """Run ffprobe and return one dict per audio stream in the source.
+
+    Plan 22 M1 — extends ``_probe_audio_params`` (which only returns
+    track 0) so the multi-audio picker can advertise every track to
+    the mobile player.  Each entry contains:
+
+    * ``index`` — the FFmpeg stream index (NOT track-relative; the value
+      passed to ``-map 0:a:<index>``).  Stable for as long as the source
+      file doesn't change.
+    * ``codec`` — normalized codec name (lowercased, split on ``_`` so
+      ``aac_lc`` resolves to ``aac``); shared with the allowlist check.
+    * ``language`` — ISO 639-2 tag from ``tags.language``; ``None`` when
+      the source's container omits it (common for NVIDIA Game Bar
+      captures, screen recordings, plain encoder output).
+    * ``title`` — free-form label from ``tags.title``; ``None`` when
+      missing.  Used as the picker's row label when present
+      (e.g. "Director's Commentary").
+    * ``channels`` / ``sample_rate`` — int values from the stream
+      metadata.  Channel count drives the picker subtitle (e.g. "5.1"
+      from a value of 6).
+    * ``bit_rate`` — int when the source exposed one; ``None`` for
+      lossless / packed-VBR sources where ffprobe doesn't surface it.
+
+    Diagnostics-only.  ffprobe failure / missing file / no audio streams
+    all return ``[]`` — playback never blocks on this probe.  Logged at
+    ``debug`` level so a noisy library doesn't flood the operator's
+    INFO stream.
+    """
+    ffprobe = _ffprobe_bin()
+    if ffprobe is None:
+        return []
+    cmd = [
+        ffprobe,
+        "-v",
+        "error",
+        "-print_format",
+        "json",
+        "-show_streams",
+        "-select_streams",
+        "a",
+        file_path,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await proc.communicate()
+    except (OSError, FileNotFoundError):
+        logger.debug(
+            "multi-track audio ffprobe failed for %s", file_path, exc_info=True
+        )
+        return []
+    if proc.returncode != 0:
+        return []
+    try:
+        data = json.loads(stdout.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return []
+    streams = data.get("streams") or []
+    if not streams:
+        return []
+
+    tracks: list[dict] = []
+    for s in streams:
+        raw_index = s.get("index")
+        try:
+            index = int(raw_index) if raw_index is not None else None
+        except (TypeError, ValueError):
+            index = None
+        if index is None:
+            # Without an index we can't address the track in -map, so
+            # skip it rather than emit a meaningless entry.
+            continue
+
+        codec = _normalize_audio_codec(s.get("codec_name")) or ""
+
+        tags = s.get("tags") or {}
+        language = tags.get("language") or None
+        title = tags.get("title") or None
+
+        raw_channels = s.get("channels")
+        try:
+            channels = int(raw_channels) if raw_channels is not None else 0
+        except (TypeError, ValueError):
+            channels = 0
+
+        raw_rate = s.get("sample_rate")
+        try:
+            sample_rate = int(raw_rate) if raw_rate is not None else 0
+        except (TypeError, ValueError):
+            sample_rate = 0
+
+        raw_bitrate = s.get("bit_rate")
+        try:
+            bit_rate = int(raw_bitrate) if raw_bitrate is not None else None
+        except (TypeError, ValueError):
+            bit_rate = None
+
+        tracks.append(
+            {
+                "index": index,
+                "codec": codec,
+                "language": language,
+                "title": title,
+                "channels": channels,
+                "sample_rate": sample_rate,
+                "bit_rate": bit_rate,
+            }
+        )
+    return tracks
 
 
 async def _resolve_source_metadata(
@@ -679,18 +820,31 @@ def _build_ffmpeg_cmd(
 
     cmd.extend(["-i", file_path])
 
-    # Pin stream selection to the first video + first audio track. Without
-    # an explicit `-map`, FFmpeg's HLS muxer includes every audio stream
-    # from the source — fine for the segments themselves, but the
-    # `_ensure_fmp4_init_segment` fallback only declares `0:a:0?` in its
-    # moov, so on multi-audio-track sources (NVIDIA Game Bar dual-track
-    # captures, multi-language movie rips) the init segment claims one
-    # audio decoder while the segments deliver several. media_kit on
-    # Android then silently drops all audio. Pinning to `0:a:0?` here
-    # matches the init.mp4 contract; the trailing `?` keeps silent video
-    # files (no audio stream at index 0) from failing the spawn.
-    # Multi-track playback with operator selection is tracked in plan 22.
-    cmd.extend(["-map", "0:v:0", "-map", "0:a:0?"])
+    # Pin stream selection — first video track always; audio is
+    # conditional on the pipeline (plan 22 M1).
+    #
+    # The 2026-05-14 bandaid forced `-map 0:a:0?` for every path because
+    # `_ensure_fmp4_init_segment` only declared `0:a:0?` in its moov;
+    # multi-audio-track sources (NVIDIA Game Bar dual-track captures,
+    # multi-language movie rips) silently lost audio on Android when
+    # the segments delivered N tracks against an init segment claiming 1.
+    #
+    # Plan 22 reshapes the bandaid:
+    #   * Stream-copy audio → `-map 0:a?` (no index = every audio track,
+    #     trailing `?` keeps silent video files working).  The init
+    #     segment is now generated with `-map 0:a?` too so its moov
+    #     describes every track, matching the segments.  media_kit
+    #     exposes each track via `Player.state.tracks.audio`; the
+    #     mobile picker switches between them client-side.
+    #   * Re-encode audio (tonemap, DTS/TrueHD source, audio fallback,
+    #     mixed-codec source) → `-map 0:a:0?` (single track only).
+    #     Multi-track re-encode would need N separate `-c:a` flag
+    #     groups; deferred to v1.1 per the plan's behaviour matrix.
+    cmd.extend(["-map", "0:v:0"])
+    if audio_passthrough:
+        cmd.extend(["-map", "0:a?"])
+    else:
+        cmd.extend(["-map", "0:a:0?"])
 
     # Plan 21 — fmp4 trigger now also fires when audio is stream-copied
     # and the source codec is non-AAC (ac3 / eac3 / opus / flac).
@@ -1087,8 +1241,13 @@ async def _ensure_fmp4_init_segment(
     moov at the head of the file; `default_base_moof` + `frag_keyframe`
     are the standard fmp4 set).  The resulting file has the moov box
     matching the source's video config + the AAC config we'd produce
-    in the segments.  Players parse the moov, set up the decoder, and
-    skip the tiny mdat without complaint.
+    in the segments.  Plan 22 M1: `-map 0:a?` (no index) makes the
+    moov describe every audio track in the source, so the segments
+    produced by the main pipeline (also `-map 0:a?` under stream-
+    copy) line up cleanly — media_kit sees the same track count in
+    both and exposes each one via ``Player.state.tracks.audio``.
+    Players parse the moov, set up the decoders, and skip the tiny
+    mdat without complaint.
 
     Returns True if a file now exists at `init.mp4` (whether we wrote
     it or it was already there); False on failure.
@@ -1102,8 +1261,11 @@ async def _ensure_fmp4_init_segment(
     except FileNotFoundError:
         return False
 
-    # `-map 0:a:0?` makes the audio track optional — silent video files
-    # (no audio stream at index 0) don't error out.
+    # `-map 0:a?` (no index) declares every audio stream in the moov
+    # — plan 22 M1: the segments produced by the main pipeline under
+    # stream-copy also use `-map 0:a?`, so the track count agrees on
+    # both ends and media_kit can expose each track.  Trailing `?`
+    # keeps silent video files (no audio at all) from erroring out.
     # `-t 0.04` writes ≈1 frame at 25 fps; the moov header is what the
     # player actually reads, the tiny mdat is skipped.
     cmd = [
@@ -1119,7 +1281,7 @@ async def _ensure_fmp4_init_segment(
         "-c:v",
         "copy",
         "-map",
-        "0:a:0?",
+        "0:a?",
         "-c:a",
         "aac",
         "-b:a",
@@ -1413,6 +1575,28 @@ async def start_stream(
         # Diagnostics only — must not break playback.
         logger.debug("audio_probe raised — skipping", exc_info=True)
 
+    # Plan 22 M1 — probe every audio track so the resolver can detect
+    # mixed-codec sources (sharp edge #5: an AAC + DTS source would
+    # otherwise pass the single-track allowlist check and then explode
+    # at runtime when `-map 0:a?` tries to stream-copy the DTS track
+    # into fmp4).  Cached on ``_session_audio_tracks`` so the M3 router
+    # can render the response payload without re-probing.  Failure
+    # leaves the list empty — the resolver then falls back to its
+    # legacy single-track decision.
+    audio_tracks: list[dict] = []
+    try:
+        audio_tracks = await _probe_audio_tracks(file_path)
+        logger.debug(
+            "audio_tracks session=%s count=%d codecs=%s",
+            session_id,
+            len(audio_tracks),
+            [t.get("codec") for t in audio_tracks] or "[]",
+        )
+    except Exception:
+        # Diagnostics only — must not break playback.
+        logger.debug("audio_tracks probe raised — skipping", exc_info=True)
+    _session_audio_tracks[session_id] = audio_tracks
+
     # Tonemap is only meaningful when both: (a) the source is HDR and
     # (b) the caller asked for it.  Anything else is a no-op.
     apply_hdr_tonemap = bool(tonemap_hdr and hdr_format)
@@ -1420,12 +1604,14 @@ async def start_stream(
     # Plan 21 — resolve audio passthrough up front so the diagnostic
     # log line + downstream cmd builder + fmp4 trigger in this function
     # all see the same decision.  Mirrors the video direct_remux flag
-    # plan 19/20 introduced.
+    # plan 19/20 introduced.  Plan 22 M1 — also pass the full track
+    # list so mixed-codec sources collapse to single-track re-encode.
     force_audio_transcode: bool = _session_force_audio_transcode.get(session_id, False)
     audio_passthrough = _resolve_audio_passthrough(
         apply_hdr_tonemap=apply_hdr_tonemap,
         source_audio_codec=audio_codec_name,
         session_id=session_id,
+        source_audio_tracks=audio_tracks or None,
     )
 
     direct_remux_h264 = source_codec == "h264" and not force_transcode
@@ -1509,13 +1695,31 @@ async def start_stream(
             decision_reason = "unsupported-source-codec"
         decision_path = "transcode"
 
-    # Plan 21 — audio decision.  Independent of video: a session can
+    # Plan 21 / 22 — audio decision.  Independent of video: a session can
     # video-transcode (tonemap on) and still audio-stream-copy?  No —
     # tonemap forces audio re-encode (see ``_resolve_audio_passthrough``
     # path 1).  But a session can video-stream-copy and audio-transcode
     # (auto-mode fallback after audio decode error).  Reason precedence
     # mirrors the video resolver: forced fallback first, then tonemap,
-    # then allowlist gate.
+    # then mixed-codec multi-track check, then allowlist gate.
+    #
+    # The mixed-codec branch (plan 22 sharp edge #5) fires when the
+    # first track *would* be eligible (single-track resolver returns
+    # True) but a later track is non-allowlist — the resolver then
+    # forces re-encode to avoid a runtime failure under ``-map 0:a?``.
+    normalized_track0 = _normalize_audio_codec(audio_codec_name)
+    track0_eligible = (
+        normalized_track0 is not None
+        and normalized_track0 in _AUDIO_STREAM_COPY_ALLOWLIST
+    )
+    multi_track_mixed = (
+        not audio_passthrough
+        and not force_audio_transcode
+        and not apply_hdr_tonemap
+        and track0_eligible
+        and bool(audio_tracks)
+        and len(audio_tracks) > 1
+    )
     if force_audio_transcode:
         audio_reason = "audio-forced-fallback"
     elif apply_hdr_tonemap:
@@ -1524,6 +1728,8 @@ async def start_stream(
         audio_reason = "tonemap-audio-reencode"
     elif audio_passthrough:
         audio_reason = "audio-allowlist"
+    elif multi_track_mixed:
+        audio_reason = "audio-mixed-codec-fallback"
     else:
         audio_reason = "audio-not-allowlist"
     audio_decision_path = "stream-copy" if audio_passthrough else "transcode"
@@ -2020,6 +2226,10 @@ async def stop_stream(session_id: str) -> None:
     clear_session_force_transcode(session_id)
     # Plan 21 — drop the audio-fallback marker alongside the video one.
     clear_session_force_audio_transcode(session_id)
+    # Plan 22 M1 — drop the cached audio-track list.  M3's router reads
+    # it for the response payload; once the session ends the cache is
+    # no longer relevant and would otherwise leak forever.
+    _session_audio_tracks.pop(session_id, None)
 
 
 async def restart_stream(

@@ -181,6 +181,191 @@ async def test_backfill_keyset_pagination_does_not_loop(test_db, tmp_path) -> No
     assert fake_probe.await_count == 1
 
 
+# ── _persist_probe — audio_tracks JSON column (plan 22 M2) ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_scan_persists_audio_tracks_for_multi_track_file(
+    test_db, tmp_path
+) -> None:
+    """A scan that probes a file with multiple audio streams must write
+    a JSON-encoded list to ``media_files.audio_tracks`` so the
+    ``/stream/start`` router (plan 22 M3) can advertise every track to
+    the mobile player without re-running ffprobe."""
+    import json
+
+    fake_video = tmp_path / "dual_audio.mkv"
+    fake_video.write_bytes(b"\x00" * 16)  # not actually playable; we mock probe
+
+    await test_db.execute(
+        "INSERT INTO media_files"
+        " (id, path, name, extension, size_bytes, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        ("multi-1", str(fake_video), "dual_audio.mkv", ".mkv", 16),
+    )
+    await test_db.commit()
+
+    fake_video_probe = AsyncMock(
+        return_value={
+            "width": 1920,
+            "height": 1080,
+            "codec_name": "h264",
+            "hdr_format": None,
+            "duration_sec": 120.0,
+        }
+    )
+    # NVIDIA Game Bar dual-track shape — game audio on stream 1, mic on 2.
+    fake_audio_probe = AsyncMock(
+        return_value=[
+            {
+                "index": 1,
+                "codec": "aac",
+                "language": None,
+                "title": "Game",
+                "channels": 2,
+                "sample_rate": 48000,
+                "bit_rate": 192000,
+            },
+            {
+                "index": 2,
+                "codec": "aac",
+                "language": None,
+                "title": "Mic",
+                "channels": 1,
+                "sample_rate": 48000,
+                "bit_rate": 128000,
+            },
+        ]
+    )
+
+    with (
+        patch.object(library_service, "probe_video", fake_video_probe),
+        patch.object(library_service, "_probe_audio_tracks", fake_audio_probe),
+    ):
+        await library_service._persist_probe(test_db, "multi-1", fake_video)
+
+    async with test_db.execute(
+        "SELECT audio_tracks FROM media_files WHERE id = 'multi-1'"
+    ) as cur:
+        row = await cur.fetchone()
+    assert (
+        row["audio_tracks"] is not None
+    ), "Multi-track audio probe must persist a non-NULL JSON value"
+    parsed = json.loads(row["audio_tracks"])
+    assert isinstance(parsed, list)
+    assert len(parsed) == 2
+    assert [t["codec"] for t in parsed] == ["aac", "aac"]
+    assert [t["index"] for t in parsed] == [1, 2]
+    assert {t["title"] for t in parsed} == {"Game", "Mic"}
+    fake_audio_probe.assert_awaited_once_with(str(fake_video))
+
+
+@pytest.mark.asyncio
+async def test_scan_writes_null_audio_tracks_on_probe_failure(
+    test_db, tmp_path
+) -> None:
+    """When ``_probe_audio_tracks`` returns ``[]`` (ffprobe failure or no
+    audio streams in the source), the persisted column must be NULL —
+    NOT the JSON literal ``"[]"`` — so M3's lazy-backfill path can
+    distinguish "never probed" from "probed and found nothing"."""
+    fake_video = tmp_path / "no_audio.mkv"
+    fake_video.write_bytes(b"\x00" * 16)
+
+    await test_db.execute(
+        "INSERT INTO media_files"
+        " (id, path, name, extension, size_bytes, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        ("no-aud-1", str(fake_video), "no_audio.mkv", ".mkv", 16),
+    )
+    await test_db.commit()
+
+    fake_video_probe = AsyncMock(
+        return_value={
+            "width": 1920,
+            "height": 1080,
+            "codec_name": "h264",
+            "hdr_format": None,
+            "duration_sec": 60.0,
+        }
+    )
+    fake_audio_probe = AsyncMock(return_value=[])
+
+    with (
+        patch.object(library_service, "probe_video", fake_video_probe),
+        patch.object(library_service, "_probe_audio_tracks", fake_audio_probe),
+    ):
+        await library_service._persist_probe(test_db, "no-aud-1", fake_video)
+
+    async with test_db.execute(
+        "SELECT audio_tracks FROM media_files WHERE id = 'no-aud-1'"
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["audio_tracks"] is None, (
+        "Empty probe result must persist as NULL so the M3 lazy-backfill "
+        "path can distinguish 'never probed' from 'probed and found nothing'"
+    )
+
+
+@pytest.mark.asyncio
+async def test_scan_persists_audio_tracks_for_single_track_file(
+    test_db, tmp_path
+) -> None:
+    """Sanity case — single-track files are the common path and must
+    still produce a 1-element JSON array (NOT NULL)."""
+    import json
+
+    fake_video = tmp_path / "single_audio.mkv"
+    fake_video.write_bytes(b"\x00" * 16)
+
+    await test_db.execute(
+        "INSERT INTO media_files"
+        " (id, path, name, extension, size_bytes, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        ("single-1", str(fake_video), "single_audio.mkv", ".mkv", 16),
+    )
+    await test_db.commit()
+
+    fake_video_probe = AsyncMock(
+        return_value={
+            "width": 1920,
+            "height": 1080,
+            "codec_name": "h264",
+            "hdr_format": None,
+            "duration_sec": 90.0,
+        }
+    )
+    fake_audio_probe = AsyncMock(
+        return_value=[
+            {
+                "index": 1,
+                "codec": "aac",
+                "language": "eng",
+                "title": None,
+                "channels": 2,
+                "sample_rate": 48000,
+                "bit_rate": 192000,
+            }
+        ]
+    )
+
+    with (
+        patch.object(library_service, "probe_video", fake_video_probe),
+        patch.object(library_service, "_probe_audio_tracks", fake_audio_probe),
+    ):
+        await library_service._persist_probe(test_db, "single-1", fake_video)
+
+    async with test_db.execute(
+        "SELECT audio_tracks FROM media_files WHERE id = 'single-1'"
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["audio_tracks"] is not None
+    parsed = json.loads(row["audio_tracks"])
+    assert isinstance(parsed, list)
+    assert len(parsed) == 1
+    assert parsed[0]["codec"] == "aac"
+    assert parsed[0]["language"] == "eng"
+
+
 # ── DVR-capture filename heuristic (TMDB lookup skip) ─────────────────────────
 
 
