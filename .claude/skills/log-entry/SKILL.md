@@ -64,6 +64,20 @@ Pick the smallest accurate set. Tags help future grep, not vanity.
 - Path: bare, no parenthetical
 - Why: one short line, never paragraphs
 
+**MANDATORY: derive the file list from git, not from recollection.** Before drafting the table, run one of:
+
+```bash
+# Uncommitted work in this session:
+git status --short
+
+# Work that already landed in commits X..Y this session:
+git diff --name-status <base>..<HEAD>
+```
+
+Every row's path must appear in that output. If a path looks plausible but isn't there, do not include it — recollection drifts (especially across subagent reports). A wrong path in the log misdirects every future agent who greps the log to find where a feature lives.
+
+This is not optional. A previous closeout agent fabricated paths like `player_transport_bar.dart` and `library_card_test.dart` for files that didn't exist; the log had to be rewritten from git diff after the fact.
+
 ### `### Test Counts (re-baselined)`
 
 Only when tests changed. Show the delta:
@@ -92,9 +106,25 @@ Each item names a specific file / endpoint / milestone. No "consider exploring�
 
 See `f:/AI Models/Projects/Fluxora/AGENT_LOG.md` — the latest entry is always the closest reference. Format spec at `docs/12_guidelines/04_agent_log_format.md` (only read if a question isn't answered by this skill).
 
-## Log rotation
+## Log rotation — archive VERBATIM, summary lives in the fresh log
 
-If `AGENT_LOG.md` exceeds ~1000 lines BEFORE you append, first archive it to `docs/logs/AGENT_LOG_archive_NN.md` (next available NN), write a fresh `AGENT_LOG.md` with a 5–10 line summary header pointing at the archive, then append your new entry to the fresh log.
+If `AGENT_LOG.md` exceeds ~1000 lines BEFORE you append:
+
+1. **Move the full current `AGENT_LOG.md` (verbatim, every line) to `docs/logs/AGENT_LOG_archive_NN.md`** (pick the next free `NN`). Mechanical move:
+   ```bash
+   git mv AGENT_LOG.md docs/logs/AGENT_LOG_archive_NN.md
+   ```
+   Then write a brand-new `AGENT_LOG.md`. The archive must contain every original entry — Files tables, Sharp Edges sections, everything — exactly as it was. Future agents grep archives to locate work; a summary-only archive breaks that.
+
+2. **Start the new `AGENT_LOG.md`** with:
+   - The standard 4-line rotation header (copy from any existing log).
+   - A `## Current State Summary (From Archive NN)` section: 1–2 lines per recent milestone / plan / large change with end-of-period test counts. Look at `docs/logs/AGENT_LOG_archive_11.md` lines 1-40 for the canonical shape.
+   - A `---` separator.
+   - Your new session entry.
+
+**Do NOT put a summary into the archive file.** The archive is the verbatim record. The summary lives in the fresh log so future agents see the recent-state digest on every read.
+
+A previous rotation got this backwards — summary went to `archive_12.md`, verbatim entries lost from the file system (only recoverable from git history). Don't repeat that.
 
 ## How to write
 
