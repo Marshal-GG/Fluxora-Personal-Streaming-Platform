@@ -1,23 +1,22 @@
 /// Playback speed bottom sheet.
 ///
-/// Reads `player.state.rate`, dispatches `player.setRate` on selection.
+/// Reads `engine.rate`, dispatches `engine.setRate` on selection.
 /// Six presets per the prototype: 0.5× / 0.75× / 1× / 1.25× / 1.5× / 2×.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:fluxora_core/fluxora_core.dart';
-import 'package:media_kit/media_kit.dart' show Player;
 
 class SpeedSheet extends StatelessWidget {
-  const SpeedSheet({required this.player, super.key});
+  const SpeedSheet({required this.engine, super.key});
 
-  final Player player;
+  final PlayerEngine engine;
 
   static const List<double> _speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
 
   @override
   Widget build(BuildContext context) {
-    final current = player.state.rate;
+    final current = engine.rate;
     return FluxBottomSheet(
       title: 'Playback speed',
       child: Column(
@@ -28,7 +27,7 @@ class SpeedSheet extends StatelessWidget {
               speed: speed,
               selected: speed == current,
               onTap: () {
-                player.setRate(speed);
+                engine.setRate(speed);
                 Navigator.of(context).pop();
               },
             ),

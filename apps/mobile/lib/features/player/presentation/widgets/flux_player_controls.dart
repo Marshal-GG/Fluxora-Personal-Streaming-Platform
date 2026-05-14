@@ -15,7 +15,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/fluxora_core.dart';
-import 'package:media_kit/media_kit.dart' show Player;
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:fluxora_mobile/features/player/data/services/pip_service.dart';
 import 'package:fluxora_mobile/features/player/presentation/controllers/player_controls_controller.dart';
@@ -49,7 +48,7 @@ const Duration _kRippleMs = Duration(milliseconds: 400);
 
 class FluxPlayerControls extends StatefulWidget {
   const FluxPlayerControls({
-    required this.player,
+    required this.engine,
     required this.controller,
     required this.title,
     required this.onBack,
@@ -64,7 +63,7 @@ class FluxPlayerControls extends StatefulWidget {
     super.key,
   });
 
-  final Player player;
+  final PlayerEngine engine;
   final PlayerControlsController controller;
   final String title;
   final VoidCallback onBack;
@@ -159,8 +158,18 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
   bool? _pipSupported;
 
   Future<void> _enterPip() async {
-    final w = widget.player.state.width ?? 16;
-    final h = widget.player.state.height ?? 9;
+    // Source-pixel dimensions drive the PIP window aspect ratio.
+    // Today only the MediaKitEngine path exposes width/height directly;
+    // ExoPlayerEngine (M3+) will surface the same fields via its own
+    // state — until it does we fall back to a 16:9 default which is
+    // what PipService used pre-plan-24 when these were null anyway.
+    int w = 16;
+    int h = 9;
+    final engine = widget.engine;
+    if (engine is MediaKitEngine) {
+      w = engine.mediaKitPlayer.state.width ?? 16;
+      h = engine.mediaKitPlayer.state.height ?? 9;
+    }
     await PipService.enter(width: w, height: h);
     // Hide the controls overlay once we've asked the system for PIP — by
     // the time we redraw we'll be in a small window where the overlay
@@ -340,8 +349,8 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
     // at source-time 0:10 instead of 5:10 (the cubit subtracts the
     // offset internally and the in-player path clamps the negative
     // result to 0).
-    final playerPos = widget.player.state.position;
-    final playerDur = widget.player.state.duration;
+    final playerPos = widget.engine.position;
+    final playerDur = widget.engine.duration;
     final offset = Duration(
       milliseconds: (widget.playlistOffsetSec * 1000).toInt(),
     );
@@ -367,17 +376,26 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
       cb(target);
     } else {
       final offsetMs = (widget.playlistOffsetSec * 1000).toInt();
-      final playerDurMs = widget.player.state.duration.inMilliseconds;
+      final playerDurMs = widget.engine.duration.inMilliseconds;
       final playerMs = (target.inMilliseconds - offsetMs).clamp(
         0,
         playerDurMs > 0 ? playerDurMs : 1 << 30,
       );
-      widget.player.seek(Duration(milliseconds: playerMs));
+      widget.engine.seek(Duration(milliseconds: playerMs));
     }
   }
 
   void _togglePlay() {
-    widget.player.playOrPause();
+    // `PlayerEngine` doesn't carry a media_kit-style `playOrPause`
+    // combinator (ExoPlayer / Media3 doesn't either), so toggle from
+    // the live `isPlaying` snapshot.  Race-safe because the only thing
+    // that flips this between read and the matching call is another
+    // user tap, which would land the same outcome (one transition).
+    if (widget.engine.isPlaying) {
+      widget.engine.pause();
+    } else {
+      widget.engine.play();
+    }
     widget.controller.show();
   }
 
@@ -401,14 +419,14 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
 
   void _onLongPressStart(LongPressStartDetails _) {
     if (widget.controller.lockMode) return;
-    _peekRestoreRate = widget.player.state.rate;
-    widget.player.setRate(2.0);
+    _peekRestoreRate = widget.engine.rate;
+    widget.engine.setRate(2.0);
     HapticFeedback.mediumImpact();
   }
 
   void _onLongPressEnd(LongPressEndDetails _) {
     if (_peekRestoreRate != null) {
-      widget.player.setRate(_peekRestoreRate!);
+      widget.engine.setRate(_peekRestoreRate!);
       _peekRestoreRate = null;
     }
   }
@@ -425,7 +443,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
         _dragStartValue = 0.5;
       }
     } else {
-      _dragStartValue = widget.player.state.volume / 100.0;
+      _dragStartValue = widget.engine.volume / 100.0;
     }
   }
 
@@ -442,7 +460,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
       }
       widget.controller.setBrightnessHud(value);
     } else {
-      widget.player.setVolume(value * 100.0);
+      widget.engine.setVolume(value * 100.0);
       widget.controller.setVolumeHud(value);
     }
   }
@@ -519,13 +537,13 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
           context: context,
           builder: (_) => BlocProvider<PlayerCubit>.value(
             value: playerCubit,
-            child: AudioSubsSheet(player: widget.player),
+            child: AudioSubsSheet(engine: widget.engine),
           ),
         );
       case Sheet.speed:
         await showFluxBottomSheet<void>(
           context: context,
-          builder: (_) => SpeedSheet(player: widget.player),
+          builder: (_) => SpeedSheet(engine: widget.engine),
         );
       case Sheet.sleep:
         final picked = await showFluxBottomSheet<Duration?>(
@@ -556,7 +574,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
     if (d != null) {
       _sleepTimer = Timer(d, () {
         if (mounted) {
-          widget.player.pause();
+          widget.engine.pause();
           setState(() => _sleepDuration = null);
         }
       });
@@ -673,17 +691,17 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                       child: Center(
                         child: FocusTraversalOrder(
                           order: const NumericFocusOrder(2),
-                          // Stream `player.stream.playing` so the
-                          // play/pause icon flips the instant libmpv
-                          // toggles state, instead of waiting for the
-                          // next ambient setState (controller auto-hide
-                          // tick).  Pre-2026-05-14 the icon read
-                          // `widget.player.state.playing` once per
-                          // build, so a tap looked unresponsive until
-                          // an unrelated rebuild caught up.
+                          // Stream `engine.isPlayingStream` so the
+                          // play/pause icon flips the instant the
+                          // engine toggles state, instead of waiting
+                          // for the next ambient setState (controller
+                          // auto-hide tick).  Pre-2026-05-14 the icon
+                          // read the playing snapshot once per build,
+                          // so a tap looked unresponsive until an
+                          // unrelated rebuild caught up.
                           child: StreamBuilder<bool>(
-                            stream: widget.player.stream.playing,
-                            initialData: widget.player.state.playing,
+                            stream: widget.engine.isPlayingStream,
+                            initialData: widget.engine.isPlaying,
                             builder: (context, snap) {
                               final isPlaying = snap.data ?? false;
                               return PlayerCenterTransport(
@@ -746,7 +764,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                         child: FocusTraversalOrder(
                           order: const NumericFocusOrder(5),
                           child: PlayerProgressBar(
-                            player: widget.player,
+                            engine: widget.engine,
                             onSeekCommit: _emitSeek,
                             playlistOffsetSec: widget.playlistOffsetSec,
                             isSeeking: widget.isSeeking,
@@ -1174,20 +1192,20 @@ class _CircleButtonState extends State<_CircleButton> {
 
 /// Scrubber + elapsed / total timestamps.
 ///
-/// Public + `@visibleForTesting` so golden tests can supply a mocked
-/// `Player` and capture the bar at a deterministic playhead without
-/// having to mount the full player overlay.
+/// Public + `@visibleForTesting` so golden tests can supply a fake
+/// `PlayerEngine` and capture the bar at a deterministic playhead
+/// without having to mount the full player overlay.
 class PlayerProgressBar extends StatefulWidget {
   @visibleForTesting
   const PlayerProgressBar({
     super.key,
-    required this.player,
+    required this.engine,
     this.onSeekCommit,
     this.playlistOffsetSec = 0.0,
     this.isSeeking = false,
   });
 
-  final Player player;
+  final PlayerEngine engine;
 
   /// Called once on `onChangeEnd` with the final scrub target so the
   /// cubit can decide between in-player seek and server restart.
@@ -1285,8 +1303,8 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
   Widget build(BuildContext context) {
     final offsetMs = (widget.playlistOffsetSec * 1000).toInt();
     return StreamBuilder<Duration>(
-      stream: widget.player.stream.position,
-      initialData: widget.player.state.position,
+      stream: widget.engine.positionStream,
+      initialData: widget.engine.position,
       builder: (context, posSnap) {
         final playerPos = posSnap.data ?? Duration.zero;
         // Display position is in source-time = player-time + offset.
@@ -1294,8 +1312,8 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
           milliseconds: playerPos.inMilliseconds + offsetMs,
         );
         return StreamBuilder<Duration>(
-          stream: widget.player.stream.duration,
-          initialData: widget.player.state.duration,
+          stream: widget.engine.durationStream,
+          initialData: widget.engine.duration,
           builder: (context, durSnap) {
             final playerDur = durSnap.data ?? Duration.zero;
             // Total duration in source-time = playlist-duration + offset.
@@ -1440,7 +1458,7 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
                                 0,
                                 playerDur.inMilliseconds,
                               );
-                              widget.player.seek(
+                              widget.engine.seek(
                                 Duration(milliseconds: playerMs),
                               );
                             }

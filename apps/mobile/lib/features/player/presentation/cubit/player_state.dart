@@ -1,5 +1,4 @@
-import 'package:media_kit/media_kit.dart' show Player;
-import 'package:media_kit_video/media_kit_video.dart' show VideoController;
+import 'package:fluxora_core/fluxora_core.dart';
 import 'package:fluxora_mobile/features/player/domain/entities/stream_start_response.dart';
 
 /// Which transport is being used for the current stream.
@@ -27,8 +26,7 @@ class PlayerReady extends PlayerState {
   const PlayerReady({
     required this.sessionId,
     required this.fileName,
-    required this.player,
-    required this.controller,
+    required this.engine,
     this.resumeSec = 0.0,
     this.playlistOffsetSec = 0.0,
     this.streamPath = StreamPath.hls,
@@ -41,8 +39,18 @@ class PlayerReady extends PlayerState {
 
   final String sessionId;
   final String fileName;
-  final Player player;
-  final VideoController controller;
+
+  /// Plan 24 — the active playback engine.  Was previously a raw
+  /// `media_kit.Player` + `VideoController` pair; refactored to the
+  /// shared [PlayerEngine] abstraction so the rest of the player
+  /// code doesn't depend on which backend (libmpv vs. Media3) is
+  /// running underneath.  For the MediaKitEngine path the embedded
+  /// `Player` + `VideoController` are reachable via the engine's
+  /// own typed accessors (`mediaKitPlayer` / `videoController`) —
+  /// transitional escape hatches that disappear when the remaining
+  /// libmpv-specific call sites (audio_service binding, subtitle
+  /// picker) move to platform-agnostic equivalents (M7+).
+  final PlayerEngine engine;
 
   /// The position the player was seeked to on open (0 = fresh start).
   final double resumeSec;
@@ -53,11 +61,11 @@ class PlayerReady extends PlayerState {
   /// When `start_stream` / `restart_stream` snap the requested seek to
   /// a segment boundary (`floor(seek / hls_time) * hls_time`), the
   /// player's reported playback position is relative to that snap, not
-  /// to t=0 of the source file.  Add this value to libmpv's reported
-  /// position when rendering the scrubber so the user sees source-time,
-  /// not playlist-time (otherwise: forward-seek looks like "scrubber
-  /// reset to 0" because the new playlist's t=0 is the seek target's
-  /// segment boundary).
+  /// to t=0 of the source file.  Add this value to the engine's
+  /// reported position when rendering the scrubber so the user sees
+  /// source-time, not playlist-time (otherwise: forward-seek looks
+  /// like "scrubber reset to 0" because the new playlist's t=0 is the
+  /// seek target's segment boundary).
   final double playlistOffsetSec;
 
   /// The active streaming transport.
@@ -76,10 +84,11 @@ class PlayerReady extends PlayerState {
 
   /// True while a server-side seek-restart is in flight (POST /seek →
   /// playlist re-open).  Drives a small "Seeking…" / spinner overlay so
-  /// the user understands why playback paused.  Distinct from media_kit's
-  /// own buffering signal because the server restart needs ≥1 segment
-  /// of wall-time to produce its first new segment, which is a longer
-  /// gap than the player's normal buffer-fill animation can explain.
+  /// the user understands why playback paused.  Distinct from the
+  /// engine's own buffering signal because the server restart needs ≥1
+  /// segment of wall-time to produce its first new segment, which is a
+  /// longer gap than the player's normal buffer-fill animation can
+  /// explain.
   final bool isSeeking;
 
   /// Plan 22 — every audio track exposed by the source container, as
@@ -99,6 +108,13 @@ class PlayerReady extends PlayerState {
   /// True when the source is HDR.  Convenience alias.
   bool get isHdrSource => hdrFormat != null && hdrFormat!.isNotEmpty;
 
+  /// Flutter texture id the player screen should embed.  For the
+  /// MediaKitEngine path this round-trips through
+  /// `VideoController.id.value`; for the future ExoPlayerEngine path
+  /// it's the `SurfaceProducer`-issued id.  Null while the engine is
+  /// initialising.
+  int? get textureId => engine.textureId;
+
   PlayerReady copyWith({
     StreamPath? streamPath,
     bool? isSeeking,
@@ -108,8 +124,7 @@ class PlayerReady extends PlayerState {
   }) => PlayerReady(
     sessionId: sessionId,
     fileName: fileName,
-    player: player,
-    controller: controller,
+    engine: engine,
     resumeSec: resumeSec,
     playlistOffsetSec: playlistOffsetSec ?? this.playlistOffsetSec,
     streamPath: streamPath ?? this.streamPath,

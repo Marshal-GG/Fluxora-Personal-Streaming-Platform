@@ -11,7 +11,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/fluxora_core.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:media_kit/media_kit.dart' show Player;
 import 'package:fluxora_mobile/core/router/app_router.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.dart';
@@ -34,7 +33,7 @@ class FluxMiniPlayer extends StatelessWidget {
           alignment: Alignment.bottomCenter,
           child: ready
               ? _Bar(
-                  player: state.player,
+                  engine: state.engine,
                   title: state.fileName,
                   onTap: () => _resume(context, state),
                   onClose: cubit.dismiss,
@@ -60,13 +59,13 @@ class FluxMiniPlayer extends StatelessWidget {
 
 class _Bar extends StatelessWidget {
   const _Bar({
-    required this.player,
+    required this.engine,
     required this.title,
     required this.onTap,
     required this.onClose,
   });
 
-  final Player player;
+  final PlayerEngine engine;
   final String title;
   final VoidCallback onTap;
   final VoidCallback onClose;
@@ -137,13 +136,13 @@ class _Bar extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                           const SizedBox(height: 2),
-                          _TimeLine(player: player),
+                          _TimeLine(engine: engine),
                         ],
                       ),
                     ),
                   ),
                   const SizedBox(width: 4),
-                  _PlayPauseButton(player: player),
+                  _PlayPauseButton(engine: engine),
                   Semantics(
                     label: 'Close mini player',
                     button: true,
@@ -169,19 +168,19 @@ class _Bar extends StatelessWidget {
 }
 
 class _TimeLine extends StatelessWidget {
-  const _TimeLine({required this.player});
+  const _TimeLine({required this.engine});
 
-  final Player player;
+  final PlayerEngine engine;
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<Duration>(
-      stream: player.stream.position,
-      initialData: player.state.position,
+      stream: engine.positionStream,
+      initialData: engine.position,
       builder: (context, posSnap) {
         return StreamBuilder<Duration>(
-          stream: player.stream.duration,
-          initialData: player.state.duration,
+          stream: engine.durationStream,
+          initialData: engine.duration,
           builder: (context, durSnap) {
             final pos = posSnap.data ?? Duration.zero;
             final dur = durSnap.data ?? Duration.zero;
@@ -209,15 +208,15 @@ class _TimeLine extends StatelessWidget {
 }
 
 class _PlayPauseButton extends StatelessWidget {
-  const _PlayPauseButton({required this.player});
+  const _PlayPauseButton({required this.engine});
 
-  final Player player;
+  final PlayerEngine engine;
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<bool>(
-      stream: player.stream.playing,
-      initialData: player.state.playing,
+      stream: engine.isPlayingStream,
+      initialData: engine.isPlaying,
       builder: (context, snap) {
         final playing = snap.data ?? false;
         return Semantics(
@@ -231,7 +230,13 @@ class _PlayPauseButton extends StatelessWidget {
               playing ? Icons.pause : Icons.play_arrow,
               color: AppColors.textBright,
             ),
-            onPressed: player.playOrPause,
+            onPressed: () {
+              if (engine.isPlaying) {
+                engine.pause();
+              } else {
+                engine.play();
+              }
+            },
             splashRadius: 22,
           ),
         );

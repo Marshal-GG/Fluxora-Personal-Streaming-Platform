@@ -19,7 +19,7 @@ void main() {
   testGoldens('PlayerProgressBar — 30% through a 1h30m movie', (tester) async {
     // Deterministic playhead: 27 m of 1 h 30 m -> 30% (matches plan
     // §14 sample-data spec for the scrubber capture).
-    final player = buildFakePlayer(
+    final engine = buildFakeEngine(
       position: const Duration(minutes: 27),
       duration: const Duration(hours: 1, minutes: 30),
     );
@@ -29,7 +29,7 @@ void main() {
         color: const Color(0xCC000000),
         child: Align(
           alignment: Alignment.bottomCenter,
-          child: PlayerProgressBar(player: player),
+          child: PlayerProgressBar(engine: engine),
         ),
       ),
       surfaceSize: const Size(412, 60),

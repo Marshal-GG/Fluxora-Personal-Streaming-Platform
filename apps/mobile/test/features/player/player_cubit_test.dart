@@ -1,9 +1,10 @@
+import 'dart:async';
+
 import 'package:bloc_test/bloc_test.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
-import 'package:fluxora_core/network/api_exception.dart';
-import 'package:fluxora_core/storage/secure_storage.dart';
+import 'package:fluxora_core/fluxora_core.dart';
 import 'package:fluxora_mobile/features/player/domain/entities/stream_start_response.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
@@ -12,6 +13,122 @@ import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.d
 class MockPlayerRepository extends Mock implements PlayerRepository {}
 
 class MockSecureStorage extends Mock implements SecureStorage {}
+
+/// In-memory [PlayerEngine] for cubit tests.  Plan 24 M2 carved the
+/// engine interface out of the cubit; the test build now substitutes
+/// this fake via [PlayerCubit.engineBuilder] so the cubit can reach
+/// `PlayerReady` without spinning up a real libmpv.  Mirrors the
+/// `FakePlayerEngine` golden-test helper (kept separate to avoid
+/// cross-importing test/goldens/ from test/features/).
+class _FakePlayerEngine implements PlayerEngine {
+  Duration _position = Duration.zero;
+  final Duration _duration = Duration.zero;
+  bool _isPlaying = false;
+  double _rate = 1.0;
+  double _volume = 100.0;
+
+  final StreamController<Duration> _positionCtl =
+      StreamController<Duration>.broadcast();
+  final StreamController<Duration> _durationCtl =
+      StreamController<Duration>.broadcast();
+  final StreamController<bool> _isPlayingCtl =
+      StreamController<bool>.broadcast();
+  final StreamController<int?> _audioCtl =
+      StreamController<int?>.broadcast();
+  final StreamController<EngineErrorEvent> _errorCtl =
+      StreamController<EngineErrorEvent>.broadcast();
+
+  @override
+  Duration get position => _position;
+
+  @override
+  Duration get duration => _duration;
+
+  @override
+  bool get isPlaying => _isPlaying;
+
+  @override
+  double get rate => _rate;
+
+  @override
+  double get volume => _volume;
+
+  @override
+  int? get selectedAudioTrackIndex => 0;
+
+  @override
+  List<int> get availableAudioTrackIndices => const [];
+
+  @override
+  int? get textureId => null;
+
+  @override
+  Stream<Duration> get positionStream => _positionCtl.stream;
+
+  @override
+  Stream<Duration> get durationStream => _durationCtl.stream;
+
+  @override
+  Stream<bool> get isPlayingStream => _isPlayingCtl.stream;
+
+  @override
+  Stream<int?> get selectedAudioTrackStream => _audioCtl.stream;
+
+  @override
+  Stream<EngineErrorEvent> get errorStream => _errorCtl.stream;
+
+  @override
+  Future<void> open(
+    String url, {
+    Map<String, String>? headers,
+    bool play = true,
+  }) async {
+    _isPlaying = play;
+    _isPlayingCtl.add(_isPlaying);
+  }
+
+  @override
+  Future<void> play() async {
+    _isPlaying = true;
+    _isPlayingCtl.add(true);
+  }
+
+  @override
+  Future<void> pause() async {
+    _isPlaying = false;
+    _isPlayingCtl.add(false);
+  }
+
+  @override
+  Future<void> seek(Duration position) async {
+    _position = position;
+    _positionCtl.add(position);
+  }
+
+  @override
+  Future<void> setAudioTrack(int trackIndex) async {
+    _audioCtl.add(trackIndex);
+  }
+
+  @override
+  Future<void> setRate(double rate) async {
+    _rate = rate;
+  }
+
+  @override
+  Future<void> setVolume(double volume0to100) async {
+    _volume = volume0to100;
+  }
+
+  @override
+  Future<void> dispose() async {
+    await _positionCtl.close();
+    await _durationCtl.close();
+    await _isPlayingCtl.close();
+    await _audioCtl.close();
+    await _errorCtl.close();
+  }
+}
 
 void main() {
   // PlayerCubit registers a WidgetsBindingObserver in its constructor
@@ -42,10 +159,24 @@ void main() {
     repository = MockPlayerRepository();
     secureStorage = MockSecureStorage();
     when(() => secureStorage.getAuthToken()).thenAnswer((_) async => tToken);
+    // Default to no server URL so the WebRTC path is skipped — the
+    // tests don't exercise the signaling pipeline and stubbing this
+    // out keeps `startStream` deterministic.  Pre-plan-24 this was
+    // implicit because libmpv aborted earlier in the flow; with the
+    // FakePlayerEngine substituted by the test the cubit now reaches
+    // this null-check, so we need the explicit stub.
+    when(
+      () => secureStorage.getServerUrl(),
+    ).thenAnswer((_) async => null);
     // Default off so existing startStream tests don't trip the Wi-Fi-only
     // gate (settings remediation §M3 follow-up).
     when(
       () => secureStorage.getWifiOnlyStreaming(),
+    ).thenAnswer((_) async => false);
+    // Default off so the bg-playback prompt code path is skipped in
+    // tests that don't explicitly stub it.
+    when(
+      () => secureStorage.getBackgroundPlaybackEnabled(),
     ).thenAnswer((_) async => false);
     // Default stubs — must never throw during cubit.close()
     when(() => repository.stopStream(any())).thenAnswer((_) async {});
@@ -68,6 +199,11 @@ void main() {
     repository: repository,
     secureStorage: secureStorage,
     connectivityChecker: connectivityChecker,
+    // Plan 24 M2 — inject a fake engine so the cubit can reach
+    // `PlayerReady` without instantiating libmpv (which the headless
+    // test environment can't load).  Each test gets a fresh instance
+    // so a prior test's stream subscriptions don't carry over.
+    engineBuilder: () async => _FakePlayerEngine(),
   );
 
   group('PlayerCubit', () {

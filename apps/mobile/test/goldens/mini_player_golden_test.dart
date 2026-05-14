@@ -9,7 +9,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:golden_toolkit/golden_toolkit.dart';
-import 'package:media_kit_video/media_kit_video.dart' show VideoController;
 import 'package:mocktail/mocktail.dart';
 
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
@@ -23,8 +22,6 @@ import '_player_mocks.dart';
 class _MockPlayerRepo extends Mock implements PlayerRepository {}
 
 class _MockSecureStorage extends Mock implements SecureStorage {}
-
-class _MockVideoController extends Mock implements VideoController {}
 
 /// Stub cubit so the golden is deterministic — emits a single
 /// `PlayerReady` and never touches the network or libmpv.  Subclassing
@@ -72,7 +69,7 @@ void main() {
     when(() => storage.getWifiOnlyStreaming())
         .thenAnswer((_) async => false);
 
-    final player = buildFakePlayer(
+    final engine = buildFakeEngine(
       position: const Duration(minutes: 27),
       duration: const Duration(hours: 1, minutes: 30),
       playing: true,
@@ -80,8 +77,7 @@ void main() {
     final ready = PlayerReady(
       sessionId: 'sess-1',
       fileName: 'Inception',
-      player: player,
-      controller: _MockVideoController(),
+      engine: engine,
     );
 
     cubit = _StubPlayerCubit(

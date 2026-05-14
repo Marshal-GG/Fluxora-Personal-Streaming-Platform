@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
-import 'package:media_kit_video/media_kit_video.dart' show Video, VideoController;
+import 'package:media_kit_video/media_kit_video.dart' show Video;
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:fluxora_core/fluxora_core.dart';
 import 'package:fluxora_mobile/core/router/app_router.dart';
@@ -191,7 +191,7 @@ class _PlayerViewState extends State<_PlayerView>
     if (value && mounted) {
       final cubitState = context.read<PlayerCubit>().state;
       if (cubitState is PlayerReady) {
-        await cubitState.player.play();
+        await cubitState.engine.play();
       }
     }
   }
@@ -243,11 +243,11 @@ class _PlayerViewState extends State<_PlayerView>
             },
             builder: (context, state) => switch (state) {
               PlayerInitial() || PlayerLoading() => const _LoadingView(),
-              PlayerReady(:final controller, :final fileName, :final streamPath) =>
+              PlayerReady(:final engine, :final fileName, :final streamPath) =>
                   Stack(
                     children: [
                       _VideoView(
-                        controller: controller,
+                        engine: engine,
                         fileName: fileName,
                         controlsController: _controlsController,
                         hdrFormat: state.hdrFormat,
@@ -348,7 +348,7 @@ class _LoadingView extends StatelessWidget {
 
 class _VideoView extends StatelessWidget {
   const _VideoView({
-    required this.controller,
+    required this.engine,
     required this.fileName,
     required this.controlsController,
     this.hdrFormat,
@@ -361,7 +361,7 @@ class _VideoView extends StatelessWidget {
     this.playlistOffsetSec = 0.0,
   });
 
-  final VideoController controller;
+  final PlayerEngine engine;
   final String fileName;
   final PlayerControlsController controlsController;
   final String? hdrFormat;
@@ -392,11 +392,15 @@ class _VideoView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Center(
-          child: Video(
-            controller: controller,
+    // Plan 24 M2 — Option A: for the MediaKitEngine path keep using
+    // the `media_kit_video` `Video` widget so we don't lose its
+    // aspect-ratio / fit-mode handling during the spike phase.  The
+    // ExoPlayerEngine path (M3+) will render `Texture(textureId: id)`
+    // directly — a future patch swaps the branch below once that
+    // engine exists.  Technical debt: M4 unifies the rendering path.
+    final videoSurface = engine is MediaKitEngine
+        ? Video(
+            controller: (engine as MediaKitEngine).videoController,
             controls: (state) => const SizedBox.shrink(),
             // Disable media_kit_video's per-play-state wakelock
             // toggling — we hold KEEP_SCREEN_ON for the entire player-
@@ -406,10 +410,13 @@ class _VideoView extends StatelessWidget {
             // down the AudioTrack mid-playback and produced the "audio
             // dies after ~32 ms" pattern.
             wakelock: false,
-          ),
-        ),
+          )
+        : _EngineTextureSurface(engine: engine);
+    return Stack(
+      children: [
+        Center(child: videoSurface),
         FluxPlayerControls(
-          player: controller.player,
+          engine: engine,
           controller: controlsController,
           title: fileName,
           onBack: () => Navigator.of(context).pop(),
@@ -425,6 +432,28 @@ class _VideoView extends StatelessWidget {
         if (isSeeking) const _SeekingOverlay(),
       ],
     );
+  }
+}
+
+/// Raw-texture rendering path for non-MediaKit engines (ExoPlayerEngine,
+/// future engines).  Reads `engine.textureId` on every build — the
+/// engine emits texture id changes through its own state machine, and
+/// this widget is rebuilt by the BlocBuilder above when `PlayerReady`
+/// is re-emitted with a new engine.  Plan 24 M3+ will likely upgrade
+/// this to a stream-based listener for finer-grained texture id
+/// changes, but for M2 the engine never re-issues a texture id.
+class _EngineTextureSurface extends StatelessWidget {
+  const _EngineTextureSurface({required this.engine});
+
+  final PlayerEngine engine;
+
+  @override
+  Widget build(BuildContext context) {
+    final id = engine.textureId;
+    if (id == null) {
+      return const SizedBox.shrink();
+    }
+    return Texture(textureId: id);
   }
 }
 

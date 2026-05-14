@@ -24,7 +24,7 @@ void main() {
 
   testGoldens('FluxPlayerControls — lock-mode overlay at rest',
       (tester) async {
-    final player = buildFakePlayer(
+    final engine = buildFakeEngine(
       position: const Duration(minutes: 27),
       duration: const Duration(hours: 1, minutes: 30),
     );
@@ -39,7 +39,7 @@ void main() {
           // Black backdrop stands in for the video surface.
           const Positioned.fill(child: ColoredBox(color: Colors.black)),
           FluxPlayerControls(
-            player: player,
+            engine: engine,
             controller: controller,
             title: 'Inception',
             onBack: () {},

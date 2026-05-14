@@ -3,29 +3,32 @@
 /// **Audio tab** (plan 22).  Lists the cubit's `availableAudioTracks`
 /// — the server-supplied source-stream metadata captured in
 /// `PlayerReady`.  Tapping a row dispatches
-/// `PlayerCubit.selectAudioTrack(index)` which switches the libmpv
-/// audio track without a server round-trip.  When the cubit list is
-/// empty (pre-plan-22 server or single-track file) we fall back to
-/// reading media_kit's own track table — keeps the picker functional
-/// on stale clients and matches the pre-plan-22 behaviour.
+/// `PlayerCubit.selectAudioTrack(index)` which switches the active
+/// audio track via the server-restart path (plan 23) — no client-side
+/// libmpv-only call.  When the cubit list is empty (pre-plan-22 server
+/// or single-track file) AND we're on the MediaKitEngine path, we fall
+/// back to reading media_kit's own track table — keeps the picker
+/// functional on stale clients and matches the pre-plan-22 behaviour.
 ///
-/// **Subtitles tab** — unchanged from M14; reads `player.state.tracks`
-/// directly.  Subtitles are out of scope for plan 22.
+/// **Subtitles tab** — reads media_kit's track list directly via the
+/// engine's `mediaKitPlayer` escape hatch.  Subtitle plumbing is plan
+/// 24 M9's responsibility; the ExoPlayerEngine path will route through
+/// its own subtitle API at that point.  Until then this tab simply
+/// hides when running on a non-MediaKit engine.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/fluxora_core.dart';
-import 'package:media_kit/media_kit.dart'
-    show AudioTrack, Player, SubtitleTrack;
+import 'package:media_kit/media_kit.dart' show AudioTrack, SubtitleTrack;
 import 'package:fluxora_mobile/features/player/domain/entities/stream_start_response.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.dart';
 
 class AudioSubsSheet extends StatefulWidget {
-  const AudioSubsSheet({required this.player, super.key});
+  const AudioSubsSheet({required this.engine, super.key});
 
-  final Player player;
+  final PlayerEngine engine;
 
   @override
   State<AudioSubsSheet> createState() => _AudioSubsSheetState();
@@ -34,8 +37,18 @@ class AudioSubsSheet extends StatefulWidget {
 class _AudioSubsSheetState extends State<AudioSubsSheet> {
   @override
   Widget build(BuildContext context) {
-    final tracks = widget.player.state.tracks;
-    final selectedSubtitle = widget.player.state.track.subtitle;
+    // libmpv-specific track tables — only readable on the MediaKitEngine
+    // path.  ExoPlayerEngine (M3+) exposes its own track list via M9's
+    // dedicated plumbing.  Falling through with empty lists when the
+    // engine isn't MediaKit means subtitles + the legacy audio
+    // fallback list quietly disappear; the cubit-driven audio path
+    // still works because it reads `availableAudioTracks` from the
+    // server response and doesn't need a live media_kit handle.
+    final mkEngine = widget.engine is MediaKitEngine
+        ? widget.engine as MediaKitEngine
+        : null;
+    final tracks = mkEngine?.mediaKitPlayer.state.tracks;
+    final selectedSubtitle = mkEngine?.mediaKitPlayer.state.track.subtitle;
 
     return DefaultTabController(
       length: 2,
@@ -67,7 +80,8 @@ class _AudioSubsSheetState extends State<AudioSubsSheet> {
                   // Plan 22 — cubit-driven audio picker.  Falls back to
                   // media_kit's own track table when the cubit hasn't
                   // populated `availableAudioTracks` (pre-plan-22
-                  // server response or no active PlayerReady).
+                  // server response or no active PlayerReady) — only
+                  // available on the MediaKitEngine path.
                   BlocBuilder<PlayerCubit, PlayerState>(
                     builder: (context, state) {
                       if (state is PlayerReady &&
@@ -85,30 +99,55 @@ class _AudioSubsSheetState extends State<AudioSubsSheet> {
                       }
                       // Fallback — pre-plan-22 server or no cubit
                       // metadata yet.  Same behaviour as before plan 22:
-                      // read media_kit's own track table.
-                      final selectedAudio = widget.player.state.track.audio;
+                      // read media_kit's own track table.  Hidden when
+                      // the engine isn't MediaKit (the cubit-driven
+                      // picker is the only supported path there).
+                      if (mkEngine == null || tracks == null) {
+                        return Center(
+                          child: Text(
+                            'No tracks available',
+                            style: AppTypography.captionV2.copyWith(
+                              color: AppColors.textDim,
+                            ),
+                          ),
+                        );
+                      }
+                      final selectedAudio =
+                          mkEngine.mediaKitPlayer.state.track.audio;
                       return _TrackList<AudioTrack>(
                         tracks: tracks.audio,
                         selected: selectedAudio,
                         labelOf: (t, i) =>
                             t.title ?? t.language ?? 'Track ${i + 1}',
                         onTap: (t) {
-                          widget.player.setAudioTrack(t);
+                          mkEngine.mediaKitPlayer.setAudioTrack(t);
                           Navigator.of(context).pop();
                         },
                       );
                     },
                   ),
-                  _TrackList<SubtitleTrack>(
-                    tracks: tracks.subtitle,
-                    selected: selectedSubtitle,
-                    labelOf: (t, i) =>
-                        t.title ?? t.language ?? 'Subtitle ${i + 1}',
-                    onTap: (t) {
-                      widget.player.setSubtitleTrack(t);
-                      Navigator.of(context).pop();
-                    },
-                  ),
+                  if (mkEngine != null &&
+                      tracks != null &&
+                      selectedSubtitle != null)
+                    _TrackList<SubtitleTrack>(
+                      tracks: tracks.subtitle,
+                      selected: selectedSubtitle,
+                      labelOf: (t, i) =>
+                          t.title ?? t.language ?? 'Subtitle ${i + 1}',
+                      onTap: (t) {
+                        mkEngine.mediaKitPlayer.setSubtitleTrack(t);
+                        Navigator.of(context).pop();
+                      },
+                    )
+                  else
+                    Center(
+                      child: Text(
+                        'Subtitles unavailable',
+                        style: AppTypography.captionV2.copyWith(
+                          color: AppColors.textDim,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),

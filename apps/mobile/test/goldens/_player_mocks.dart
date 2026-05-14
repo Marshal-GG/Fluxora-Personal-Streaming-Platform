@@ -1,55 +1,117 @@
 /// Shared mocks for the mobile player golden tests.
 ///
-/// `media_kit`'s `Player` cannot be instantiated headlessly — the
-/// constructor reaches into the native libmpv bindings on first call.
-/// For golden capture we don't need real playback; we only need the
-/// widget to read deterministic values out of `player.state` /
-/// `player.stream`.  Mocktail covers both the synchronous getters and
-/// the per-channel `Stream<T>` exposed by `PlayerStream`.
+/// Plan 24 M2 — switched from mocking `media_kit.Player` to a small
+/// `FakePlayerEngine` that satisfies the [PlayerEngine] interface with
+/// deterministic position / duration values.  No native libmpv libs
+/// required — the engine never opens a real stream, just answers the
+/// getters and streams that the chrome widgets read.
 ///
-/// Each golden test file constructs a `FakePlayer` with the position
-/// and duration that matches its capture spec (see the table in
-/// `test/goldens/_README.md`).
+/// Each golden test file constructs a `FakePlayerEngine` with the
+/// position and duration that matches its capture spec (see the table
+/// in `test/goldens/_README.md`).
 library;
 
-import 'package:media_kit/media_kit.dart';
-import 'package:mocktail/mocktail.dart';
+import 'dart:async';
 
-class MockPlayer extends Mock implements Player {}
+import 'package:fluxora_core/fluxora_core.dart';
 
-class MockPlayerStream extends Mock implements PlayerStream {}
+/// In-memory [PlayerEngine] for headless golden capture.  Only the
+/// fields the player chrome reads are populated; everything else
+/// either returns a sensible default (zero duration, no audio tracks)
+/// or never gets touched by the widget under test.
+class FakePlayerEngine implements PlayerEngine {
+  FakePlayerEngine({
+    required this.position,
+    required this.duration,
+    this.isPlaying = false,
+    this.volume = 100.0,
+    this.rate = 1.0,
+  });
 
-/// Build a `MockPlayer` whose `state` reports `position` / `duration`
-/// and whose `stream.position` / `stream.duration` immediately emit
-/// the same values.  Other state fields fall back to `PlayerState`'s
-/// const defaults — fine for chrome-only captures where the test
-/// doesn't touch volume / audio params / tracks.
-MockPlayer buildFakePlayer({
+  @override
+  Duration position;
+
+  @override
+  Duration duration;
+
+  @override
+  bool isPlaying;
+
+  @override
+  double volume;
+
+  @override
+  double rate;
+
+  @override
+  int? get selectedAudioTrackIndex => 0;
+
+  @override
+  List<int> get availableAudioTrackIndices => const [];
+
+  @override
+  int? get textureId => null;
+
+  // Streams: emit the seeded values once, then close.  Mirrors the
+  // pre-plan-24 behaviour where MockPlayer used `Stream.value(...)`
+  // so a `StreamBuilder.initialData -> first-event` transition lands
+  // inside one `pumpAndSettle`.
+  @override
+  Stream<Duration> get positionStream => Stream.value(position);
+
+  @override
+  Stream<Duration> get durationStream => Stream.value(duration);
+
+  @override
+  Stream<bool> get isPlayingStream => Stream.value(isPlaying);
+
+  @override
+  Stream<int?> get selectedAudioTrackStream => Stream.value(0);
+
+  @override
+  Stream<EngineErrorEvent> get errorStream =>
+      const Stream<EngineErrorEvent>.empty();
+
+  // Commands — golden tests never exercise these, but the interface
+  // requires bodies.
+  @override
+  Future<void> open(
+    String url, {
+    Map<String, String>? headers,
+    bool play = true,
+  }) async {}
+
+  @override
+  Future<void> play() async {}
+
+  @override
+  Future<void> pause() async {}
+
+  @override
+  Future<void> seek(Duration position) async {}
+
+  @override
+  Future<void> setAudioTrack(int trackIndex) async {}
+
+  @override
+  Future<void> setRate(double rate) async {}
+
+  @override
+  Future<void> setVolume(double volume0to100) async {}
+
+  @override
+  Future<void> dispose() async {}
+}
+
+/// Convenience constructor mirroring the pre-plan-24 `buildFakePlayer`.
+FakePlayerEngine buildFakeEngine({
   required Duration position,
   required Duration duration,
   bool playing = false,
   double volume = 100.0,
-}) {
-  final player = MockPlayer();
-  final stream = MockPlayerStream();
-
-  final state = PlayerState(
-    position: position,
-    duration: duration,
-    playing: playing,
-    volume: volume,
-  );
-
-  when(() => player.state).thenReturn(state);
-  when(() => player.stream).thenReturn(stream);
-
-  // Streams: a single-shot emit followed by no further events covers
-  // the StreamBuilder's `initialData` -> first-event transition in
-  // one `pumpAndSettle`.  We use Stream.value so the builder gets the
-  // deterministic post-listen frame before the golden is captured.
-  when(() => stream.position).thenAnswer((_) => Stream.value(position));
-  when(() => stream.duration).thenAnswer((_) => Stream.value(duration));
-  when(() => stream.playing).thenAnswer((_) => Stream.value(playing));
-
-  return player;
-}
+}) => FakePlayerEngine(
+  position: position,
+  duration: duration,
+  isPlaying: playing,
+  volume: volume,
+);
