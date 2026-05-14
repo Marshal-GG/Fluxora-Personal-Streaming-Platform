@@ -55,6 +55,7 @@
 | Zeroconf/mDNS | LAN device discovery and auto-pairing | Zeroconf (Python) |
 | WebRTC Module | NAT traversal, P2P internet streaming | WebRTC + STUN/TURN |
 | Flutter Client | Cross-platform UI (mobile + desktop) | Flutter/Dart |
+| Mobile playback engine | **Per-platform `PlayerEngine` abstraction in `packages/fluxora_core/lib/player/` (plan 24, 2026-05-15).** `PlayerEngineFactory.create()` returns `ExoPlayerEngine` (Media3 1.10.1 via hand-rolled Kotlin platform channel under `apps/mobile/android/.../exo/`) on Android default, `MediaKitEngine` (libmpv via `media_kit`) on desktop + iOS + Android-rollback path. Cubit + UI depend on the interface only. Operator escape hatch via `_kForceMediaKitOnAndroid` in the factory. | Media3 ExoPlayer (Android) · `media_kit` + libmpv (Desktop + iOS) |
 | PC Control Panel | Desktop server management UI | Flutter Desktop |
 | TMDB Integration | Metadata fetching for media libraries | TMDB REST API |
 | Polar Webhook | Paid-order license key issuance | Standard Webhooks + HMAC-SHA256 |

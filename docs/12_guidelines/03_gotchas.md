@@ -1106,6 +1106,28 @@ static const _undefinedLanguageTags = {'und', 'unk', 'mis', 'zxx', ''};
 **iOS still on media_kit:** plan 24 explicitly defers iOS. If iOS bugs surface, plan 26 (after plan 25's multi-rendition HLS) can either reuse media_kit_video or add an AVPlayer platform channel. Don't speculate ahead of real iOS bug reports.
 
 
+## Plan 24 — `flutter analyze` does NOT catch Kotlin compile errors
+
+**Symptom:** plan 24 M4's Kotlin module passed every check the agent ran (`flutter analyze` clean, Dart tests green) but `flutter build apk --debug` failed at `:app:compileDebugKotlin` with `Unresolved reference 'ERROR_CODE_IO_DNS_FAILED'`. The constant doesn't exist on `PlaybackException` at Media3 1.10.1 (added in a later release); the M4 agent hand-verified API surface against the Media3 docs page that documented a newer version, missed the version mismatch.
+
+**Rule going forward:** any agent prompt that touches `apps/mobile/android/**` must require `flutter build apk --debug --no-pub` as a mandatory verification step — `flutter analyze` is a Dart-only check and silently passes Kotlin code that doesn't compile. The CI workflow already runs the build; agent prompts must too. If the sandbox blocks the build command, the agent must surface that explicitly so the parent agent can run it before merging the work back.
+
+**Where it bit us:** `f:\AI Models\Projects\Fluxora\apps\mobile\android\app\src\main\kotlin\dev\marshalx\fluxora_mobile\exo\FluxoraExoPlayer.kt:541` — the parent agent caught it during integration verification and removed the stale enum entry. DNS failures map to `ERROR_CODE_IO_NETWORK_CONNECTION_FAILED` on Media3 1.10.1 so the `network_error` route still works.
+
+
+## Plan 24 — Media3 `PlaybackException` error codes are version-dependent — pin the version and check on every bump
+
+**Context:** Media3 expands its `ERROR_CODE_*` enum as it grows. Code that maps `PlaybackException.errorCode` to our `EngineError` enum (in `apps/mobile/android/.../exo/FluxoraExoPlayer.kt::mapPlayerErrorCode`) referenced one constant (`ERROR_CODE_IO_DNS_FAILED`) that doesn't exist on the pinned 1.10.1 release.
+
+**Rule going forward:**
+1. The Media3 version is pinned in `apps/mobile/android/app/build.gradle.kts` — never change it without re-checking the error-code map.
+2. When bumping Media3:
+   - Open the [PlaybackException.java](https://github.com/androidx/media/blob/main/libraries/common/src/main/java/androidx/media3/common/PlaybackException.java) at the target version's tag.
+   - Diff its `ERROR_CODE_*` constants against the map in `mapPlayerErrorCode`.
+   - Add new codes to the right `EngineError` bucket; remove constants that have been deleted.
+3. Don't try to compute the integer literal for a missing constant — that breaks the moment ExoPlayer renumbers (which they have done at minor versions in the past). If a code legitimately needs to be handled and is missing at the pinned version, fall it through to the catch-all `else -> "unknown"` and document the version requirement in a comment.
+
+
 ## Desktop has no player feature — "mirror player to desktop" is net-new architecture
 
 **Context:** The desktop app (`apps/desktop/`) is a pure server control panel — it has no `lib/features/player/` directory and no media playback infrastructure whatsoever. Plans 20 and 21 both originally included "mirror mobile player cubit change to desktop" as a milestone item. Both times the subagent confirmed that `apps/desktop/lib/features/player/` does not exist.

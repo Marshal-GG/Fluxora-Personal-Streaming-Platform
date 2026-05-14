@@ -74,6 +74,7 @@ apps/server/tmp/
 apps/server/init.mp4
 
 # Flutter golden-test diff artifacts (transient, regenerated on every
-# failing run; the canonical goldens live in apps/desktop/test/goldens/
+# failing run; the canonical goldens live in apps/*/test/goldens/
 # itself, not under failures/).
 apps/desktop/test/goldens/failures/
+apps/mobile/test/goldens/failures/

@@ -180,9 +180,13 @@ Inherits `fluxora_core`. Adds:
 | `multicast_dns` | ^0.3.2 | mDNS discovery — PTR→SRV→A resolution chain |
 | `flutter_secure_storage` | ^9.0.0 | Token + URL storage. As of 2026-05-08 also persists 6 player prefs (`bg_playback_enabled`, `bg_playback_prompt_shown`, `wifi_only_streaming`, `max_streaming_quality`, `autoplay_next`, `subtitles_default_on`). |
 | `logger` | ^2.7.0 | Logging |
-| `media_kit` | ^1.2.6 | HLS video playback (replaces `better_player` — incompatible with AGP 8+) |
-| `media_kit_video` | ^2.0.1 | Video widget integration |
+| `media_kit` | ^1.2.6 | HLS video playback on **desktop + iOS + Android-rollback path** (wrapped behind `MediaKitEngine` since plan 24 M2, 2026-05-15). On Android, `_kForceMediaKitOnAndroid = true` (operator escape hatch) keeps libmpv as the engine. |
+| `media_kit_video` | ^2.0.1 | Video widget integration (used by `MediaKitEngine` only) |
 | `media_kit_libs_video` | ^1.0.7 | Bundled libmpv for HLS |
+| `androidx.media3:media3-exoplayer-hls` (Android native) | 1.10.1 | HLS video playback on **Android default path** (plan 24 M3 + M4, 2026-05-15). Talks to Dart via `MethodChannel('dev.marshalx.fluxora/exo_player')` + `EventChannel('dev.marshalx.fluxora/exo_player_events')`. Pinned Gradle dep in `apps/mobile/android/app/build.gradle.kts`; verified latest stable on developer.android.com 2026-05-12 (Hard Prohibition #12). |
+| `androidx.media3:media3-exoplayer` (Android native) | 1.10.1 | Core ExoPlayer; required by `media3-exoplayer-hls`. |
+| `androidx.media3:media3-ui` (Android native) | 1.10.1 | `SubtitleView` for plan 24 M9's subtitle rendering path. |
+| `junit:junit` (Android native, test) | 4.13.2 | JUnit suite for the Kotlin pure-function helpers (`buildAudioTrackMapping`, `parseSourceIndex`, `mapPlayerErrorCode`) in `apps/mobile/android/app/src/test/`. |
 | `cached_network_image` | ^3.4.1 | TMDB poster caching (bumped from ^3.3.1 at M0 of mobile redesign) |
 | `flutter_webrtc` | ^1.4.1 | WebRTC peer for internet streaming |
 | `google_fonts` | ^8.1.0 | Inter (5 weights) at runtime — mobile redesign M0 (2026-05-03). Smaller than bundling Inter as an asset; cached after first download. |

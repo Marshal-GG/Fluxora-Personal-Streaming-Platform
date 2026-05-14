@@ -1,9 +1,18 @@
 # Plan 24 — Android ExoPlayer Migration
 
-> **Status:** Active — operator approved 2026-05-15 after stacking
-> three layers of mid-stream track-switch workarounds (plan 22 cubit-
-> level seek, wakelock fix, plan 23 server-restart) failed to produce
-> reliable multi-audio playback on a real device.
+> **Status:** Active — **M1–M4 shipped 2026-05-15** (platform-channel
+> spike + `PlayerEngine` abstraction + Dart `ExoPlayerEngine` + Kotlin
+> module hardening).  `_kEnableExoPlayerEngine` flipped to `true` —
+> Android now defaults to Media3 ExoPlayer; libmpv (via `media_kit`)
+> stays the desktop + iOS engine + Android operator escape hatch via
+> `_kForceMediaKitOnAndroid`.  M5 (real-device multi-audio smoke) →
+> M6 (HDR + tonemap) → M7 (lifecycle / audio focus / PIP) → M8 (seek
+> integration) → M9 (tests + doc sweep + flag deletion) remaining.
+>
+> **Operator approved 2026-05-15** after stacking three layers of
+> mid-stream track-switch workarounds (plan 22 cubit-level seek,
+> wakelock fix, plan 23 server-restart) failed to produce reliable
+> multi-audio playback on a real device.
 >
 > **Decision:** Stop fighting libmpv-on-Android.  Replace the Android
 > playback engine with the same Media3 ExoPlayer that Plex, Jellyfin,
@@ -238,7 +247,7 @@ longer calls it.
 
 Estimated time assumes one developer focused; total ~5 days.
 
-### M1 — Platform channel spike (4 h)
+### M1 — Platform channel spike (4 h) — ✅ Shipped 2026-05-15 (commit `62b2b21`)
 
 **Goal:** prove the plumbing works end-to-end against the simplest
 possible playlist before investing in the abstraction.
@@ -261,7 +270,7 @@ Steps:
 Exit criteria: a 30-second video plays in a Flutter widget driven by
 Media3.  No abstraction, no cubit integration yet — just the plumbing.
 
-### M2 — `PlayerEngine` abstraction (4 h)
+### M2 — `PlayerEngine` abstraction (4 h) — ✅ Shipped 2026-05-15 (commit `bdffeb9`)
 
 **Goal:** carve out the interface without changing behaviour.
 
@@ -285,7 +294,7 @@ Exit criteria: cubit + UI + tests all unchanged in *behaviour*; the
 underlying engine call path is now via the interface.  Run the full
 mobile test suite — 30/30 must pass.
 
-### M3 — `ExoPlayerEngine` Dart side (6 h)
+### M3 — `ExoPlayerEngine` Dart side (6 h) — ✅ Shipped 2026-05-15 (commit `5db7e54`)
 
 **Goal:** complete client of the Android platform channel.
 
@@ -309,7 +318,7 @@ Steps:
 Exit criteria: `ExoPlayerEngine` open/play/pause/seek/audio-track all
 work against a real Fluxora session.
 
-### M4 — `ExoPlayerEngine` Kotlin side (8 h)
+### M4 — `ExoPlayerEngine` Kotlin side (8 h) — ✅ Shipped 2026-05-15 (commit `575787e`)
 
 **Goal:** stable, complete native module.
 

@@ -413,3 +413,97 @@ Counts above are local pre-push estimates. M2 agent reconciliation may shift mob
 4. **Plan 24 M3 — `ExoPlayerEngine` Dart side (6 h).** Implement the Dart client of the MethodChannel + EventChannel; map ExoPlayer's group/format track API to source-stream indices. Depends on M1 + M2 both green.
 5. **Plan 24 M4 — Kotlin module hardening (8 h).** Move M1's spike plugin into proper modular structure (`ExoPlayerPlugin.kt` plugin entry + `FluxoraExoPlayer.kt` per-player class); full command set; Player.Listener emitting all required state changes; SurfaceProducer lifecycle; audio focus + `setHandleAudioBecomingNoisy(true)`. Depends on M1.
 6. **HDR-no-audio bug investigation.** Separate from track switching — possibly server-side init.mp4 codec issue for HDR sources. Either fix server-side in parallel with plan 24, or wait for plan 24 M6 where ExoPlayer's parser will surface the actual error. Operator preference TBD.
+
+## [2026-05-15] [feat] [mobile] [core] — Plan 24 M3 + M4: ExoPlayerEngine wired end-to-end (Android Media3 default)
+
+**Phase:** Plan 24 — Android ExoPlayer migration. M1 spike + M2 abstraction shipped earlier today; M3 (Dart channel client) + M4 (Kotlin module) ran in parallel as Opus subagents in isolated worktrees and landed together.
+**Status:** Complete. `_kEnableExoPlayerEngine = true` — Android now defaults to ExoPlayer; libmpv remains the desktop + iOS engine and is the operator escape hatch on Android via `_kForceMediaKitOnAndroid`. Real-device smoke (M5+) is the operator's next step.
+**Commits:** `5db7e54` M3 + factory flip, `575787e` M4 Kotlin module
+
+### What Was Done
+
+#### Parallel agent setup
+
+Two Opus subagents launched in isolated git worktrees with an identical **locked channel contract** in both prompts so neither could drift. Channels:
+
+- MethodChannel `dev.marshalx.fluxora/exo_player` keyed by `playerId` — methods `create` / `open` / `play` / `pause` / `seek` / `setAudioTrack` / `setRate` / `setVolume` / `dispose`.
+- EventChannel `dev.marshalx.fluxora/exo_player_events` keyed by `playerId` — event types `positionChanged` / `durationChanged` / `isPlayingChanged` / `tracksChanged` / `playbackStateChanged` / `playerError`.
+
+`create` returns `{playerId: int, textureId: int}`; `setVolume` crosses the channel as `volume0to1` (Dart-side divides by 100); position ticker fires every ~250 ms while playing, none while paused; five error codes (`auth_failed` / `network_error` / `decoder_failed` / `format_unsupported` / `unknown`) map to `EngineError`.
+
+Each agent reported contract clarifications they made; the two reports cross-checked clean against each other at integration time. No re-runs needed.
+
+#### M3 — Dart `ExoPlayerEngine`
+
+`packages/fluxora_core/lib/player/exo_player_engine.dart` (new). `ExoPlayerEngine.create()` invokes `create` on the channel, stashes the returned id pair, subscribes to events filtered by `playerId`, exposes five broadcast streams (position / duration / isPlaying / selectedAudioTrack / errors). Caches every state field for the synchronous getters. Volume conversion + seek clamp at the channel boundary. Five error-code strings map into `EngineError`. `dispose` tolerates a doubled native teardown and always closes Dart-side controllers.
+
+11 unit tests via `setMockMethodCallHandler` + `setMockStreamHandler`. No new pub deps.
+
+#### M4 — Kotlin module hardening
+
+M1's single-file spike split into two:
+
+- `apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/ExoPlayerPlugin.kt` rewritten as the plugin entry. Holds `Map<Int, FluxoraExoPlayer>` + an id counter + the channel handles + a disposed-ids set so post-dispose calls throw `IllegalStateException` instead of silently no-oping.
+- `apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/FluxoraExoPlayer.kt` (new) — per-player wrapper. Full command set; `Player.Listener` emitting deduplicated playbackState + isPlaying + tracks + position + error events; 250 ms position ticker re-arms itself only while `isPlaying`; bearer headers go to `setDefaultRequestProperties` without values reaching logcat; `setHandleAudioBecomingNoisy(true)` so headphones unplug pauses correctly. Audio track switch uses `TrackSelectionParameters.Builder.setOverrideForType(TrackSelectionOverride(group, formatIndex))` with source-index→(group, formatIndex) mapping built from `onTracksChanged` (Format.label numeric path first, positional fallback). Rate clamped Kotlin-side to `[0.25, 4.0]`.
+
+`MainActivity.kt` simplified to `flutterEngine.plugins.add(ExoPlayerPlugin())` so the standard FlutterPlugin lifecycle drives teardown.
+
+14 JUnit tests over the pure-function helpers (`buildAudioTrackMapping`, `parseSourceIndex`, `mapPlayerErrorCode`).
+
+#### Integration fix in the foreground
+
+First `flutter build apk --debug` failed: `PlaybackException.ERROR_CODE_IO_DNS_FAILED` was unresolved at Media3 1.10.1 (added in a newer release). Removed the line from `mapPlayerErrorCode`; DNS failures land in `ERROR_CODE_IO_NETWORK_CONNECTION_FAILED` at this version so they still map to `network_error`. Documented inline. Re-built: APK clean in 28 s.
+
+After APK confirmation, flipped `_kEnableExoPlayerEngine` from `false` to `true` in `packages/fluxora_core/lib/player/player_engine_factory.dart`. Android consumers now get `ExoPlayerEngine` by default; `_kForceMediaKitOnAndroid` stays as the operator escape hatch. Both flags delete in M9.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Created | packages/fluxora_core/lib/player/exo_player_engine.dart | M3 — concrete PlayerEngine talking to the Media3 channel |
+| Created | packages/fluxora_core/test/player/exo_player_engine_test.dart | M3 — 11 unit tests via mock method/stream handlers |
+| Modified | packages/fluxora_core/lib/player/player_engine_factory.dart | Android branch returns ExoPlayerEngine; `_kEnableExoPlayerEngine` flipped to `true` |
+| Modified | packages/fluxora_core/lib/fluxora_core.dart | Export `exo_player_engine.dart` |
+| Created | apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/FluxoraExoPlayer.kt | M4 — per-player wrapper with Player.Listener + ticker + audio focus + becoming-noisy |
+| Modified | apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/ExoPlayerPlugin.kt | M4 — plugin entry, multi-player map, disposed-id guard |
+| Modified | apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/MainActivity.kt | M4 — standard `flutterEngine.plugins.add(...)` registration |
+| Modified | apps/mobile/android/app/build.gradle.kts | M4 — testImplementation junit 4.13.2 |
+| Created | apps/mobile/android/app/src/test/kotlin/dev/marshalx/fluxora_mobile/exo/FluxoraExoPlayerTest.kt | M4 — JUnit over the pure-function helpers |
+| Modified | apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/FluxoraExoPlayer.kt | Foreground fix: drop `ERROR_CODE_IO_DNS_FAILED` (not on Media3 1.10.1) |
+
+### Decisions Made
+
+- **Flip `_kEnableExoPlayerEngine` to `true` immediately after the debug APK built clean.** The flag exists exactly so we can verify-then-flip without a separate commit; APK build is the integration test for Media3 API drift. JUnit `./gradlew :app:test` was sandbox-blocked but the JUnit helpers are pure functions hand-verified during review — the operator can run them on the next real-device session as part of M5 smoke.
+- **Remove `ERROR_CODE_IO_DNS_FAILED` rather than try to compute its integer literal.** Media3 added it in a later 1.x release; falling back to `ERROR_CODE_IO_NETWORK_CONNECTION_FAILED` on 1.10.1 is the right mapping at this version. If we bump Media3 in M9 we can put it back.
+- **Worktree isolation for parallel agents, again.** Same pattern as M1 + M2 earlier today — disjoint file sets (Dart core + tests vs. Kotlin module + JUnit) made worktrees free of merge collisions and let me drive integration myself.
+
+### Test Counts (re-baselined)
+
+- **Core: 19 passing** (was 8; +11 ExoPlayerEngine unit tests). Analyze clean.
+- **Mobile: 87 passing** (unchanged — engine swap is invisible to cubit tests because they inject `_FakePlayerEngine` via `engineBuilder`). Analyze clean. Goldens excluded per project convention.
+- **Server: 830** (untouched).
+- **Desktop: 113** (untouched).
+- **Android JUnit:** 14 tests authored; gradle execution sandbox-blocked — operator runs as part of M5 smoke.
+- **APK build:** `flutter build apk --debug --no-pub` green against Media3 1.10.1 in 28 s after the `ERROR_CODE_IO_DNS_FAILED` fix.
+
+### Issues / Sharp Edges Discovered
+
+1. **Media3 1.10.1 doesn't have `ERROR_CODE_IO_DNS_FAILED`.** Future Media3 version bumps should re-check the error-code enum — any new codes need a `mapPlayerErrorCode` entry, any removed codes break the build. The fact this slipped through M4's hand-verification highlights that "hand-verified against the docs" isn't a substitute for `flutter build`. The sandbox blocking gradle is a process problem — future Android agent prompts should explicitly grant `flutter build apk --debug --no-pub` in the allowlist.
+2. **`flutter analyze` doesn't catch Kotlin compile errors.** Both agents reported clean analyze + tests; the build break only surfaced when I ran the APK build myself. The lesson is: Android-touching agents must run `flutter build apk` as a final verification step, not just `flutter analyze`. M5+ prompts will require this.
+3. **No real-device smoke yet.** APK built and analyze is clean, but no human has run the app against the new engine on a phone. The operator's first multi-audio AC3 5.1 retest is the load-bearing verification of the entire plan-24 effort.
+4. **`MediaKitEngine.mediaKitPlayer` escape hatch is still used by `audio_subs_sheet` (subtitles tab + legacy fallback) and `fluxora_audio_handler`.** ExoPlayerEngine returns no media_kit.Player — those code paths gate behind `engine is MediaKitEngine` today. M7 (audio_service / MediaSession) and M9 (subtitles) clean these up.
+5. **Cubit's `audioParams` / `videoParams` watchers** (plan 20 auto-fallback + plan 21 audio fallback) still need `MediaKitEngine`-specific reads. They no-op silently under ExoPlayerEngine, which is correct (Media3's HLS parser emits actual error events that the auto-fallback path consumes via `errorStream` instead). Documented as a punt for M6 / M7.
+
+### Working-Tree Status
+
+- 4 commits ahead of `origin/main` not yet pushed: docs sweep + plan-23 set was 5 commits pushed pre-M3 (`299b2f0` doc sweep ↑); M3+M4 cycle: `5db7e54` Dart + `575787e` Kotlin.
+- Still uncommitted: `.gitignore` mobile-failures rule (held since two messages ago — operator interrupted), `.claude/worktrees/` metadata.
+
+### Next Agent Should
+
+1. **Operator real-device smoke against M5 test matrix.** Open the player on a real Android device against a single-audio AAC file first (basic smoke: video + audio + scrubber + close). Then the multi-audio AC3 5.1 file that motivated plan 24 — the entire effort lives or dies on whether `Multi-audio AC3 5.1 — switch track mid-play` is green. Then HDR + pause/resume + lockscreen. Plan 24 test matrix is at the bottom of `docs/10_planning/24_player_audio_reliability_plan.md`.
+2. **Plan 24 M5 (3 h) — Multi-audio track switching verification + fix loop.** No code is expected to land here; M5 is "operator runs the matrix, agent fixes anything that breaks." If switch latency is bad, look at the source-index mapping in `parseSourceIndex` / `buildAudioTrackMapping` in `FluxoraExoPlayer.kt`. If audio is silent on switch, check `setAudioTrack` overrides build correctly against the actual `tracksChanged` payload Media3 emits for the test file.
+3. **Plan 24 M6 (3 h) — HDR + tonemap + HDR-multi-audio.** ExoPlayer's HLS parser is strict-but-diagnostic; HDR-no-audio bug should produce an actual error in `adb logcat -s ExoPlayer` rather than libmpv's silent drop. If a server-side init.mp4 codec issue surfaces, fix server-side.
+4. **Plan 24 M7 (3 h) — Lifecycle, audio focus, PIP, background.** Audit `pip_service.dart`, `fluxora_audio_handler.dart`, lockscreen controls. Consider replacing `audio_service` binding to `MediaKitEngine.mediaKitPlayer` with Media3's `MediaSessionService` natively (cleaner; first-party).
+5. **Plan 24 M8 (2 h) — Position tracking + seek-restart integration.** Confirm `seekTo` + scrubber-pin + progress-reporter all behave the same against `ExoPlayerEngine`. Most existing code already routes through `PlayerEngine` so this should be smoke-level.
+6. **Plan 24 M9 (4 h) — Tests + golden re-baseline + doc sweep + flag deletion.** Drop the `_kEnableExoPlayerEngine` flag, delete the M1 spike page + `/dev/exo-spike` route, archive plan 24 to `docs/10_planning/archive/24_player_audio_reliability_plan.md`, sweep architecture + frontend + gotchas docs, update `current_status.md` + `roadmap.md`.

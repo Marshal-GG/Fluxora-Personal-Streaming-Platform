@@ -13,9 +13,11 @@
 | Architecture | Clean Architecture (Domain / Data / Presentation) |
 | State Management | BLoC (`flutter_bloc`) — Cubit for simple state, Bloc for event-driven |
 | HTTP Client | `ApiClient` (Dio) from `fluxora_core` |
-| Video Playback | `media_kit ^1.2.6` + `media_kit_video ^2.0.1` + `media_kit_libs_video ^1.0.7` — full M5–M7 fullscreen player with controls + sheets + mini-player handoff |
+| Video Playback (abstraction) | `PlayerEngine` interface in `packages/fluxora_core/lib/player/` — cubit + widgets depend on this, never on a concrete backend. `PlayerEngineFactory.create()` picks the right impl per platform. Plan 24 M2 (commit `bdffeb9`). |
+| Video Playback (Android) | **Media3 ExoPlayer 1.10.1** via `androidx.media3:media3-exoplayer-hls` + `media3-exoplayer` + `media3-ui` and a hand-rolled Kotlin platform channel under `apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/` — `ExoPlayerPlugin.kt` plugin entry + `FluxoraExoPlayer.kt` per-player wrapper rendering into a `SurfaceProducer.getSurface()`. Plan 24 M3 + M4 (commits `5db7e54` Dart + `575787e` Kotlin). Default on Android as of `_kEnableExoPlayerEngine = true`. |
+| Video Playback (Desktop + iOS) | `media_kit ^1.2.6` + `media_kit_video ^2.0.1` + `media_kit_libs_video ^1.0.7` wrapped behind `MediaKitEngine`. Same engine on Android too when `_kForceMediaKitOnAndroid = true` (operator escape hatch). |
 | Audio Playback (M11 viewers) | `just_audio ^0.10.5` — drives `MusicPlayerCubit` for the full-screen `/music-player` route |
-| Audio Service / Lockscreen | `audio_service ^0.18.18` — `FluxoraAudioHandler` sidecar bridges `media_kit.Player` to the OS MediaSession (lockscreen / notification card / Bluetooth-headset transport) |
+| Audio Service / Lockscreen | `audio_service ^0.18.18` — `FluxoraAudioHandler` sidecar bridges `media_kit.Player` (via the `MediaKitEngine.mediaKitPlayer` escape hatch) to the OS MediaSession (lockscreen / notification card / Bluetooth-headset transport). **Plan 24 M7 will rewrite this to use Media3's `MediaSessionService` natively** so the Dart-side plumbing disappears for Android sessions. |
 | PDF Viewer (M11) | `pdfx ^2.9.2` — `/doc-viewer` |
 | Photo Viewer (M11) | `photo_view ^0.15.0` — pinch-zoom + pan on `/photo-viewer` |
 | QR Pairing Scanner (mobile) | `mobile_scanner ^7.1.2` — `/scan-qr` reads the canonical `fluxora://pair` payload |
@@ -283,7 +285,7 @@ apps/mobile/lib/
         ├── data/services/
         │   ├── webrtc_signaling_service.dart
         │   ├── pip_service.dart                          # Player polish — Android PIP method-channel wrapper (isSupported / enter)
-        │   └── fluxora_audio_handler.dart                # Player polish — BaseAudioHandler sidecar; bind/detach on a media_kit.Player
+        │   └── fluxora_audio_handler.dart                # Player polish — BaseAudioHandler sidecar; bind/detach on `MediaKitEngine.mediaKitPlayer` (escape hatch). Plan 24 M7 will rewrite to Media3 `MediaSessionService` natively for ExoPlayerEngine sessions.
         └── presentation/
             ├── controllers/player_controls_controller.dart     # M5 ChangeNotifier — visibility / lockMode / fitCover / 3 s auto-hide / drag-HUD scratchpad
             ├── cubit/{player_cubit.dart,player_state.dart}     # M7 singleton + restart-safe startStream + _disposeCurrentSession + dismiss(); Player polish: optional FluxoraAudioHandler param + WidgetsBindingObserver auto-pause on background when bg_playback_enabled=false; Phase 6: setTonemap(bool) restarts stream with tonemap flag while preserving position; _lastFileId/_lastFileName/_lastPosterUrl cached; PlayerReady gains hdrFormat/tonemapped/isHdrSource + isSeeking + playlistOffsetSec; 2026-05-09 (commit `f609287`): backward `seekTo` targets that fall below the current playlist start now route through a server restart instead of an unbounded local seek that media_kit would silently floor to 0 — cubit emits `isSeeking: true` immediately so the scrubber pin stays stable across the debounce; **plan 20 (2026-05-12):** `_scheduleAutoFallbackWatcher` — arms a 6 s video-error watcher only when `response.streamingMode == 'auto'`; on any player error within 6 s calls `reportFallbackTranscode`, reloads playlist, cancels watcher; strict modes let errors bubble unchanged; **plan 21 (2026-05-12):** `_scheduleAutoAudioFallbackWatcher` — independently arms a 6 s audio-error watcher only when `response.streamingMode == 'auto'` AND `response.audioStreamingMode == 'stream-copy'`; detection heuristic: `player.stream.error` payload mentions audio/aac/codec keywords OR `audioParams` stream emits no non-empty value within 4 s; on trigger calls `reportFallbackAudioTranscode`, reloads playlist; cancels on first non-empty audioParams (proves audio track is live); both watchers can fire in the same session; **plan 22 (2026-05-14):** `PlayerReady` gains `availableAudioTracks: List<AudioTrackInfo>` + `selectedAudioTrackIndex: int` populated from `response.audioTracks` (default `[]` + `0`); new cubit method `selectAudioTrack(int sourceIndex)` resolves the matching media_kit `AudioTrack` (dropping synthetic `auto`/`no` entries, then matching by list position with id-substring fallback) and calls `Player.setAudioTrack` — purely client-side, no server roundtrip
@@ -345,7 +347,8 @@ On app restart: `setupInjector()` reads `SecureStorage` (both `serverUrl` and `r
 | Android MulticastLock | `MethodChannel('dev.marshalx.fluxora/multicast')` | Android silently drops multicast without `WifiManager.MulticastLock`; acquired in `ConnectCubit.startDiscovery()`, released on close; non-fatal if unavailable (iOS/desktop) |
 | ApiClient configure | Called in `ConnectScreen` on server select | Server URL must be set on `ApiClient` before any pairing request; done at navigation time, not at app start |
 | UUID generation | Custom via `dart:math` + `Random.secure()` | Avoids adding `uuid` package for one use |
-| Video player | `media_kit v1.2.6` | `better_player` incompatible with AGP 8+ |
+| Video player (Android) | **Media3 ExoPlayer 1.10.1** via hand-rolled platform channel (plan 24, 2026-05-15) | `better_player` unmaintained since 2022; libmpv-via-media_kit shipped repeat audio defects on Android (channel-mask emulation, AudioTrack churn, mid-stream `setAudioTrack` hang). Media3 is what Plex / Jellyfin / Netflix use under the hood. |
+| Video player (Desktop + iOS) | `media_kit v1.2.6` via `MediaKitEngine` | libmpv works correctly on desktop; AVPlayer under `media_kit_video` works correctly on iOS. Per-platform engine selection via `PlayerEngineFactory`. |
 | WebRTC | `flutter_webrtc ^1.4.1` — Phase 3 ✅ | `WebRtcSignalingService` + `NetworkPathDetector`; LAN detection skips negotiation; 8 s ICE timeout with HLS fallback |
 | Smart path | `NetworkPathDetector.isLan()` (in `fluxora_core`) | Pure in-process /24 subnet check; no DNS, no ICMP; fails-safe to WAN. Used by `ApiClient` for dual-base routing and by `PlayerCubit` for the WebRTC vs HLS decision |
 | Dual-base ApiClient | `ApiClient(localBaseUrl, remoteBaseUrl, lanCheck)` in `fluxora_core` | Per-request resolution: LAN → localBaseUrl, WAN → remoteBaseUrl; throws `NoRemoteConfiguredException` if off-LAN with no remote configured. Phase 3 of public-routing plan |
@@ -403,6 +406,41 @@ Core packages/fluxora_core/test/ (8 tests)
 ```
 
 ---
+
+## `PlayerEngine` — per-platform playback engine (plan 24, 2026-05-15)
+
+Mobile playback runs through a `PlayerEngine` abstraction in `packages/fluxora_core/lib/player/`. The cubit, screen, widgets, sheets, and mini-player all depend on the interface — never on `media_kit.Player` or `androidx.media3.exoplayer.ExoPlayer` directly. `PlayerEngineFactory.create()` picks the right concrete impl for the current platform:
+
+```
+PlayerEngineFactory.create()
+  Android + _kEnableExoPlayerEngine && !_kForceMediaKitOnAndroid
+                              ──▶  ExoPlayerEngine (Media3 1.10.1)
+                                   └── MethodChannel("dev.marshalx.fluxora/exo_player")
+                                       EventChannel("dev.marshalx.fluxora/exo_player_events")
+                                       Both keyed by playerId for multi-player support
+                                   └── Kotlin: ExoPlayerPlugin.kt + FluxoraExoPlayer.kt
+                                       (SurfaceProducer-backed Flutter texture)
+  Every other path (desktop, iOS, Android escape hatch)
+                              ──▶  MediaKitEngine (media_kit / libmpv)
+                                   └── Wraps Player + VideoController
+                                   └── Exposes mediaKitPlayer + videoController
+                                       as typed escape hatches for the libmpv-
+                                       specific callers (audio_service, subtitle
+                                       picker, Video widget) that will be migrated
+                                       to engine-agnostic equivalents in M7+.
+```
+
+**Interface (subset of what the cubit + chrome use):**
+
+- Commands: `open(url, headers?, play, startPositionMs)`, `play`, `pause`, `seek(positionMs)`, `setAudioTrack(sourceIndex)`, `setRate`, `setVolume(0..100)`, `dispose`.
+- Sync getters: `position`, `duration`, `isPlaying`, `rate`, `volume`, `selectedAudioTrackIndex`, `availableAudioTrackIndices`, `textureId`.
+- Streams: `positionStream` (~250 ms), `durationStream`, `isPlayingStream`, `selectedAudioTrackStream`, `errorStream` (with `EngineErrorEvent.cause` carrying the native error).
+
+**Error mapping** — both engines surface errors through `EngineError`: `auth` (HTTP 401/403 on segment), `network` (other HTTP / IO), `decode` (decoder init / codec failure), `formatUnsupported` (manifest parse failure / unsupported codec), `generic` (fallback). Auto-fallback paths (plan 20 video, plan 21 audio) react to `EngineError.decode` / `EngineError.formatUnsupported` regardless of which engine fired.
+
+**Engine-specific callsites** — anything that needs `media_kit.Player` (`AudioParams`/`VideoParams` watcher reads, `audio_service` binding, subtitle picker reading `state.tracks`) gates behind `engine is MediaKitEngine` + accesses via the typed escape hatch. These are documented exits, not architectural leaks — M7 (audio_service) and M9 (subtitles) clean them up. The cubit's plan-20 + plan-21 auto-fallback watcher paths no-op silently under `ExoPlayerEngine` (which surfaces errors through `errorStream` directly).
+
+**Rollback** — `_kForceMediaKitOnAndroid` in the factory forces libmpv on Android even with `_kEnableExoPlayerEngine = true`. Both flags delete in M9 once the migration is locked in.
 
 ## Desktop Has No Player Feature
 
