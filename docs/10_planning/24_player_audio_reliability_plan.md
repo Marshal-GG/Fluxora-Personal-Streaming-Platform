@@ -603,24 +603,28 @@ the inevitable Kotlin/Surface lifecycle weirdness.
 
 ---
 
-## Open questions
+## Open questions (resolved 2026-05-15)
 
-1. **Single-rendition HLS today; switch to multi-rendition later?**
-   Our server today emits one HLS rendition with multiplexed audio
-   streams.  Some industry-standard players (notably older AVPlayer
-   versions) expect `EXT-X-MEDIA TYPE=AUDIO` groups.  ExoPlayer
-   handles our current shape fine, but if we ever want iOS to do
-   native track switching the server may need to emit audio
-   renditions.  Out of scope for plan 24; flag for plan 25.
-2. **iOS migration timeline.**  If iOS playback bugs start emerging,
-   plan 25 should mirror this work using AVPlayer via a similar
-   platform channel.  Don't speculate on AOSP-vs-AVPlayer parity
-   until we have real iOS bug reports.
-3. **Subtitle support parity.**  ExoPlayer has built-in subtitle
-   rendering (`SubtitleView`).  Today we surface subtitles via
-   `media_kit`'s track API and let it render on top of the video.
-   For ExoPlayer, the rendition→Flutter overlay path needs decision
-   in M3 — render in Kotlin via SubtitleView (simpler) or stream
-   cues to Dart and let the Flutter overlay render (more
-   customizable).  Plan 24 picks Kotlin-side rendering for shipping
-   speed.
+1. **Multi-rendition HLS — adopt the industry standard.** **Decision:**
+   move the server to emit proper `#EXT-X-MEDIA TYPE=AUDIO` audio
+   renditions instead of the current single-rendition with multiplexed
+   audio streams. That's what Netflix / Plex / YouTube / every modern
+   HLS player emits and what AVPlayer (iOS) expects for native track
+   switching. **Scope:** not part of plan 24 itself — plan 24 lands
+   ExoPlayer against the current single-rendition shape (it parses
+   that correctly). Multi-rendition emission is **plan 25** so we
+   don't compound the Android migration with a server-side HLS
+   shape change in the same week. Mark plan 25 as the immediate
+   follow-up.
+2. **iOS migration — defer.** **Decision:** keep `media_kit_video`
+   (AVPlayer underneath) on iOS for now. No reported iOS playback
+   bugs; revisit if and when iOS-specific issues surface. A future
+   plan can mirror this work via an AVPlayer platform channel — or
+   plan 25's multi-rendition server output may give AVPlayer
+   everything it needs without a native bridge.
+3. **Subtitles — use ExoPlayer's built-in `SubtitleView`.**
+   **Decision:** render subtitles Kotlin-side via Media3's
+   `SubtitleView`. Shipping speed wins over the customisation we'd
+   get from streaming cues to Dart. If a future design ask requires
+   Flutter-rendered subtitles (custom styling, animation), revisit
+   then.

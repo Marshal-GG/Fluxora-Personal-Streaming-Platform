@@ -281,3 +281,135 @@ Bandaid landed first (commit `682bc3e`, pinned `-map 0:v:0 -map 0:a:0?` in `_bui
 2. **Multi-language file QA** — test a multi-language movie rip (e.g. anime with `eng + jpn + commentary`). Expected: picker shows three rows with language tags; switching is instant.
 3. **End-of-episode resolver** (audit §17.3 #9) — still the only open functional item in the mobile redesign post-M14. ~2-3 hours.
 4. **06 Installer plan** (`docs/10_planning/06_installer_plan.md`) — the ship-readiness blocker for v1; payload-staging build pipeline + Squirrel.Windows + Win 10 / Win 11 VM smoke matrix. ~1 day.
+## [2026-05-15] [feat] [fix] [server] [mobile] [docs] — Plan 23 audio track switching + Plan 24 ExoPlayer migration kickoff
+
+**Phase:** Plan 23 (server-restart audio track switching) shipped same day; Plan 24 (Android Media3 ExoPlayer migration) kicked off with M1 + M2 in parallel
+**Status:** Plan 23 complete (unverified end-to-end on device); Plan 24 M1 + M2 in flight via parallel Opus subagents in isolated worktrees
+**Commits:** `089f091` server endpoint, `d4e18bf` mobile wiring, `b54ed64` label polish, `a291683` player UI + wakelock, `bd0cc55` plan 24 doc, **+ pending docs commit**
+
+### What Was Done
+
+#### 1. Plan 23 — Server-restart audio track switching (server)
+
+Operator reported (2026-05-15) that plan 22's client-side `media_kit.Player.setAudioTrack` reliably hangs libmpv-on-Android on a multi-audio AC3 5.1 file: pause+swap+resume kills audio for 20 s then stalls; swap-while-playing produces 20 s of silent video then stalls. Every cubit-level workaround failed (bare swap, pause/seek/play sequence, self-seek, 1s-back seek). Root cause: libmpv's HLS demuxer on Android can't recover from an init-segment vs. segments contract change mid-session.
+
+**Server fix (`089f091`):** new `POST /api/v1/stream/{session_id}/audio-track` endpoint respawns FFmpeg with `-map 0:a:<index>?` so the chosen track is the only one in the playlist. Critical step: the endpoint `unlink`s the stale `init.mp4` BEFORE FFmpeg respawns — without this, libmpv keeps the multi-track init in cache and hangs on the segment/init mismatch. Returns segment-snapped `applied_seek_sec` so the cubit updates `_playlistOffsetSec` for the source-time scrubber.
+
+`ffmpeg_service.py` gains a module-level `_session_pinned_audio_track: dict[str, int]` cache + `set/get/clear` helpers; `_build_ffmpeg_cmd` emits `-map 0:a:N?` when pinned; `_ensure_fmp4_init_segment` matches with the same shape so init.mp4 declares only the pinned track; `stop_stream` clears the pin. Models: `AudioTrackSwitchRequest` + `AudioTrackSwitchResponse` Pydantic.
+
+#### 2. Plan 23 — Mobile wiring + libmpv audio reliability fixes
+
+**Mobile (`d4e18bf`):** `PlayerRepository.switchAudioTrack` interface + impl POSTs to `/audio-track`; `PlayerCubit.selectAudioTrack` rewritten to call it, then `player.open(Media(url, httpHeaders: headers), play: wasPlaying)` to flush libmpv's cached HLS state.
+
+**Two independent Android audio fixes layered in:**
+
+- **libmpv `ao=audiotrack` override.** Before first `Player.open`, `NativePlayer.setProperty('ao', 'audiotrack')` flips libmpv from the default `opensles` AO to Android's `AudioTrack` API. Symptoms with `opensles` (operator debug logs on Oplus/OnePlus): `libOpenSLES: Emulating old channel mask behavior` on every track init (multi-channel falls back to stereo); AudioTrack churn 32 ms per play/pause; `flutter_webrtc` audio focus cascades. The `audiotrack` AO handles channels correctly and respects focus.
+- **Screen-lifetime wakelock.** `WakelockPlus.enable()` in `_PlayerViewState.initState` + `Video(wakelock: false)`. Replaces media_kit_video's per-frame `FLAG_KEEP_SCREEN_ON` toggle (Oplus surface-recreate-on-flag-toggle was dropping ~32 ms of audio per play/pause). `wakelock_plus` made explicit in mobile pubspec (was already transitive via media_kit_video).
+
+#### 3. Player UI redesign
+
+**`a291683`:** Top bar gains Lock + Fit/Fill icons left of the 3-dot. Bottom 4×2 icon grid replaced by a 3-dot overflow menu with Audio / Subs / Speed / Quality / Sleep / Cast tiles. Center transport rebuilds via `StreamBuilder<bool>(player.stream.playing)` so pause/play reacts on first tap (was lagging because the parent rebuild gated on cubit state which didn't fire on every play/pause).
+
+#### 4. Audio track label polish
+
+**`b54ed64`:** Filter `und` / `unk` / `mis` / `zxx` / empty (NVIDIA Game Bar stamps every track with `tags.language="und"`); fall back to `Track N` where N is 1-based audio ordinal (not the FFmpeg stream index — matches VLC).
+
+#### 5. Plan 24 — Android ExoPlayer migration plan drafted + M1/M2 kicked off
+
+**`bd0cc55`:** 626-line plan for migrating Android playback from libmpv-via-media_kit to Media3 ExoPlayer via a hand-rolled Kotlin platform channel. `PlayerEngine` Dart abstraction in `packages/fluxora_core/lib/player/`; `MediaKitEngine` (desktop + iOS unchanged) + `ExoPlayerEngine` (Android, new). M1-M9 ~37 h ≈ 5 working days. Rollback via `_kForceMediaKitOnAndroid` flag. iOS deferred; multi-rendition HLS server output (industry-standard `#EXT-X-MEDIA TYPE=AUDIO` groups) split into plan 25.
+
+**Open questions resolved 2026-05-15:**
+1. Multi-rendition HLS server output — adopt the industry standard (plan 25, after plan 24 lands).
+2. iOS migration — defer; no reported iOS bugs.
+3. Subtitles — render Kotlin-side via Media3's `SubtitleView` (shipping speed wins).
+
+**Parallel Opus subagents launched in isolated worktrees 2026-05-15:**
+- **M1 — Kotlin platform-channel spike** — Media3 deps + `ExoPlayerPlugin.kt` + `SurfaceProducer` plumbing + throwaway Dart `ExoSpikePage` at `apps/mobile/lib/dev/` + hidden `/dev/exo-spike` route.
+- **M2 — `PlayerEngine` Dart abstraction** — interface + `MediaKitEngine` wrapping current media_kit usage + cubit/screen/widgets refactored to depend on the engine instead of `Player` directly.
+
+Both agents finished and merged their outputs back into the main tree by the time this entry was written (worktree paths kept locked under `.claude/worktrees/` for reconciliation). Reconciliation + integration commits pending in this session.
+
+#### 6. Docs sweep
+
+Following the documentation update protocol verbatim — every doc the protocol checklist flags as affected was updated. See "Docs Updated" below.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Modified | apps/server/services/ffmpeg_service.py | Plan 23 — pin cache + `-map 0:a:N?` + matching init |
+| Modified | apps/server/routers/stream.py | Plan 23 — `/audio-track` endpoint + init.mp4 unlink |
+| Modified | apps/server/models/stream_session.py | Plan 23 — request/response models |
+| Modified | apps/mobile/lib/features/player/data/repositories/player_repository_impl.dart | Plan 23 — `switchAudioTrack` POST impl |
+| Modified | apps/mobile/lib/features/player/domain/repositories/player_repository.dart | Plan 23 — `switchAudioTrack` interface |
+| Modified | apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart | Plan 23 — server-restart switch + libmpv `ao=audiotrack` |
+| Modified | apps/mobile/lib/features/player/presentation/screens/player_screen.dart | Wakelock fix — `WakelockPlus.enable` + `Video(wakelock: false)` |
+| Modified | apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart | UI redesign — top bar Lock/Fit + 3-dot overflow + StreamBuilder transport |
+| Modified | apps/mobile/lib/features/player/presentation/sheets/audio_subs_sheet.dart | Pass audio ordinal to `labelFor` |
+| Modified | apps/mobile/lib/features/player/domain/entities/stream_start_response.dart | `labelFor(audioOrdinal)` + UND-language filter |
+| Modified | apps/mobile/test/features/player/player_cubit_test.dart | Updated for server-restart switch |
+| Modified | apps/mobile/test/goldens/top_bar_golden_test.dart | New top bar params (onLock/onFit/fitCover) |
+| Modified | apps/mobile/test/goldens/goldens/player_top_bar.png | Regenerated baseline |
+| Modified | apps/mobile/pubspec.yaml | `wakelock_plus` made explicit |
+| Modified | apps/mobile/pubspec.lock | wakelock_plus version |
+| Created | docs/10_planning/24_player_audio_reliability_plan.md | Plan 24 drafted (committed in `bd0cc55`) |
+| Created | docs/10_planning/archive/23_audio_track_switching.md | Plan 23 retrospective archive |
+| Modified | docs/10_planning/24_player_audio_reliability_plan.md | Open questions resolved (multi-rendition / iOS defer / SubtitleView) |
+| Modified | CLAUDE.md | Plan index — plan 23 + plan 24 entries |
+| Modified | docs/10_planning/01_roadmap.md | Plan 23 ✅ + Plan 24 🔵 active + header date bump |
+| Modified | docs/00_overview/current_status.md | Top-of-doc snapshot for plan 23 + plan 24 |
+| Modified | docs/04_api/01_api_contracts.md | New `POST /stream/{id}/audio-track` endpoint section |
+| Modified | docs/05_infrastructure/02_url_inventory.md | `/audio-track` + previously-missing `/fallback-transcode` + `/fallback-audio-transcode` rows |
+| Modified | docs/12_guidelines/03_gotchas.md | 6 new gotchas — libmpv setAudioTrack hang, init.mp4 unlink, OpenSL ES AO, wakelock toggle, UND language tags, per-platform engine |
+
+### Docs Updated
+
+- `CLAUDE.md` — plan index gains plan 23 + plan 24 rows.
+- `docs/00_overview/current_status.md` — new top-of-doc snapshot for 2026-05-15.
+- `docs/04_api/01_api_contracts.md` — `POST /stream/{id}/audio-track` endpoint section.
+- `docs/05_infrastructure/02_url_inventory.md` — stream router rows for `/audio-track` + previously-missing `/fallback-transcode` + `/fallback-audio-transcode`.
+- `docs/10_planning/01_roadmap.md` — plan 23 ✅ + plan 24 🔵 active rows + header date.
+- `docs/10_planning/24_player_audio_reliability_plan.md` — open questions resolved.
+- `docs/10_planning/archive/23_audio_track_switching.md` — new archive retrospective.
+- `docs/12_guidelines/03_gotchas.md` — 6 new entries (libmpv setAudioTrack hang, init.mp4 unlink contract, OpenSL ES AO churn, media_kit_video wakelock toggle, `und` language tags, per-platform engine policy).
+- `AGENT_LOG.md` — this entry.
+
+### Decisions Made
+
+- **Stop iterating on cubit-level workarounds for the libmpv setAudioTrack hang.** Three layers of workarounds (bare swap, pause/seek/play, self-seek) all failed on real-device testing. Switched to server-restart approach (plan 23) and then escalated to engine migration (plan 24). The cubit-level path is a dead end on Android.
+- **Ship plan 23 even though plan 24 will obsolete the cubit caller.** Endpoint stays in tree as a fallback for future clients (TV / web running libmpv); the work isn't wasted, and removing it now would add churn before plan 24 lands.
+- **Parallel Opus subagents in isolated worktrees for M1 + M2.** M1 is Kotlin/gradle work, M2 is Dart abstraction work — disjoint file sets, no merge collision risk. Worktree isolation guarantees the agents can't accidentally collide with each other or with the foreground doc work.
+- **Multi-rendition HLS server output split into plan 25** rather than bundled into plan 24. Plan 24 is already 5 days of Android-side work; adding a server-side HLS shape change in the same week is too much risk in one window. ExoPlayer parses the current single-rendition+multiplexed-audio shape correctly, so plan 24 doesn't need plan 25 to ship.
+
+### Issues / Sharp Edges Discovered
+
+1. **End-to-end real-device verification of plan 23 is incomplete.** The init.mp4 unlink fix landed late in the session; operator didn't run a fresh post-fix log. The code is in tree and presumed correct based on the fix matching the diagnosed cause, but no green-light log exists. Plan 24 obviates this, so we are not blocking on plan 23 verification.
+2. **HDR multi-audio audio-silent bug is unresolved.** Separate symptom from track switching; possibly a server-side init.mp4 codec issue for HDR sources. Plan 24 M6 will test ExoPlayer's stricter HLS parser against this; Media3's parser emits actual error messages where libmpv silently drops audio.
+3. **Plan 22 picker still draws all tracks even when one is pinned.** The cubit's `availableAudioTracks` comes from `StreamStartResponse.audio_tracks` (probed at scan, persisted in `media_files.audio_tracks`). That doesn't change when a track is pinned — the picker still shows every track in the source. The selected-row highlight tracks `selectedAudioTrackIndex` which is the source-stream index. Acceptable UX (the operator can still pick any track from the original set).
+4. **VS Code extension crashes on long log pastes.** During this session the operator pasted ~6 KB Debug Console logs multiple times; the extension errored "Unhandled case: [object Object]" and stopped generating responses, prompting confusing "you keep crashing" pings. Worked around by asking the operator to truncate. Not a Fluxora bug — flag for the IDE plugin.
+
+### Test Counts (re-baselined)
+
+- **Server: 830 passing** (827 → 830, +3 around the new `/audio-track` endpoint).
+- **Mobile: 99 passing** (97 → 99, +2 cubit test updates for server-restart switch).
+- **Desktop: 113 passing** (untouched).
+- **Core: 8 passing** (untouched — M2 agent's `packages/fluxora_core/lib/player/` additions pending reconciliation).
+
+Counts above are local pre-push estimates. M2 agent reconciliation may shift mobile + core counts; will re-baseline after integration. `flutter analyze` + `ruff` clean on the plan-23 commits.
+
+### Working-Tree Status
+
+- 5 commits ahead of `origin/main` (plan 23 + plan 24 doc), not yet pushed.
+- Pending uncommitted: docs sweep (this entry + the 8 doc files listed above) — about to commit as one chunk.
+- Plan 24 M1 agent output staged in main tree (not yet committed): `apps/mobile/android/app/build.gradle.kts`, `apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/MainActivity.kt`, `apps/mobile/lib/core/router/app_router.dart`, `apps/mobile/lib/features/profile/presentation/screens/profile_screen.dart`, `apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/` (new dir), `apps/mobile/lib/dev/` (new dir).
+- Plan 24 M2 agent output staged in main tree (not yet committed): `packages/fluxora_core/lib/fluxora_core.dart`, `packages/fluxora_core/pubspec.yaml`, `packages/fluxora_core/pubspec.lock`, `packages/fluxora_core/lib/player/` (new dir).
+- Agent worktrees still locked under `.claude/worktrees/agent-a8fc66d7f39c0a60d/` + `.claude/worktrees/agent-a987e40da9cf470c9/` — to be removed after reconciliation.
+
+### Next Agent Should
+
+1. **Reconcile + commit M1 (Kotlin spike) output.** Verify the Media3 deps resolve (`cd apps/mobile && flutter build apk --debug`), the `ExoPlayerPlugin.kt` compiles, the hidden `/dev/exo-spike` route is reachable from a long-press affordance on Profile (look in `apps/mobile/lib/features/profile/presentation/screens/profile_screen.dart` for the agent's added handler), and the Dart spike page builds. Commit as `feat(mobile): plan 24 M1 — ExoPlayer platform-channel spike`. Then delete `.claude/worktrees/agent-a8fc66d7f39c0a60d/`.
+2. **Reconcile + commit M2 (`PlayerEngine` abstraction) output.** Verify `flutter analyze` clean in both `apps/mobile/` and `packages/fluxora_core/`; verify `flutter test` green in `apps/mobile/`; verify the cubit + screen + widgets + sheets compile against the new interface and behave identically to pre-M2 (no-op refactor). Commit as `refactor(mobile,core): plan 24 M2 — PlayerEngine abstraction`. Then delete `.claude/worktrees/agent-a987e40da9cf470c9/`.
+3. **Operator real-device test of M1.** Open the hidden `/dev/exo-spike` route, paste a Fluxora HLS playlist URL, hit Open — must see video + hear audio for a 30-second clip. Exit criteria for M1.
+4. **Plan 24 M3 — `ExoPlayerEngine` Dart side (6 h).** Implement the Dart client of the MethodChannel + EventChannel; map ExoPlayer's group/format track API to source-stream indices. Depends on M1 + M2 both green.
+5. **Plan 24 M4 — Kotlin module hardening (8 h).** Move M1's spike plugin into proper modular structure (`ExoPlayerPlugin.kt` plugin entry + `FluxoraExoPlayer.kt` per-player class); full command set; Player.Listener emitting all required state changes; SurfaceProducer lifecycle; audio focus + `setHandleAudioBecomingNoisy(true)`. Depends on M1.
+6. **HDR-no-audio bug investigation.** Separate from track switching — possibly server-side init.mp4 codec issue for HDR sources. Either fix server-side in parallel with plan 24, or wait for plan 24 M6 where ExoPlayer's parser will surface the actual error. Operator preference TBD.

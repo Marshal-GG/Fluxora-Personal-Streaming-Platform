@@ -2559,6 +2559,53 @@ Audio stream-copy is attempted when:
 
 ---
 
+### `POST /api/v1/stream/{session_id}/audio-track`
+**Description:** Switch the source audio track the server is demuxing by respawning FFmpeg with `-map 0:a:<index>?` so the chosen track is the only one in the playlist. Sidesteps libmpv-on-Android's mid-stream `setAudioTrack` hang (operator-reported 2026-05-15: 20 s silent then stall on multi-audio AC3 5.1 files). Plan 23.
+**Auth:** Bearer token.
+**Rate limit:** 10 per minute.
+**Status:** ✅ Plan 23. Effectively superseded by plan 24 (Android ExoPlayer migration) but the endpoint stays as a fallback for future clients that can't do client-side track switching.
+
+**Path param:** `session_id` — the active session UUID.
+
+**Request body:**
+```json
+{ "index": 1, "current_position_sec": 42.5 }
+```
+
+- `index` — source-stream audio index (matches `AudioTrackInfo.index` from `/stream/start`, i.e. FFmpeg's `0:a:<index>` ordinal). Must be `≥ 0`.
+- `current_position_sec` — caller's playhead position; server snaps it down to the nearest `hls_time` boundary. Must be `≥ 0`.
+
+**Response (200):**
+```json
+{
+  "session_id": "abc-...",
+  "playlist_url": "http://…/hls/abc-…/playlist.m3u8",
+  "pinned_audio_track_index": 1,
+  "applied_seek_sec": 42.0
+}
+```
+
+`applied_seek_sec` is the segment-snapped position FFmpeg actually started from. Caller uses this to update its source-time `playlistOffsetSec` for the scrubber. The playlist URL is unchanged from `/stream/start` but its contents are rewritten with new segment numbering + a new `init.mp4` declaring only the pinned track — caller MUST re-open the playlist on the player so libmpv re-fetches the rewritten init (without the re-open, libmpv keeps the multi-track init in cache and hangs on the segment/init mismatch).
+
+**Status codes:**
+
+| Code | Condition |
+|------|-----------|
+| 200 | Track switched; respond with new pinned index + applied seek |
+| 404 | Session not found or already ended |
+| 403 | Session not owned by the calling client |
+| 422 | `index` or `current_position_sec` missing / negative |
+| 429 | Rate limit exceeded (10/min) |
+| 500 | FFmpeg respawn failed (operator action: check server logs) |
+
+**Init.mp4 contract:** the endpoint unlinks the existing `<hls_tmp_path>/<session_id>/init.mp4` before respawning FFmpeg. The `_ensure_fmp4_init_segment` helper re-generates an init.mp4 matching the new single-track shape (`-map 0:a:<index>?`) when the rebuilt segments are written.
+
+**Relation to plan 22's client-side switch:** plan 22 shipped `media_kit.Player.setAudioTrack` for client-side switching with no server roundtrip. It works on desktop but reliably hangs libmpv-on-Android. The mobile cubit now calls `/audio-track` instead; desktop has no player feature.
+
+**Relation to plan 24:** plan 24 replaces the Android engine with Media3 ExoPlayer, which does client-side track switching correctly via `TrackSelectionParameters`. Once plan 24 ships, the mobile cubit stops calling `/audio-track` but the endpoint stays in the codebase for future clients (TV / web) that may not have native track switching.
+
+---
+
 ### `GET /api/v1/logs`
 **Description:** List structured log records from the server's JSON log file with filtering and cursor-based pagination.  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  

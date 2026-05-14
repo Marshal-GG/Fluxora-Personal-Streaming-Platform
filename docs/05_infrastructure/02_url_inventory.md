@@ -85,6 +85,9 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `GET` | `/api/v1/stream/{session_id}` | Bearer token | Get session details |
 | `PATCH` | `/api/v1/stream/{session_id}/progress` | Bearer token | Record playback position |
 | `POST` | `/api/v1/stream/{session_id}/seek` | Bearer token | Re-spawn FFmpeg from `seek_sec`; rewrites the playlist with `#EXT-X-DISCONTINUITY` markers |
+| `POST` | `/api/v1/stream/{session_id}/fallback-transcode` | Bearer token | Plan 20 — opt-in `auto`-mode video fallback; blocklists `(client, codec)` + flips session to transcode |
+| `POST` | `/api/v1/stream/{session_id}/fallback-audio-transcode` | Bearer token | Plan 21 — opt-in `auto`-mode audio-only fallback; blocklists `(client, audio_codec)` + re-encodes audio while keeping video stream-copy |
+| `POST` | `/api/v1/stream/{session_id}/audio-track` | Bearer token | Plan 23 — switch source audio track by respawning FFmpeg with `-map 0:a:<index>?`; unlinks stale init.mp4; returns segment-snapped `applied_seek_sec` |
 | `DELETE` | `/api/v1/stream/{session_id}` | Bearer token | Stop session and kill FFmpeg process |
 | `GET` | `/api/v1/hls/{session_id}/playlist.m3u8` | Bearer token | Serve HLS playlist |
 | `GET` | `/api/v1/hls/{session_id}/{segment}.ts` | Bearer token | Serve HLS segment |

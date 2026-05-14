@@ -996,6 +996,116 @@ Pattern in `apps/desktop/lib/features/transcode/presentation/widgets/storage_str
 **Recommendation:** if a follow-up plan adopts more value-objects on mobile (e.g. for the eventual track-language-preference feature), hoist `equatable` into the mobile pubspec in one PR and convert the affected entities in the same commit. Doing it for one entity in isolation isn't worth the dep churn.
 
 
+## Plan 23 — libmpv-on-Android `setAudioTrack` reliably hangs the player mid-stream
+
+**Symptoms** (operator-reported 2026-05-15, multi-audio AC3 5.1 file on Oplus):
+- Pause → switch audio → resume: audio dies for ~20 s, then libmpv stalls completely; only a manual seek recovers.
+- Switch audio while playing: video plays silently for ~20 s then stalls; seeking recovers.
+
+**Workarounds attempted, all failed:**
+- Bare `setAudioTrack`.
+- `pause + setAudioTrack + seek + play`.
+- `setAudioTrack + seek-to-current`.
+- `setAudioTrack + 1s-back seek`.
+
+**Root cause:** libmpv's HLS demuxer on Android can't recover when the fmp4 init-segment vs. segments contract changes mid-session, and switching tracks in libmpv-on-HLS requires a demuxer reset that the bundled Android build doesn't ship cleanly.
+
+**Mitigation (plan 23):** server-restart approach via `POST /api/v1/stream/{session_id}/audio-track` — server respawns FFmpeg with `-map 0:a:<index>?` so the chosen track is the only one in the playlist, unlinks the stale init.mp4, returns segment-snapped `applied_seek_sec`; cubit re-opens the playlist on the player. Sidesteps libmpv's broken track-switch path by handing it a clean new playlist that only declares one audio track.
+
+**Permanent fix (plan 24):** migrate Android playback to Media3 ExoPlayer. Once `ExoPlayerEngine.setAudioTrack` ships, the mobile cubit stops calling `/audio-track`. Endpoint stays in tree as a fallback for future clients that can't do native track switching.
+
+**Trap to avoid:** the obvious cubit-level workaround `_player.setAudioTrack(track)` followed by any seek-and-replay sequence is a dead end on Android. Don't waste time iterating on it — the issue is in the libmpv build, not the call sequence.
+
+
+## Plan 23 — Unlink `init.mp4` BEFORE FFmpeg respawns or the player hangs on the new playlist
+
+**Symptom:** plan-23 server-restart endpoint switched the audio track correctly (FFmpeg respawned with `-map 0:a:<index>?`, new segments declared only the pinned track), but the player still hung. Logs showed libmpv parsing the playlist, fetching segments, then stalling.
+
+**Root cause:** FFmpeg's HLS muxer writes `init.mp4` only on first invocation in a session — subsequent respawns leave the existing init.mp4 in place. The original init.mp4 from the multi-track session declared every audio track in its `moov`; after the respawn the segments only carry one audio track. libmpv reads the stale init, expects N audio tracks, sees one, and hangs trying to reconcile.
+
+**Fix:** the `/audio-track` endpoint explicitly `unlink`s `<hls_tmp_path>/<session_id>/init.mp4` before respawning FFmpeg. The `_ensure_fmp4_init_segment` helper then re-generates a single-track init.mp4 matching the new segments.
+
+**Rule going forward:** any new code path that respawns FFmpeg with a different `-map` shape MUST unlink the existing init.mp4 first. The init segment is part of the session contract with the player; changing the segment shape without changing the init is a silent failure mode.
+
+
+## Plan 23 — libmpv-on-Android OpenSL ES AO churns AudioTrack on every play/pause
+
+**Symptoms** (Android Debug Console, Oplus/OnePlus):
+- `libOpenSLES: Emulating old channel mask behavior` on every track init — channel mask negotiation broken; multi-channel audio falls back to stereo regardless of source channel count.
+- AudioTrack object allocated + released within ~32 ms on every play/pause transition, dropping audio briefly on each transition.
+- `flutter_webrtc`'s `audioFocusChangeListener` fires on every route change because OpenSL ES doesn't claim audio focus cleanly.
+
+**Fix:** flip libmpv's audio output from the default `opensles` to `audiotrack` before first `Player.open`:
+
+```dart
+if (Platform.isAndroid && _player!.platform is NativePlayer) {
+  await (_player!.platform! as NativePlayer)
+      .setProperty('ao', 'audiotrack');
+}
+```
+
+The `audiotrack` AO uses Android's `AudioTrack` API directly, handles multi-channel correctly, and respects audio focus. **Must be set before `Player.open`** — libmpv picks the AO at session init and won't switch mid-stream.
+
+**Why this isn't the default in media_kit:** OpenSL ES is the lowest-common-denominator path; `audiotrack` requires API 21+ (which Fluxora's `minSdk` already exceeds). Upstream `media_kit_libs_video_android` ships with the conservative default.
+
+**Plan 24 makes this redundant:** Media3 ExoPlayer uses `AudioTrack` natively. After plan 24 lands the `ao=audiotrack` snippet only matters on the Android-still-on-libmpv rollback path.
+
+
+## Plan 23 — `media_kit_video` toggles `FLAG_KEEP_SCREEN_ON` on every play/pause, churning audio on Oplus
+
+**Symptom:** with `Video(wakelock: true)` (the media_kit_video default), every play/pause transition triggers an Oplus surface-recreate-on-flag-toggle that drops ~32 ms of audio. Compounded with the OpenSL ES gotcha above, real audio dropouts on every pause/resume on multi-audio files.
+
+**Fix:** hold the wakelock yourself for the player screen's lifetime instead of letting media_kit_video manage it per-frame:
+
+```dart
+// In _PlayerViewState
+@override
+void initState() {
+  super.initState();
+  WakelockPlus.enable().catchError((_) => null);
+}
+
+@override
+void dispose() {
+  WakelockPlus.disable().catchError((_) => null);
+  super.dispose();
+}
+
+// In build():
+Video(controller: vc, wakelock: false)
+```
+
+Requires `wakelock_plus` as an explicit pubspec entry (it was already a transitive dep via media_kit_video — make it explicit so the version is pinned).
+
+**Vendor-specific:** the surface-recreate-on-flag-toggle is reproducible on Oplus (Oppo) ColorOS skins (notably OnePlus). Stock Android doesn't recreate the surface on flag changes, so the symptom doesn't show on Pixel devices. Don't assume "works on Pixel = works everywhere" for any Android surface lifecycle code.
+
+**Plan 24 makes this redundant:** Media3 sets `KEEP_SCREEN_ON` automatically and doesn't dance with the surface on flag changes. Wakelock fix stays in tree as belt-and-braces (and helps the libmpv fallback path if `_kForceMediaKitOnAndroid` is ever re-enabled).
+
+
+## Plan 23 — `tags.language = "und"` is "no language", not a real language
+
+**Symptom:** NVIDIA Game Bar captures stamp every audio stream with `tags.language = "und"`. The plan-22 audio picker rendered two identical `"UND · 2.0 · AAC"` rows; the operator couldn't tell them apart.
+
+**Fix:** filter `und`, `unk`, `mis`, `zxx`, and empty in `AudioTrackInfo.labelFor` and fall back to `"Track N"` where N is the 1-based audio-stream ordinal (NOT the FFmpeg stream index, which counts video streams too). Matches VLC's behaviour for the same set of ISO 639-2 "no language" codes.
+
+```dart
+static const _undefinedLanguageTags = {'und', 'unk', 'mis', 'zxx', ''};
+```
+
+**Audio ordinal vs. FFmpeg index:** the picker shows the ordinal because that's what operators recognise (VLC: "Track 1 / Track 2 / …"). The cubit's `selectedAudioTrackIndex` still holds the FFmpeg stream index — they're decoupled.
+
+
+## Plan 24 — Per-platform playback engine — Android = ExoPlayer; desktop + iOS = media_kit
+
+**Decision (plan 24, 2026-05-15):** Android playback is migrating from libmpv-via-media_kit to Media3 ExoPlayer. Desktop (Windows / macOS / Linux) keeps media_kit. iOS keeps media_kit_video (AVPlayer underneath).
+
+**The `PlayerEngine` abstraction** lives at `packages/fluxora_core/lib/player/player_engine.dart`. Cubit + widgets see only the interface; the concrete `MediaKitEngine` or `ExoPlayerEngine` is selected by `PlayerEngineFactory.create()` based on `Platform.isAndroid`. A `_kForceMediaKitOnAndroid` const lets us flip Android back to libmpv if ExoPlayer regresses; the flag deletes in plan 24 M9.
+
+**Rule going forward:** new player-side code must depend on `PlayerEngine`, not on `media_kit.Player` directly. The single place `media_kit` may be imported is `MediaKitEngine`. ExoPlayer-specific code lives in `ExoPlayerEngine` + the Kotlin module. Anything that grep-hits `media_kit` in `apps/mobile/lib/features/player/` outside MediaKitEngine is a layer violation — refactor through the interface.
+
+**iOS still on media_kit:** plan 24 explicitly defers iOS. If iOS bugs surface, plan 26 (after plan 25's multi-rendition HLS) can either reuse media_kit_video or add an AVPlayer platform channel. Don't speculate ahead of real iOS bug reports.
+
+
 ## Desktop has no player feature — "mirror player to desktop" is net-new architecture
 
 **Context:** The desktop app (`apps/desktop/`) is a pure server control panel — it has no `lib/features/player/` directory and no media playback infrastructure whatsoever. Plans 20 and 21 both originally included "mirror mobile player cubit change to desktop" as a milestone item. Both times the subagent confirmed that `apps/desktop/lib/features/player/` does not exist.
