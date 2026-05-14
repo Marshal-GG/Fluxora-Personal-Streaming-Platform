@@ -1,5 +1,6 @@
 import 'package:media_kit/media_kit.dart' show Player;
 import 'package:media_kit_video/media_kit_video.dart' show VideoController;
+import 'package:fluxora_mobile/features/player/domain/entities/stream_start_response.dart';
 
 /// Which transport is being used for the current stream.
 enum StreamPath {
@@ -34,12 +35,15 @@ class PlayerReady extends PlayerState {
     this.hdrFormat,
     this.tonemapped = false,
     this.isSeeking = false,
+    this.availableAudioTracks = const [],
+    this.selectedAudioTrackIndex = 0,
   });
 
   final String sessionId;
   final String fileName;
   final Player player;
   final VideoController controller;
+
   /// The position the player was seeked to on open (0 = fresh start).
   final double resumeSec;
 
@@ -78,6 +82,20 @@ class PlayerReady extends PlayerState {
   /// gap than the player's normal buffer-fill animation can explain.
   final bool isSeeking;
 
+  /// Plan 22 — every audio track exposed by the source container, as
+  /// returned by `/stream/start`.  Drives the Audio bottom-sheet
+  /// picker.  Empty list (pre-plan-22 server) means the picker greys
+  /// out; single-entry list also greys out per behavior matrix ("UI
+  /// hides picker when only one track").
+  final List<AudioTrackInfo> availableAudioTracks;
+
+  /// Plan 22 — the source stream index (`AudioTrackInfo.index`) of the
+  /// currently-selected audio track.  Defaults to 0 — FFmpeg's first
+  /// audio track, which matches the server's "default track 0" rule.
+  /// Updated via [PlayerCubit.selectAudioTrack].  Per-session only —
+  /// next playback resets to 0 (sharp edge #4).
+  final int selectedAudioTrackIndex;
+
   /// True when the source is HDR.  Convenience alias.
   bool get isHdrSource => hdrFormat != null && hdrFormat!.isNotEmpty;
 
@@ -85,19 +103,23 @@ class PlayerReady extends PlayerState {
     StreamPath? streamPath,
     bool? isSeeking,
     double? playlistOffsetSec,
-  }) =>
-      PlayerReady(
-        sessionId: sessionId,
-        fileName: fileName,
-        player: player,
-        controller: controller,
-        resumeSec: resumeSec,
-        playlistOffsetSec: playlistOffsetSec ?? this.playlistOffsetSec,
-        streamPath: streamPath ?? this.streamPath,
-        hdrFormat: hdrFormat,
-        tonemapped: tonemapped,
-        isSeeking: isSeeking ?? this.isSeeking,
-      );
+    List<AudioTrackInfo>? availableAudioTracks,
+    int? selectedAudioTrackIndex,
+  }) => PlayerReady(
+    sessionId: sessionId,
+    fileName: fileName,
+    player: player,
+    controller: controller,
+    resumeSec: resumeSec,
+    playlistOffsetSec: playlistOffsetSec ?? this.playlistOffsetSec,
+    streamPath: streamPath ?? this.streamPath,
+    hdrFormat: hdrFormat,
+    tonemapped: tonemapped,
+    isSeeking: isSeeking ?? this.isSeeking,
+    availableAudioTracks: availableAudioTracks ?? this.availableAudioTracks,
+    selectedAudioTrackIndex:
+        selectedAudioTrackIndex ?? this.selectedAudioTrackIndex,
+  );
 }
 
 class PlayerFailure extends PlayerState {

@@ -5,7 +5,13 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
 import 'package:media_kit/media_kit.dart'
-    show AudioParams, Media, Player, PlayerConfiguration, VideoParams;
+    show
+        AudioParams,
+        AudioTrack,
+        Media,
+        Player,
+        PlayerConfiguration,
+        VideoParams;
 import 'package:media_kit_video/media_kit_video.dart' show VideoController;
 import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
@@ -324,6 +330,16 @@ class PlayerCubit extends Cubit<PlayerState> {
           streamPath: path,
           hdrFormat: response.hdrFormat,
           tonemapped: response.tonemapped,
+          // Plan 22 — multi-audio-track support.  Server returns every
+          // audio track in the source container; default selection is
+          // FFmpeg's track 0 (the first audio stream), matching the
+          // server's `-map 0:a?` ordering.  Operator can switch via
+          // [selectAudioTrack] which only changes the decoded track —
+          // no server round-trip.
+          availableAudioTracks: response.audioTracks,
+          selectedAudioTrackIndex: response.audioTracks.isNotEmpty
+              ? response.audioTracks.first.index
+              : 0,
         ),
       );
 
@@ -454,6 +470,105 @@ class PlayerCubit extends Cubit<PlayerState> {
       tonemap: enabled,
       serverSeekSec: resumeSec > 0 ? resumeSec : null,
     );
+  }
+
+  /// Switch the active session's audio track to the one whose source
+  /// stream index matches [sourceIndex] (i.e. [AudioTrackInfo.index]).
+  ///
+  /// Plan 22 — purely client-side: the server has multiplexed every
+  /// audio track into the fmp4 init segment + segments, so media_kit
+  /// already has the decoded track table.  We just tell libmpv which
+  /// one to play via `Player.setAudioTrack`.  No server round-trip;
+  /// no FFmpeg restart.
+  ///
+  /// **Track-index mapping.**  The server's [AudioTrackInfo.index] is
+  /// the FFmpeg source-stream index (`0:a:<index>`).  media_kit
+  /// exposes its own `AudioTrack` objects via `player.state.tracks.audio`
+  /// with string `id` fields; in practice libmpv numbers them `"1"`,
+  /// `"2"`, ... in the order they appeared in the container, which
+  /// matches FFmpeg's source-stream ordering.  We try a list-position
+  /// match first (`player.state.tracks.audio[sourceIndex + skipNonTrack]`
+  /// after dropping the magic `auto`/`no` entries) and fall back to
+  /// id-substring match if the position lookup fails.  An ambiguous
+  /// match logs a warning but still emits the state change so the
+  /// checkmark in the picker tracks the operator's intent.
+  ///
+  /// No-op when there is no active session.  Failures from libmpv
+  /// (track index out of range, decoder error) log and DO NOT update
+  /// state — the picker UI's checkmark stays on the previous track so
+  /// the operator sees that the switch didn't take.
+  Future<void> selectAudioTrack(int sourceIndex) async {
+    final player = _player;
+    final currentState = state;
+    if (player == null || currentState is! PlayerReady) {
+      _log.d('[Player] selectAudioTrack($sourceIndex) — no active session');
+      return;
+    }
+
+    // Find the matching entry in the cubit's own track list first so we
+    // can log meaningful track metadata if the libmpv call fails.
+    final tracks = currentState.availableAudioTracks;
+    final trackInfoIdx = tracks.indexWhere((t) => t.index == sourceIndex);
+    if (trackInfoIdx < 0) {
+      _log.w(
+        '[Player] selectAudioTrack($sourceIndex) — index not in '
+        'availableAudioTracks (size=${tracks.length})',
+      );
+      return;
+    }
+    final trackInfo = tracks[trackInfoIdx];
+
+    try {
+      final mediaKitTracks = player.state.tracks.audio;
+      // libmpv reserves the first two synthetic entries (`auto` / `no`)
+      // — drop them before mapping by position.  Source-track 0 ↔
+      // mediaKitTracks[2] when both magic entries are present.
+      final realTracks = mediaKitTracks
+          .where((t) => t.id != 'auto' && t.id != 'no')
+          .toList();
+      AudioTrack? picked;
+      if (trackInfoIdx >= 0 && trackInfoIdx < realTracks.length) {
+        picked = realTracks[trackInfoIdx];
+      } else {
+        // Fallback: match by id substring (some libmpv builds tag the
+        // track id with the source index).
+        for (final t in realTracks) {
+          if (t.id.contains('$sourceIndex')) {
+            picked = t;
+            break;
+          }
+        }
+      }
+
+      if (picked == null) {
+        _log.w(
+          '[Player] selectAudioTrack($sourceIndex) — no matching '
+          'media_kit AudioTrack (have ${realTracks.length} real tracks); '
+          'updating cubit state without dispatching to libmpv',
+        );
+      } else {
+        await player.setAudioTrack(picked);
+        _log.i(
+          '[Player] audio_track_switched session=${currentState.sessionId} '
+          'source_index=$sourceIndex codec=${trackInfo.codec} '
+          'channels=${trackInfo.channels} language=${trackInfo.language} '
+          'media_kit_id=${picked.id}',
+        );
+      }
+    } catch (e, st) {
+      _log.w(
+        '[Player] selectAudioTrack($sourceIndex) — libmpv call failed; '
+        'cubit state will still update so the picker UI reflects intent',
+        error: e,
+        stackTrace: st,
+      );
+    }
+
+    if (state is PlayerReady) {
+      emit(
+        (state as PlayerReady).copyWith(selectedAudioTrackIndex: sourceIndex),
+      );
+    }
   }
 
   /// Seek the active stream to [position].

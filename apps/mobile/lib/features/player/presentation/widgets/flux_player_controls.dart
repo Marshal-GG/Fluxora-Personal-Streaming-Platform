@@ -13,11 +13,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fluxora_core/fluxora_core.dart';
 import 'package:media_kit/media_kit.dart' show Player;
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:fluxora_mobile/features/player/data/services/pip_service.dart';
 import 'package:fluxora_mobile/features/player/presentation/controllers/player_controls_controller.dart';
+import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
+import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.dart';
 import 'package:fluxora_mobile/features/player/presentation/sheets/audio_subs_sheet.dart';
 import 'package:fluxora_mobile/features/player/presentation/sheets/cast_sheet.dart';
 import 'package:fluxora_mobile/features/player/presentation/sheets/quality_sheet.dart';
@@ -215,7 +218,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                   widget.tonemapped
                       ? 'Server is converting BT.2020 PQ to BT.709 (slower).'
                       : 'Source is ${widget.hdrFormat}; tap to convert if '
-                          'colours look washed.',
+                            'colours look washed.',
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.6),
                     fontSize: 12,
@@ -235,10 +238,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
               ),
             if (canGroupWatch)
               ListTile(
-                leading: const Icon(
-                  Icons.groups_rounded,
-                  color: Colors.white,
-                ),
+                leading: const Icon(Icons.groups_rounded, color: Colors.white),
                 title: const Text(
                   'Group Watch',
                   style: TextStyle(color: Colors.white),
@@ -297,8 +297,9 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
     // result to 0).
     final playerPos = widget.player.state.position;
     final playerDur = widget.player.state.duration;
-    final offset =
-        Duration(milliseconds: (widget.playlistOffsetSec * 1000).toInt());
+    final offset = Duration(
+      milliseconds: (widget.playlistOffsetSec * 1000).toInt(),
+    );
     final sourceDur = playerDur + offset;
     final sourcePos = playerPos + offset;
     var target = sourcePos + delta;
@@ -322,8 +323,10 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
     } else {
       final offsetMs = (widget.playlistOffsetSec * 1000).toInt();
       final playerDurMs = widget.player.state.duration.inMilliseconds;
-      final playerMs = (target.inMilliseconds - offsetMs)
-          .clamp(0, playerDurMs > 0 ? playerDurMs : 1 << 30);
+      final playerMs = (target.inMilliseconds - offsetMs).clamp(
+        0,
+        playerDurMs > 0 ? playerDurMs : 1 << 30,
+      );
       widget.player.seek(Duration(milliseconds: playerMs));
     }
   }
@@ -446,8 +449,10 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
   double get _unlockProgress {
     if (_unlockHoldStart == null) return 0.0;
     final elapsed = DateTime.now().difference(_unlockHoldStart!);
-    return (elapsed.inMilliseconds / _unlockHoldDuration.inMilliseconds)
-        .clamp(0.0, 1.0);
+    return (elapsed.inMilliseconds / _unlockHoldDuration.inMilliseconds).clamp(
+      0.0,
+      1.0,
+    );
   }
 
   // ── Sheets ─────────────────────────────────────────────────────────────────
@@ -548,10 +553,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
             ),
 
             if (_ripplePos != null)
-              _SeekRipple(
-                position: _ripplePos!,
-                isForward: _rippleIsForward,
-              ),
+              _SeekRipple(position: _ripplePos!, isForward: _rippleIsForward),
 
             Positioned(
               top: 80,
@@ -577,10 +579,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                     opacity: c.dragHudVisible ? 1.0 : 0.0,
                     duration: _kFadeMs,
                     curve: Curves.easeOut,
-                    child: _DragHud(
-                      kind: c.activeDrag,
-                      value: c.dragHudValue,
-                    ),
+                    child: _DragHud(kind: c.activeDrag, value: c.dragHudValue),
                   ),
                 ),
               ),
@@ -678,12 +677,35 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                             const SizedBox(height: 8),
                             FocusTraversalOrder(
                               order: const NumericFocusOrder(6),
-                              child: PlayerQuickActions(
-                                onLock: c.lock,
-                                onFit: c.toggleFit,
-                                fitCover: c.fitCover,
-                                onOpenSheet: _openSheet,
-                                sleepActive: _sleepDuration != null,
+                              // Plan 22 — wrap the quick-action row in a
+                              // BlocBuilder so the Audio action's
+                              // disabled state tracks the cubit's
+                              // `availableAudioTracks` count.  Greyed
+                              // when 0-or-1 tracks (no point in opening
+                              // a picker with nothing to pick).
+                              child: BlocBuilder<PlayerCubit, PlayerState>(
+                                buildWhen: (prev, next) {
+                                  final prevCount = prev is PlayerReady
+                                      ? prev.availableAudioTracks.length
+                                      : 0;
+                                  final nextCount = next is PlayerReady
+                                      ? next.availableAudioTracks.length
+                                      : 0;
+                                  return prevCount != nextCount;
+                                },
+                                builder: (context, state) {
+                                  final audioTrackCount = state is PlayerReady
+                                      ? state.availableAudioTracks.length
+                                      : 0;
+                                  return PlayerQuickActions(
+                                    onLock: c.lock,
+                                    onFit: c.toggleFit,
+                                    fitCover: c.fitCover,
+                                    onOpenSheet: _openSheet,
+                                    sleepActive: _sleepDuration != null,
+                                    audioTrackCount: audioTrackCount,
+                                  );
+                                },
                               ),
                             ),
                             const SizedBox(height: 4),
@@ -738,11 +760,13 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                                     width: 56,
                                     height: 56,
                                     decoration: BoxDecoration(
-                                      color: Colors.black
-                                          .withValues(alpha: 0.7),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.7,
+                                      ),
                                       shape: BoxShape.circle,
                                       border: Border.all(
-                                          color: AppColors.borderSubtle),
+                                        color: AppColors.borderSubtle,
+                                      ),
                                     ),
                                     alignment: Alignment.center,
                                     child: const Icon(
@@ -886,10 +910,7 @@ class PlayerTopBar extends StatelessWidget {
           if (hdrFormat != null)
             Padding(
               padding: const EdgeInsets.only(right: 4),
-              child: _HdrChip(
-                format: hdrFormat!,
-                tonemapped: tonemapped,
-              ),
+              child: _HdrChip(format: hdrFormat!, tonemapped: tonemapped),
             ),
           if (onXRay != null)
             Semantics(
@@ -897,10 +918,7 @@ class PlayerTopBar extends StatelessWidget {
               button: true,
               child: IconButton(
                 tooltip: 'X-Ray',
-                icon: const Icon(
-                  Icons.science_outlined,
-                  color: Colors.white,
-                ),
+                icon: const Icon(Icons.science_outlined, color: Colors.white),
                 onPressed: onXRay,
                 splashRadius: 22,
               ),
@@ -1188,8 +1206,9 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
       builder: (context, posSnap) {
         final playerPos = posSnap.data ?? Duration.zero;
         // Display position is in source-time = player-time + offset.
-        final sourcePos =
-            Duration(milliseconds: playerPos.inMilliseconds + offsetMs);
+        final sourcePos = Duration(
+          milliseconds: playerPos.inMilliseconds + offsetMs,
+        );
         return StreamBuilder<Duration>(
           stream: widget.player.stream.duration,
           initialData: widget.player.state.duration,
@@ -1209,8 +1228,10 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
             // would render value=1.0 mid-drag.
             final liveValue = (sourceDur.inMilliseconds == 0)
                 ? 0.0
-                : (sourcePos.inMilliseconds / sourceDur.inMilliseconds)
-                    .clamp(0.0, 1.0);
+                : (sourcePos.inMilliseconds / sourceDur.inMilliseconds).clamp(
+                    0.0,
+                    1.0,
+                  );
             // Precedence: live drag (touch) > post-release pin > live
             // player position.  The pin holds while the cubit drives a
             // seek (debounce window + server-restart open/seek) so the
@@ -1227,8 +1248,8 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
                 _pendingValue != null &&
                 !widget.isSeeking &&
                 sourceDur.inMilliseconds > 0) {
-              final pendingMs =
-                  (sourceDur.inMilliseconds * _pendingValue!).round();
+              final pendingMs = (sourceDur.inMilliseconds * _pendingValue!)
+                  .round();
               if ((sourcePos.inMilliseconds - pendingMs).abs() <
                   _kPendingSettleToleranceMs) {
                 WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1245,13 +1266,11 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
             final displayPos = pinned == null
                 ? sourcePos
                 : Duration(
-                    milliseconds:
-                        (sourceDur.inMilliseconds * pinned).round(),
+                    milliseconds: (sourceDur.inMilliseconds * pinned).round(),
                   );
 
             return Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Row(
                 children: [
                   Semantics(
@@ -1271,8 +1290,7 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
                     child: Semantics(
                       slider: true,
                       label: 'Seek',
-                      value:
-                          '${_format(displayPos)} of ${_format(sourceDur)}',
+                      value: '${_format(displayPos)} of ${_format(sourceDur)}',
                       child: SliderTheme(
                         data: SliderTheme.of(context).copyWith(
                           trackHeight: 3,
@@ -1285,61 +1303,64 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
                           ),
                         ),
                         child: Slider(
-                        value: value,
-                        onChangeStart: (v) {
-                          setState(() => _dragValue = v);
-                        },
-                        onChanged: (v) {
-                          // No `player.seek` here — local-state-only
-                          // preview avoids the "jumps to max" bug when
-                          // dragging past the current playlist's end.
-                          // Visual feedback is fluid because the slider
-                          // re-renders with the new `_dragValue` on
-                          // every onChanged tick.
-                          setState(() => _dragValue = v);
-                        },
-                        onChangeEnd: (v) {
-                          final sourceMs =
-                              (sourceDur.inMilliseconds * v).round();
-                          // Hand the cubit a SOURCE-time target — the
-                          // cubit decides server-restart vs in-player
-                          // and converts to player-time itself.
-                          final target = Duration(milliseconds: sourceMs);
-                          // Pin the released value so the slider stays
-                          // there across the cubit's seek-commit
-                          // window (300 ms debounce + pause + open +
-                          // seek for the server-restart path) and the
-                          // post-emit settle-out where libmpv's
-                          // position stream catches up to the new
-                          // playlist coordinates.  Pin is dropped by
-                          // the post-frame settle check in `build`
-                          // once the player's source-time converges
-                          // on the target, or by the fallback timer
-                          // armed below if convergence never happens.
-                          setState(() {
-                            _dragValue = null;
-                            _pendingValue = v;
-                          });
-                          _pinFallbackTimer?.cancel();
-                          _pinFallbackTimer = Timer(
-                            const Duration(seconds: _kPinMaxHoldSec),
-                            () {
-                              if (mounted && _pendingValue != null) {
-                                setState(() => _pendingValue = null);
-                              }
-                            },
-                          );
-                          if (widget.onSeekCommit != null) {
-                            widget.onSeekCommit!(target);
-                          } else {
-                            // No cubit hookup → fall through to a raw
-                            // in-player seek using player-time.
-                            final playerMs = (sourceMs - offsetMs)
-                                .clamp(0, playerDur.inMilliseconds);
-                            widget.player
-                                .seek(Duration(milliseconds: playerMs));
-                          }
-                        },
+                          value: value,
+                          onChangeStart: (v) {
+                            setState(() => _dragValue = v);
+                          },
+                          onChanged: (v) {
+                            // No `player.seek` here — local-state-only
+                            // preview avoids the "jumps to max" bug when
+                            // dragging past the current playlist's end.
+                            // Visual feedback is fluid because the slider
+                            // re-renders with the new `_dragValue` on
+                            // every onChanged tick.
+                            setState(() => _dragValue = v);
+                          },
+                          onChangeEnd: (v) {
+                            final sourceMs = (sourceDur.inMilliseconds * v)
+                                .round();
+                            // Hand the cubit a SOURCE-time target — the
+                            // cubit decides server-restart vs in-player
+                            // and converts to player-time itself.
+                            final target = Duration(milliseconds: sourceMs);
+                            // Pin the released value so the slider stays
+                            // there across the cubit's seek-commit
+                            // window (300 ms debounce + pause + open +
+                            // seek for the server-restart path) and the
+                            // post-emit settle-out where libmpv's
+                            // position stream catches up to the new
+                            // playlist coordinates.  Pin is dropped by
+                            // the post-frame settle check in `build`
+                            // once the player's source-time converges
+                            // on the target, or by the fallback timer
+                            // armed below if convergence never happens.
+                            setState(() {
+                              _dragValue = null;
+                              _pendingValue = v;
+                            });
+                            _pinFallbackTimer?.cancel();
+                            _pinFallbackTimer = Timer(
+                              const Duration(seconds: _kPinMaxHoldSec),
+                              () {
+                                if (mounted && _pendingValue != null) {
+                                  setState(() => _pendingValue = null);
+                                }
+                              },
+                            );
+                            if (widget.onSeekCommit != null) {
+                              widget.onSeekCommit!(target);
+                            } else {
+                              // No cubit hookup → fall through to a raw
+                              // in-player seek using player-time.
+                              final playerMs = (sourceMs - offsetMs).clamp(
+                                0,
+                                playerDur.inMilliseconds,
+                              );
+                              widget.player.seek(
+                                Duration(milliseconds: playerMs),
+                              );
+                            }
+                          },
                         ),
                       ),
                     ),
@@ -1382,6 +1403,7 @@ class PlayerQuickActions extends StatelessWidget {
     required this.fitCover,
     required this.onOpenSheet,
     required this.sleepActive,
+    this.audioTrackCount = 0,
   });
 
   final VoidCallback onLock;
@@ -1390,12 +1412,21 @@ class PlayerQuickActions extends StatelessWidget {
   final ValueChanged<Sheet> onOpenSheet;
   final bool sleepActive;
 
+  /// Plan 22 — number of audio tracks the source container exposes,
+  /// surfaced from the cubit's `availableAudioTracks`.  When `<= 1`
+  /// the Audio quick-action greys out with a tooltip explaining why
+  /// (the picker would be empty / single-row).  Default `0` keeps the
+  /// action disabled when no `PlayerCubit` is above the widget (golden
+  /// tests, widget previews).
+  final int audioTrackCount;
+
   @override
   Widget build(BuildContext context) {
     // 4x2 grid per plan §14 ("4x2 quick-control grid"). Two Rows of four
     // Expanded cells fits at portrait widths (412 px) where the prior
     // single 8-cell Row overflowed by ~111 px. Equal Expanded weights
     // give the same spacing landscape and portrait, no MediaQuery branch.
+    final audioDisabled = audioTrackCount <= 1;
     final row1 = [
       _Action(
         icon: Icons.lock_outline,
@@ -1415,7 +1446,9 @@ class PlayerQuickActions extends StatelessWidget {
         icon: Icons.audiotrack_outlined,
         label: 'Audio',
         semanticLabel: 'Audio tracks',
-        onTap: () => onOpenSheet(Sheet.audioSubs),
+        onTap: audioDisabled ? null : () => onOpenSheet(Sheet.audioSubs),
+        disabled: audioDisabled,
+        tooltip: audioDisabled ? 'Only one audio track in this file' : null,
       ),
       _Action(
         icon: Icons.subtitles_outlined,
@@ -1476,6 +1509,8 @@ class _Action extends StatelessWidget {
     this.semanticLabel,
     this.onTap,
     this.highlight = false,
+    this.disabled = false,
+    this.tooltip,
   });
 
   final IconData icon;
@@ -1489,36 +1524,59 @@ class _Action extends StatelessWidget {
   final VoidCallback? onTap;
   final bool highlight;
 
+  /// Plan 22 — when true the action renders dimmed and skips its
+  /// InkWell `onTap`.  Currently driven by the Audio quick-action's
+  /// "≤ 1 audio track" gate.  Distinct from `onTap == null` so the
+  /// caller can pass both (the InkWell still mounts so the long-press
+  /// tooltip can fire on the disabled affordance).
+  final bool disabled;
+
+  /// Optional Material tooltip displayed on long-press / hover.  Used
+  /// by plan 22 to explain why the Audio action is greyed when the
+  /// source carries 0-or-1 audio tracks.
+  final String? tooltip;
+
   @override
   Widget build(BuildContext context) {
-    final color = highlight ? AppColors.violetTint : Colors.white;
-    return Semantics(
-      label: semanticLabel ?? label,
-      button: true,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-          child: ExcludeSemantics(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, color: color, size: 20),
-                const SizedBox(height: 4),
-                Text(
-                  label,
-                  style: AppTypography.captionV2.copyWith(
-                    color: color,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w500,
-                  ),
+    final Color color;
+    if (disabled) {
+      color = Colors.white.withValues(alpha: 0.35);
+    } else if (highlight) {
+      color = AppColors.violetTint;
+    } else {
+      color = Colors.white;
+    }
+    final inkwell = InkWell(
+      onTap: disabled ? null : onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: ExcludeSemantics(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: color, size: 20),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: AppTypography.captionV2.copyWith(
+                  color: color,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
+    );
+    final tip = tooltip;
+    return Semantics(
+      label: semanticLabel ?? label,
+      button: true,
+      enabled: !disabled,
+      hint: tip,
+      child: tip != null ? Tooltip(message: tip, child: inkwell) : inkwell,
     );
   }
 }
@@ -1748,8 +1806,7 @@ class _DragHud extends StatelessWidget {
             child: LinearProgressIndicator(
               value: value.clamp(0.0, 1.0),
               backgroundColor: const Color(0x33FFFFFF),
-              valueColor:
-                  const AlwaysStoppedAnimation<Color>(AppColors.violet),
+              valueColor: const AlwaysStoppedAnimation<Color>(AppColors.violet),
               minHeight: 3,
             ),
           ),
