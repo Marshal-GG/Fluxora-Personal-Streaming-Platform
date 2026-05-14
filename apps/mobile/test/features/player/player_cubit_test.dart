@@ -619,7 +619,7 @@ void main() {
           channels: 6,
           sampleRate: 48000,
         );
-        expect(surroundEng.labelFor(Object()), 'ENG · 5.1 · AC3');
+        expect(surroundEng.labelFor(1), 'ENG · 5.1 · AC3');
 
         const commentary = AudioTrackInfo(
           index: 1,
@@ -629,17 +629,33 @@ void main() {
           sampleRate: 48000,
         );
         expect(
-          commentary.labelFor(Object()),
+          commentary.labelFor(2),
           'Director Commentary · 2.0 · AAC',
         );
 
+        // NVIDIA Game Bar captures stamp every audio track with
+        // tags.language="und"; the picker should treat "und" as
+        // "no language" and fall through to the audio-ordinal label.
+        const undefinedLang = AudioTrackInfo(
+          index: 1,
+          codec: 'aac',
+          language: 'und',
+          channels: 2,
+          sampleRate: 48000,
+        );
+        expect(undefinedLang.labelFor(1), 'Track 1 · 2.0 · AAC');
+
+        // Audio-ordinal numbering matches VLC: picker passes 1-based
+        // position within audio-only stream list, not the FFmpeg
+        // stream index (which counts video too — would skew to "Track 3"
+        // for the second audio stream of a video file).
         const fallback = AudioTrackInfo(
           index: 2,
           codec: 'aac',
           channels: 2,
           sampleRate: 48000,
         );
-        expect(fallback.labelFor(Object()), 'Track 3 · 2.0 · AAC');
+        expect(fallback.labelFor(2), 'Track 2 · 2.0 · AAC');
       },
     );
 

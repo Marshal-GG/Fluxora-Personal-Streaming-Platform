@@ -77,4 +77,25 @@ class PlayerRepositoryImpl implements PlayerRepository {
       data: {'current_position_sec': currentPositionSec},
     );
   }
+
+  @override
+  Future<double> switchAudioTrack({
+    required String sessionId,
+    required int index,
+    required double currentPositionSec,
+  }) async {
+    final response = await _apiClient.post<Map<String, dynamic>>(
+      '/api/v1/stream/$sessionId/audio-track',
+      data: {
+        'index': index,
+        'current_position_sec': currentPositionSec,
+      },
+    );
+    final raw = response['applied_seek_sec'];
+    if (raw is num) return raw.toDouble();
+    // Server contract says it's always present; if the response is
+    // somehow shape-shifted we fall back to the caller-supplied
+    // position rather than crashing.
+    return currentPositionSec;
+  }
 }

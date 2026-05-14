@@ -4,11 +4,13 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
+import 'dart:io' show Platform;
+
 import 'package:media_kit/media_kit.dart'
     show
         AudioParams,
-        AudioTrack,
         Media,
+        NativePlayer,
         Player,
         PlayerConfiguration,
         VideoParams;
@@ -286,6 +288,39 @@ class PlayerCubit extends Cubit<PlayerState> {
           bufferSize: _kPlayerBufferBytes,
         ),
       );
+
+      // Core audio-output fix for Android: switch libmpv from the
+      // default `opensles` AO to `audiotrack`.  Symptoms with the
+      // OpenSL ES backend on Oplus/OnePlus (and likely other vendor
+      // skins) — every one of these visible in operator debug logs
+      // 2026-05-14/15:
+      //   * `libOpenSLES: Emulating old channel mask behavior` on
+      //     every track init — channel mask negotiation broken, falls
+      //     back to stereo regardless of source channel count.
+      //   * AudioTrack churn on `setAudioTrack` mid-playback (audio
+      //     dies for 20 s then libmpv stalls; only a manual seek
+      //     recovers).
+      //   * Flutter_webrtc's audio focus listener fires on every
+      //     route change because OpenSL ES doesn't claim focus
+      //     cleanly.
+      // The `audiotrack` AO uses Android's AudioTrack API directly,
+      // handles multi-channel correctly, and respects audio focus.
+      // Set BEFORE `Player.open` so libmpv picks it on first init.
+      if (Platform.isAndroid && _player!.platform is NativePlayer) {
+        try {
+          await (_player!.platform! as NativePlayer)
+              .setProperty('ao', 'audiotrack');
+          _log.i('[Player] libmpv ao=audiotrack set for Android session');
+        } catch (e, st) {
+          _log.w(
+            '[Player] failed to set ao=audiotrack; falling back to '
+            'default opensles',
+            error: e,
+            stackTrace: st,
+          );
+        }
+      }
+
       _controller = VideoController(_player!);
       _lastPlaylistUrl = response.playlistUrl;
       _lastPlaylistHeaders = headers;
@@ -518,55 +553,57 @@ class PlayerCubit extends Cubit<PlayerState> {
     }
     final trackInfo = tracks[trackInfoIdx];
 
+    // Plan 23 — server-restart switching.  Every client-side approach
+    // we tried (bare setAudioTrack, pause+swap+seek+play, self-seek,
+    // 1-s-back seek, ao=audiotrack) hit the same wall: libmpv-on-
+    // Android can't reliably swap audio decoders mid-stream against a
+    // multi-track fmp4 init.  Going server-side means the respawned
+    // FFmpeg only emits ONE audio track, so libmpv never has to
+    // switch — it just opens a fresh stream with the desired track
+    // already selected.  ~2 s visible gap (server restart + buffer
+    // fill); rock-solid in exchange.
+    final currentPositionSec =
+        player.state.position.inMilliseconds / 1000.0;
+    final wasPlaying = player.state.playing;
+    final headers = _lastPlaylistHeaders ?? const <String, String>{};
     try {
-      final mediaKitTracks = player.state.tracks.audio;
-      // libmpv reserves the first two synthetic entries (`auto` / `no`)
-      // — drop them before mapping by position.  Source-track 0 ↔
-      // mediaKitTracks[2] when both magic entries are present.
-      final realTracks = mediaKitTracks
-          .where((t) => t.id != 'auto' && t.id != 'no')
-          .toList();
-      AudioTrack? picked;
-      if (trackInfoIdx >= 0 && trackInfoIdx < realTracks.length) {
-        picked = realTracks[trackInfoIdx];
-      } else {
-        // Fallback: match by id substring (some libmpv builds tag the
-        // track id with the source index).
-        for (final t in realTracks) {
-          if (t.id.contains('$sourceIndex')) {
-            picked = t;
-            break;
-          }
-        }
-      }
-
-      if (picked == null) {
-        _log.w(
-          '[Player] selectAudioTrack($sourceIndex) — no matching '
-          'media_kit AudioTrack (have ${realTracks.length} real tracks); '
-          'updating cubit state without dispatching to libmpv',
+      final appliedSeek = await _repository.switchAudioTrack(
+        sessionId: currentState.sessionId,
+        index: sourceIndex,
+        currentPositionSec: currentPositionSec,
+      );
+      _log.i(
+        '[Player] audio_track_switched session=${currentState.sessionId} '
+        'source_index=$sourceIndex codec=${trackInfo.codec} '
+        'channels=${trackInfo.channels} language=${trackInfo.language} '
+        'applied_seek_sec=$appliedSeek (server-restart)',
+      );
+      // Re-open the playlist on the player so libmpv flushes its
+      // cached VOD playlist + init segment and pulls the new single-
+      // audio-track stream.  Same URL — the server-side restart
+      // rewrote the segments in place.
+      final url = _lastPlaylistUrl;
+      if (url != null) {
+        await player.open(
+          Media(url, httpHeaders: headers),
+          play: wasPlaying,
         );
-      } else {
-        await player.setAudioTrack(picked);
-        _log.i(
-          '[Player] audio_track_switched session=${currentState.sessionId} '
-          'source_index=$sourceIndex codec=${trackInfo.codec} '
-          'channels=${trackInfo.channels} language=${trackInfo.language} '
-          'media_kit_id=${picked.id}',
+      }
+      if (state is PlayerReady) {
+        emit(
+          (state as PlayerReady).copyWith(
+            selectedAudioTrackIndex: sourceIndex,
+            playlistOffsetSec: appliedSeek,
+          ),
         );
       }
     } catch (e, st) {
       _log.w(
-        '[Player] selectAudioTrack($sourceIndex) — libmpv call failed; '
-        'cubit state will still update so the picker UI reflects intent',
+        '[Player] selectAudioTrack($sourceIndex) — server-restart '
+        'switch failed; cubit state unchanged so the picker rolls '
+        'back to the previous track',
         error: e,
         stackTrace: st,
-      );
-    }
-
-    if (state is PlayerReady) {
-      emit(
-        (state as PlayerReady).copyWith(selectedAudioTrackIndex: sourceIndex),
       );
     }
   }

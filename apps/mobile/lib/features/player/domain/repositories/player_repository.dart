@@ -72,4 +72,22 @@ abstract class PlayerRepository {
     required String sessionId,
     required double currentPositionSec,
   });
+
+  /// `POST /api/v1/stream/{session_id}/audio-track` (plan 23) —
+  /// switch the source audio track the server demuxes by respawning
+  /// FFmpeg with `-map 0:a:<index>?` pinning the chosen track.
+  /// Sidesteps the broken libmpv-on-Android client-side
+  /// `setAudioTrack` path (mid-stream switching reliably hangs the
+  /// player; operator-reported 2026-05-15).
+  ///
+  /// Returns the segment-snapped seek the server applied so the
+  /// cubit can update `_playlistOffsetSec` (the playlist URL is the
+  /// same but the playlist contents are rewritten with new segment
+  /// numbering + the new audio-only init.mp4 — caller must re-open
+  /// the playlist on the player after this resolves).
+  Future<double> switchAudioTrack({
+    required String sessionId,
+    required int index,
+    required double currentPositionSec,
+  });
 }
