@@ -113,22 +113,26 @@ class _AvatarChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 36,
-      height: 36,
-      decoration: BoxDecoration(
-        gradient: AppGradientPlaceholders.violetDeep,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.borderSubtle),
-      ),
-      alignment: Alignment.center,
-      child: const Text(
-        'M',
-        style: TextStyle(
-          fontFamily: 'Inter',
-          fontSize: 14,
-          fontWeight: FontWeight.w700,
-          color: Colors.white,
+    return Semantics(
+      label: 'Your profile',
+      image: true,
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          gradient: AppGradientPlaceholders.violetDeep,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: AppColors.borderSubtle),
+        ),
+        alignment: Alignment.center,
+        child: const Text(
+          'M',
+          style: TextStyle(
+            fontFamily: 'Inter',
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: Colors.white,
+          ),
         ),
       ),
     );
@@ -213,30 +217,38 @@ class _BrowseTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => context.push(Routes.libraryWithFilter(spec.filter)),
-      child: Container(
-        height: 84,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          gradient: spec.gradient,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.borderSubtle),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(spec.icon, size: 20, color: AppColors.textBright),
-            Text(
-              spec.label,
-              style: AppTypography.captionV2.copyWith(
-                color: AppColors.textBright,
-                fontWeight: FontWeight.w700,
+    return Semantics(
+      button: true,
+      label: 'Browse ${spec.label}',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => context.push(Routes.libraryWithFilter(spec.filter)),
+        child: Container(
+          height: 84,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            gradient: spec.gradient,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.borderSubtle),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ExcludeSemantics(
+                child: Icon(spec.icon, size: 20, color: AppColors.textBright),
               ),
-            ),
-          ],
+              ExcludeSemantics(
+                child: Text(
+                  spec.label,
+                  style: AppTypography.captionV2.copyWith(
+                    color: AppColors.textBright,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -365,23 +377,28 @@ class _CwRailEmpty extends StatelessWidget {
                       .copyWith(color: AppColors.textDim),
                 ),
                 const SizedBox(height: 16),
-                TextButton(
-                  onPressed: () =>
-                      context.push(Routes.libraryWithFilter('movies')),
-                  style: TextButton.styleFrom(
-                    backgroundColor: AppColors.violetTint.withValues(alpha: 0.12),
-                    foregroundColor: AppColors.violetTint,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 8),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                Semantics(
+                  button: true,
+                  label: 'Browse library',
+                  child: TextButton(
+                    onPressed: () =>
+                        context.push(Routes.libraryWithFilter('movies')),
+                    style: TextButton.styleFrom(
+                      backgroundColor:
+                          AppColors.violetTint.withValues(alpha: 0.12),
+                      foregroundColor: AppColors.violetTint,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
-                  ),
-                  child: Text(
-                    'Browse library',
-                    style: AppTypography.captionV2.copyWith(
-                      color: AppColors.violetTint,
-                      fontWeight: FontWeight.w600,
+                    child: Text(
+                      'Browse library',
+                      style: AppTypography.captionV2.copyWith(
+                        color: AppColors.violetTint,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),

@@ -401,7 +401,10 @@ class _CopyButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    return Semantics(
+      button: true,
+      label: 'Copy invite link',
+      child: InkWell(
       borderRadius: BorderRadius.circular(10),
       onTap: () async {
         await Clipboard.setData(
@@ -429,6 +432,7 @@ class _CopyButton extends StatelessWidget {
           size: 16,
           color: AppColors.violet,
         ),
+      ),
       ),
     );
   }

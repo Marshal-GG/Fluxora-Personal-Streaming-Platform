@@ -157,13 +157,18 @@ void main() {
     await loadAppFonts();
   });
 
-  setUp(() {
+  setUp(() async {
     // Production `DashboardScreen.build()` resolves DashboardRepository,
     // StorageRepository, and RecentActivityRepository from the global
     // GetIt instance inside `MultiBlocProvider.create`. To exercise the
     // real screen wiring under test, register mock repos before pumping,
     // then stub their methods to return deterministic test data.
-    GetIt.I.reset();
+    //
+    // `GetIt.reset()` is async — awaiting prevents a race where the
+    // registerSingleton calls below land before the reset has cleared
+    // the previous test's state, producing flaky "type X is not
+    // registered" failures (see `docs/12_guidelines/03_gotchas.md`).
+    await GetIt.I.reset();
     GetIt.I.registerSingleton<DashboardRepository>(mockDashboardRepo);
     GetIt.I.registerSingleton<StorageRepository>(mockStorageRepo);
     GetIt.I.registerSingleton<RecentActivityRepository>(mockActivityRepo);
@@ -180,7 +185,7 @@ void main() {
         .thenAnswer((_) async => _activities);
   });
 
-  tearDown(() => GetIt.I.reset());
+  tearDown(() async => GetIt.I.reset());
 
   testGoldens('DashboardScreen — m3 default state', (tester) async {
     final systemStatsCubit = _StubSystemStatsCubit(mockSystemStatsRepo);

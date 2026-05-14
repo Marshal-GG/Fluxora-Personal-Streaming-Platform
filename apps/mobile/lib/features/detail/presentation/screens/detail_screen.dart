@@ -415,23 +415,31 @@ class _IconAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: () {},
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: AppColors.textBright, size: 22),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              style: AppTypography.captionV2.copyWith(
-                color: AppColors.textMutedV2,
+    return Semantics(
+      button: true,
+      label: label,
+      child: InkWell(
+        onTap: () {},
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ExcludeSemantics(
+                child: Icon(icon, color: AppColors.textBright, size: 22),
               ),
-            ),
-          ],
+              const SizedBox(height: 6),
+              ExcludeSemantics(
+                child: Text(
+                  label,
+                  style: AppTypography.captionV2.copyWith(
+                    color: AppColors.textMutedV2,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -465,13 +473,18 @@ class _Synopsis extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        GestureDetector(
-          onTap: onToggle,
-          child: Text(
-            expanded ? 'Less' : 'More',
-            style: AppTypography.captionV2.copyWith(
-              color: AppColors.violetTint,
-              fontWeight: FontWeight.w600,
+        Semantics(
+          button: true,
+          label: expanded ? 'Show less synopsis' : 'Show more synopsis',
+          child: GestureDetector(
+            onTap: onToggle,
+            behavior: HitTestBehavior.opaque,
+            child: Text(
+              expanded ? 'Less' : 'More',
+              style: AppTypography.captionV2.copyWith(
+                color: AppColors.violetTint,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),

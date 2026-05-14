@@ -73,66 +73,94 @@ class _Bar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          height: FluxMiniPlayer.height,
-          decoration: const BoxDecoration(
-            color: Color(0xF008061A), // bgRoot 0.94
-            border: Border(
-              top: BorderSide(color: AppColors.borderSubtle),
-            ),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              // Poster / placeholder
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [AppColors.violetDeep, AppColors.violet],
-                  ),
-                  borderRadius: BorderRadius.circular(AppRadii.sm),
+    return FocusTraversalGroup(
+      policy: OrderedTraversalPolicy(),
+      child: Material(
+        color: Colors.transparent,
+        child: Semantics(
+          // The bar itself is a tap-to-expand affordance.  Title is
+          // surfaced via the `value` so a screen reader announces "Now
+          // playing: <title>.  Expand player." in one swipe.
+          label: 'Now playing: $title. Expand player',
+          button: true,
+          container: true,
+          child: InkWell(
+            onTap: onTap,
+            child: Container(
+              height: FluxMiniPlayer.height,
+              decoration: const BoxDecoration(
+                color: Color(0xF008061A), // bgRoot 0.94
+                border: Border(
+                  top: BorderSide(color: AppColors.borderSubtle),
                 ),
-                alignment: Alignment.center,
-                child: const Icon(Icons.movie_creation_outlined,
-                    color: Colors.white, size: 22),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: AppTypography.body.copyWith(
-                        color: AppColors.textBright,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(
+                children: [
+                  // Poster / placeholder — decorative, hidden from a11y.
+                  ExcludeSemantics(
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [AppColors.violetDeep, AppColors.violet],
+                        ),
+                        borderRadius: BorderRadius.circular(AppRadii.sm),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      alignment: Alignment.center,
+                      child: const Icon(
+                        Icons.movie_creation_outlined,
+                        color: Colors.white,
+                        size: 22,
+                      ),
                     ),
-                    const SizedBox(height: 2),
-                    _TimeLine(player: player),
-                  ],
-                ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    // Already surfaced as part of the parent `Semantics.label`.
+                    // Hide the inner Text so the screen reader doesn't read
+                    // the title a second time after the bar's own label.
+                    child: ExcludeSemantics(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: AppTypography.body.copyWith(
+                              color: AppColors.textBright,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          _TimeLine(player: player),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  _PlayPauseButton(player: player),
+                  Semantics(
+                    label: 'Close mini player',
+                    button: true,
+                    child: IconButton(
+                      tooltip: 'Close',
+                      icon: const Icon(
+                        Icons.close,
+                        color: AppColors.textMutedV2,
+                        size: 20,
+                      ),
+                      onPressed: onClose,
+                      splashRadius: 20,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 4),
-              _PlayPauseButton(player: player),
-              IconButton(
-                tooltip: 'Close',
-                icon: const Icon(Icons.close,
-                    color: AppColors.textMutedV2, size: 20),
-                onPressed: onClose,
-                splashRadius: 20,
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -192,14 +220,20 @@ class _PlayPauseButton extends StatelessWidget {
       initialData: player.state.playing,
       builder: (context, snap) {
         final playing = snap.data ?? false;
-        return IconButton(
-          tooltip: playing ? 'Pause' : 'Play',
-          icon: Icon(
-            playing ? Icons.pause : Icons.play_arrow,
-            color: AppColors.textBright,
+        return Semantics(
+          // State-dependent label — read by screen readers and refreshed
+          // on every play/pause stream tick.
+          label: playing ? 'Pause' : 'Play',
+          button: true,
+          child: IconButton(
+            tooltip: playing ? 'Pause' : 'Play',
+            icon: Icon(
+              playing ? Icons.pause : Icons.play_arrow,
+              color: AppColors.textBright,
+            ),
+            onPressed: player.playOrPause,
+            splashRadius: 22,
           ),
-          onPressed: player.playOrPause,
-          splashRadius: 22,
         );
       },
     );

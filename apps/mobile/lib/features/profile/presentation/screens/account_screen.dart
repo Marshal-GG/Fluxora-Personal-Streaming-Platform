@@ -319,6 +319,7 @@ class _EditableNameRow extends StatelessWidget {
               const Icon(Icons.close_rounded, color: AppColors.textMutedV2),
           onPressed: () => Navigator.of(sheetCtx).maybePop(),
           splashRadius: 18,
+          tooltip: 'Close',
         ),
         child: _EditNameForm(currentName: current, profileCubit: cubit),
       ),
@@ -558,6 +559,7 @@ class _CopyableRow extends StatelessWidget {
             icon: const Icon(Icons.copy_rounded,
                 size: 16, color: AppColors.textMutedV2),
             splashRadius: 18,
+            tooltip: 'Copy $label',
             onPressed: () async {
               final messenger = ScaffoldMessenger.of(context);
               await Clipboard.setData(ClipboardData(text: value));

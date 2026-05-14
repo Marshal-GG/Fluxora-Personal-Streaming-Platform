@@ -64,6 +64,7 @@ class FluxAppBar extends StatelessWidget implements PreferredSizeWidget {
                 color: AppColors.textBright,
                 onPressed: onBack,
                 splashRadius: 22,
+                tooltip: 'Back',
               )
             : null);
 

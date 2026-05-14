@@ -116,16 +116,25 @@ class FluxRow extends StatelessWidget {
     );
 
     if (onTap == null) {
-      return body;
+      return MergeSemantics(child: body);
     }
 
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        splashColor: AppColors.pillBgPurple,
-        highlightColor: const Color(0x0AFFFFFF),
-        child: body,
+    // M14 polish: merge label + sub + trailing into a single semantics
+    // node and announce as a button so screen-readers say
+    // "Account, email@example.com, button" instead of three separate
+    // taps for the row.
+    return MergeSemantics(
+      child: Semantics(
+        button: true,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            splashColor: AppColors.pillBgPurple,
+            highlightColor: const Color(0x0AFFFFFF),
+            child: body,
+          ),
+        ),
       ),
     );
   }

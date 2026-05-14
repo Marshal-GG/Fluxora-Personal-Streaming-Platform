@@ -270,42 +270,47 @@ class _Controls extends StatelessWidget {
                 onPressed: null,
                 tooltip: 'Previous (no queue)',
               ),
-              GestureDetector(
-                onTap: isReady
-                    ? () => context.read<MusicPlayerCubit>().playPause()
-                    : null,
-                child: Container(
-                  width: 64,
-                  height: 64,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [AppColors.violet, AppColors.violetDeep],
-                    ),
-                    borderRadius: BorderRadius.circular(32),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x50A855F7),
-                        blurRadius: 16,
-                        offset: Offset(0, 6),
+              Semantics(
+                button: true,
+                label: isPlaying ? 'Pause' : 'Play',
+                enabled: isReady,
+                child: GestureDetector(
+                  onTap: isReady
+                      ? () => context.read<MusicPlayerCubit>().playPause()
+                      : null,
+                  child: Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [AppColors.violet, AppColors.violetDeep],
                       ),
-                    ],
-                  ),
-                  child: isBuffering
-                      ? const Center(
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          ),
-                        )
-                      : Icon(
-                          isPlaying ? Icons.pause : Icons.play_arrow,
-                          color: Colors.white,
-                          size: 32,
+                      borderRadius: BorderRadius.circular(32),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x50A855F7),
+                          blurRadius: 16,
+                          offset: Offset(0, 6),
                         ),
+                      ],
+                    ),
+                    child: isBuffering
+                        ? const Center(
+                            child: SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            ),
+                          )
+                        : Icon(
+                            isPlaying ? Icons.pause : Icons.play_arrow,
+                            color: Colors.white,
+                            size: 32,
+                          ),
+                  ),
                 ),
               ),
               const IconButton(

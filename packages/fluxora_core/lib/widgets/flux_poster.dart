@@ -171,13 +171,20 @@ class FluxPoster extends StatelessWidget {
     );
 
     if (onTap != null) {
-      poster = Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(AppRadii.lg),
-          splashColor: AppColors.pillBgPurple,
-          child: poster,
+      // M14 polish: wrap tap region in Semantics so screen-readers
+      // announce "View <title>" — covers every poster row across Home,
+      // Library, Search, Detail "More like this", Continue Watching.
+      poster = Semantics(
+        button: true,
+        label: 'View $title',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(AppRadii.lg),
+            splashColor: AppColors.pillBgPurple,
+            child: ExcludeSemantics(child: poster),
+          ),
         ),
       );
     }

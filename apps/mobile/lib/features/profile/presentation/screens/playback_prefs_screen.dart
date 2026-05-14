@@ -337,6 +337,7 @@ class _QualityPickerSheet extends StatelessWidget {
         icon: const Icon(Icons.close_rounded, color: AppColors.textMutedV2),
         onPressed: () => Navigator.of(context).maybePop(),
         splashRadius: 18,
+        tooltip: 'Close',
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,

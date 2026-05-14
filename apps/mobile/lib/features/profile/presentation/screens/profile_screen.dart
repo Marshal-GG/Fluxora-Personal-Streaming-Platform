@@ -726,24 +726,28 @@ class _SignOutButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          color: const Color(0x1AEF4444),
-          border: Border.all(color: const Color(0x40EF4444)),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          'Sign out',
-          style: AppTypography.body.copyWith(
-            fontSize: 13.5,
-            fontWeight: FontWeight.w600,
-            color: const Color(0xFFF87171),
+    return Semantics(
+      button: true,
+      label: 'Sign out and unpair this device',
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: const Color(0x1AEF4444),
+            border: Border.all(color: const Color(0x40EF4444)),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            'Sign out',
+            style: AppTypography.body.copyWith(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFFF87171),
+            ),
           ),
         ),
       ),
@@ -771,6 +775,7 @@ Future<void> _showAboutSheet(BuildContext context) async {
         icon: const Icon(Icons.close_rounded, color: AppColors.textMutedV2),
         onPressed: () => Navigator.of(sheetCtx).maybePop(),
         splashRadius: 18,
+        tooltip: 'Close',
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -845,6 +850,7 @@ Future<void> _showHelpSheet(BuildContext context) async {
         icon: const Icon(Icons.close_rounded, color: AppColors.textMutedV2),
         onPressed: () => Navigator.of(sheetCtx).maybePop(),
         splashRadius: 18,
+        tooltip: 'Close',
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -942,6 +948,7 @@ class _DiagnosticRow extends StatelessWidget {
                 color: AppColors.textMutedV2,
               ),
               splashRadius: 18,
+              tooltip: 'Copy $label',
               onPressed: () async {
                 final messenger = ScaffoldMessenger.of(context);
                 await Clipboard.setData(ClipboardData(text: value));

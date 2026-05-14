@@ -99,6 +99,7 @@ class _SearchViewState extends State<_SearchView> {
                             _controller.clear();
                             _setQuery('');
                           },
+                          tooltip: 'Clear search',
                         )
                       : null,
                 );
@@ -181,10 +182,15 @@ class _EmptyState extends StatelessWidget {
           runSpacing: 8,
           children: [
             for (final spec in _browseFilters)
-              GestureDetector(
-                onTap: () =>
-                    context.push(Routes.libraryWithFilter(spec.filter)),
-                child: FluxChip(spec.label, color: FluxChipColor.purple),
+              Semantics(
+                button: true,
+                label: 'Browse ${spec.label}',
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () =>
+                      context.push(Routes.libraryWithFilter(spec.filter)),
+                  child: FluxChip(spec.label, color: FluxChipColor.purple),
+                ),
               ),
           ],
         ),

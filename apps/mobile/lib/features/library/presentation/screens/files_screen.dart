@@ -260,36 +260,40 @@ class _FileChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(10),
-      onTap: () => _onTap(context),
-      child: Container(
-        width: 130,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0x0DFFFFFF),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: AppColors.borderSubtle),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(_kindIcon(kind), size: 22, color: AppColors.violetTint),
-            const Spacer(),
-            Text(
-              file.title ?? file.name,
-              style: AppTypography.bodySmall
-                  .copyWith(color: AppColors.textBright),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              file.extension.toUpperCase().replaceAll('.', ''),
-              style: AppTypography.micro
-                  .copyWith(color: AppColors.textDim),
-            ),
-          ],
+    return Semantics(
+      button: true,
+      label: 'Open ${file.title ?? file.name}',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _onTap(context),
+        child: Container(
+          width: 130,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0x0DFFFFFF),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.borderSubtle),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(_kindIcon(kind), size: 22, color: AppColors.violetTint),
+              const Spacer(),
+              Text(
+                file.title ?? file.name,
+                style: AppTypography.bodySmall
+                    .copyWith(color: AppColors.textBright),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                file.extension.toUpperCase().replaceAll('.', ''),
+                style: AppTypography.micro
+                    .copyWith(color: AppColors.textDim),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -188,7 +188,10 @@ class _ServerTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
+    return Semantics(
+      button: true,
+      label: 'Connect to ${server.name} at ${server.ip} port ${server.port}',
+      child: Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: () => _connect(context, server),
@@ -247,6 +250,7 @@ class _ServerTile extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -342,6 +346,7 @@ class _BottomCtas extends StatelessWidget {
           icon: const Icon(Icons.close_rounded, color: AppColors.textMutedV2),
           onPressed: () => Navigator.of(context).maybePop(),
           splashRadius: 18,
+          tooltip: 'Close',
         ),
         child: _ManualEntryForm(
           onSubmit: (server) {
@@ -397,7 +402,10 @@ class _ManualEntryFormState extends State<_ManualEntryForm> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    // M14 polish: ordered focus traversal — IP -> Port -> Connect.
+    return FocusTraversalGroup(
+      policy: OrderedTraversalPolicy(),
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -418,6 +426,7 @@ class _ManualEntryFormState extends State<_ManualEntryForm> {
                 leadingIcon: LucideIcons.globe,
                 keyboardType: TextInputType.url,
                 onSubmitted: (_) => _submit(),
+                autofocus: true,
               ),
             ),
             const SizedBox(width: 10),
@@ -449,6 +458,7 @@ class _ManualEntryFormState extends State<_ManualEntryForm> {
         ),
         const SizedBox(height: 10),
       ],
+      ),
     );
   }
 }

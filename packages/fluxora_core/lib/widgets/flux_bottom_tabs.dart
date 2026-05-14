@@ -96,29 +96,36 @@ class _Tab extends StatelessWidget {
       onTap: onTap,
       splashColor: AppColors.pillBgPurple,
       highlightColor: const Color(0x0AFFFFFF),
-      child: AnimatedScale(
-        scale: selected ? 1.05 : 1.0,
-        duration: const Duration(milliseconds: 150),
-        curve: Curves.easeOut,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(item.icon, size: 22, color: color),
-            const SizedBox(height: 4),
-            AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 150),
-              style: TextStyle(
-                fontFamily: 'Inter',
-                fontSize: 10.5,
-                fontWeight: weight,
-                color: color,
-                letterSpacing: 0.1,
-                height: 1,
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: item.label,
+        child: AnimatedScale(
+          // M14 polish: 220 ms scale 1.0→1.05 on activate, easeOut curve
+          // (mobile redesign plan §7 M14 — "tab scale 1.0→1.05").
+          scale: selected ? 1.05 : 1.0,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(item.icon, size: 22, color: color),
+              const SizedBox(height: 4),
+              AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 220),
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 10.5,
+                  fontWeight: weight,
+                  color: color,
+                  letterSpacing: 0.1,
+                  height: 1,
+                ),
+                child: Text(item.label),
               ),
-              child: Text(item.label),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

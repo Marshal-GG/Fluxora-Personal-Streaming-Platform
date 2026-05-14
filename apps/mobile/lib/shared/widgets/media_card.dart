@@ -17,16 +17,20 @@ class MediaCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(AppSizes.s4),
-        decoration: BoxDecoration(
-          color: AppColors.surfaceGlass,
-          borderRadius: BorderRadius.circular(AppSizes.radiusLg),
-          border: Border.all(color: AppColors.borderSubtle),
-        ),
-        child: Row(
+    return Semantics(
+      button: true,
+      label: 'View ${file.title ?? file.name}',
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.all(AppSizes.s4),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceGlass,
+            borderRadius: BorderRadius.circular(AppSizes.radiusLg),
+            border: Border.all(color: AppColors.borderSubtle),
+          ),
+          child: Row(
           children: [
             _Thumbnail(posterUrl: file.posterUrl),
             const SizedBox(width: AppSizes.s3),
@@ -72,6 +76,7 @@ class MediaCard extends StatelessWidget {
               size: 20,
             ),
           ],
+        ),
         ),
       ),
     );

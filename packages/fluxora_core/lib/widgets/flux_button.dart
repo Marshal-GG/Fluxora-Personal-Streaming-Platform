@@ -228,6 +228,15 @@ class _FluxButtonState extends State<FluxButton> {
       ),
     );
 
+    // M14 polish: announce as a button (enabled / disabled mirrored)
+    // and merge label + icons into a single node so the screen-reader
+    // says "Connect, button" instead of "icon, Connect".
+    result = Semantics(
+      button: true,
+      enabled: enabled,
+      child: MergeSemantics(child: result),
+    );
+
     if (widget.fullWidth) {
       result = SizedBox(width: double.infinity, child: result);
     }

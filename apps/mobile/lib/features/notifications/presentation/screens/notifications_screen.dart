@@ -54,21 +54,27 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               title: 'Notifications',
               onBack: () => Navigator.of(context).maybePop(),
               trailing: [
-                TextButton(
-                  onPressed: unreadCount > 0
-                      ? () => context.read<NotificationsCubit>().markAllRead()
-                      : null,
-                  style: TextButton.styleFrom(
-                    foregroundColor: AppColors.violetTint,
-                    disabledForegroundColor: AppColors.textDim,
-                  ),
-                  child: Text(
-                    'Mark all read',
-                    style: AppTypography.captionV2.copyWith(
-                      color: unreadCount > 0
-                          ? AppColors.violetTint
-                          : AppColors.textDim,
-                      fontWeight: FontWeight.w600,
+                Semantics(
+                  button: true,
+                  label: 'Mark all notifications as read',
+                  enabled: unreadCount > 0,
+                  child: TextButton(
+                    onPressed: unreadCount > 0
+                        ? () =>
+                            context.read<NotificationsCubit>().markAllRead()
+                        : null,
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.violetTint,
+                      disabledForegroundColor: AppColors.textDim,
+                    ),
+                    child: Text(
+                      'Mark all read',
+                      style: AppTypography.captionV2.copyWith(
+                        color: unreadCount > 0
+                            ? AppColors.violetTint
+                            : AppColors.textDim,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
@@ -202,7 +208,12 @@ class _NotificationRow extends StatelessWidget {
     final color = _categoryColor(item.category);
     final isUnread = item.readAt == null;
 
-    return InkWell(
+    return Semantics(
+      button: true,
+      label: isUnread
+          ? '${item.title}, unread. ${item.message}'
+          : '${item.title}. ${item.message}',
+      child: InkWell(
       onTap: () {
         if (isUnread) {
           context.read<NotificationsCubit>().markRead(item.id);
@@ -273,6 +284,7 @@ class _NotificationRow extends StatelessWidget {
             ],
           ],
         ),
+      ),
       ),
     );
   }

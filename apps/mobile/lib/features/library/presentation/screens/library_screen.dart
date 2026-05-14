@@ -234,8 +234,13 @@ class _FilterChipButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: 'Filter by $label',
+      child: GestureDetector(
       onTap: onTap,
+      behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -258,6 +263,7 @@ class _FilterChipButton extends StatelessWidget {
           ),
         ),
       ),
+      ),
     );
   }
 }
@@ -272,7 +278,10 @@ class _LibraryCard extends StatelessWidget {
     final gradient = AppGradientPlaceholders.forKey(library.id);
     final cover = library.coverUrls.isNotEmpty ? library.coverUrls.first : null;
 
-    return InkWell(
+    return Semantics(
+      button: true,
+      label: 'Open ${library.name} library, ${library.fileCount} items',
+      child: InkWell(
       onTap: () => context.push(Routes.libraryFiles(library.id)),
       borderRadius: BorderRadius.circular(14),
       child: ClipRRect(
@@ -333,6 +342,7 @@ class _LibraryCard extends StatelessWidget {
           ],
         ),
       ),
+      ),
     );
   }
 }
@@ -347,7 +357,10 @@ class _LibraryListRow extends StatelessWidget {
     final gradient = AppGradientPlaceholders.forKey(library.id);
     final cover = library.coverUrls.isNotEmpty ? library.coverUrls.first : null;
 
-    return InkWell(
+    return Semantics(
+      button: true,
+      label: 'Open ${library.name} library, ${library.fileCount} items',
+      child: InkWell(
       onTap: () => context.push(Routes.libraryFiles(library.id)),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -397,6 +410,7 @@ class _LibraryListRow extends StatelessWidget {
             const Icon(Icons.chevron_right, color: AppColors.textDim),
           ],
         ),
+      ),
       ),
     );
   }

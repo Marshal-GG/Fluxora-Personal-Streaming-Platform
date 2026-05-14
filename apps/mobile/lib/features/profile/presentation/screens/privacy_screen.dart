@@ -265,6 +265,7 @@ class _InfoRow extends StatelessWidget {
               icon: const Icon(Icons.copy_rounded,
                   size: 16, color: AppColors.textMutedV2),
               splashRadius: 18,
+              tooltip: 'Copy $label',
               onPressed: () async {
                 final messenger = ScaffoldMessenger.of(context);
                 await Clipboard.setData(ClipboardData(text: value));

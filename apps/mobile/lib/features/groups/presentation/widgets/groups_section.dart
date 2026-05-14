@@ -105,15 +105,20 @@ class _MembershipsCard extends StatelessWidget {
       icon: Icons.group_rounded,
       iconColor: AppColors.violet,
       trailing: unlockedCount > 1
-          ? GestureDetector(
-              onTap: () => _confirmLockAll(context),
-              child: MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: Text(
-                  'Lock all',
-                  style: AppTypography.captionV2.copyWith(
-                    color: AppColors.red,
-                    fontWeight: FontWeight.w600,
+          ? Semantics(
+              button: true,
+              label: 'Lock all unlocked groups',
+              child: GestureDetector(
+                onTap: () => _confirmLockAll(context),
+                behavior: HitTestBehavior.opaque,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: Text(
+                    'Lock all',
+                    style: AppTypography.captionV2.copyWith(
+                      color: AppColors.red,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ),
@@ -211,7 +216,12 @@ class _MembershipRow extends StatelessWidget {
         group.isPublic ? 'Available to every client' : 'Available without a PIN',
     };
 
-    return InkWell(
+    return Semantics(
+      button: isLocked,
+      label: isLocked
+          ? '${group.name}, locked, $caption. Tap to enter PIN.'
+          : '${group.name}, $caption',
+      child: InkWell(
       onTap: (isLocked && !isBusy) ? () => _onTapLocked(context) : null,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 12),
@@ -258,6 +268,7 @@ class _MembershipRow extends StatelessWidget {
             ),
           ],
         ),
+      ),
       ),
     );
   }

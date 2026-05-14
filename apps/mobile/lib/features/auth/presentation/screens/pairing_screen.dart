@@ -154,7 +154,10 @@ class _EmailEntryPanelState extends State<_EmailEntryPanel> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
+    // M14 polish: ordered focus traversal — email field -> Continue -> Skip.
+    return FocusTraversalGroup(
+      policy: OrderedTraversalPolicy(),
+      child: ListView(
       children: [
         const SizedBox(height: 24),
         Container(
@@ -222,6 +225,7 @@ class _EmailEntryPanelState extends State<_EmailEntryPanel> {
           child: const Text('Skip'),
         ),
       ],
+      ),
     );
   }
 }

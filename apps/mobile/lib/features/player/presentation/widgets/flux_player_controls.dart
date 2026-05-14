@@ -24,6 +24,26 @@ import 'package:fluxora_mobile/features/player/presentation/sheets/quality_sheet
 import 'package:fluxora_mobile/features/player/presentation/sheets/sleep_sheet.dart';
 import 'package:fluxora_mobile/features/player/presentation/sheets/speed_sheet.dart';
 
+// ── Animation timings (M14 polish spec) ────────────────────────────────────
+// Named so the durations are auditable in one place rather than scattered
+// as magic ints.  All values come from `docs/11_design/mobile_redesign_plan.md`
+// §7 row M14: fade 250 ms, transport press 50 ms, ripple expand 400 ms.
+//
+// Exceptions intentionally NOT funnelled through these constants:
+//   * `_unlockHoldDuration = 1200ms` — hold-to-unlock affordance timing, not
+//     a fade.  Per plan §7 row M6 this is a deliberate UX hold, not a
+//     visual transition; keeping it as its own const inside the State.
+//   * `_onVerticalDragEnd` 600 ms `Future.delayed` — delay before the drag
+//     HUD is cleared so the value lingers long enough for the operator to
+//     read it, not a fade duration.  Left as-is.
+//   * `flux_mini_player.dart` `AnimatedSize` 200 ms — bar mount / unmount
+//     timing is a layout transition, not an overlay fade.  Out of scope
+//     for this slice (mini-player is shared chrome, fade-spec applies to
+//     player-overlay surfaces).
+const Duration _kFadeMs = Duration(milliseconds: 250);
+const Duration _kTransportPressMs = Duration(milliseconds: 50);
+const Duration _kRippleMs = Duration(milliseconds: 400);
+
 class FluxPlayerControls extends StatefulWidget {
   const FluxPlayerControls({
     required this.player,
@@ -326,7 +346,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
       _rippleIsForward = isForward;
     });
     _rippleTimer?.cancel();
-    _rippleTimer = Timer(const Duration(milliseconds: 400), () {
+    _rippleTimer = Timer(_kRippleMs, () {
       if (mounted) setState(() => _ripplePos = null);
     });
   }
@@ -509,7 +529,8 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
           children: [
             AnimatedOpacity(
               opacity: c.visible ? 1.0 : 0.0,
-              duration: const Duration(milliseconds: 250),
+              duration: _kFadeMs,
+              curve: Curves.easeOut,
               child: const DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -532,170 +553,232 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                 isForward: _rippleIsForward,
               ),
 
-            if (_peekRestoreRate != null)
-              const Positioned(
-                top: 80,
-                left: 0,
-                right: 0,
-                child: Center(child: _PeekBadge()),
+            Positioned(
+              top: 80,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: AnimatedSwitcher(
+                  duration: _kFadeMs,
+                  switchInCurve: Curves.easeOut,
+                  switchOutCurve: Curves.easeOut,
+                  child: _peekRestoreRate != null
+                      ? const _PeekBadge()
+                      : const SizedBox.shrink(),
+                ),
               ),
+            ),
 
-            if (c.dragHudVisible)
-              Positioned.fill(
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: !c.dragHudVisible,
                 child: Center(
-                  child: _DragHud(
-                    kind: c.activeDrag,
-                    value: c.dragHudValue,
+                  child: AnimatedOpacity(
+                    opacity: c.dragHudVisible ? 1.0 : 0.0,
+                    duration: _kFadeMs,
+                    curve: Curves.easeOut,
+                    child: _DragHud(
+                      kind: c.activeDrag,
+                      value: c.dragHudValue,
+                    ),
                   ),
                 ),
               ),
+            ),
 
-            if (c.visible && !c.lockMode) ...[
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: SafeArea(
-                  bottom: false,
-                  child: _TopBar(
-                    title: widget.title,
-                    onBack: widget.onBack,
-                    onMore: _showOverflowMenu,
-                    onPip: _pipSupported == true ? _enterPip : null,
-                    onXRay: widget.onXRay,
-                    sleepActive: _sleepDuration != null,
-                    hdrFormat: widget.hdrFormat,
-                    tonemapped: widget.tonemapped,
-                  ),
-                ),
-              ),
-
-              Positioned.fill(
-                child: Center(
-                  child: _CenterTransport(
-                    isPlaying: widget.player.state.playing,
-                    onRewind: () =>
-                        _seekRelative(const Duration(seconds: -10)),
-                    onPlayPause: _togglePlay,
-                    onForward: () =>
-                        _seekRelative(const Duration(seconds: 10)),
-                  ),
-                ),
-              ),
-
-              if (isLandscape) ...[
-                const Positioned(
-                  top: 0,
-                  bottom: 0,
-                  left: 0,
-                  child: _SideRail(
-                    icon: Icons.brightness_6_outlined,
-                    label: 'Brightness',
-                    align: Alignment.centerLeft,
-                  ),
-                ),
-                const Positioned(
-                  top: 0,
-                  bottom: 0,
-                  right: 0,
-                  child: _SideRail(
-                    icon: Icons.volume_up_outlined,
-                    label: 'Volume',
-                    align: Alignment.centerRight,
-                  ),
-                ),
-              ],
-
-              Positioned(
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: SafeArea(
-                  top: false,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _ProgressBar(
-                        player: widget.player,
-                        onSeekCommit: _emitSeek,
-                        playlistOffsetSec: widget.playlistOffsetSec,
-                        isSeeking: widget.isSeeking,
+            if (c.visible && !c.lockMode)
+              FocusTraversalGroup(
+                policy: OrderedTraversalPolicy(),
+                child: Stack(
+                  children: [
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: SafeArea(
+                        bottom: false,
+                        child: FocusTraversalOrder(
+                          order: const NumericFocusOrder(1),
+                          child: PlayerTopBar(
+                            title: widget.title,
+                            onBack: widget.onBack,
+                            onMore: _showOverflowMenu,
+                            onPip: _pipSupported == true ? _enterPip : null,
+                            onXRay: widget.onXRay,
+                            sleepActive: _sleepDuration != null,
+                            hdrFormat: widget.hdrFormat,
+                            tonemapped: widget.tonemapped,
+                          ),
+                        ),
                       ),
-                      const SizedBox(height: 8),
-                      _QuickActions(
-                        onLock: c.lock,
-                        onFit: c.toggleFit,
-                        fitCover: c.fitCover,
-                        onOpenSheet: _openSheet,
-                        sleepActive: _sleepDuration != null,
+                    ),
+                    Positioned.fill(
+                      child: Center(
+                        child: FocusTraversalOrder(
+                          order: const NumericFocusOrder(2),
+                          child: PlayerCenterTransport(
+                            isPlaying: widget.player.state.playing,
+                            onRewind: () =>
+                                _seekRelative(const Duration(seconds: -10)),
+                            onPlayPause: _togglePlay,
+                            onForward: () =>
+                                _seekRelative(const Duration(seconds: 10)),
+                          ),
+                        ),
                       ),
-                      const SizedBox(height: 4),
+                    ),
+                    if (isLandscape) ...[
+                      const Positioned(
+                        top: 0,
+                        bottom: 0,
+                        left: 0,
+                        child: FocusTraversalOrder(
+                          order: NumericFocusOrder(3),
+                          child: PlayerSideRail(
+                            icon: Icons.brightness_6_outlined,
+                            label: 'Brightness',
+                            align: Alignment.centerLeft,
+                            kind: PlayerDragKind.brightness,
+                          ),
+                        ),
+                      ),
+                      const Positioned(
+                        top: 0,
+                        bottom: 0,
+                        right: 0,
+                        child: FocusTraversalOrder(
+                          order: NumericFocusOrder(4),
+                          child: PlayerSideRail(
+                            icon: Icons.volume_up_outlined,
+                            label: 'Volume',
+                            align: Alignment.centerRight,
+                            kind: PlayerDragKind.volume,
+                          ),
+                        ),
+                      ),
                     ],
-                  ),
-                ),
-              ),
-            ],
-
-            if (c.lockMode)
-              Positioned(
-                bottom: 24 + MediaQuery.of(context).padding.bottom,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: GestureDetector(
-                    onLongPressStart: (_) => _onUnlockHoldStart(),
-                    onLongPressEnd: (_) => _onUnlockHoldEnd(),
-                    onLongPressCancel: _onUnlockHoldEnd,
-                    child: SizedBox(
-                      width: 80,
-                      height: 80,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          if (_unlockHoldStart != null)
-                            SizedBox(
-                              width: 80,
-                              height: 80,
-                              child: CircularProgressIndicator(
-                                value: _unlockProgress,
-                                strokeWidth: 3,
-                                color: AppColors.violet,
-                                backgroundColor:
-                                    Colors.white.withValues(alpha: 0.15),
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: SafeArea(
+                        top: false,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            FocusTraversalOrder(
+                              order: const NumericFocusOrder(5),
+                              child: PlayerProgressBar(
+                                player: widget.player,
+                                onSeekCommit: _emitSeek,
+                                playlistOffsetSec: widget.playlistOffsetSec,
+                                isSeeking: widget.isSeeking,
                               ),
                             ),
-                          Container(
-                            width: 56,
-                            height: 56,
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.7),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                  color: AppColors.borderSubtle),
+                            const SizedBox(height: 8),
+                            FocusTraversalOrder(
+                              order: const NumericFocusOrder(6),
+                              child: PlayerQuickActions(
+                                onLock: c.lock,
+                                onFit: c.toggleFit,
+                                fitCover: c.fitCover,
+                                onOpenSheet: _openSheet,
+                                sleepActive: _sleepDuration != null,
+                              ),
                             ),
-                            alignment: Alignment.center,
-                            child: const Icon(Icons.lock_open_outlined,
-                                color: Colors.white, size: 22),
-                          ),
-                        ],
+                            const SizedBox(height: 4),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
-            if (c.lockMode && _unlockHoldStart == null)
-              Positioned(
-                bottom: 8 + MediaQuery.of(context).padding.bottom,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: Text(
-                    'Press and hold to unlock',
-                    style: AppTypography.captionV2.copyWith(
-                      color: Colors.white70,
-                      fontSize: 10,
+
+            if (c.lockMode)
+              // Lock mode is its own focus scope: while engaged, the
+              // hold-to-unlock affordance is the only focusable element
+              // (FocusTraversalGroup absorbs traversal so the hidden
+              // chrome above can't be reached via D-pad / Tab).
+              FocusTraversalGroup(
+                policy: OrderedTraversalPolicy(),
+                child: Stack(
+                  children: [
+                    Positioned(
+                      bottom: 24 + MediaQuery.of(context).padding.bottom,
+                      left: 0,
+                      right: 0,
+                      child: Center(
+                        child: Semantics(
+                          label: 'Press and hold to unlock player',
+                          button: true,
+                          child: GestureDetector(
+                            onLongPressStart: (_) => _onUnlockHoldStart(),
+                            onLongPressEnd: (_) => _onUnlockHoldEnd(),
+                            onLongPressCancel: _onUnlockHoldEnd,
+                            child: SizedBox(
+                              width: 80,
+                              height: 80,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  if (_unlockHoldStart != null)
+                                    SizedBox(
+                                      width: 80,
+                                      height: 80,
+                                      child: CircularProgressIndicator(
+                                        value: _unlockProgress,
+                                        strokeWidth: 3,
+                                        color: AppColors.violet,
+                                        backgroundColor: Colors.white
+                                            .withValues(alpha: 0.15),
+                                      ),
+                                    ),
+                                  Container(
+                                    width: 56,
+                                    height: 56,
+                                    decoration: BoxDecoration(
+                                      color: Colors.black
+                                          .withValues(alpha: 0.7),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                          color: AppColors.borderSubtle),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: const Icon(
+                                      Icons.lock_open_outlined,
+                                      color: Colors.white,
+                                      size: 22,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                    if (_unlockHoldStart == null)
+                      Positioned(
+                        bottom: 8 + MediaQuery.of(context).padding.bottom,
+                        left: 0,
+                        right: 0,
+                        child: Center(
+                          child: Semantics(
+                            label: 'Press and hold the lock icon to unlock',
+                            child: ExcludeSemantics(
+                              child: Text(
+                                'Press and hold to unlock',
+                                style: AppTypography.captionV2.copyWith(
+                                  color: Colors.white70,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
           ],
@@ -707,8 +790,17 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
 
 enum Sheet { none, audioSubs, speed, sleep, quality, cast }
 
-class _TopBar extends StatelessWidget {
-  const _TopBar({
+/// Player top bar — back chevron, title, optional HDR chip, sleep
+/// indicator, X-Ray / PIP / overflow buttons.
+///
+/// Public + `@visibleForTesting` so golden-tests in
+/// `apps/mobile/test/goldens/` can construct it directly without
+/// having to spin up a real `Player`.  Outside tests it is only
+/// instantiated by `FluxPlayerControls.build`.
+class PlayerTopBar extends StatelessWidget {
+  @visibleForTesting
+  const PlayerTopBar({
+    super.key,
     required this.title,
     required this.onBack,
     required this.onMore,
@@ -749,29 +841,47 @@ class _TopBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
       child: Row(
         children: [
-          IconButton(
-            tooltip: 'Back',
-            icon: const Icon(Icons.chevron_left, color: Colors.white),
-            onPressed: onBack,
-            splashRadius: 22,
+          Semantics(
+            label: 'Back',
+            button: true,
+            child: IconButton(
+              tooltip: 'Back',
+              icon: const Icon(Icons.chevron_left, color: Colors.white),
+              onPressed: onBack,
+              splashRadius: 22,
+            ),
           ),
           Expanded(
-            child: Text(
-              title,
-              style: AppTypography.h1.copyWith(
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-                color: Colors.white,
+            child: Semantics(
+              header: true,
+              label: 'Now playing: $title',
+              child: ExcludeSemantics(
+                child: Text(
+                  title,
+                  style: AppTypography.h1.copyWith(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
           ),
           if (sleepActive)
-            const Padding(
-              padding: EdgeInsets.only(right: 4),
-              child: Icon(Icons.bedtime,
-                  color: AppColors.violetTint, size: 18),
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Semantics(
+                label: 'Sleep timer active',
+                child: const ExcludeSemantics(
+                  child: Icon(
+                    Icons.bedtime,
+                    color: AppColors.violetTint,
+                    size: 18,
+                  ),
+                ),
+              ),
             ),
           if (hdrFormat != null)
             Padding(
@@ -782,30 +892,42 @@ class _TopBar extends StatelessWidget {
               ),
             ),
           if (onXRay != null)
-            IconButton(
-              tooltip: 'X-Ray',
-              icon: const Icon(
-                Icons.science_outlined,
-                color: Colors.white,
+            Semantics(
+              label: 'X-Ray: cast and scene details',
+              button: true,
+              child: IconButton(
+                tooltip: 'X-Ray',
+                icon: const Icon(
+                  Icons.science_outlined,
+                  color: Colors.white,
+                ),
+                onPressed: onXRay,
+                splashRadius: 22,
               ),
-              onPressed: onXRay,
-              splashRadius: 22,
             ),
           if (onPip != null)
-            IconButton(
-              tooltip: 'Picture-in-picture',
-              icon: const Icon(
-                Icons.picture_in_picture_alt_rounded,
-                color: Colors.white,
+            Semantics(
+              label: 'Picture in picture',
+              button: true,
+              child: IconButton(
+                tooltip: 'Picture-in-picture',
+                icon: const Icon(
+                  Icons.picture_in_picture_alt_rounded,
+                  color: Colors.white,
+                ),
+                onPressed: onPip,
+                splashRadius: 22,
               ),
-              onPressed: onPip,
+            ),
+          Semantics(
+            label: 'More options',
+            button: true,
+            child: IconButton(
+              tooltip: 'More',
+              icon: const Icon(Icons.more_vert, color: Colors.white),
+              onPressed: onMore,
               splashRadius: 22,
             ),
-          IconButton(
-            tooltip: 'More',
-            icon: const Icon(Icons.more_vert, color: Colors.white),
-            onPressed: onMore,
-            splashRadius: 22,
           ),
         ],
       ),
@@ -813,8 +935,15 @@ class _TopBar extends StatelessWidget {
   }
 }
 
-class _CenterTransport extends StatelessWidget {
-  const _CenterTransport({
+/// 3-button transport row (rewind 10 / play-pause / forward 10).
+///
+/// Public + `@visibleForTesting` to enable golden capture without a
+/// live `Player`.  Production code only constructs it from
+/// `FluxPlayerControls.build`.
+class PlayerCenterTransport extends StatelessWidget {
+  @visibleForTesting
+  const PlayerCenterTransport({
+    super.key,
     required this.isPlaying,
     required this.onRewind,
     required this.onPlayPause,
@@ -831,31 +960,50 @@ class _CenterTransport extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _CircleButton(icon: Icons.replay_10, size: 56, onPressed: onRewind),
+        _CircleButton(
+          icon: Icons.replay_10,
+          size: 56,
+          onPressed: onRewind,
+          semanticLabel: 'Rewind 10 seconds',
+        ),
         const SizedBox(width: 24),
         _CircleButton(
           icon: isPlaying ? Icons.pause : Icons.play_arrow,
           size: 72,
           gradient: true,
           onPressed: onPlayPause,
+          // State-dependent label — read out loud by screen readers, so
+          // it reflects the action the button will perform on tap, not
+          // the current playback state.
+          semanticLabel: isPlaying ? 'Pause' : 'Play',
+          // Lands the keyboard / D-pad cursor on play-pause when chrome
+          // appears (M14 focus traversal spec).
+          autofocus: true,
         ),
         const SizedBox(width: 24),
         _CircleButton(
           icon: Icons.forward_10,
           size: 56,
           onPressed: onForward,
+          semanticLabel: 'Forward 10 seconds',
         ),
       ],
     );
   }
 }
 
-class _CircleButton extends StatelessWidget {
+/// Transport circle button with a 50-ms press scale-down (M14 spec).
+/// Stateful so the scale animation can run in response to tap-down /
+/// tap-up / tap-cancel without rebuilding the parent transport row on
+/// every press.
+class _CircleButton extends StatefulWidget {
   const _CircleButton({
     required this.icon,
     required this.size,
     required this.onPressed,
     this.gradient = false,
+    this.semanticLabel,
+    this.autofocus = false,
   });
 
   final IconData icon;
@@ -863,32 +1011,74 @@ class _CircleButton extends StatelessWidget {
   final VoidCallback onPressed;
   final bool gradient;
 
+  /// Screen-reader-friendly label.  For the play-pause button this is
+  /// state-dependent ("Play" vs "Pause") — passed in by the parent so
+  /// the rebuild on play-state change refreshes the announced label.
+  final String? semanticLabel;
+
+  /// True for the primary action (play / pause) — autofocuses so a
+  /// keyboard / D-pad operator lands there first when chrome appears.
+  final bool autofocus;
+
+  @override
+  State<_CircleButton> createState() => _CircleButtonState();
+}
+
+class _CircleButtonState extends State<_CircleButton> {
+  bool _pressed = false;
+
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        width: size,
-        height: size,
-        decoration: gradient
-            ? const BoxDecoration(
-                gradient: AppGradients.brand,
-                shape: BoxShape.circle,
-                boxShadow: AppShadows.buttonGlow,
-              )
-            : BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.5),
-                shape: BoxShape.circle,
-                border: Border.all(color: AppColors.borderSubtle),
+    return Semantics(
+      label: widget.semanticLabel,
+      button: true,
+      child: GestureDetector(
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTap: widget.onPressed,
+        child: AnimatedScale(
+          scale: _pressed ? 0.92 : 1.0,
+          duration: _kTransportPressMs,
+          curve: Curves.easeOut,
+          child: Focus(
+            autofocus: widget.autofocus,
+            child: Container(
+              width: widget.size,
+              height: widget.size,
+              decoration: widget.gradient
+                  ? const BoxDecoration(
+                      gradient: AppGradients.brand,
+                      shape: BoxShape.circle,
+                      boxShadow: AppShadows.buttonGlow,
+                    )
+                  : BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: AppColors.borderSubtle),
+                    ),
+              child: Icon(
+                widget.icon,
+                color: Colors.white,
+                size: widget.size * 0.5,
               ),
-        child: Icon(icon, color: Colors.white, size: size * 0.5),
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
-class _ProgressBar extends StatefulWidget {
-  const _ProgressBar({
+/// Scrubber + elapsed / total timestamps.
+///
+/// Public + `@visibleForTesting` so golden tests can supply a mocked
+/// `Player` and capture the bar at a deterministic playhead without
+/// having to mount the full player overlay.
+class PlayerProgressBar extends StatefulWidget {
+  @visibleForTesting
+  const PlayerProgressBar({
+    super.key,
     required this.player,
     this.onSeekCommit,
     this.playlistOffsetSec = 0.0,
@@ -917,10 +1107,10 @@ class _ProgressBar extends StatefulWidget {
   final bool isSeeking;
 
   @override
-  State<_ProgressBar> createState() => _ProgressBarState();
+  State<PlayerProgressBar> createState() => _PlayerProgressBarState();
 }
 
-class _ProgressBarState extends State<_ProgressBar> {
+class _PlayerProgressBarState extends State<PlayerProgressBar> {
   /// While the user is actively dragging the scrubber, this holds the
   /// in-flight slider value (0..1) so the thumb tracks their finger
   /// without us having to call `player.seek` continuously.  Null
@@ -1064,27 +1254,37 @@ class _ProgressBarState extends State<_ProgressBar> {
                   const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: Row(
                 children: [
-                  Text(
-                    _format(displayPos),
-                    style: AppTypography.monoMicro.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
+                  Semantics(
+                    label: 'Elapsed',
+                    child: ExcludeSemantics(
+                      child: Text(
+                        _format(displayPos),
+                        style: AppTypography.monoMicro.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 3,
-                        activeTrackColor: AppColors.violet,
-                        inactiveTrackColor: const Color(0x33FFFFFF),
-                        thumbColor: AppColors.violet,
-                        overlayColor: AppColors.pillBgPurple,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 6,
+                    child: Semantics(
+                      slider: true,
+                      label: 'Seek',
+                      value:
+                          '${_format(displayPos)} of ${_format(sourceDur)}',
+                      child: SliderTheme(
+                        data: SliderTheme.of(context).copyWith(
+                          trackHeight: 3,
+                          activeTrackColor: AppColors.violet,
+                          inactiveTrackColor: const Color(0x33FFFFFF),
+                          thumbColor: AppColors.violet,
+                          overlayColor: AppColors.pillBgPurple,
+                          thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 6,
+                          ),
                         ),
-                      ),
-                      child: Slider(
+                        child: Slider(
                         value: value,
                         onChangeStart: (v) {
                           setState(() => _dragValue = v);
@@ -1140,15 +1340,21 @@ class _ProgressBarState extends State<_ProgressBar> {
                                 .seek(Duration(milliseconds: playerMs));
                           }
                         },
+                        ),
                       ),
                     ),
                   ),
                   const SizedBox(width: 12),
-                  Text(
-                    _format(sourceDur),
-                    style: AppTypography.monoMicro.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
+                  Semantics(
+                    label: 'Total duration',
+                    child: ExcludeSemantics(
+                      child: Text(
+                        _format(sourceDur),
+                        style: AppTypography.monoMicro.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -1161,8 +1367,16 @@ class _ProgressBarState extends State<_ProgressBar> {
   }
 }
 
-class _QuickActions extends StatelessWidget {
-  const _QuickActions({
+/// 4x2 grid of quick actions (Lock / Fit-Fill / Audio / Subs / Speed /
+/// Quality / Sleep / Cast).
+///
+/// Public + `@visibleForTesting` so golden tests can capture the row in
+/// isolation.  Production code only instantiates it from
+/// `FluxPlayerControls.build`.
+class PlayerQuickActions extends StatelessWidget {
+  @visibleForTesting
+  const PlayerQuickActions({
+    super.key,
     required this.onLock,
     required this.onFit,
     required this.fitCover,
@@ -1178,49 +1392,78 @@ class _QuickActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          _Action(icon: Icons.lock_outline, label: 'Lock', onTap: onLock),
-          _Action(
-            icon: fitCover ? Icons.fit_screen : Icons.aspect_ratio,
-            label: fitCover ? 'Fit' : 'Fill',
-            onTap: onFit,
-          ),
-          _Action(
-            icon: Icons.audiotrack_outlined,
-            label: 'Audio',
-            onTap: () => onOpenSheet(Sheet.audioSubs),
-          ),
-          _Action(
-            icon: Icons.subtitles_outlined,
-            label: 'Subs',
-            onTap: () => onOpenSheet(Sheet.audioSubs),
-          ),
-          _Action(
-            icon: Icons.speed,
-            label: 'Speed',
-            onTap: () => onOpenSheet(Sheet.speed),
-          ),
-          _Action(
-            icon: Icons.high_quality_outlined,
-            label: 'Quality',
-            onTap: () => onOpenSheet(Sheet.quality),
-          ),
-          _Action(
-            icon: sleepActive ? Icons.bedtime : Icons.bedtime_outlined,
-            label: 'Sleep',
-            onTap: () => onOpenSheet(Sheet.sleep),
-            highlight: sleepActive,
-          ),
-          _Action(
-            icon: Icons.cast,
-            label: 'Cast',
-            onTap: () => onOpenSheet(Sheet.cast),
-          ),
-        ],
+    // 4x2 grid per plan §14 ("4x2 quick-control grid"). Two Rows of four
+    // Expanded cells fits at portrait widths (412 px) where the prior
+    // single 8-cell Row overflowed by ~111 px. Equal Expanded weights
+    // give the same spacing landscape and portrait, no MediaQuery branch.
+    final row1 = [
+      _Action(
+        icon: Icons.lock_outline,
+        label: 'Lock',
+        semanticLabel: 'Lock controls',
+        onTap: onLock,
+      ),
+      _Action(
+        icon: fitCover ? Icons.fit_screen : Icons.aspect_ratio,
+        label: fitCover ? 'Fit' : 'Fill',
+        semanticLabel: fitCover
+            ? 'Switch to fit (letterbox) mode'
+            : 'Switch to fill (cover) mode',
+        onTap: onFit,
+      ),
+      _Action(
+        icon: Icons.audiotrack_outlined,
+        label: 'Audio',
+        semanticLabel: 'Audio tracks',
+        onTap: () => onOpenSheet(Sheet.audioSubs),
+      ),
+      _Action(
+        icon: Icons.subtitles_outlined,
+        label: 'Subs',
+        semanticLabel: 'Subtitles',
+        onTap: () => onOpenSheet(Sheet.audioSubs),
+      ),
+    ];
+    final row2 = [
+      _Action(
+        icon: Icons.speed,
+        label: 'Speed',
+        semanticLabel: 'Playback speed',
+        onTap: () => onOpenSheet(Sheet.speed),
+      ),
+      _Action(
+        icon: Icons.high_quality_outlined,
+        label: 'Quality',
+        semanticLabel: 'Video quality',
+        onTap: () => onOpenSheet(Sheet.quality),
+      ),
+      _Action(
+        icon: sleepActive ? Icons.bedtime : Icons.bedtime_outlined,
+        label: 'Sleep',
+        semanticLabel: sleepActive ? 'Sleep timer (active)' : 'Sleep timer',
+        onTap: () => onOpenSheet(Sheet.sleep),
+        highlight: sleepActive,
+      ),
+      _Action(
+        icon: Icons.cast,
+        label: 'Cast',
+        semanticLabel: 'Cast to device',
+        onTap: () => onOpenSheet(Sheet.cast),
+      ),
+    ];
+    return Semantics(
+      container: true,
+      label: 'Quick actions',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(children: [for (final a in row1) Expanded(child: a)]),
+            const SizedBox(height: 8),
+            Row(children: [for (final a in row2) Expanded(child: a)]),
+          ],
+        ),
       ),
     );
   }
@@ -1230,80 +1473,127 @@ class _Action extends StatelessWidget {
   const _Action({
     required this.icon,
     required this.label,
+    this.semanticLabel,
     this.onTap,
     this.highlight = false,
   });
 
   final IconData icon;
   final String label;
+
+  /// Screen-reader-friendly label.  Falls back to [label] (the visible
+  /// caption text) when omitted — but most call sites should pass an
+  /// explicit verb-phrase ("Lock controls", "Cast to device") because
+  /// the short caption is too cryptic when announced aloud.
+  final String? semanticLabel;
   final VoidCallback? onTap;
   final bool highlight;
 
   @override
   Widget build(BuildContext context) {
     final color = highlight ? AppColors.violetTint : Colors.white;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: color, size: 20),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: AppTypography.captionV2.copyWith(
-                color: color,
-                fontSize: 10,
-                fontWeight: FontWeight.w500,
-              ),
+    return Semantics(
+      label: semanticLabel ?? label,
+      button: true,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: ExcludeSemantics(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: color, size: 20),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  style: AppTypography.captionV2.copyWith(
+                    color: color,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
   }
 }
 
-class _SideRail extends StatelessWidget {
-  const _SideRail({
+/// Edge-anchored brightness / volume passive indicator rail.
+///
+/// Public + `@visibleForTesting` so golden tests can capture each rail
+/// (left = brightness, right = volume) without standing up the full
+/// player overlay or a landscape MediaQuery.
+class PlayerSideRail extends StatelessWidget {
+  @visibleForTesting
+  const PlayerSideRail({
+    super.key,
     required this.icon,
     required this.label,
     required this.align,
+    required this.kind,
   });
 
   final IconData icon;
   final String label;
   final Alignment align;
 
+  /// Which axis the rail represents — drives the screen-reader hint
+  /// ("Drag up or down on the left half / right half to change …").
+  final PlayerDragKind kind;
+
+  String get _hint {
+    switch (kind) {
+      case PlayerDragKind.brightness:
+        return 'Drag up or down on the left half of the screen to change brightness';
+      case PlayerDragKind.volume:
+        return 'Drag up or down on the right half of the screen to change volume';
+      case PlayerDragKind.seek:
+        return '';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 64,
-      child: Align(
-        alignment: align,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.4),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.borderSubtle),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: Colors.white, size: 20),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: AppTypography.captionV2.copyWith(
-                  color: Colors.white70,
-                  fontSize: 9,
-                ),
+    return Semantics(
+      label: label,
+      hint: _hint,
+      // Rail itself is a passive indicator — the value-reporting slider
+      // semantics live on the centred drag HUD that appears while the
+      // operator is actually dragging.  Flagging it `readOnly` so screen
+      // readers don't announce it as actionable.
+      readOnly: true,
+      child: SizedBox(
+        width: 64,
+        child: Align(
+          alignment: align,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.borderSubtle),
+            ),
+            child: ExcludeSemantics(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: Colors.white, size: 20),
+                  const SizedBox(height: 4),
+                  Text(
+                    label,
+                    style: AppTypography.captionV2.copyWith(
+                      color: Colors.white70,
+                      fontSize: 9,
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       ),
@@ -1311,31 +1601,67 @@ class _SideRail extends StatelessWidget {
   }
 }
 
-class _SeekRipple extends StatelessWidget {
+/// Double-tap seek ripple — expands from 0.4 → 1.0 over 400 ms with an
+/// `easeOut` curve, then is removed by the parent's `_rippleTimer`
+/// after the same duration.  Stateful so the animation runs once on
+/// mount instead of every parent rebuild.  Per plan §7 row M14 the
+/// ripple-expand timing target is 400 ms.
+class _SeekRipple extends StatefulWidget {
   const _SeekRipple({required this.position, required this.isForward});
 
   final Offset position;
   final bool isForward;
 
   @override
+  State<_SeekRipple> createState() => _SeekRippleState();
+}
+
+class _SeekRippleState extends State<_SeekRipple>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: _kRippleMs,
+  )..forward();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Positioned(
-      left: position.dx - 60,
-      top: position.dy - 60,
+      left: widget.position.dx - 60,
+      top: widget.position.dy - 60,
       child: IgnorePointer(
-        child: Container(
-          width: 120,
-          height: 120,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: AppColors.violet.withValues(alpha: 0.18),
-          ),
-          alignment: Alignment.center,
-          child: Icon(
-            isForward ? Icons.forward_10 : Icons.replay_10,
-            color: Colors.white,
-            size: 36,
-          ),
+        child: AnimatedBuilder(
+          animation: _ctrl,
+          builder: (_, __) {
+            final t = Curves.easeOut.transform(_ctrl.value);
+            final scale = 0.4 + (0.6 * t);
+            final opacity = (1.0 - t).clamp(0.0, 1.0);
+            return Opacity(
+              opacity: opacity,
+              child: Transform.scale(
+                scale: scale,
+                child: Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: AppColors.violet.withValues(alpha: 0.18),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    widget.isForward ? Icons.forward_10 : Icons.replay_10,
+                    color: Colors.white,
+                    size: 36,
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

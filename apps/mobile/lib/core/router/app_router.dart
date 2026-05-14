@@ -164,32 +164,72 @@ void setupRouterUnauthorizedBridge() {
   });
 }
 
+/// M14 polish — 250 ms fade page-transition (mobile redesign plan §7).
+///
+/// Every top-level route (and every deep-link route outside the shell)
+/// uses this helper so route pushes feel like Apple's Photos / Plex —
+/// not the default Material slide-from-right.  Tab swaps inside
+/// `StatefulShellRoute` don't go through this — those are handled by the
+/// `FluxBottomTabs` scale animation.
+CustomTransitionPage<T> _fadePage<T>({
+  required LocalKey key,
+  required Widget child,
+}) {
+  return CustomTransitionPage<T>(
+    key: key,
+    child: child,
+    transitionDuration: const Duration(milliseconds: 250),
+    reverseTransitionDuration: const Duration(milliseconds: 200),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      return FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+        child: child,
+      );
+    },
+  );
+}
+
 final GoRouter appRouter = GoRouter(
   initialLocation: Routes.splash,
   redirect: _guardRedirect,
   routes: [
     GoRoute(
       path: Routes.splash,
-      builder: (context, state) => const SplashScreen(),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const SplashScreen(),
+      ),
     ),
     GoRoute(
       path: Routes.connect,
-      builder: (context, state) => const ConnectScreen(),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const ConnectScreen(),
+      ),
     ),
     GoRoute(
       path: Routes.pairing,
-      builder: (context, state) {
+      pageBuilder: (context, state) {
         final server = state.extra as DiscoveredServer;
-        return PairingScreen(server: server);
+        return _fadePage(
+          key: state.pageKey,
+          child: PairingScreen(server: server),
+        );
       },
     ),
     GoRoute(
       path: Routes.reconnect,
-      builder: (context, state) => const ReconnectScreen(),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const ReconnectScreen(),
+      ),
     ),
     GoRoute(
       path: Routes.scanQr,
-      builder: (context, state) => const ScanQrScreen(),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const ScanQrScreen(),
+      ),
     ),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) =>
@@ -199,7 +239,10 @@ final GoRouter appRouter = GoRouter(
           routes: [
             GoRoute(
               path: Routes.home,
-              builder: (context, state) => const HomeScreen(),
+              pageBuilder: (context, state) => _fadePage(
+                key: state.pageKey,
+                child: const HomeScreen(),
+              ),
             ),
           ],
         ),
@@ -207,8 +250,11 @@ final GoRouter appRouter = GoRouter(
           routes: [
             GoRoute(
               path: Routes.library,
-              builder: (context, state) => LibraryScreen(
-                initialFilter: state.uri.queryParameters['filter'],
+              pageBuilder: (context, state) => _fadePage(
+                key: state.pageKey,
+                child: LibraryScreen(
+                  initialFilter: state.uri.queryParameters['filter'],
+                ),
               ),
             ),
           ],
@@ -217,7 +263,10 @@ final GoRouter appRouter = GoRouter(
           routes: [
             GoRoute(
               path: Routes.search,
-              builder: (context, state) => const SearchScreen(),
+              pageBuilder: (context, state) => _fadePage(
+                key: state.pageKey,
+                child: const SearchScreen(),
+              ),
             ),
           ],
         ),
@@ -225,7 +274,10 @@ final GoRouter appRouter = GoRouter(
           routes: [
             GoRoute(
               path: Routes.profile,
-              builder: (context, state) => const ProfileScreen(),
+              pageBuilder: (context, state) => _fadePage(
+                key: state.pageKey,
+                child: const ProfileScreen(),
+              ),
             ),
           ],
         ),
@@ -233,100 +285,145 @@ final GoRouter appRouter = GoRouter(
     ),
     GoRoute(
       path: '/library-files/:id',
-      builder: (context, state) {
+      pageBuilder: (context, state) {
         final id = state.pathParameters['id']!;
         final name = state.extra as String? ?? '';
-        return FilesScreen(libraryId: id, libraryName: name);
+        return _fadePage(
+          key: state.pageKey,
+          child: FilesScreen(libraryId: id, libraryName: name),
+        );
       },
     ),
     GoRoute(
       path: Routes.player,
-      builder: (context, state) {
+      pageBuilder: (context, state) {
         final file = state.extra as MediaFile;
-        return PlayerScreen(file: file);
+        return _fadePage(
+          key: state.pageKey,
+          child: PlayerScreen(file: file),
+        );
       },
     ),
     GoRoute(
       path: Routes.playerResume,
-      builder: (context, state) => const PlayerScreen.resume(),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const PlayerScreen.resume(),
+      ),
     ),
     GoRoute(
       path: Routes.notifications,
-      builder: (context, state) => const NotificationsScreen(),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const NotificationsScreen(),
+      ),
     ),
     GoRoute(
       path: Routes.offline,
-      builder: (context, state) {
+      pageBuilder: (context, state) {
         // `extra` may carry a server name string from a future
         // connectivity-watcher push; null is the safe default.
         final extra = state.extra;
-        return OfflineScreen(
-          serverName: extra is String ? extra : null,
+        return _fadePage(
+          key: state.pageKey,
+          child: OfflineScreen(
+            serverName: extra is String ? extra : null,
+          ),
         );
       },
     ),
     GoRoute(
       path: Routes.xray,
-      builder: (context, state) {
+      pageBuilder: (context, state) {
         // `extra` may be a MediaFile (full detail-side push) or a
         // String (player chrome only carries fileName).  Anything
         // else falls back to the generic "X-Ray" title.
         final extra = state.extra;
-        return XRayScreen(
-          file: extra is MediaFile ? extra : null,
-          title: extra is String ? extra : null,
+        return _fadePage(
+          key: state.pageKey,
+          child: XRayScreen(
+            file: extra is MediaFile ? extra : null,
+            title: extra is String ? extra : null,
+          ),
         );
       },
     ),
     GoRoute(
       path: Routes.groupWatch,
-      builder: (context, state) {
+      pageBuilder: (context, state) {
         // `extra` is the source title; null falls back to a generic
         // "this stream" copy in the hero card.
         final extra = state.extra;
-        return GroupWatchScreen(
-          title: extra is String ? extra : null,
+        return _fadePage(
+          key: state.pageKey,
+          child: GroupWatchScreen(
+            title: extra is String ? extra : null,
+          ),
         );
       },
     ),
     GoRoute(
       path: Routes.docViewer,
-      builder: (context, state) =>
-          DocViewerScreen(file: state.extra as MediaFile),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: DocViewerScreen(file: state.extra as MediaFile),
+      ),
     ),
     GoRoute(
       path: Routes.photoViewer,
-      builder: (context, state) =>
-          PhotoViewerScreen(file: state.extra as MediaFile),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: PhotoViewerScreen(file: state.extra as MediaFile),
+      ),
     ),
     GoRoute(
       path: Routes.musicPlayer,
-      builder: (context, state) =>
-          MusicPlayerScreen(file: state.extra as MediaFile),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: MusicPlayerScreen(file: state.extra as MediaFile),
+      ),
     ),
     GoRoute(
       path: Routes.upgrade,
-      builder: (context, state) => const UpgradeScreen(),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const UpgradeScreen(),
+      ),
     ),
     GoRoute(
       path: Routes.account,
-      builder: (context, state) => const AccountScreen(),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const AccountScreen(),
+      ),
     ),
     GoRoute(
       path: Routes.privacy,
-      builder: (context, state) => const PrivacyScreen(),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const PrivacyScreen(),
+      ),
     ),
     GoRoute(
       path: Routes.playbackPrefs,
-      builder: (context, state) => const PlaybackPrefsScreen(),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: const PlaybackPrefsScreen(),
+      ),
     ),
     GoRoute(
       path: '/detail/:id',
-      builder: (context, state) => DetailScreen(id: state.pathParameters['id']!),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: DetailScreen(id: state.pathParameters['id']!),
+      ),
     ),
     GoRoute(
       path: '/episodes/:id',
-      builder: (context, state) => EpisodesScreen(id: state.pathParameters['id']!),
+      pageBuilder: (context, state) => _fadePage(
+        key: state.pageKey,
+        child: EpisodesScreen(id: state.pathParameters['id']!),
+      ),
     ),
   ],
 );
