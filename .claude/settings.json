@@ -36,7 +36,18 @@
       "Read(//c/Users/marsh/AppData/Local/Pub/Cache/hosted/pub.dev/**)",
       "mcp__fluxora-db__query",
       "Bash(python -m black --check services/ffmpeg_service.py tests/test_stream.py)",
-      "Bash(python -m black services/ffmpeg_service.py tests/test_stream.py)"
+      "Bash(python -m black services/ffmpeg_service.py tests/test_stream.py)",
+      "mcp__dart__hot_reload",
+      "Bash(grep -E \"audio_tracks|stream_decision\" \"C:/Users/marsh/AppData/Roaming/Fluxora/fluxora.log\" | tail -5)",
+      "Read(//c/Users/marsh/AppData/Roaming/Fluxora/**)",
+      "mcp__fluxora-db__get_table_schema",
+      "Bash(cp \"C:/Users/marsh/AppData/Roaming/Fluxora/fluxora.db\" /tmp/*)",
+      "Bash(cp /tmp/fluxora* /tmp/*)",
+      "Bash(rm /tmp/fluxora*)",
+      "Bash(rm -f /tmp/fluxora*)",
+      "PowerShell(Copy-Item \"C:\\Users\\marsh\\AppData\\Roaming\\Fluxora\\fluxora.db\" *)",
+      "PowerShell(Remove-Item $env:TEMP\\fluxora*)",
+      "PowerShell(Remove-Item -Force $env:TEMP\\fluxora*)"
     ]
   }
 }

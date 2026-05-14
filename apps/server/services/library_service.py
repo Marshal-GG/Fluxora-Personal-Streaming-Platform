@@ -769,13 +769,44 @@ async def _scan_library_locked(
                 )
                 continue
             async with db.execute(
-                "SELECT id, transcoded_path, transcoded_source_mtime"
+                "SELECT id, library_id, transcoded_path,"
+                "       transcoded_source_mtime"
                 "  FROM media_files WHERE path = ?",
                 (path_str,),
             ) as cur:
                 existing = await cur.fetchone()
 
             if existing:
+                # Re-claim orphaned rows whose owner library was
+                # deleted (`media_files.library_id` is `ON DELETE
+                # SET NULL`, so a delete+recreate of the same root
+                # leaves rows with `library_id IS NULL` that the
+                # path-lookup above would otherwise skip — the
+                # operator's re-scan would silently appear to add
+                # nothing).  Only re-claim when the existing row is
+                # actually orphaned; rows owned by another library
+                # are left alone (overlapping roots are rare but
+                # legal).
+                if existing["library_id"] is None:
+                    # Refresh `created_at` on re-claim so the
+                    # operator-facing "added" date matches when they
+                    # re-attached the library, not the stale first-
+                    # scan date 9 days ago.  TMDB / resume / sidecar
+                    # metadata stays intact (only the timestamp +
+                    # ownership change).
+                    await db.execute(
+                        "UPDATE media_files"
+                        "   SET library_id = ?,"
+                        "       created_at = ?,"
+                        "       updated_at = ?"
+                        " WHERE id = ?",
+                        (library_id, now, now, existing["id"]),
+                    )
+                    logger.info(
+                        "library scan: re-claimed orphan %s for library %s",
+                        path_str,
+                        library_id,
+                    )
                 # Plan 19 §M6 — stale-sidecar detection.  If the
                 # source has been overwritten since the sidecar was
                 # produced (mtime advance), clear `transcoded_path`
@@ -1231,13 +1262,18 @@ async def upload_file_to_library(
         except OSError:
             size = 0
 
+        # Re-claim if this row was orphaned by a prior library
+        # delete (`library_id IS NULL`).  COALESCE preserves a
+        # different non-null library_id rather than stealing the
+        # row across libraries.
         await db.execute(
             """
             UPDATE media_files
-            SET size_bytes = ?, updated_at = ?
+            SET size_bytes = ?, updated_at = ?,
+                library_id = COALESCE(library_id, ?)
             WHERE id = ?
             """,
-            (size, now, file_id),
+            (size, now, library_id, file_id),
         )
         await db.commit()
     else:
