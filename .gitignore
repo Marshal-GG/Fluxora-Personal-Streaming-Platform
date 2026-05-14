@@ -17,6 +17,7 @@ venv/
 .vscode/*
 .claude/scheduled_tasks.lock
 .claude/settings.local.json
+.claude/dtd_uri.txt
 !.vscode/launch.json
 !.vscode/tasks.json
 build/

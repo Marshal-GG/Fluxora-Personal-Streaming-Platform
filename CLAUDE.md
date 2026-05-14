@@ -109,6 +109,8 @@ Components:
 | Networking / streaming | `docs/02_architecture/01_system_overview.md` (architecture); `docs/10_planning/11_streaming_pipeline_issues.md` (current defects + remediation plan) |
 | Security-sensitive feature | `docs/06_security/01_security.md` |
 | CI / CD changes | `docs/05_infrastructure/01_infrastructure.md` |
+| MCP servers (Dart / fluxora-db) — setup, DTD URI workflow, slowness gotchas | `docs/12_guidelines/06_mcp_setup_and_usage.md` |
+| Claude Code skills (archive-plan / ci-status / doc-sweep / log-entry / new-plan) — when to invoke + how to add new ones | `docs/12_guidelines/07_skills_reference.md` |
 
 ---
 

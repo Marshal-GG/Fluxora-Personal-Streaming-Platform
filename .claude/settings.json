@@ -21,7 +21,18 @@
       "Bash(gh issue list*)",
       "Bash(gh repo view*)",
       "Bash(gh auth status*)",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "mcp__dart__list_running_apps",
+      "mcp__dart__list_devices",
+      "mcp__dart__connect_dart_tooling_daemon",
+      "mcp__dart__get_widget_tree",
+      "mcp__dart__get_selected_widget",
+      "mcp__dart__get_runtime_errors",
+      "mcp__dart__get_app_logs",
+      "mcp__dart__get_active_location",
+      "mcp__dart__pub_dev_search",
+      "mcp__dart__dart_format",
+      "Bash(powershell.exe -NoProfile -File scripts/get-dtd-uri.ps1)"
     ]
   }
 }
