@@ -1,7 +1,7 @@
 # Ship Readiness — v1
 
 > **Category:** Planning
-> **Status:** Active — Updated 2026-05-08 (streaming pipeline §16 + §17 + same-day real-device follow-on patches all shipped on top of the mobile redesign + settings remediation closure earlier same day; uniform `-loglevel info`, new `services/ffmpeg_capabilities.py` version probe, transcode-only capability-gated `-readrate 1.5` + `-readrate_initial_burst 30`, end-to-end `playlistOffsetSec` plumbing for source-time scrubber after seek-restart, mobile `_ProgressBar` Stateful drag-preview state.  Mobile redesign M10/M11/M12 + settings remediation plan M1–M5 + M2.5 server endpoint all closed earlier same day; Profile-as-settings rebuilt from "8 of 11 dead-tap" to "8 live + 2 honestly-stubbed"; bearer-only `PATCH /api/v1/auth/clients/me` self-rename endpoint; `connectivity_plus`-backed Wi-Fi-only enforcement in `PlayerCubit.startStream`; audit §17.3 #8 (Notifications FIFO cap parity) + #9-Custom (sleep-timer `showTimePicker`).  **Server suite 775; mobile suite 78; desktop 113; core 8.**  Settings remediation plan archived to [`docs/10_planning/archive/15_mobile_settings_remediation_plan.md`](./archive/15_mobile_settings_remediation_plan.md).  Audit §17.3 #1 (iOS PIP) + #7 (player-overlay goldens — folds into M14) + #9-End-of-episode (needs next-episode resolver) remain the only mobile-redesign opens.  M13 (host-a-server shell — Phase 5+ runtime gate) + M14 (goldens + a11y) are the only redesign milestones still open.) 2026-05-07 (mobile UI row flipped to ✅ — Groups v2 mobile shipped completes the redesign rollout)
+> **Status:** Active — Updated 2026-05-14 (**M14 shipped — mobile redesign fully closed.** Mobile test suite 82 → 92 (+10 goldens). Mobile redesign open items reduced to: iOS PIP (§17.3 #1 — blocked on iOS test device, manual task) + end-of-episode resolver (§17.3 #9 — needs next-episode lookup + auto-advance hook). M13 (host-a-server shell) gated on Phase 5+ runtime — not blocking v1. **Server suite 814; mobile suite 92 (82 + 10 goldens); desktop 113; core 8.**)
 > **Purpose:** "Can we ship?" synthesis. What v1's architecture deliberately doesn't need, what's actually blocking the door, and the distribution-side gaps the rest of the docs don't cover. References [`04_manual_tasks.md`](./04_manual_tasks.md) for individual task detail rather than duplicating it.
 
 ---
@@ -87,7 +87,7 @@ These are real ship-blockers that the rest of the docs don't currently cover. Ea
 
 | Gap | Status |
 |-----|--------|
-| **Mobile UI redesign** | ✅ M0–M9 complete 2026-05-03; Phase A + B real-data backfill complete 2026-05-04; player polish (PIP + audio_service + bg toggle) added 2026-05-04; seek-restart wire-up landed 2026-05-05; Groups v2 mobile UX (M4 + M6 + M8) shipped 2026-05-07.  Mobile is now V2-pure end-to-end.  Plan in [`docs/11_design/mobile_redesign_plan.md`](../11_design/mobile_redesign_plan.md). |
+| **Mobile UI redesign** | ✅ **Fully closed 2026-05-14.** M0–M14 all shipped. Mobile test suite: 92 (82 unit/widget + 10 goldens). Remaining opens (not blocking v1): iOS PIP (§17.3 #1 — needs iOS test device) + end-of-episode resolver (§17.3 #9). Plan: [`docs/11_design/mobile_redesign_plan.md`](../11_design/mobile_redesign_plan.md). |
 | **Real Dashboard screenshot on landing page** | Currently a faux mockup; tracked in [`04_manual_tasks.md`](./04_manual_tasks.md). |
 | **Footer placeholder links** (Documentation, Help Center, Status, Roadmap, Blog, Discord, X/Twitter) | Tracked in [`04_manual_tasks.md`](./04_manual_tasks.md). |
 

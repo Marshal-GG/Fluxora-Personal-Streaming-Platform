@@ -959,4 +959,41 @@ Pattern in `apps/desktop/lib/features/transcode/presentation/widgets/storage_str
 
 **When planning desktop playback:** do not reference plans 20/21 as prior art for the cubit pattern unless the desktop has already shipped a player screen. The mobile cubit and repository implementations remain the reference.
 
+
+## `GetIt.I.reset()` is async — always `await` in test setUp
+
+**Context:** `GetIt.I.reset()` returns a `Future<void>` because resetting clears scopes that may have running async dispose callbacks. If a `setUp` callback is synchronous (`setUp(() { ... })`) the `reset()` call returns the Future but nothing awaits it, so the `registerSingleton` calls below race against the in-progress reset and produce `Object/factory with type X is not registered` errors that are easy to misdiagnose as missing registration (the reset just hasn't finished). Desktop's existing single-test case never surfaced the race; a second test would have failed.
+
+**Fix:** make the `setUp` callback async and `await GetIt.I.reset()` before calling `registerSingleton`. For `tearDown`, the arrow form `tearDown(() async => GetIt.I.reset())` is fine (the framework awaits any returned Future).
+
+**Where it lives:** mobile golden suite at `apps/mobile/test/goldens/` + the desktop golden at `apps/desktop/test/goldens/m3_dashboard_golden_test.dart` were both updated 2026-05-14 to follow this pattern.
+
+
+## `_DragHud` (and similar fade-overlay widgets) are always in the widget tree
+
+**Context:** Wave 1a of M14 made the player drag HUD persistent — it stays in the tree at all times and is shown/hidden with `AnimatedOpacity` + `IgnorePointer` to avoid layout shifts on appear/disappear. Any test asserting `find.byType(_DragHud).evaluate().isEmpty` when the HUD is "hidden" will fail: the widget is present, just invisible. The same pattern applies to `_PeekBadge` (AnimatedSwitcher) — when "absent" it still occupies its slot.
+
+**Fix:** assert on opacity or `IgnorePointer.ignoring`, not on widget presence. To confirm a fade-overlay is non-interactive, verify `IgnorePointer.ignoring == true`.
+
+**This is by design**, not a bug — layout stability is the reason. Future fade-style overlays in the player chrome should follow the same pattern.
+
+
+## Private widget exposure pattern — `_FooBar` → `PlayerFooBar` rename convention
+
+**Context:** Flutter's golden_toolkit requires the widget under test to be directly constructible in a test file. Private widgets (`_FooBar`) cannot be imported or instantiated outside their defining library. The project convention is to rename a private player-chrome widget to `PlayerFooBar` (public, but prefixed with the feature name) and annotate it `@visibleForTesting` to signal it is not part of the public widget API.
+
+**Fix pattern:**
+```dart
+// Before (not testable from golden_test.dart):
+class _TransportBar extends StatelessWidget { ... }
+
+// After (golden-testable):
+@visibleForTesting
+class PlayerTransportBar extends StatelessWidget { ... }
+```
+
+This rename must be reflected in the widget tree, all internal usages, and the golden test import. Do not use `part of` directives as an alternative — they produce tight coupling between test and production files.
+
+**Flagged in:** M14 §17.3 #7 sharp edge.
+
 **Flagged in:** plan 21 M4 agent architectural finding.
