@@ -16,6 +16,8 @@ from config import settings
 from database.db import get_db
 from models.stream_session import (
     AudioTrackInfo,
+    AudioTrackSwitchRequest,
+    AudioTrackSwitchResponse,
     FallbackAudioTranscodeRequest,
     FallbackAudioTranscodeResponse,
     FallbackTranscodeBody,
@@ -1019,6 +1021,202 @@ async def fallback_audio_transcode(
         session_id=session_id,
         playlist_url=_playlist_url(request, session_id),
         forced_audio_transcode=True,
+    )
+
+
+# ── POST /api/v1/stream/{session_id}/audio-track ───────────────────────────
+# Plan 23 — server-restart audio-track switching.  Mirrors plan-21's
+# fallback-audio-transcode shape: respawn FFmpeg from the live playhead,
+# this time with `-map 0:a:<index>?` pinning the chosen source audio
+# track.  Replaces the broken libmpv-on-Android client-side
+# `setAudioTrack` path (operator-reported 2026-05-15: the client-side
+# swap left audio dead for 20 s then froze the entire player; no
+# workaround stuck).  The pinned-track approach means libmpv only ever
+# sees one audio stream so mid-stream switching never happens.
+
+
+@router.post(
+    "/{session_id}/audio-track",
+    response_model=AudioTrackSwitchResponse,
+)
+@limiter.limit("12/minute")
+async def switch_audio_track(
+    session_id: str,
+    request: Request,
+    body: AudioTrackSwitchRequest,
+    db: aiosqlite.Connection = Depends(get_db),
+    client: aiosqlite.Row = Depends(validate_token),
+) -> AudioTrackSwitchResponse:
+    """Pin ``session_id`` to source audio track ``body.index`` and
+    respawn FFmpeg from ``body.current_position_sec``.  Returns the
+    same playlist URL — the client must call ``Player.open(url)``
+    again to pick up the new pipeline's segments (which now contain
+    exactly one audio stream, the operator-chosen one)."""
+    async with db.execute(
+        "SELECT id, client_id, file_id FROM stream_sessions"
+        " WHERE id = ? AND ended_at IS NULL",
+        (session_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+    if row["client_id"] != client["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not your session"
+        )
+
+    file_row = await library_service.get_file(db, row["file_id"])
+    if file_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source file no longer exists",
+        )
+
+    # Validate `body.index` against the session's known audio tracks.
+    # Cache-first (plan 22 M1 populated this on start_stream); fall
+    # back to the persisted column on media_files (plan 22 M2's scan
+    # writes it) so a server-restart in the middle of the session
+    # doesn't 400 the picker.
+    tracks: list = ffmpeg_service._session_audio_tracks.get(session_id) or []
+    if not tracks:
+        db_audio_tracks = file_row.get("audio_tracks")
+        if db_audio_tracks:
+            try:
+                parsed = json.loads(db_audio_tracks)
+                if isinstance(parsed, list):
+                    tracks = parsed
+            except (json.JSONDecodeError, TypeError):
+                logger.debug(
+                    "audio-track switch: corrupt audio_tracks JSON for file=%s",
+                    row["file_id"],
+                    exc_info=True,
+                )
+    valid_indices = {
+        int(t["index"])
+        for t in tracks
+        if isinstance(t, dict) and isinstance(t.get("index"), int)
+    }
+    if not valid_indices:
+        # Source has no probed tracks at all — refuse rather than spawn
+        # an FFmpeg that'll trip on `-map 0:a:0?` against a silent file.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No audio tracks available on this source",
+        )
+    if body.index not in valid_indices:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Audio track index {body.index} not in source",
+        )
+
+    # Per-library overrides + sidecar handling — mirrors /start +
+    # /seek + /fallback-* so the restarted session keeps every other
+    # plan-19 / plan-20 decision intact.
+    library_row: dict | None = None
+    if file_row.get("library_id"):
+        library_row = await library_service.get_library(db, file_row["library_id"])
+
+    playback_path = file_row.get("transcoded_path") or file_row["path"]
+    using_sidecar = False
+    if file_row.get("transcoded_path"):
+        if Path(file_row["transcoded_path"]).exists():
+            using_sidecar = True
+        else:
+            logger.warning(
+                "Transcoded sidecar missing on disk; falling back to source: %s",
+                file_row["transcoded_path"],
+            )
+            playback_path = file_row["path"]
+    sidecar_codec_override = "h264" if using_sidecar else None
+    sidecar_duration_override = (
+        float(file_row["duration_sec"])
+        if using_sidecar and file_row.get("duration_sec")
+        else None
+    )
+
+    # Clamp the caller-supplied position to [0, duration - 1) so the
+    # restart's `-ss` doesn't trip undefined behaviour or land past EOF.
+    duration_sec = float(file_row.get("duration_sec") or 0.0)
+    clamped = max(0.0, float(body.current_position_sec))
+    if duration_sec > 0 and clamped >= duration_sec - 1.0:
+        clamped = max(0.0, duration_sec - 1.0)
+
+    # Pin the audio track BEFORE restart_stream so the respawn picks it
+    # up in `_build_ffmpeg_cmd` + `_ensure_fmp4_init_segment`.  Clears
+    # automatically on session end via `stop_stream`.
+    ffmpeg_service.set_session_pinned_audio_track(session_id, body.index)
+
+    # Wipe the stale init.mp4 so `_ensure_fmp4_init_segment` regenerates
+    # it under the new `-map 0:a:<index>?` pin.  Without this the old
+    # init (declaring every audio track) lingers next to segments that
+    # only carry one track — libmpv ingests one frame and stalls
+    # because the track-count contract is violated.  Operator-reported
+    # 2026-05-15: track switch fires server-side cleanly but client
+    # video freezes immediately afterward, matching this exact symptom.
+    session_dir = Path(settings.hls_tmp_path) / session_id
+    init_path = session_dir / "init.mp4"
+    try:
+        init_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        # Best-effort — log and let restart_stream proceed.  Worst case
+        # the operator sees the freeze and we iterate.
+        logger.warning(
+            "audio-track switch: could not unlink stale init.mp4 for session=%s",
+            session_id,
+            exc_info=True,
+        )
+
+    try:
+        await ffmpeg_service.restart_stream(
+            playback_path,
+            session_id,
+            settings.hls_tmp_path,
+            seek_sec=clamped,
+            tonemap_hdr=False,
+            source_codec_override=sidecar_codec_override,
+            duration_sec_override=sidecar_duration_override,
+            library_row=library_row,
+        )
+    except FileNotFoundError as exc:
+        # Source vanished mid-restart — release the pin so the operator
+        # isn't stuck with a half-applied state.
+        ffmpeg_service.clear_session_pinned_audio_track(session_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        ffmpeg_service.clear_session_pinned_audio_track(session_id)
+        ffmpeg_error = str(exc) or exc.__class__.__name__
+        logger.error(
+            "audio-track switch restart failed: session=%s index=%d seek=%.3f error=%s",
+            session_id,
+            body.index,
+            clamped,
+            ffmpeg_error,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Audio track switch restart failed: {ffmpeg_error}",
+        ) from exc
+
+    logger.info(
+        "audio-track switch: session=%s index=%d seek=%.3f",
+        session_id,
+        body.index,
+        clamped,
+    )
+
+    return AudioTrackSwitchResponse(
+        session_id=session_id,
+        playlist_url=_playlist_url(request, session_id),
+        pinned_audio_track_index=body.index,
+        applied_seek_sec=clamped,
     )
 
 

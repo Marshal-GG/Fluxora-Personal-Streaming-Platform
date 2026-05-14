@@ -146,3 +146,35 @@ class FallbackAudioTranscodeResponse(BaseModel):
     session_id: str
     playlist_url: str
     forced_audio_transcode: bool
+
+
+class AudioTrackSwitchRequest(BaseModel):
+    """Plan 23 — server-restart audio-track switch.
+
+    ``index`` is the source FFmpeg audio-stream index (``0:a:<index>``)
+    the operator picked from the mobile audio picker.  The router
+    validates it against the session's known ``audio_tracks`` list
+    before flipping the pin and respawning FFmpeg.
+
+    ``current_position_sec`` is the live playhead at the moment the
+    operator tapped the row.  Used identically to the fallback
+    endpoints — clamped + handed to ``restart_stream`` as ``-ss`` so
+    the new pipeline picks up where the old one stopped.
+    """
+
+    index: int = Field(ge=0)
+    current_position_sec: float = Field(ge=0)
+
+
+class AudioTrackSwitchResponse(BaseModel):
+    """200 response.  Same shape as the fallback endpoints' responses
+    so the client can reuse its "respawn → reopen playlist" code path.
+    The playlist URL is identical to the one ``/start`` returned;
+    re-opening it pulls the new segments produced by the respawned
+    FFmpeg (now pinned to the chosen audio track).
+    """
+
+    session_id: str
+    playlist_url: str
+    pinned_audio_track_index: int
+    applied_seek_sec: float

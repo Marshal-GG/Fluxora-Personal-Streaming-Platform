@@ -90,6 +90,19 @@ _AUDIO_STREAM_COPY_ALLOWLIST: frozenset[str] = frozenset(
 # (client_id, source_audio_codec) pair.  Cleared on ``stop_stream``.
 _session_force_audio_transcode: dict[str, bool] = {}
 
+# Plan 23 — per-session pinned audio track index.  Set when the
+# client invokes ``/stream/{session_id}/audio-track?index=N`` to
+# switch which source audio track the server demuxes.  When present,
+# ``_build_ffmpeg_cmd`` emits ``-map 0:v:0 -map 0:a:<index>`` instead
+# of the plan-22 ``-map 0:a?`` (all-tracks) form, and
+# ``_ensure_fmp4_init_segment`` declares exactly that one audio
+# stream in the init moov.  libmpv-on-Android can't switch audio
+# tracks mid-stream reliably (operator-reported repeatedly 2026-05-15
+# — every workaround we tried at the client level eventually stalled
+# the player); going through a server-restart with a pinned track
+# sidesteps the libmpv code path entirely.  Cleared on ``stop_stream``.
+_session_pinned_audio_track: dict[str, int] = {}
+
 
 def set_session_force_transcode(session_id: str, value: bool = True) -> None:
     """Mark / unmark ``session_id`` for forced server-side transcoding.
@@ -139,6 +152,35 @@ def clear_session_force_audio_transcode(session_id: str) -> None:
     session ends.  No-op when no entry exists.
     """
     _session_force_audio_transcode.pop(session_id, None)
+
+
+def set_session_pinned_audio_track(session_id: str, index: int | None) -> None:
+    """Plan 23 — pin ``session_id`` to source audio track ``index``.
+
+    The ``/audio-track`` endpoint calls this before kicking
+    ``restart_stream`` so the respawned FFmpeg only demuxes the
+    selected track (``-map 0:v:0 -map 0:a:<index>``).  Pass ``index=None``
+    to release the pin and return to plan-22 multi-track behaviour
+    (``-map 0:v:0 -map 0:a?``) on the next spawn.
+    """
+    if index is None:
+        _session_pinned_audio_track.pop(session_id, None)
+    else:
+        _session_pinned_audio_track[session_id] = index
+
+
+def clear_session_pinned_audio_track(session_id: str) -> None:
+    """Drop the session's pinned audio track entry, if any.
+
+    Called from ``stop_stream`` so the entry doesn't linger.  No-op
+    when no entry exists.
+    """
+    _session_pinned_audio_track.pop(session_id, None)
+
+
+def get_session_pinned_audio_track(session_id: str) -> int | None:
+    """Return the pinned audio track index for ``session_id``, or None."""
+    return _session_pinned_audio_track.get(session_id)
 
 
 def _normalize_audio_codec(codec: str | None) -> str | None:
@@ -739,6 +781,7 @@ def _build_ffmpeg_cmd(
     source_audio_sample_rate: int | None = None,
     source_audio_channels: int | None = None,
     audio_passthrough: bool = False,
+    pinned_audio_track_index: int | None = None,
 ) -> list[str]:
     """Compose the FFmpeg command line.
 
@@ -841,7 +884,14 @@ def _build_ffmpeg_cmd(
     #     Multi-track re-encode would need N separate `-c:a` flag
     #     groups; deferred to v1.1 per the plan's behaviour matrix.
     cmd.extend(["-map", "0:v:0"])
-    if audio_passthrough:
+    if pinned_audio_track_index is not None:
+        # Plan 23 — server-restart track switching.  Demux only the
+        # operator-chosen audio track so libmpv never has to switch
+        # mid-stream (the broken path that produced the 20 s silent +
+        # freeze symptom).  Trailing ``?`` keeps things tolerant if the
+        # source somehow lost the track between probe and respawn.
+        cmd.extend(["-map", f"0:a:{pinned_audio_track_index}?"])
+    elif audio_passthrough:
         cmd.extend(["-map", "0:a?"])
     else:
         cmd.extend(["-map", "0:a:0?"])
@@ -1226,6 +1276,7 @@ async def _ensure_fmp4_init_segment(
     session_dir: Path,
     file_path: str,
     audio_aac_kbps: int = 128,
+    pinned_audio_track_index: int | None = None,
 ) -> bool:
     """Generate `<session_dir>/init.mp4` if FFmpeg's HLS muxer didn't.
 
@@ -1268,6 +1319,17 @@ async def _ensure_fmp4_init_segment(
     # keeps silent video files (no audio at all) from erroring out.
     # `-t 0.04` writes ≈1 frame at 25 fps; the moov header is what the
     # player actually reads, the tiny mdat is skipped.
+    # Plan 23 — when a session is pinned to a specific source audio
+    # track, the init moov must declare exactly that one stream so
+    # media_kit's track count matches the segments (which are produced
+    # with `-map 0:a:<index>?` by the main pipeline).  Mismatched
+    # track counts between init.mp4 and segments produce the exact
+    # "audio dies after 32 ms" symptom multi-audio originally hit.
+    audio_map_arg = (
+        f"0:a:{pinned_audio_track_index}?"
+        if pinned_audio_track_index is not None
+        else "0:a?"
+    )
     cmd = [
         ffmpeg,
         "-hide_banner",
@@ -1281,7 +1343,7 @@ async def _ensure_fmp4_init_segment(
         "-c:v",
         "copy",
         "-map",
-        "0:a?",
+        audio_map_arg,
         "-c:a",
         "aac",
         "-b:a",
@@ -1922,6 +1984,7 @@ async def start_stream(
         source_audio_sample_rate=audio_sample_rate,
         source_audio_channels=audio_channels,
         audio_passthrough=audio_passthrough,
+        pinned_audio_track_index=_session_pinned_audio_track.get(session_id),
     )
     succeeded, tail, returncode, killed_after_timeout = await _spawn_ffmpeg_attempt(
         cmd,
@@ -1966,6 +2029,7 @@ async def start_stream(
             source_audio_sample_rate=audio_sample_rate,
             source_audio_channels=audio_channels,
             audio_passthrough=audio_passthrough,
+            pinned_audio_track_index=_session_pinned_audio_track.get(session_id),
         )
         # Software-decode retry is materially slower than the GPU-input
         # first attempt, so bump the timeout up one tier.  A 10 s budget
@@ -1985,7 +2049,13 @@ async def start_stream(
         # already wrote it (file exists).
         if use_fmp4:
             try:
-                wrote = await _ensure_fmp4_init_segment(session_dir, file_path)
+                wrote = await _ensure_fmp4_init_segment(
+                    session_dir,
+                    file_path,
+                    pinned_audio_track_index=_session_pinned_audio_track.get(
+                        session_id
+                    ),
+                )
                 if not wrote:
                     logger.warning(
                         "Could not generate fmp4 init segment for session=%s; "
@@ -2226,6 +2296,10 @@ async def stop_stream(session_id: str) -> None:
     clear_session_force_transcode(session_id)
     # Plan 21 — drop the audio-fallback marker alongside the video one.
     clear_session_force_audio_transcode(session_id)
+    # Plan 23 — drop the pinned-audio-track entry so a future session
+    # with the same id (won't happen with uuids but cheap guard) starts
+    # from a clean "all tracks demuxed" state.
+    clear_session_pinned_audio_track(session_id)
     # Plan 22 M1 — drop the cached audio-track list.  M3's router reads
     # it for the response payload; once the session ends the cache is
     # no longer relevant and would otherwise leak forever.
