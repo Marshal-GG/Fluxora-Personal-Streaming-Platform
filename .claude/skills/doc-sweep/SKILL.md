@@ -36,7 +36,7 @@ Match the change against this matrix:
 | `DESIGN.md` | Color, spacing, typography, or component spec changed |
 | `CLAUDE.md` | A rule changed, or a new planning doc was archived (add a "Where the detail lives" row) |
 | `docs/12_guidelines/03_gotchas.md` | A risk is mitigated or a new one discovered |
-| `AGENT_LOG.md` | Always — use the `/log-entry` skill |
+| `AGENT_LOG.md` | Always — follow the canonical format spec at `docs/12_guidelines/04_agent_log_format.md` |
 
 ## Step 2 — Cross-reference grep sweep
 
@@ -87,8 +87,4 @@ Don't declare done until:
 - [ ] Step 2 grep found no stale references
 - [ ] Step 3 self-check passed
 - [ ] Step 4 consistency checks passed
-- [ ] `AGENT_LOG.md` entry lists every doc touched (use `/log-entry`)
-
-## Delegation hint
-
-This sweep is repetitive and token-heavy. For non-trivial changes, delegate to a Sonnet subagent with the change summary + the file matrix above; reserve the main thread for code work. Keep the API contract / behavior summary in the prompt so the subagent doesn't have to re-derive it.
+- [ ] `AGENT_LOG.md` entry lists every doc touched (follow `docs/12_guidelines/04_agent_log_format.md`)

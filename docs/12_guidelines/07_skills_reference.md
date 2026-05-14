@@ -24,8 +24,9 @@ Five skills are checked into the repo. The `.claude/` folder used to be gitignor
 | **archive-plan** | Moves a fully-shipped plan from `docs/10_planning/<N>_<slug>.md` -> `docs/10_planning/archive/<N>_<slug>.md`, then updates every doc that links to it (roadmap, CLAUDE.md "Where the detail lives" table, current_status, cross-references). Includes a grep sweep for stale links. | "archive plan N", "plan N is done", or after the doc-sweep that closes out a milestone |
 | **ci-status** | Runs `gh run list --limit 5 --branch=main`, parses the table, and if any recent run is `failure` auto-pulls the failing log lines through the standard error-grep regex. Encodes the common failure-shape -> root-cause table (black drift, FFmpeg missing on runner, ruff F401, etc.). | At session start (per CLAUDE.md mandatory rule), after the operator confirms a push, or any "check CI" / "is CI passing" / "did my push break anything" prompt |
 | **doc-sweep** | Walks the Fluxora documentation update protocol checklist after a non-trivial code change. Cross-references the affected-file matrix from `docs/12_guidelines/02_documentation_update_protocol.md` so the agent doesn't re-read the protocol every time. | "update docs", "doc sweep", "make sure docs are aligned", or after any change that touches schema / endpoints / architecture / migrations / planning |
-| **log-entry** | Appends a canonical AGENT_LOG.md entry following the format spec in `docs/12_guidelines/04_agent_log_format.md` (Title Case headers, `[tagged]` header line, 3-column Files Created / Modified table, Docs Updated section, Next Agent Should section). Encodes the append-only rule. | When closing out a session that produced meaningful work |
 | **new-plan** | Scaffolds a new planning doc at `docs/10_planning/<N>_<slug>.md` using the canonical structure from plans 18-21 (Context / Decisions / Behavior matrix / Migration / Server changes / Client changes / Tests / Milestones / Files touched / Sharp edges). Auto-picks the next plan number by scanning both active and archive dirs. | "create a plan", "draft a plan", "new plan doc", or whenever a feature warrants planning before code — DB migrations, multi-app changes, new endpoint families, architectural shifts |
+
+> **Note:** A `log-entry` skill existed earlier in this session but was removed 2026-05-14 after a sonnet-spawned closeout produced a fabricated AGENT_LOG entry. To write an AGENT_LOG entry, read `docs/12_guidelines/04_agent_log_format.md` directly — forcing engagement with the canonical doc (which now requires the Files table to be derived from `git diff --name-status`) is harder to silently bypass than a skill body.
 
 ## Built-in vs project-specific
 
@@ -42,7 +43,7 @@ These are not stored in `.claude/skills/` and are not Fluxora-specific. Treat th
 
 Two ways:
 
-1. **Type the slash command** — `/archive-plan`, `/ci-status`, `/doc-sweep`, `/log-entry`, `/new-plan`. Claude Code surfaces a one-line confirmation, then the skill body loads as Claude's operating prompt.
+1. **Type the slash command** — `/archive-plan`, `/ci-status`, `/doc-sweep`, `/new-plan`. Claude Code surfaces a one-line confirmation, then the skill body loads as Claude's operating prompt.
 2. **Phrase-trigger** — the descriptions above each match natural phrasings ("plan 21 is done" -> archive-plan, "check CI" -> ci-status). Claude reads the descriptions on every turn and self-invokes when one matches.
 
 Both routes go through the `Skill` tool internally. Agents can invoke their own skills — no human-in-the-loop needed once the trigger fires.

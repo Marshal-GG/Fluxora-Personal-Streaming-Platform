@@ -79,7 +79,7 @@ Also grep for the OLD path with backslashes / forward-slash variants if the proj
 
 ## Step 7 — Append AGENT_LOG entry
 
-Use `/log-entry` skill (or follow `docs/12_guidelines/04_agent_log_format.md`) to append a `[docs]` entry titled "Archive plan <N> — <plan name>". Files Created/Modified should list:
+Follow `docs/12_guidelines/04_agent_log_format.md` to append a `[docs]` entry titled "Archive plan <N> — <plan name>". Files Created/Modified should list:
 
 - The renamed file (Action: `Renamed`, Path: `docs/10_planning/<N>_<slug>.md → docs/10_planning/archive/<N>_<slug>.md`, Why: "Plan complete; move to archive folder per project convention")
 - `docs/10_planning/01_roadmap.md` (link + status update)
