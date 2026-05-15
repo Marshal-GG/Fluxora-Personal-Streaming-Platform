@@ -165,6 +165,13 @@ class _FakePlayerEngine implements PlayerEngine {
   }
 
   @override
+  ({int width, int height})? get videoSize => null;
+
+  @override
+  Stream<({int width, int height})?> get videoSizeStream =>
+      const Stream<({int width, int height})?>.empty();
+
+  @override
   Future<void> dispose() async {
     _disposed = true;
     await _positionCtl.close();

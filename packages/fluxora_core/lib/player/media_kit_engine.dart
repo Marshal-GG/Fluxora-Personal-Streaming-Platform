@@ -50,6 +50,15 @@ class MediaKitEngine implements PlayerEngine {
 
   StreamSubscription<String>? _errorBridgeSub;
 
+  /// Video frame size emissions.  Subscribes to `player.stream.video
+  /// Params` and forwards `(w, h)` whenever both are non-null + positive.
+  /// Drives the player screen's `AspectRatio` so the raw `Texture`
+  /// path doesn't stretch the frame.
+  final StreamController<({int width, int height})?> _videoSizeController =
+      StreamController<({int width, int height})?>.broadcast();
+  StreamSubscription<mk.VideoParams>? _videoSizeBridgeSub;
+  ({int width, int height})? _videoSize;
+
   int? _selectedAudioTrackIndex;
 
   /// Factory.  Builds the `media_kit.Player` + `VideoController`, then
@@ -100,7 +109,22 @@ class MediaKitEngine implements PlayerEngine {
     final controller = VideoController(player);
     final engine = MediaKitEngine._(player, controller);
     engine._attachErrorBridge();
+    engine._attachVideoSizeBridge();
     return engine;
+  }
+
+  void _attachVideoSizeBridge() {
+    _videoSizeBridgeSub = _player.stream.videoParams.listen((p) {
+      final w = p.w ?? 0;
+      final h = p.h ?? 0;
+      if (w > 0 && h > 0) {
+        final size = (width: w, height: h);
+        if (_videoSize != size) {
+          _videoSize = size;
+          _videoSizeController.add(size);
+        }
+      }
+    });
   }
 
   void _attachErrorBridge() {
@@ -226,8 +250,11 @@ class MediaKitEngine implements PlayerEngine {
   Future<void> dispose() async {
     await _errorBridgeSub?.cancel();
     _errorBridgeSub = null;
+    await _videoSizeBridgeSub?.cancel();
+    _videoSizeBridgeSub = null;
     await _errorController.close();
     await _selectedAudioController.close();
+    await _videoSizeController.close();
     await _player.dispose();
   }
 
@@ -262,6 +289,9 @@ class MediaKitEngine implements PlayerEngine {
   @override
   int? get textureId => _videoController.id.value;
 
+  @override
+  ({int width, int height})? get videoSize => _videoSize;
+
   // ── PlayerEngine — streams ───────────────────────────────────────
 
   @override
@@ -278,4 +308,8 @@ class MediaKitEngine implements PlayerEngine {
 
   @override
   Stream<EngineErrorEvent> get errorStream => _errorController.stream;
+
+  @override
+  Stream<({int width, int height})?> get videoSizeStream =>
+      _videoSizeController.stream;
 }

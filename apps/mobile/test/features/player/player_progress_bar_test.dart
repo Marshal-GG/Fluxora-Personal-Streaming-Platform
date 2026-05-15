@@ -140,6 +140,13 @@ class _StreamableFakeEngine implements PlayerEngine {
   Future<void> setMetadata(String? title) async {}
 
   @override
+  ({int width, int height})? get videoSize => null;
+
+  @override
+  Stream<({int width, int height})?> get videoSizeStream =>
+      const Stream<({int width, int height})?>.empty();
+
+  @override
   Future<void> dispose() async {
     await _positionCtl.close();
     await _durationCtl.close();

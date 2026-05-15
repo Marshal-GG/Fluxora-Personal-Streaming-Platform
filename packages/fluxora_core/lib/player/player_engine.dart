@@ -110,6 +110,14 @@ abstract class PlayerEngine {
   /// loaded.
   int? get textureId;
 
+  /// Latest decoded video frame size in pixels, or `null` until the
+  /// first frame's dimensions are known.  Drives the player screen's
+  /// `AspectRatio` wrapper so a bare `Texture(textureId: ...)` isn't
+  /// stretched to fill its parent — engines without an aspect-ratio-
+  /// aware widget (like media_kit's `Video`) need this so the player
+  /// surface can letterbox / pillarbox correctly.
+  ({int width, int height})? get videoSize;
+
   // ── Streams (push updates as state changes) ───────────────────────
 
   /// Position emissions — engine-defined cadence, ~250 ms is typical.
@@ -130,4 +138,10 @@ abstract class PlayerEngine {
   /// shape.  Native error payloads are preserved on the event's
   /// [EngineErrorEvent.cause] field for diagnostic logging.
   Stream<EngineErrorEvent> get errorStream;
+
+  /// Emits whenever the engine learns the decoded video frame size
+  /// (typically once per [open] when the first frame is parsed,
+  /// plus on resolution changes mid-stream).  Null means "no video"
+  /// (audio-only stream) or "size not yet known".
+  Stream<({int width, int height})?> get videoSizeStream;
 }

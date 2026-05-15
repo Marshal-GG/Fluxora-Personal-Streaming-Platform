@@ -65,6 +65,7 @@ class ExoPlayerEngine implements PlayerEngine {
   double _volume = 100.0;
   int? _selectedAudioTrackIndex;
   List<int> _availableAudioTrackIndices = const <int>[];
+  ({int width, int height})? _videoSize;
 
   final StreamController<Duration> _positionController =
       StreamController<Duration>.broadcast();
@@ -76,6 +77,8 @@ class ExoPlayerEngine implements PlayerEngine {
       StreamController<int?>.broadcast();
   final StreamController<EngineErrorEvent> _errorController =
       StreamController<EngineErrorEvent>.broadcast();
+  final StreamController<({int width, int height})?> _videoSizeController =
+      StreamController<({int width, int height})?>.broadcast();
 
   /// Default factory — production code uses this.  Allocates a Kotlin-
   /// side ExoPlayer + SurfaceProducer pair via the `create` method, then
@@ -179,6 +182,15 @@ class ExoPlayerEngine implements PlayerEngine {
           break;
         case 'tracksChanged':
           _onTracksChanged(event);
+          break;
+        case 'videoSizeChanged':
+          final w = (event['width'] as num?)?.toInt() ?? 0;
+          final h = (event['height'] as num?)?.toInt() ?? 0;
+          final size = (w > 0 && h > 0) ? (width: w, height: h) : null;
+          if (size != _videoSize) {
+            _videoSize = size;
+            _videoSizeController.add(size);
+          }
           break;
         case 'playbackStateChanged':
           // Currently advisory — the cubit doesn't subscribe to a
@@ -289,8 +301,10 @@ class ExoPlayerEngine implements PlayerEngine {
     // side emits the new `durationChanged`.
     _position = Duration.zero;
     _duration = Duration.zero;
+    _videoSize = null;
     _positionController.add(_position);
     _durationController.add(_duration);
+    _videoSizeController.add(null);
 
     // The cubit drives all seek decisions via [seek]; `open` always
     // starts at position 0 unless the cubit later issues a seek.  The
@@ -402,6 +416,7 @@ class ExoPlayerEngine implements PlayerEngine {
     await _isPlayingController.close();
     await _selectedAudioController.close();
     await _errorController.close();
+    await _videoSizeController.close();
   }
 
   // ── PlayerEngine — state snapshots ───────────────────────────────
@@ -430,6 +445,9 @@ class ExoPlayerEngine implements PlayerEngine {
   @override
   int? get textureId => _textureId;
 
+  @override
+  ({int width, int height})? get videoSize => _videoSize;
+
   // ── PlayerEngine — streams ───────────────────────────────────────
 
   @override
@@ -446,6 +464,10 @@ class ExoPlayerEngine implements PlayerEngine {
 
   @override
   Stream<EngineErrorEvent> get errorStream => _errorController.stream;
+
+  @override
+  Stream<({int width, int height})?> get videoSizeStream =>
+      _videoSizeController.stream;
 
   // ── Diagnostics (test-only accessors) ────────────────────────────
 

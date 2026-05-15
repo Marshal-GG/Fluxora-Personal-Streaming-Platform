@@ -15,6 +15,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -66,6 +67,15 @@ internal class FluxoraExoPlayer(
      * [MediaKitEngine.mediaKitPlayer] on the Dart side.
      */
     private val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext)
+        // Custom renderers factory that asks the decoder to tone-map
+        // HDR content (HDR10 / HLG / DolbyVision) to SDR before the
+        // frames reach the Flutter texture.  Without it, HDR-encoded
+        // PQ values on an SDR Flutter `SurfaceProducer` render
+        // washed-out / desaturated.  No-op on Android <13 / unsupported
+        // codecs — falls back to the server-side `?tonemap=true` toggle.
+        .setRenderersFactory(
+            TonemappingRenderersFactory(context.applicationContext),
+        )
         .build()
         .apply {
             setAudioAttributes(
@@ -448,6 +458,66 @@ internal class FluxoraExoPlayer(
                     "selectedAudioSourceIndex" to mapping.selectedSourceIndex,
                 ),
             )
+
+            // Emit video size as soon as the manifest is parsed — sources
+            // where `onVideoSizeChanged` fires late (or not at all for
+            // audio-only sessions) would otherwise leave the Dart side's
+            // `videoSize` null forever, stranding the player surface on
+            // the "first frame's dimensions unknown" fallback.  Read
+            // width/height directly off the selected video TrackGroup's
+            // Format — Media3 populates these from the HLS manifest +
+            // probe before any frames decode.
+            val videoFormat = firstSelectedVideoFormat(tracks)
+            if (videoFormat != null && videoFormat.width > 0 && videoFormat.height > 0) {
+                val par = videoFormat.pixelWidthHeightRatio
+                    .takeIf { it > 0f } ?: 1f
+                val displayWidth = (videoFormat.width * par).toInt().coerceAtLeast(1)
+                Log.i(
+                    TAG,
+                    "playerId=$playerId onTracksChanged video " +
+                        "raw=${videoFormat.width}x${videoFormat.height} par=$par " +
+                        "display=${displayWidth}x${videoFormat.height}",
+                )
+                plugin.sendEvent(
+                    mapOf(
+                        "playerId" to playerId,
+                        "type" to "videoSizeChanged",
+                        "width" to displayWidth,
+                        "height" to videoFormat.height,
+                    ),
+                )
+            }
+        }
+
+        override fun onVideoSizeChanged(videoSize: VideoSize) {
+            // Width/height are the pixel dimensions of the decoded frame
+            // before pixelWidthHeightRatio is applied; anamorphic sources
+            // (DVD MPEG-2, some old Blu-ray rips) need that ratio too or
+            // the displayed frame is squashed.  Bake it into the emitted
+            // width so the Dart-side `AspectRatio` renders correctly
+            // without having to plumb a second number.
+            val rawWidth = videoSize.width
+            val rawHeight = videoSize.height
+            if (rawWidth <= 0 || rawHeight <= 0) {
+                Log.d(TAG, "playerId=$playerId onVideoSizeChanged size=unknown")
+                return
+            }
+            val par = videoSize.pixelWidthHeightRatio.takeIf { it > 0f } ?: 1f
+            val displayWidth = (rawWidth * par).toInt().coerceAtLeast(1)
+            Log.i(
+                TAG,
+                "playerId=$playerId onVideoSizeChanged " +
+                    "raw=${rawWidth}x${rawHeight} par=$par " +
+                    "display=${displayWidth}x${rawHeight}",
+            )
+            plugin.sendEvent(
+                mapOf(
+                    "playerId" to playerId,
+                    "type" to "videoSizeChanged",
+                    "width" to displayWidth,
+                    "height" to rawHeight,
+                ),
+            )
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -520,6 +590,29 @@ internal data class AudioMappingResult(
  * Pure function so it's unit-testable on the host JVM without a real
  * ExoPlayer.  See `FluxoraExoPlayerTest`.
  */
+/**
+ * Find the currently-selected video track's [Format] (the one Media3
+ * is actually decoding), or the first declared video format when no
+ * selection has happened yet (the latter only matters for the
+ * `STATE_BUFFERING → STATE_READY` window — `onTracksChanged` fires
+ * again with the real selection once it lands).  Returns `null` for
+ * audio-only sources.  Pure function — tested in
+ * `FluxoraExoPlayerTest`.
+ */
+internal fun firstSelectedVideoFormat(tracks: Tracks): Format? {
+    var fallback: Format? = null
+    for (group in tracks.groups) {
+        if (group.type != C.TRACK_TYPE_VIDEO) continue
+        for (i in 0 until group.length) {
+            val format = group.getTrackFormat(i)
+            if (format.width <= 0 || format.height <= 0) continue
+            if (group.isTrackSelected(i)) return format
+            fallback = fallback ?: format
+        }
+    }
+    return fallback
+}
+
 internal fun buildAudioTrackMapping(tracks: Tracks): AudioMappingResult {
     val descriptors = mutableListOf<Map<String, Any?>>()
     val handles = mutableMapOf<Int, AudioTrackHandle>()
