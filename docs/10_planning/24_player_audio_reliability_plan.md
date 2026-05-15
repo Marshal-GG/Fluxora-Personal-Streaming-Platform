@@ -1,18 +1,20 @@
 # Plan 24 — Android ExoPlayer Migration
 
-> **Status:** Active — **M1, M2, M3, M4, M7, M8 shipped 2026-05-15**
-> (platform-channel spike + `PlayerEngine` abstraction + Dart
-> `ExoPlayerEngine` + Kotlin module hardening + Media3
+> **Status:** Active — **M1, M2, M3, M4, M7, M8 + M9 partial shipped
+> 2026-05-15** (platform-channel spike + `PlayerEngine` abstraction +
+> Dart `ExoPlayerEngine` + Kotlin module hardening + Media3
 > `MediaSessionService` for lockscreen / notification card / BT
-> transport + seek-restart + scrubber pin integration).
-> `_kEnableExoPlayerEngine` flipped to `true` — Android now defaults
-> to Media3 ExoPlayer; libmpv (via `media_kit`) stays the desktop +
-> iOS engine + Android operator escape hatch via
-> `_kForceMediaKitOnAndroid`.  **M5 (real-device multi-audio smoke)
-> + M6 (HDR + tonemap) require operator device testing** and are
-> the only remaining functional milestones.  **M9 (tests + doc
-> sweep + flag deletion + spike cleanup)** is the final mechanical
-> close-out.
+> transport + seek-restart + scrubber pin integration + title
+> plumbing to the lockscreen + subtitle tab gating + dev-spike
+> removal + `_kEnableExoPlayerEngine` flag deletion).  Android now
+> defaults to Media3 ExoPlayer (the factory's flag dropped — the
+> behaviour is the only path); libmpv (via `media_kit`) stays the
+> desktop + iOS engine + Android operator escape hatch via
+> `_kForceMediaKitOnAndroid` (kept until M5+M6 are operator-green).
+> **M5 (real-device multi-audio smoke) + M6 (HDR + tonemap) require
+> operator device testing** and are the only remaining functional
+> milestones.  **M9 finishes** with `_kForceMediaKitOnAndroid`
+> deletion + plan archival once M5+M6 confirm no regressions.
 >
 > **Operator approved 2026-05-15** after stacking three layers of
 > mid-stream track-switch workarounds (plan 22 cubit-level seek,
@@ -449,7 +451,7 @@ Steps:
 
 Exit criteria: scrubber + auto-resume + manual-seek all work.
 
-### M9 — Tests, golden re-baseline, doc sweep (4 h)
+### M9 — Tests, golden re-baseline, doc sweep (4 h) — 🟡 Partial 2026-05-15 (commit `24d3579`) — title plumbing + subtitle tab gate + dev-spike removal + `_kEnableExoPlayerEngine` flag deletion + gotchas entry shipped. `_kForceMediaKitOnAndroid` flag deletion + plan archival held until M5+M6 are operator-green.
 
 Steps:
 1. Update player tests to use a `FakePlayerEngine` mock instead of

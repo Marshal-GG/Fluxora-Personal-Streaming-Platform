@@ -624,3 +624,110 @@ Saved as a feedback memory (`feedback_no_plan_refs_in_code.md`) so future sessio
 3. **Plan 24 M6 (3 h) — HDR + tonemap + HDR-multi-audio.** ExoPlayer's HLS parser is strict-but-diagnostic; HDR-no-audio bug should now produce an actual error in `adb logcat -s ExoPlayer` rather than libmpv's silent drop. If a server-side init.mp4 codec issue surfaces, fix server-side.
 4. **Plan 24 M9 (4 h) — Tests + golden re-baseline + doc sweep + flag deletion + spike cleanup.** Delete `_kEnableExoPlayerEngine` + `_kForceMediaKitOnAndroid` flags from the factory. Delete `apps/mobile/lib/dev/exo_spike_page.dart` + the hidden `/dev/exo-spike` route + the long-press affordance in profile_screen. Archive plan 24 to `docs/10_planning/archive/24_player_audio_reliability_plan.md`. Sweep architecture + frontend + gotchas docs. Update `current_status.md` + `roadmap.md` to mark plan 24 ✅ Done.
 5. **Thread the file title through `MediaSessionService.applyMetadata`** so the lockscreen card shows the movie/episode name (current default is "Fluxora"). Small Dart-side change: cubit's `_engineBuilder` flow already has the title from `startStream`; pass it through `ExoPlayerEngine.open()` headers or a new `setMetadata(title)` method on the channel. Likely belongs in M9 alongside flag deletion.
+
+## [2026-05-15] [feat] [refactor] [mobile] [core] [docs] — Plan 24 M9 partial + doc sweep
+
+**Phase:** Plan 24 — Android ExoPlayer migration. Pre-device-verification cleanup pass: title plumbing to the lockscreen, subtitle picker gating, dev spike removal, `_kEnableExoPlayerEngine` flag deletion + gotchas entry.
+**Status:** M9 partial complete. `_kForceMediaKitOnAndroid` flag deletion + plan 24 archival deliberately deferred until M5 + M6 are operator-green on a real device.
+**Commits:** `24d3579` M9 partial code
+
+### What Was Done
+
+#### Title plumbing (lockscreen card shows the actual file title)
+
+- `PlayerEngine` gains `Future<void> setMetadata(String? title)`. Doc-comment: sets the OS-side metadata (lockscreen card / notification / BT transport); engines without an OS MediaSession should no-op.
+- `MediaKitEngine.setMetadata` → `async {}` (libmpv doesn't manage OS metadata directly; `FluxoraAudioHandler` already carried the title via `audio_service.bind(title: …)` for that path).
+- `ExoPlayerEngine.setMetadata` → `await _methodChannel.invokeMethod<void>('setMetadata', {'playerId': _playerId, 'title': title});` Tolerates `null`.
+- `ExoPlayerPlugin.kt` MethodChannel handler: new `setMetadata` case dispatches to `requirePlayer(call).setMetadata(call.argument<String?>('title'))` and returns an empty `Map<String, Any>`.
+- `FluxoraExoPlayer.kt` adds `fun setMetadata(title: String?)`. `ensureAlive()` + posts to the main thread + calls `FluxoraMediaSessionService.applyMetadata(title)`. Wraps in `try/catch` that logs at `Log.w` (Hard Prohibition #4).
+- Cubit's `startStream` now calls `engine.setMetadata(fileName)` immediately after `engine.open(...)` resolves successfully. Wrapped in `try/catch` that logs at INFO and continues — metadata failure must never break playback.
+
+#### Subtitle picker gate
+
+The Subtitles tab in `audio_subs_sheet.dart` previously read libmpv's `state.tracks` directly via the `MediaKitEngine.mediaKitPlayer` escape hatch. On `ExoPlayerEngine` that surface doesn't exist. Tab stays visible — the operator may scroll to it expecting it — but renders a placeholder card explaining the picker is engine-specific and that embedded subtitles still render. MediaKit path unchanged.
+
+#### Dev spike removal
+
+The M1 plumbing proof is fully superseded by M4's hardened module. Removed:
+- `apps/mobile/lib/dev/exo_spike_page.dart` (the throwaway page itself; `apps/mobile/lib/dev/` directory empty + removed).
+- `Routes.devExoSpike` const + the `GoRoute(path: Routes.devExoSpike, …)` entry + the `state.matchedLocation == Routes.devExoSpike` line in `_guardRedirect`.
+- `import 'package:fluxora_mobile/dev/exo_spike_page.dart';` in `app_router.dart`.
+- Hidden long-press `GestureDetector` on Profile About-sheet's version label — reverted to a plain `Text(snap.data ?? '—')`.
+
+#### `_kEnableExoPlayerEngine` flag deletion
+
+`packages/fluxora_core/lib/player/player_engine_factory.dart` dropped the `_kEnableExoPlayerEngine` const + its docstring + the conditional in `PlayerEngineFactory.create()`. Android now constructs `ExoPlayerEngine` unconditionally (modulo `_kForceMediaKitOnAndroid`). File-header docstring rewritten to reflect the new shape.
+
+**Kept:** `_kForceMediaKitOnAndroid = false`. This is the operator rollback escape hatch — flipping it to `true` forces libmpv on Android even with the new engine wired in. Stays until M5+M6 are operator-green on a real device.
+
+#### Gotchas entry
+
+New `## Subtitle picker is engine-specific — Android ExoPlayer hides the picker behind a "coming later" card` entry in `docs/12_guidelines/03_gotchas.md`. Documents:
+- The libmpv-`state.tracks` escape hatch is the last documented exit.
+- Today's behaviour (placeholder card; embedded subtitles still render).
+- Migration path: add `setSubtitleTrack(int sourceIndex)` to `PlayerEngine`; `ExoPlayerEngine` routes through `TrackSelectionParameters.setOverrideForType` on a text-type `TrackGroup`. Kotlin can render via Media3's `SubtitleView`.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Modified | packages/fluxora_core/lib/player/player_engine.dart | New `setMetadata(String? title)` interface method |
+| Modified | packages/fluxora_core/lib/player/media_kit_engine.dart | `setMetadata` no-op (audio_service carries title) |
+| Modified | packages/fluxora_core/lib/player/exo_player_engine.dart | `setMetadata` forwards via MethodChannel |
+| Modified | packages/fluxora_core/lib/player/player_engine_factory.dart | Dropped `_kEnableExoPlayerEngine` const; factory branches on `_kForceMediaKitOnAndroid` only |
+| Modified | packages/fluxora_core/test/player/exo_player_engine_test.dart | +1 test — setMetadata sends title (incl. null) through the channel |
+| Modified | apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/ExoPlayerPlugin.kt | New `setMetadata` MethodCall handler + dispatch |
+| Modified | apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/FluxoraExoPlayer.kt | New `fun setMetadata(title)` → posts to main thread + `FluxoraMediaSessionService.applyMetadata` |
+| Modified | apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart | Calls `engine.setMetadata(fileName)` after `engine.open` resolves |
+| Modified | apps/mobile/lib/features/player/presentation/sheets/audio_subs_sheet.dart | Subtitle tab placeholder when engine is not MediaKitEngine |
+| Modified | apps/mobile/lib/core/router/app_router.dart | Strip `Routes.devExoSpike` + `GoRoute` + auth-bypass entry + spike import |
+| Modified | apps/mobile/lib/features/profile/presentation/screens/profile_screen.dart | Strip About-sheet version-label long-press affordance |
+| Deleted | apps/mobile/lib/dev/exo_spike_page.dart | M1 spike fully superseded by M4 |
+| Modified | apps/mobile/test/features/player/player_cubit_test.dart | `_FakePlayerEngine` gains `setMetadata` (records last title) |
+| Modified | apps/mobile/test/features/player/player_progress_bar_test.dart | Local fake gains `setMetadata` no-op |
+| Modified | apps/mobile/test/goldens/_player_mocks.dart | `FakePlayerEngine` gains `setMetadata` no-op |
+| Modified | docs/12_guidelines/03_gotchas.md | New "Subtitle picker is engine-specific" entry |
+
+### Docs Updated
+
+- `docs/10_planning/24_player_audio_reliability_plan.md` — M9 marked 🟡 partial with commit ref; status header revised (M1-M4 + M7 + M8 + M9-partial shipped; M5+M6 still operator-pending; remaining M9 work scoped to `_kForceMediaKitOnAndroid` deletion + plan archival).
+- `docs/00_overview/current_status.md` — new top-of-doc snapshot covering M9 partial.
+- `docs/10_planning/01_roadmap.md` — plan 24 row updated with new commit list + revised remaining scope.
+- `CLAUDE.md` — plan 24 index row replaced with the post-M9-partial shape.
+- `docs/12_guidelines/03_gotchas.md` — subtitle-picker entry (also in code commit).
+- `AGENT_LOG.md` — this entry.
+
+### Decisions Made
+
+- **Strip `_kEnableExoPlayerEngine`, keep `_kForceMediaKitOnAndroid`.** The `_kEnable…` flag was always-true post-M3+M4; deleting it is forward-only with no rollback consequence. The `_kForce…` flag is the actual operator escape hatch — if M5/M6 device testing surfaces a regression, that's the rollback knob. Deleting both would strand the operator with no fallback before device verification. Hold the `_kForce…` deletion until M5+M6 are green.
+- **Subtitle tab placeholder, not tab removal.** Operator may scroll to the tab expecting it to be there. A visible placeholder card with a "coming later" message is less surprising than the tab vanishing entirely. The actual Media3 `SubtitleView` migration is a separate feature build — not part of plan 24's "fix the audio path" goal.
+- **Title plumbing via a new `setMetadata` engine method, not via `open()`'s args.** Adding to `open()` would force every other engine.open callsite (server-restart, audio-track-switch, tonemap, auto-fallback paths) to re-pass the title; a separate method keeps title independent and the cubit only calls it once at session start. Media3's MediaSession state persists across player re-binds on the same `FluxoraExoPlayer` instance, so re-opens inherit the title automatically.
+- **Did the work inline rather than via subagent.** The launched M9-partial subagent stalled (crashed during the MCP-server reconnect cycle); rather than re-launching and waiting again, I did the ~10-file pass inline. Memory note: agents are great for parallel disjoint work; for a sequential cleanup pass with strict scope, inline is fine.
+
+### Issues / Sharp Edges Discovered
+
+1. **The stalled agent had partially executed** before crashing: `apps/mobile/lib/dev/exo_spike_page.dart` was already deleted on disk + git showed it as `D`, and `player_engine_factory.dart` was already trimmed (but had both flags wiped — including the rollback hatch). Restored `_kForceMediaKitOnAndroid` during the inline pass. Lesson: stalled-agent partial state can be subtly wrong; verify on resume rather than assume the file is in its pre-launch state.
+2. **The cubit's title call uses `fileName`, not a more descriptive title field.** The `MediaFile` entity may carry a richer title elsewhere (per-episode title from `tmdb_episodes`, custom rename label, etc.). Today the lockscreen sees the same string as the player's top-bar. Good enough for v1; a real-data follow-up could plumb the richer source through.
+3. **Media3 `MediaSession` static state across player rebinds.** `FluxoraMediaSessionService.applyMetadata` updates the singleton session's `MediaMetadata`. If the cubit ever runs two `FluxoraExoPlayer` instances simultaneously (multi-player surface — currently impossible — see plan 24 M4's `players: Map<Int, FluxoraExoPlayer>`), they'd fight over the single MediaSession's metadata. Documented as a sharp edge in M7's report; still applies.
+
+### Test Counts (re-baselined)
+
+- **Core: 20 passing** (19 → 20; +1 `setMetadata` channel-args test).
+- **Mobile: 97 passing** (unchanged — the three `FakePlayerEngine` impls gained `setMetadata` stubs but no new test cases).
+- **Server: 830 / Desktop: 113** (untouched).
+- **APK build:** `flutter build apk --debug --no-pub` green against Media3 1.10.1.
+- Analyze clean × `apps/mobile` + `packages/fluxora_core`.
+
+### Working-Tree Status
+
+- 1 commit ahead of `origin/main`: `24d3579` M9 partial.
+- Plus the about-to-land doc-sweep commit (this entry + the 4 cross-doc files).
+- `.claude/worktrees/` may still hold the stale `lucid-moore-ad3c0a` empty dir (Windows file-handle quirk from the earlier session); gitignored, harmless. The M9-partial stalled agent's worktrees were force-cleaned earlier in this session.
+
+### Next Agent Should
+
+1. **Operator real-device smoke against M5 + M6.** Flash the new APK; run the multi-audio AC3 5.1 file (the load-bearing test that motivated plan 24); confirm lockscreen card shows the actual file title; confirm Subtitles tab's placeholder card renders correctly (not crashing); confirm HDR + tonemap + pause/resume + Bluetooth-headset transport.
+2. **M9 close-out** once M5+M6 are green: delete `_kForceMediaKitOnAndroid` flag (factory becomes one-liner `return Platform.isAndroid ? ExoPlayerEngine.create() : MediaKitEngine.create();`); archive `docs/10_planning/24_player_audio_reliability_plan.md` to `docs/10_planning/archive/24_player_audio_reliability_plan.md`; mark plan 24 ✅ Done in roadmap + current_status + CLAUDE.md.
+3. **Subtitle picker migration (separate plan).** New `setSubtitleTrack(int sourceIndex)` on `PlayerEngine`. `MediaKitEngine` keeps `Player.setSubtitleTrack`. `ExoPlayerEngine` routes to Media3's `TrackSelectionParameters.setOverrideForType` on a text-type `TrackGroup`. Kotlin renders via `SubtitleView`. Probably a half-day milestone.
+4. **HDR-no-audio investigation** (if M6 surfaces it). Plan 24 M6 expects Media3's stricter HLS parser to emit an actual error rather than libmpv's silent drop. If a server-side init.mp4 codec issue surfaces, fix server-side.
+5. **Plan 25 — multi-rendition HLS server output** (`#EXT-X-MEDIA TYPE=AUDIO` groups instead of multiplexed audio in a single rendition). Unblocks future iOS native track switching. Out of scope for plan 24.
