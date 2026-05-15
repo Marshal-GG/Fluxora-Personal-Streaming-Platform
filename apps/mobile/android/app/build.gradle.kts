@@ -55,17 +55,28 @@ flutter {
 // stable at the time of M1 (1.10.1, released 2026-05-12) per
 // developer.android.com/jetpack/androidx/releases/media3.
 //
-// Three artefacts are required for M1's HLS playback spike:
+// Four artefacts are required for M1's HLS playback spike + M7's
+// MediaSession integration:
 //   - media3-exoplayer        — core Player + DefaultRenderersFactory
 //   - media3-exoplayer-hls    — HlsMediaSource + HLS playlist parser
 //   - media3-ui               — PlayerView (kept for future surface +
 //                                subtitle rendering — see Plan 24 M9
 //                                open-question on Kotlin-side subtitles)
+//   - media3-session          — Plan 24 M7.  MediaSession + MediaSession
+//                                Service for lockscreen / notification /
+//                                Bluetooth-headset transport controls.
+//                                Replaces the audio_service Dart-side
+//                                binding when the ExoPlayerEngine owns
+//                                playback (Android default).  Same 1.10.1
+//                                pin as the other media3 artefacts —
+//                                version skew within the media3 family
+//                                is unsafe (shared internal AIDL).
 dependencies {
     val media3Version = "1.10.1"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
+    implementation("androidx.media3:media3-session:$media3Version")
 
     // Plan 24 M4 — JUnit unit tests for the rendition→source-index
     // mapping helper in FluxoraExoPlayer.  Host-JVM only; we don't

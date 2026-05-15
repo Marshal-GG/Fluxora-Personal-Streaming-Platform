@@ -5,6 +5,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:fluxora_core/fluxora_core.dart';
+import 'package:fluxora_mobile/features/player/data/services/fluxora_audio_handler.dart';
 import 'package:fluxora_mobile/features/player/domain/entities/stream_start_response.dart';
 import 'package:fluxora_mobile/features/player/domain/repositories/player_repository.dart';
 import 'package:fluxora_mobile/features/player/presentation/cubit/player_cubit.dart';
@@ -14,6 +15,14 @@ class MockPlayerRepository extends Mock implements PlayerRepository {}
 
 class MockSecureStorage extends Mock implements SecureStorage {}
 
+/// Plan 24 M7 — recording stub used to assert that the cubit skips the
+/// Dart-side `FluxoraAudioHandler.bind` whenever the engine is not a
+/// [MediaKitEngine] (ExoPlayerEngine / fakes / future native engines).
+/// On those paths Media3's `FluxoraMediaSessionService` owns the OS
+/// MediaSession natively and double-registering would surface two
+/// competing sessions.
+class _MockFluxoraAudioHandler extends Mock implements FluxoraAudioHandler {}
+
 /// In-memory [PlayerEngine] for cubit tests.  Plan 24 M2 carved the
 /// engine interface out of the cubit; the test build now substitutes
 /// this fake via [PlayerCubit.engineBuilder] so the cubit can reach
@@ -22,10 +31,37 @@ class MockSecureStorage extends Mock implements SecureStorage {}
 /// cross-importing test/goldens/ from test/features/).
 class _FakePlayerEngine implements PlayerEngine {
   Duration _position = Duration.zero;
-  final Duration _duration = Duration.zero;
+  Duration _duration = Duration.zero;
   bool _isPlaying = false;
   double _rate = 1.0;
   double _volume = 100.0;
+
+  /// Plan 24 M8 — test seam so the seek-restart tests can simulate the
+  /// engine's reported playhead BEFORE issuing the cubit-level seek.
+  /// Production code never calls this; it bypasses the engine's normal
+  /// seek path (which would also push a position emission) so test
+  /// arrange-act-assert can keep the position/duration state isolated.
+  void debugSetPosition(Duration value) {
+    _position = value;
+  }
+
+  /// Plan 24 M8 — test seam so the seek-restart tests can simulate the
+  /// engine reporting a non-zero playlist duration (needed for the
+  /// `backwardInPlaylist` in-bounds check inside `PlayerCubit.seekTo`).
+  void debugSetDuration(Duration value) {
+    _duration = value;
+  }
+
+  /// Recorded engine.seek() targets — the test harness asserts on this
+  /// to prove the cubit took the in-player path vs. server-restart.
+  /// Includes both M8-test calls and any internal cubit-issued seeks
+  /// (e.g. the post-server-restart sub-segment seek).
+  final List<Duration> seekTargets = <Duration>[];
+
+  /// True after dispose() returns — used by tests that assert the
+  /// engine isn't held past the cubit's lifecycle.
+  bool get isDisposed => _disposed;
+  bool _disposed = false;
 
   final StreamController<Duration> _positionCtl =
       StreamController<Duration>.broadcast();
@@ -101,6 +137,7 @@ class _FakePlayerEngine implements PlayerEngine {
 
   @override
   Future<void> seek(Duration position) async {
+    seekTargets.add(position);
     _position = position;
     _positionCtl.add(position);
   }
@@ -122,6 +159,7 @@ class _FakePlayerEngine implements PlayerEngine {
 
   @override
   Future<void> dispose() async {
+    _disposed = true;
     await _positionCtl.close();
     await _durationCtl.close();
     await _isPlayingCtl.close();
@@ -226,6 +264,47 @@ void main() {
 
         verify(() => repository.startStream(tFileId)).called(1);
         await cubit.close();
+      },
+    );
+
+    test(
+      'plan 24 M7 — startStream with non-MediaKit engine skips audio '
+      'handler bind (Media3 service owns the MediaSession natively)',
+      () async {
+        when(
+          () => repository.startStream(tFileId),
+        ).thenAnswer((_) async => tResponse);
+
+        final audioHandler = _MockFluxoraAudioHandler();
+        // No `when(...).thenAnswer(...)` for `bind` — we don't expect
+        // the cubit to call it on this path.  mocktail's default
+        // response (`null`) is fine for `detach` (also unused on this
+        // path).
+        when(() => audioHandler.detach()).thenAnswer((_) async {});
+
+        final cubit = PlayerCubit(
+          repository: repository,
+          secureStorage: secureStorage,
+          audioHandler: audioHandler,
+          // _FakePlayerEngine is not a MediaKitEngine — the cubit
+          // must NOT call audioHandler.bind on this engine type.
+          engineBuilder: () async => _FakePlayerEngine(),
+        );
+        await cubit.startStream(tFileId, tFileName, 0.0);
+        await cubit.close();
+
+        // The cubit must never call `bind` on the audio handler when
+        // the engine is not a MediaKitEngine — Media3 owns the OS
+        // MediaSession natively on that path.  `verifyNever(... bind
+        // ...)` with `any(named: 'player')` would need a fallback
+        // value for `media_kit.Player` (which we can't construct in a
+        // headless test), so we sniff the recorded invocations
+        // directly — mocktail's `Mock` superclass exposes them via
+        // the standard `noSuchMethod` capture surfaced as
+        // `verifyInOrder` results.  Easiest path: cubit close calls
+        // `detach`, nothing else; assert exactly that.
+        verify(() => audioHandler.detach()).called(greaterThanOrEqualTo(1));
+        verifyNoMoreInteractions(audioHandler);
       },
     );
 
@@ -854,6 +933,250 @@ void main() {
       expect(cubit.state, isA<PlayerInitial>());
       verifyNever(() => repository.startStream(any()));
       await cubit.close();
+    });
+
+    // ── Plan 24 M8 — seek-restart loop through PlayerEngine ───────────
+    //
+    // M8 is the verification + targeted-fix milestone that confirms the
+    // existing seek paths (in-player vs. server-restart, the back-out-of-
+    // playlist routing, the eager `isSeeking` flag flip for the scrubber
+    // pin) all route through the new `PlayerEngine` abstraction and stay
+    // engine-agnostic.  These tests exercise the cubit's decision tree
+    // end-to-end against the `_FakePlayerEngine` so the same logic works
+    // unchanged under `MediaKitEngine` (desktop+iOS) and `ExoPlayerEngine`
+    // (Android).
+    //
+    // Each test drives the cubit through `startStream` → sets the fake
+    // engine's reported playhead/duration to simulate the playlist
+    // currently loaded → calls `seekTo(...)` → asserts on either the
+    // recorded `engine.seek(...)` targets (in-player path) or the
+    // `repository.seekStream(...)` invocation (server-restart path).
+
+    group('seekTo seek-restart loop', () {
+      late _FakePlayerEngine fakeEngine;
+
+      /// Build a cubit whose engineBuilder captures the fake so each
+      /// test can manipulate its position/duration after PlayerReady
+      /// emits.  Re-binding the captured reference on every invocation
+      /// of the builder isn't necessary in these tests (one engine per
+      /// cubit lifetime), but keeps the seam honest if a future test
+      /// re-spawns the engine via `startStream` against the same cubit.
+      PlayerCubit buildCubitWithCapturedEngine() => PlayerCubit(
+        repository: repository,
+        secureStorage: secureStorage,
+        engineBuilder: () async {
+          fakeEngine = _FakePlayerEngine();
+          return fakeEngine;
+        },
+      );
+
+      /// Server response that gives the playlist a 5 s `appliedSeekSec`
+      /// offset so the source-time vs player-time math has non-trivial
+      /// numbers (catches a regression where the cubit accidentally
+      /// reads source-time as if it were player-time, or vice versa).
+      const offsetResponse = StreamStartResponse(
+        sessionId: tSessionId,
+        fileId: tFileId,
+        playlistUrl: tPlaylistUrl,
+        appliedSeekSec: 5.0,
+      );
+
+      test('forward seek beyond threshold calls repository.seekStream '
+          'and emits PlayerReady with the server-reported '
+          'playlistOffsetSec', () async {
+        when(
+          () => repository.startStream(tFileId),
+        ).thenAnswer((_) async => offsetResponse);
+        // Server-restart returns a snapped seek value the cubit should
+        // store as the new playlistOffsetSec.  Plan 17 §10 — the server
+        // floors to a segment boundary; here we mimic a 60 s snap.
+        when(
+          () => repository.seekStream(
+            tSessionId,
+            any(),
+            tonemap: any(named: 'tonemap'),
+          ),
+        ).thenAnswer((_) async => 60.0);
+
+        final cubit = buildCubitWithCapturedEngine();
+        await cubit.startStream(tFileId, tFileName, 0.0);
+        expect(cubit.state, isA<PlayerReady>());
+
+        // Simulate the engine reporting a live playhead 10 s into a
+        // playlist whose duration is known.  10 s player-time + 5 s
+        // playlistOffsetSec = 15 s source-time = the current scrubber
+        // position.  Seek target is 75 s source-time = delta 60 s
+        // forward — well past the 5 s in-player threshold.
+        fakeEngine
+          ..debugSetPosition(const Duration(seconds: 10))
+          ..debugSetDuration(const Duration(minutes: 30));
+
+        await cubit.seekTo(const Duration(seconds: 75));
+
+        // The eager `isSeeking: true` emit must land BEFORE the debounce
+        // timer; the scrubber-pin gate (flux_player_controls
+        // `_pendingValue`) is wired 1:1 to this flag for the entire
+        // restart window.
+        expect((cubit.state as PlayerReady).isSeeking, isTrue);
+
+        // Wait out the debounce (300 ms) + the synchronous server-
+        // restart call chain inside `_commitServerSeek`.
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+
+        verify(
+          () => repository.seekStream(tSessionId, 75.0, tonemap: false),
+        ).called(1);
+
+        final readyState = cubit.state as PlayerReady;
+        expect(readyState.isSeeking, isFalse);
+        expect(readyState.playlistOffsetSec, 60.0);
+        await cubit.close();
+      });
+
+      test('backward seek that lands BEFORE the playlist origin routes '
+          'through the server-restart path (plan 17 §10 follow-on)',
+          () async {
+        // Playlist already shifted by a prior forward server-restart;
+        // the cubit holds appliedSeekSec=60 (set via the response
+        // below).  User drags backwards to source-time 30 s, which
+        // maps to a NEGATIVE player-time inside the current playlist
+        // — must route through server-restart, not clamp to player 0.
+        const shiftedResponse = StreamStartResponse(
+          sessionId: tSessionId,
+          fileId: tFileId,
+          playlistUrl: tPlaylistUrl,
+          appliedSeekSec: 60.0,
+        );
+        when(
+          () => repository.startStream(tFileId),
+        ).thenAnswer((_) async => shiftedResponse);
+        when(
+          () => repository.seekStream(
+            tSessionId,
+            any(),
+            tonemap: any(named: 'tonemap'),
+          ),
+        ).thenAnswer((_) async => 25.0);
+
+        final cubit = buildCubitWithCapturedEngine();
+        await cubit.startStream(tFileId, tFileName, 0.0);
+
+        // Engine reports 5 s player-time = 65 s source-time (5+60).
+        // Target source-time 30 s → player-target = -30 s → must NOT
+        // be clamped to 0 in-player; must route to server.
+        fakeEngine
+          ..debugSetPosition(const Duration(seconds: 5))
+          ..debugSetDuration(const Duration(minutes: 30));
+
+        await cubit.seekTo(const Duration(seconds: 30));
+        expect((cubit.state as PlayerReady).isSeeking, isTrue);
+
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+
+        verify(
+          () => repository.seekStream(tSessionId, 30.0, tonemap: false),
+        ).called(1);
+        final readyState = cubit.state as PlayerReady;
+        expect(readyState.playlistOffsetSec, 25.0);
+        await cubit.close();
+      });
+
+      test('forward seek within threshold calls engine.seek directly '
+          '— no server roundtrip, no isSeeking flag set', () async {
+        when(
+          () => repository.startStream(tFileId),
+        ).thenAnswer((_) async => offsetResponse);
+
+        final cubit = buildCubitWithCapturedEngine();
+        await cubit.startStream(tFileId, tFileName, 0.0);
+
+        // Player-time 10 s = source-time 15 s; target 17 s = delta 2 s
+        // forward, inside the 5 s in-player threshold.  Engine.seek
+        // should be invoked with player-time = 17 - 5 = 12 s.
+        fakeEngine
+          ..debugSetPosition(const Duration(seconds: 10))
+          ..debugSetDuration(const Duration(minutes: 30));
+        final preCallSeeks = fakeEngine.seekTargets.length;
+
+        await cubit.seekTo(const Duration(seconds: 17));
+
+        // No debounce wait needed — the in-player path is synchronous
+        // after the `engine.seek` await.
+        verifyNever(
+          () => repository.seekStream(
+            any(),
+            any(),
+            tonemap: any(named: 'tonemap'),
+          ),
+        );
+        // Engine recorded exactly one new seek to player-time 12 s
+        // (12000 ms).  Cubit must NOT have routed through the eager
+        // `emit(isSeeking: true)` path either.
+        expect(fakeEngine.seekTargets.length, preCallSeeks + 1);
+        expect(
+          fakeEngine.seekTargets.last,
+          const Duration(milliseconds: 12000),
+        );
+        expect((cubit.state as PlayerReady).isSeeking, isFalse);
+        await cubit.close();
+      });
+
+      test('backward seek INSIDE the current playlist routes through '
+          'engine.seek (in-player path, no server roundtrip)', () async {
+        when(
+          () => repository.startStream(tFileId),
+        ).thenAnswer((_) async => offsetResponse);
+
+        final cubit = buildCubitWithCapturedEngine();
+        await cubit.startStream(tFileId, tFileName, 0.0);
+
+        // Player-time 120 s = source-time 125 s; target 90 s source =
+        // player-target 85 s, comfortably inside [0, playerDur].  This
+        // is the canonical "I jumped back inside what's already cached"
+        // path that plan 17 §10's follow-on left untouched.
+        fakeEngine
+          ..debugSetPosition(const Duration(seconds: 120))
+          ..debugSetDuration(const Duration(minutes: 30));
+        final preCallSeeks = fakeEngine.seekTargets.length;
+
+        await cubit.seekTo(const Duration(seconds: 90));
+
+        verifyNever(
+          () => repository.seekStream(
+            any(),
+            any(),
+            tonemap: any(named: 'tonemap'),
+          ),
+        );
+        expect(fakeEngine.seekTargets.length, preCallSeeks + 1);
+        expect(
+          fakeEngine.seekTargets.last,
+          const Duration(milliseconds: 85000),
+        );
+        await cubit.close();
+      });
+
+      test('_reportProgress reads engine.position (not a stale player '
+          'handle) and POSTs the live playhead', () async {
+        when(
+          () => repository.startStream(tFileId),
+        ).thenAnswer((_) async => offsetResponse);
+
+        final cubit = buildCubitWithCapturedEngine();
+        await cubit.startStream(tFileId, tFileName, 0.0);
+
+        // Engine reports a non-zero playhead — the periodic progress
+        // timer (10 s cadence) reads `engine.position.inMicroseconds`
+        // and divides to seconds before POSTing.  The 10 s timer is
+        // too long to wait in a unit test, but `dismiss()` also fires
+        // a final progress report through the same code path; we use
+        // that to verify the cubit reads the engine snapshot, not a
+        // stale field.
+        fakeEngine.debugSetPosition(const Duration(seconds: 42));
+        await cubit.dismiss();
+
+        verify(() => repository.updateProgress(tSessionId, 42.0)).called(1);
+      });
     });
 
     test(

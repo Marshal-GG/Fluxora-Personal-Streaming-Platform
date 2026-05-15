@@ -17,6 +17,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Plan 24 M7 — Android 13 (API 33) and newer require an explicit
+         runtime grant before any app can post foreground-service
+         notifications.  The Media3 MediaSessionService below (and the
+         existing audio_service AudioService) both rely on a persistent
+         notification to keep the lockscreen / shade transport card alive.
+         Without this permission declared, the user can still play media
+         but the lockscreen card never appears on Android 13+ devices.
+         The grant itself is requested at first-playback time via the
+         platform's standard permission flow — see the user-grant
+         tracking in `audio_service`, which already covers both
+         services. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Fluxora"
         android:name="${applicationName}"
@@ -76,6 +88,29 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
+
+        <!-- Plan 24 M7 — Media3 MediaSessionService.  Surfaces the active
+             ExoPlayer's playback to the OS media-session layer
+             (lockscreen card, notification, BT headset transport, Android
+             Auto / WearOS).  Replaces audio_service's binding for
+             ExoPlayerEngine sessions; the MediaKitEngine path keeps using
+             the AudioService declared above (the cubit gates which one
+             is active based on the engine type).
+             `foregroundServiceType="mediaPlayback"` matches AudioService
+             above and uses the same FOREGROUND_SERVICE_MEDIA_PLAYBACK
+             permission already declared in <uses-permission>.
+             `exported="true"` is required so system UI (lockscreen,
+             notification shade) and Android Auto / Wear can resolve our
+             session.  The intent-filter advertises the standard Media3
+             session-service action — system components match against it. -->
+        <service
+            android:name=".exo.FluxoraMediaSessionService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

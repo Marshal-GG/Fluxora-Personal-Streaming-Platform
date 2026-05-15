@@ -45,6 +45,21 @@ class ExoPlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         private const val TAG = "FluxoraExoPlugin"
         private const val METHOD_CHANNEL_NAME = "dev.marshalx.fluxora/exo_player"
         private const val EVENT_CHANNEL_NAME = "dev.marshalx.fluxora/exo_player_events"
+
+        /**
+         * Plan 24 M7 — process-global handle to the currently-active
+         * plugin instance.  The [FluxoraMediaSessionService] runs in a
+         * separate Android component and needs to reach across to the
+         * Flutter-attached plugin to read the current player.  A weak
+         * static handle is the simplest robust shape (the AOSP
+         * [androidx.media3.session.MediaSessionService] sample uses the
+         * same pattern).  Cleared in [onDetachedFromEngine] so a
+         * relaunch can't leak across engine teardown.
+         */
+        @JvmStatic
+        @Volatile
+        internal var activeInstance: ExoPlayerPlugin? = null
+            private set
     }
 
     private var methodChannel: MethodChannel? = null
@@ -60,6 +75,20 @@ class ExoPlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private val disposedIds: MutableSet<Int> = HashSet()
     private var nextPlayerId: Int = 0
 
+    /**
+     * Plan 24 M7 — id of the most-recently-`create`d player.  Drives the
+     * [FluxoraMediaSessionService]'s "current session" selection: when
+     * the user has multiple Flutter player widgets alive simultaneously
+     * (mini-player + fullscreen player) only the most recent one owns
+     * the OS media session.  Stays set across `dispose` if the operator
+     * tears down a player without creating a new one — in that case the
+     * service binds to nothing and the lockscreen card stays idle, which
+     * matches the audio_service detach semantics on the MediaKitEngine
+     * path.
+     */
+    @Volatile
+    private var currentSessionPlayerId: Int? = null
+
     // ── FlutterPlugin lifecycle ──────────────────────────────────────────────
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -67,6 +96,7 @@ class ExoPlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         applicationContext = binding.applicationContext
         textureRegistry = binding.textureRegistry
         registerChannels(binding.binaryMessenger)
+        activeInstance = this
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -79,6 +109,23 @@ class ExoPlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         eventSink = null
         applicationContext = null
         textureRegistry = null
+        currentSessionPlayerId = null
+        // Clear the static handle only if it still points at *this*
+        // instance — defensive against an out-of-order re-attach.
+        if (activeInstance === this) {
+            activeInstance = null
+        }
+    }
+
+    /**
+     * Plan 24 M7 — returns the [FluxoraExoPlayer] the
+     * [FluxoraMediaSessionService] should bind to right now, or `null`
+     * when there's no active player.  Reading [currentSessionPlayerId]
+     * preserves the "most-recently-created wins" rule.
+     */
+    internal fun activeSessionPlayer(): FluxoraExoPlayer? {
+        val id = currentSessionPlayerId ?: return null
+        return players[id]
     }
 
     /**
@@ -196,6 +243,14 @@ class ExoPlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             plugin = this,
         )
         players[playerId] = player
+        // Plan 24 M7 — newest player wins the MediaSession slot.  The
+        // actual bind to the MediaSession happens later, after the player
+        // has called prepare() (see FluxoraExoPlayer.open) — at this
+        // point there's no MediaItem yet, so attaching a session would
+        // produce a notification with no title.  We just record the id
+        // so [activeSessionPlayer] can look the player up if the service
+        // needs it.
+        currentSessionPlayerId = playerId
 
         Log.i(TAG, "create — playerId=$playerId textureId=$textureId")
         result.success(
@@ -273,6 +328,13 @@ class ExoPlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             Log.e(TAG, "dispose — release threw for playerId=$playerId", t)
         }
         disposedIds.add(playerId)
+        // Plan 24 M7 — clear the slot if the disposed player was the
+        // active one.  [FluxoraExoPlayer.release] above already called
+        // [FluxoraMediaSessionService.unbind] so the OS session is gone;
+        // we just track the bookkeeping locally.
+        if (currentSessionPlayerId == playerId) {
+            currentSessionPlayerId = null
+        }
         Log.i(TAG, "dispose — playerId=$playerId released")
         result.success(emptyMap<String, Any>())
     }

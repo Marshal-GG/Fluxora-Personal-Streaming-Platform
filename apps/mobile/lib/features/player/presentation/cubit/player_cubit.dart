@@ -295,11 +295,18 @@ class PlayerCubit extends Cubit<PlayerState> {
 
       // Hook the OS media session (lockscreen / notification card / BT
       // headset).  Best-effort — if audio_service hasn't initialised
-      // (unit tests, embedded preview) this is a no-op.  The handler
-      // still binds to the libmpv `Player` directly because plan 24 M7
-      // is the milestone that rewrites it to drive off the engine
-      // abstraction; for the MediaKitEngine path the underlying Player
-      // is reachable via the typed `mediaKitPlayer` accessor.
+      // (unit tests, embedded preview) this is a no-op.
+      //
+      // Plan 24 M7 — gate to MediaKitEngine only.  The
+      // `FluxoraAudioHandler` binds to a `media_kit.Player` directly,
+      // so it's only valid on that engine path.  On the
+      // `ExoPlayerEngine` path the Kotlin-side
+      // `FluxoraMediaSessionService` owns the OS media session via
+      // Media3's first-party `MediaSession.Builder(this, exoPlayer)`,
+      // which wires every transport command back into ExoPlayer
+      // automatically.  Binding the audio_service handler on top would
+      // produce two competing sessions fighting for audio focus and
+      // the lockscreen card would flicker between them.
       if (engine is MediaKitEngine) {
         try {
           await _audioHandler?.bind(
@@ -311,6 +318,13 @@ class PlayerCubit extends Cubit<PlayerState> {
         } catch (e, st) {
           _log.w('AudioHandler.bind failed', error: e, stackTrace: st);
         }
+      } else {
+        // ExoPlayerEngine — Media3's `FluxoraMediaSessionService` owns
+        // the OS MediaSession natively; the Dart handler is skipped.
+        _log.d(
+          '[Player] OS media session owned natively by Media3 '
+          '(engine=${engine.runtimeType}); Dart audio handler skipped',
+        );
       }
 
       emit(

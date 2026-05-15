@@ -47,8 +47,24 @@ internal class FluxoraExoPlayer(
         private const val POSITION_TICK_MS = 250L
     }
 
+    /**
+     * Application context retained for the life of this player so the
+     * Media3 [FluxoraMediaSessionService] can be started/stopped from
+     * the M7 lifecycle calls.  Strictly application-scoped — we never
+     * store the Activity to avoid leaking it past Flutter detach.
+     */
+    private val appContext: Context = context.applicationContext
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /**
+     * Backing [ExoPlayer].  Exposed via [exoPlayer] so the plugin's
+     * MediaSessionService (Plan 24 M7) can bind a [androidx.media3.session.
+     * MediaSession] against the currently-active player without having to
+     * reach through every command method individually.  Treat the
+     * accessor as a transitional escape hatch — same shape as
+     * [MediaKitEngine.mediaKitPlayer] on the Dart side.
+     */
     private val player: ExoPlayer = ExoPlayer.Builder(context.applicationContext)
         .build()
         .apply {
@@ -61,6 +77,10 @@ internal class FluxoraExoPlayer(
             )
             setHandleAudioBecomingNoisy(true)
         }
+
+    /** Package-internal accessor for [FluxoraMediaSessionService]. */
+    internal val exoPlayer: ExoPlayer
+        get() = player
 
     /** Mapping populated from the most-recent `onTracksChanged`.
      *  source-stream index → (audio TrackGroup, formatIndex within it). */
@@ -159,6 +179,31 @@ internal class FluxoraExoPlayer(
                     player.seekTo(startPositionMs)
                 }
                 player.playWhenReady = play
+                // Plan 24 M7 — hand the prepared player to the OS
+                // MediaSession so lockscreen / shade / Bluetooth-
+                // headset transport is owned natively.  The bind is
+                // idempotent across re-opens against the same player
+                // (this is the common case — `setTonemap` and the
+                // seek-restart path call `open` again with the same
+                // ExoPlayer instance).
+                try {
+                    FluxoraMediaSessionService.bind(appContext, player)
+                    // Apply a baseline "Fluxora" metadata so the
+                    // lockscreen card never shows a blank title.  The
+                    // Dart side does not pass per-file titles to the
+                    // open() bridge today (plan 24 M3 contract); a
+                    // future milestone can plumb the real file name
+                    // through to here.  Do NOT pass `url` — it embeds
+                    // bearer-tokenised paths on some routes (Hard
+                    // Prohibition #8).
+                    FluxoraMediaSessionService.applyMetadata(null)
+                } catch (t: Throwable) {
+                    Log.w(
+                        TAG,
+                        "playerId=$playerId open — MediaSession.bind threw",
+                        t,
+                    )
+                }
             } catch (t: Throwable) {
                 Log.e(TAG, "playerId=$playerId open — failed to start playback", t)
                 plugin.sendEvent(
@@ -268,6 +313,15 @@ internal class FluxoraExoPlayer(
         if (released) return
         released = true
         Log.i(TAG, "playerId=$playerId release — tearing down")
+        // Plan 24 M7 — detach the OS MediaSession BEFORE releasing the
+        // ExoPlayer so the session never holds a reference to a
+        // released player (Media3 would log a `Player.release()
+        // already called` warning otherwise).
+        try {
+            FluxoraMediaSessionService.unbind()
+        } catch (t: Throwable) {
+            Log.w(TAG, "playerId=$playerId release — MediaSession.unbind threw", t)
+        }
         mainHandler.removeCallbacks(positionTicker)
         try {
             player.release()
