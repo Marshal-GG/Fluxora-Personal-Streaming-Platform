@@ -1128,6 +1128,23 @@ static const _undefinedLanguageTags = {'und', 'unk', 'mis', 'zxx', ''};
 3. Don't try to compute the integer literal for a missing constant — that breaks the moment ExoPlayer renumbers (which they have done at minor versions in the past). If a code legitimately needs to be handled and is missing at the pinned version, fall it through to the catch-all `else -> "unknown"` and document the version requirement in a comment.
 
 
+## Android cleartext HTTP is blocked by default — LAN streaming needs `network_security_config.xml`
+
+**Symptom:** ExoPlayer throws `androidx.media3.datasource.HttpDataSource$CleartextNotPermittedException: Cleartext HTTP traffic to 192.168.x.y not permitted` on every LAN stream-start.  Surfaces as a `network_error` `EngineError` event on the cubit's error stream; playback never starts.
+
+**Root cause:** Android 9 (API 28) flipped the default for `<application android:usesCleartextTraffic>` from `true` to `false`.  libmpv (via `media_kit`) shipped its own HTTP implementation and bypassed `NetworkSecurityPolicy.isCleartextTrafficPermitted` entirely, so Fluxora's LAN HTTP streams worked.  Media3 ExoPlayer uses `DefaultHttpDataSource` → `HttpURLConnectionImpl` → Android's network stack, which respects the policy.  The mobile-redesign manifest never set `usesCleartextTraffic` or `networkSecurityConfig`, so the default-secure policy applied — invisible until ExoPlayer became the default Android engine.
+
+**Fix:** ship `apps/mobile/android/app/src/main/res/xml/network_security_config.xml` that scopes cleartext to LAN-only:
+- IPv4 RFC 1918 — `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+- IPv4 link-local + loopback — `169.254.0.0/16`, `127.0.0.0/8`
+- IPv6 loopback + link-local + ULA — `::1`, `fe80::/10`, `fc00::/7`
+- mDNS — `local` with `includeSubdomains="true"`
+
+`<base-config cleartextTrafficPermitted="false">` keeps the default-secure stance for every other destination so the public tunnel at `fluxora-api.marshalx.dev` (HTTPS) is unaffected.
+
+**Rule going forward:** any new Android networking dep that uses the platform HTTP stack (Retrofit/OkHttp on its own, `flutter`'s `http` package without overrides, Dio's default `DefaultHttpClientAdapter`, etc.) inherits this same constraint.  Don't blanket-enable `usesCleartextTraffic="true"` — that opens HTTP to arbitrary hosts including hostile Wi-Fi.  Extend the `<domain-config cleartextTrafficPermitted="true">` block above with the specific destination instead.
+
+
 ## Subtitle picker is engine-specific — Android ExoPlayer hides the picker behind a "coming later" card
 
 **Context:** The `audio_subs_sheet`'s Subtitles tab reads libmpv's `state.tracks` directly via the `MediaKitEngine.mediaKitPlayer` escape hatch. On the desktop + iOS + Android-rollback paths (`MediaKitEngine`) it works as before. On the Android ExoPlayer path (`ExoPlayerEngine`) there's no libmpv to read from — Media3's subtitle pipeline is a different API surface (`SubtitleView` + `Tracks.Group` of type `C.TRACK_TYPE_TEXT`).
