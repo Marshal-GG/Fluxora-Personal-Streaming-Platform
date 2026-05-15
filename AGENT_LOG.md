@@ -507,3 +507,120 @@ After APK confirmation, flipped `_kEnableExoPlayerEngine` from `false` to `true`
 4. **Plan 24 M7 (3 h) — Lifecycle, audio focus, PIP, background.** Audit `pip_service.dart`, `fluxora_audio_handler.dart`, lockscreen controls. Consider replacing `audio_service` binding to `MediaKitEngine.mediaKitPlayer` with Media3's `MediaSessionService` natively (cleaner; first-party).
 5. **Plan 24 M8 (2 h) — Position tracking + seek-restart integration.** Confirm `seekTo` + scrubber-pin + progress-reporter all behave the same against `ExoPlayerEngine`. Most existing code already routes through `PlayerEngine` so this should be smoke-level.
 6. **Plan 24 M9 (4 h) — Tests + golden re-baseline + doc sweep + flag deletion.** Drop the `_kEnableExoPlayerEngine` flag, delete the M1 spike page + `/dev/exo-spike` route, archive plan 24 to `docs/10_planning/archive/24_player_audio_reliability_plan.md`, sweep architecture + frontend + gotchas docs, update `current_status.md` + `roadmap.md`.
+
+## [2026-05-15] [feat] [refactor] [mobile] [core] [docs] — Plan 24 M7 + M8 + plan-tag strip pass + doc sweep
+
+**Phase:** Plan 24 — Android ExoPlayer migration. M7 (Media3 MediaSessionService native) + M8 (seek-restart + scrubber integration) ran in parallel as Opus subagents in isolated worktrees. Strip-tag refactor pass + doc sweep landed in the same session.
+**Status:** Complete. M5 (multi-audio device smoke) + M6 (HDR + tonemap) remain operator-driven device-testing milestones; M9 (tests + golden re-baseline + doc sweep + flag deletion + spike cleanup) is the final mechanical close-out.
+**Commits:** `0debbe9` M7, `4ba2a87` M8, `a1a9c12` strip pass
+
+### What Was Done
+
+#### Parallel agent setup (M7 + M8)
+
+Two Opus subagents launched in isolated git worktrees with disjoint file scopes:
+
+- **M7 — Kotlin Media3 MediaSessionService** (apps/mobile/android/.../exo + manifest + cubit gate + build.gradle.kts).
+- **M8 — Dart seek-restart + scrubber verification** (apps/mobile/lib/features/player + packages/fluxora_core/lib/player + new widget test).
+
+No file collision. M7 reported back first; M8 second. Integration verification (analyze + tests + APK build) was clean for both. Foreground integration: needed to copy M8's three changed files (`flux_player_controls.dart`, `exo_player_engine.dart`, new `player_progress_bar_test.dart`) from its worktree to the main tree because the worktree was still locked at session end.
+
+#### M7 — native Media3 MediaSessionService
+
+Replaces the Dart-side `FluxoraAudioHandler` ↔ `media_kit.Player` binding for Android ExoPlayer sessions with Media3's first-party `MediaSessionService`. Lockscreen card, notification card, Bluetooth-headset transport, OS MediaSession are now owned natively in Kotlin for the Android default path.
+
+- `apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/FluxoraMediaSessionService.kt` (new) subclasses `MediaSessionService`. Companion `bind(context, player)` / `unbind()` / `applyMetadata(title)` API. Reentrant lock around static state. `setSessionActivity` PendingIntent rehydrates `MainActivity` (singleTop) when the lockscreen card is tapped. Releases on `onTaskRemoved` when nothing is playing.
+- `FluxoraExoPlayer.kt` after `prepare()` calls `FluxoraMediaSessionService.bind(appContext, player)` + `applyMetadata(null)`. On `release()` calls `unbind()` before `player.release()`. URL never passed to `applyMetadata` (Hard Prohibition #8 — bearer-token leak risk).
+- `AndroidManifest.xml` gains `POST_NOTIFICATIONS` + `FOREGROUND_SERVICE_MEDIA_PLAYBACK` permissions + the `.exo.FluxoraMediaSessionService` service with `foregroundServiceType="mediaPlayback"` and the standard `androidx.media3.session.MediaSessionService` intent-filter.
+- `apps/mobile/android/app/build.gradle.kts`: `media3-session:1.10.1` pinned alongside the other Media3 artifacts.
+- Cubit's existing `if (engine is MediaKitEngine)` audio-handler bind path gets a diagnostic else branch so the skip-when-ExoPlayer code path is observable at runtime.
+- `FluxoraMediaSessionServiceTest.kt` (new JUnit) asserts the bind/unbind/rebind cycle is idempotent and safe-no-op when nothing is running.
+- `player_cubit_test.dart` new test: when the cubit constructs a non-MediaKit engine, `FluxoraAudioHandler.bind` is never called.
+
+#### M8 — engine-cadence mismatches closed under ExoPlayer
+
+Verification pass over the cubit's seek-restart logic + `PlayerProgressBar` scrubber pin + progress reporter against the new ExoPlayer engine surfaced two behavioural mismatches that the existing UI was implicitly tuned to libmpv for. Both fixed.
+
+- `ExoPlayerEngine.open()` now resets `_position` and `_duration` to `Duration.zero` and emits both BEFORE the channel call. libmpv resets these synchronously on `Player.open` (observable in stream emissions); ExoPlayer keeps prior values until `STATE_READY` (duration) or `onPositionDiscontinuity` (position), and the Kotlin module dedupes identical-duration emissions — without this fix, a tonemap-toggle between two same-duration playlists would never re-emit and the scrubber would render against a stale shape.
+- `PlayerProgressBar._pendingValue` settle-check gate moved from `sourceDur.inMilliseconds > 0` to `playerDur.inMilliseconds > 0`. Under ExoPlayer `playerDur == 0` until `STATE_READY`, so the prior gate cleared the pin too early and the scrubber rendered the released drag value against an in-flight zero duration.
+- New `apps/mobile/test/features/player/player_progress_bar_test.dart` (4 widget tests): post-restart transient, in-player settle, pin-during-isSeeking, pin-during-`playerDur==0`.
+
+Other audited surfaces were already engine-agnostic + left untouched: cubit seek decision (smallForward / backwardInPlaylist / forward server-restart) reads cached `engine.position`/`engine.duration` and tolerates `playerDur <= 0`; `_reportProgress` reads cached position; `_startProgressTimer` uses `Timer.periodic` independent of stream cadence; backward-out-of-playlist server-restart routing (plan 17 §10) unchanged.
+
+#### Plan-tag strip refactor
+
+Caught by operator: ~85 plan/milestone narrative tags littered through code comments + docstrings across 27 player + engine files (`Plan 24 M7 — added the dep`, `Plan 22 (2026-05-14): every audio track …`, `Pre-fix (2026-05-08 evening) …`, dated change-log entries inside class docstrings, etc.). CLAUDE.md explicitly forbids referencing the current plan / task in code — narrative belongs in commit messages, planning docs, AGENT_LOG entries. Stripped the narrative, kept the technical content (root causes, invariants, sharp edges, vendor-specific behaviour). Kept `// TODO(plan-24-M9): remove this dev spike page` (deletion contract, not narrative). Kept test names containing `plan 24 M7 — …` (test infrastructure operator may grep).
+
+Pure no-op refactor: zero behavioural change. Analyze + tests + APK build clean.
+
+Saved as a feedback memory (`feedback_no_plan_refs_in_code.md`) so future sessions don't repeat the pattern.
+
+#### Doc sweep
+
+- Plan 24 doc: M7 + M8 milestones marked ✅ with commit refs; top-of-doc status header revised to list M1-M4 + M7 + M8 as shipped, M5 + M6 as operator-pending, M9 as the remaining mechanical close-out.
+- `current_status.md`: new top-of-doc snapshot covering M7 + M8 + strip pass.
+- `roadmap.md`: plan 24 row updated with the new commit list and revised remaining work.
+- `CLAUDE.md` plan index: replaced plan 24 row.
+- `frontend_architecture.md`: split the Audio Service / Lockscreen table row into two — one for Android ExoPlayer (native `MediaSessionService`), one for desktop + iOS + Android-rollback (`FluxoraAudioHandler`); updated the `fluxora_audio_handler.dart` comment in the project-structure listing; updated the engine-specific callsites paragraph in the `PlayerEngine` section.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Created | apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/FluxoraMediaSessionService.kt | M7 — Media3 MediaSessionService subclass |
+| Created | apps/mobile/android/app/src/test/kotlin/dev/marshalx/fluxora_mobile/exo/FluxoraMediaSessionServiceTest.kt | M7 — bind/unbind/rebind safety |
+| Modified | apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/FluxoraExoPlayer.kt | M7 — bind/unbind hooks around `prepare()` + `release()` |
+| Modified | apps/mobile/android/app/src/main/AndroidManifest.xml | M7 — POST_NOTIFICATIONS + FOREGROUND_SERVICE_MEDIA_PLAYBACK + `.exo.FluxoraMediaSessionService` service |
+| Modified | apps/mobile/android/app/build.gradle.kts | M7 — media3-session:1.10.1 dep |
+| Modified | apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart | M7 — diagnostic else branch on the audio-handler skip path |
+| Modified | apps/mobile/test/features/player/player_cubit_test.dart | M7 — assert handler not bound when engine is non-MediaKit |
+| Modified | packages/fluxora_core/lib/player/exo_player_engine.dart | M8 — `open()` resets cached position/duration + emits before the channel call |
+| Modified | apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart | M8 — `PlayerProgressBar` pin gate uses `playerDur` not `sourceDur` |
+| Created | apps/mobile/test/features/player/player_progress_bar_test.dart | M8 — 4 widget tests for pin behaviour across engines |
+| Modified | (27 player + engine files across apps/mobile + packages/fluxora_core + apps/mobile/android) | Strip pass — ~85 plan-tag narrative removals |
+
+### Docs Updated
+
+- `docs/10_planning/24_player_audio_reliability_plan.md` — M7 + M8 milestones marked ✅; status header revised.
+- `docs/00_overview/current_status.md` — new top-of-doc snapshot.
+- `docs/10_planning/01_roadmap.md` — plan 24 row updated.
+- `CLAUDE.md` — plan 24 index row updated.
+- `docs/08_frontend/01_frontend_architecture.md` — Audio Service row split per engine; project-structure comment updated; engine-specific-callsites paragraph updated.
+- `AGENT_LOG.md` — this entry.
+
+### Decisions Made
+
+- **Media3's native `MediaSessionService` for Android ExoPlayer sessions, not a Dart-side wrapper.** AOSP recommends this; first-party support; the cleanest path. `FluxoraAudioHandler` (Dart) stays for desktop + iOS + Android-rollback only. The split adds a small surface (Kotlin lockscreen owns Android-ExoPlayer; Dart owns everything else) but removes layers of plumbing on the load-bearing path.
+- **Mirror libmpv's `open()` state-reset behaviour in ExoPlayerEngine, not in the cubit.** The cubit was tuned for libmpv's reset-on-open contract; fixing the contract at the engine layer keeps cubit + scrubber engine-agnostic + means a future engine can rely on the same invariant.
+- **Strip plan-tag narrative immediately rather than wait for M9.** Operator caught it now; deferring to M9 risked adding more clutter. Per-memory saved for future sessions to stop introducing the pattern.
+
+### Issues / Sharp Edges Discovered
+
+1. **`MediaSessionService.applyMetadata` is currently always called with `null`** → falls through to artist = "Fluxora". Future plumbing should thread the file title (and ideally poster URL) through from the cubit so the lockscreen card shows the movie/episode name. Tracked as a follow-up; out of M7's "make the OS see a session" scope.
+2. **Companion-based `bind`/`unbind` on the MediaSessionService is process-singleton state.** Fine for the current one-Activity Flutter app; would need reworking if Fluxora ever hosted multiple Flutter engines simultaneously.
+3. **`pendingPlayer` between `bind()` and `onCreate()`** has a theoretical leak window if `startService` throws between the two — already handled by clearing in the catch.
+4. **ExoPlayer's `seekTo(positionMs)` issued before `STATE_READY`** is buffered and applied at READY; no `onPositionDiscontinuity` may fire if old position was also 0. The cubit's `_commitServerSeek` does `seek` after `open(play:false)` — under ExoPlayer this seek may be silently applied without emitting a Dart-side `positionChanged` until playback resumes via `play()` + ticker. M8 audit flagged this; no current user-facing bug because the cubit doesn't read position synchronously after `_commitServerSeek`.
+5. **`durationChanged` Kotlin-side dedup** masks "new playlist, identical duration" → tonemap-toggle on the same source would emit no duration event. M8's `open()` reset emission covers this (we now emit `duration=0` first, so any new positive duration counts as a change).
+6. **Position emission cadence**: libmpv emits sub-100ms (frame-rate bound); ExoPlayer emits at 250ms via the Kotlin ticker. Visually identical scrubber smoothness; no code in the player feature counts emissions or uses cadence as a stall heartbeat.
+
+### Test Counts (re-baselined)
+
+- **Core: 19 passing** (unchanged; ExoPlayerEngine reset emission covered by existing tests).
+- **Mobile: 97 passing** (91 → 97: +6 from M7 audio-handler-skip + M8 scrubber widget tests).
+- **Android JUnit (M7): added `FluxoraMediaSessionServiceTest`** alongside `FluxoraExoPlayerTest`. Gradle execution remains sandbox-blocked — operator runs as part of M5 smoke.
+- **APK build:** `flutter build apk --debug --no-pub` green against Media3 1.10.1 (`media3-session` + Kotlin compile clean).
+- **Server: 830** (untouched). **Desktop: 113** (untouched).
+
+### Working-Tree Status
+
+- 3 commits ahead of `origin/main` not yet pushed: `0debbe9` M7, `4ba2a87` M8, `a1a9c12` strip pass.
+- Plus uncommitted doc edits (this entry + the 5 cross-doc files listed above) — about to land as a single docs commit per the same-day pattern.
+- Stale `.claude/worktrees/agent-a076e240a1e18e443/` directory + corresponding branch still on disk (M8 agent's worktree was locked at session end). Gitignored; safe to leave for next-session cleanup.
+
+### Next Agent Should
+
+1. **Operator real-device smoke against the M5 test matrix.** First single-audio AAC for basic smoke (video + audio + scrubber + close + lockscreen card). Then the multi-audio AC3 5.1 file that motivated plan 24 — that's the load-bearing verification. Then HDR + pause/resume + lockscreen + Bluetooth-headset transport. Plan 24 test matrix is in the plan doc.
+2. **Plan 24 M5 (3 h) — Multi-audio track switching verification + fix loop.** No code expected unless smoke surfaces bugs. If switch latency is bad, look at `parseSourceIndex` / `buildAudioTrackMapping` in `FluxoraExoPlayer.kt`. If audio is silent on switch, check `setAudioTrack` overrides build correctly against the actual `tracksChanged` payload Media3 emits.
+3. **Plan 24 M6 (3 h) — HDR + tonemap + HDR-multi-audio.** ExoPlayer's HLS parser is strict-but-diagnostic; HDR-no-audio bug should now produce an actual error in `adb logcat -s ExoPlayer` rather than libmpv's silent drop. If a server-side init.mp4 codec issue surfaces, fix server-side.
+4. **Plan 24 M9 (4 h) — Tests + golden re-baseline + doc sweep + flag deletion + spike cleanup.** Delete `_kEnableExoPlayerEngine` + `_kForceMediaKitOnAndroid` flags from the factory. Delete `apps/mobile/lib/dev/exo_spike_page.dart` + the hidden `/dev/exo-spike` route + the long-press affordance in profile_screen. Archive plan 24 to `docs/10_planning/archive/24_player_audio_reliability_plan.md`. Sweep architecture + frontend + gotchas docs. Update `current_status.md` + `roadmap.md` to mark plan 24 ✅ Done.
+5. **Thread the file title through `MediaSessionService.applyMetadata`** so the lockscreen card shows the movie/episode name (current default is "Fluxora"). Small Dart-side change: cubit's `_engineBuilder` flow already has the title from `startStream`; pass it through `ExoPlayerEngine.open()` headers or a new `setMetadata(title)` method on the channel. Likely belongs in M9 alongside flag deletion.

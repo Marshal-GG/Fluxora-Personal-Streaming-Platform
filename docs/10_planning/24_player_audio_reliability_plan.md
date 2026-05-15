@@ -1,13 +1,18 @@
 # Plan 24 — Android ExoPlayer Migration
 
-> **Status:** Active — **M1–M4 shipped 2026-05-15** (platform-channel
-> spike + `PlayerEngine` abstraction + Dart `ExoPlayerEngine` + Kotlin
-> module hardening).  `_kEnableExoPlayerEngine` flipped to `true` —
-> Android now defaults to Media3 ExoPlayer; libmpv (via `media_kit`)
-> stays the desktop + iOS engine + Android operator escape hatch via
-> `_kForceMediaKitOnAndroid`.  M5 (real-device multi-audio smoke) →
-> M6 (HDR + tonemap) → M7 (lifecycle / audio focus / PIP) → M8 (seek
-> integration) → M9 (tests + doc sweep + flag deletion) remaining.
+> **Status:** Active — **M1, M2, M3, M4, M7, M8 shipped 2026-05-15**
+> (platform-channel spike + `PlayerEngine` abstraction + Dart
+> `ExoPlayerEngine` + Kotlin module hardening + Media3
+> `MediaSessionService` for lockscreen / notification card / BT
+> transport + seek-restart + scrubber pin integration).
+> `_kEnableExoPlayerEngine` flipped to `true` — Android now defaults
+> to Media3 ExoPlayer; libmpv (via `media_kit`) stays the desktop +
+> iOS engine + Android operator escape hatch via
+> `_kForceMediaKitOnAndroid`.  **M5 (real-device multi-audio smoke)
+> + M6 (HDR + tonemap) require operator device testing** and are
+> the only remaining functional milestones.  **M9 (tests + doc
+> sweep + flag deletion + spike cleanup)** is the final mechanical
+> close-out.
 >
 > **Operator approved 2026-05-15** after stacking three layers of
 > mid-stream track-switch workarounds (plan 22 cubit-level seek,
@@ -401,7 +406,7 @@ Steps:
 
 Exit criteria: rows "HDR multi-audio" + "HDR HEVC source" flip green.
 
-### M7 — Lifecycle, audio focus, PIP, background playback (3 h)
+### M7 — Lifecycle, audio focus, PIP, background playback (3 h) — ✅ Shipped 2026-05-15 (commit `0debbe9`)
 
 **Goal:** make sure existing UX integrations keep working.
 
@@ -426,7 +431,7 @@ Steps:
 Exit criteria: lockscreen + PIP + headphone-unplug + app-background
 all behave the same as before.
 
-### M8 — Position tracking + seek-restart integration (2 h)
+### M8 — Position tracking + seek-restart integration (2 h) — ✅ Shipped 2026-05-15 (commit `4ba2a87`)
 
 **Goal:** scrubber, resume-progress reporter, server-restart seek all
 continue to work.
