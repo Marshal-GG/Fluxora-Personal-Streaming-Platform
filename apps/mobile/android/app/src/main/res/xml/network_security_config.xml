@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext HTTP is only permitted for the LAN-streaming path that
+  Fluxora was designed for from day one: the user's home server on
+  an RFC1918 / link-local / loopback address, optionally discovered
+  via mDNS under .local.  The public WAN tunnel runs over HTTPS at
+  fluxora-api.marshalx.dev and falls under the default-secure base
+  config below.
+
+  Android 9+ blocks cleartext globally by default.  libmpv (via
+  media_kit) used its own HTTP stack and bypassed the policy; Media3
+  ExoPlayer goes through Android's network stack and respects it,
+  so without this file ExoPlayer fails every LAN stream with
+  CleartextNotPermittedException.
+
+  Scope: opens cleartext for the four IPv4 LAN ranges plus IPv6
+  link-local + ULA, the loopback, and mDNS .local. — every other
+  destination remains TLS-required.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- IPv4 private ranges (RFC 1918). -->
+        <domain includeSubdomains="false">10.0.0.0/8</domain>
+        <domain includeSubdomains="false">172.16.0.0/12</domain>
+        <domain includeSubdomains="false">192.168.0.0/16</domain>
+        <!-- IPv4 link-local. -->
+        <domain includeSubdomains="false">169.254.0.0/16</domain>
+        <!-- IPv4 loopback. -->
+        <domain includeSubdomains="false">127.0.0.0/8</domain>
+        <!-- IPv6 loopback + link-local + ULA. -->
+        <domain includeSubdomains="false">::1</domain>
+        <domain includeSubdomains="false">fe80::/10</domain>
+        <domain includeSubdomains="false">fc00::/7</domain>
+        <!-- mDNS / Bonjour. -->
+        <domain includeSubdomains="true">local</domain>
+    </domain-config>
+</network-security-config>
