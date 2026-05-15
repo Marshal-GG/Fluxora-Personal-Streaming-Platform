@@ -1346,10 +1346,24 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
             // reported source-time settles within tolerance of the
             // pinned target — this catches the in-player seek path
             // where `widget.isSeeking` never transitions.
+            //
+            // Gate on PLAYER-duration (not source-duration) so the
+            // settle check stays disarmed during the post-`open`
+            // transient under ExoPlayer (plan 24 M8).  ExoPlayer's
+            // Kotlin side only emits `durationChanged` once
+            // `STATE_READY` is reached; the Dart engine resets the
+            // cached duration to zero on `open` so `playerDur == 0`
+            // accurately signals "new playlist still preparing, the
+            // pendingMs math is using a stale-or-unknown total and
+            // would clear the pin prematurely against the wrong
+            // denominator".  libmpv's old behaviour matched this
+            // implicitly — `state.duration` resets to zero on
+            // `Player.open` and rises again only after the demuxer
+            // negotiates the new stream.
             if (_dragValue == null &&
                 _pendingValue != null &&
                 !widget.isSeeking &&
-                sourceDur.inMilliseconds > 0) {
+                playerDur.inMilliseconds > 0) {
               final pendingMs = (sourceDur.inMilliseconds * _pendingValue!)
                   .round();
               if ((sourcePos.inMilliseconds - pendingMs).abs() <

@@ -269,6 +269,32 @@ class ExoPlayerEngine implements PlayerEngine {
     Map<String, String>? headers,
     bool play = true,
   }) async {
+    // Reset cached state to "fresh source" semantics BEFORE issuing the
+    // channel call (plan 24 M8).  libmpv's `Player.open` clears
+    // `state.position` / `state.duration` to zero as a side effect; the
+    // Kotlin ExoPlayer side has no analogous "everything-resets-now"
+    // event — it deduplicates `durationChanged` (only fires on
+    // `STATE_READY` when the new duration differs from the last
+    // emitted) and doesn't synthesise a position-zero discontinuity on
+    // `stop()` + `clearMediaItems()`.  Without this reset, the Dart
+    // caches keep the *previous* playlist's position + duration while
+    // the new one is preparing — observable as a transient where the
+    // scrubber renders `oldPlayerPos + newOffsetMs` over
+    // `oldPlayerDur + newOffsetMs`, exactly the libmpv post-restart
+    // visual we already pinned the scrubber against (plan 17 §10 fix,
+    // 2026-05-09).
+    //
+    // Resetting + emitting matches the contract `MediaKitEngine` gets
+    // for free via libmpv state-reset.  The pin-hold logic in
+    // `PlayerProgressBar` gates its settle check on `playerDur > 0`
+    // (see the M8 widget test): while we're in the open→STATE_READY
+    // transient the pin stays held to the user's release value, then
+    // clears once the Kotlin side emits the new `durationChanged`.
+    _position = Duration.zero;
+    _duration = Duration.zero;
+    _positionController.add(_position);
+    _durationController.add(_duration);
+
     // The cubit drives all seek decisions via [seek]; `open` always
     // starts at position 0 unless the cubit later issues a seek.  Plan
     // 24's locked contract allows the Kotlin side to honour a
