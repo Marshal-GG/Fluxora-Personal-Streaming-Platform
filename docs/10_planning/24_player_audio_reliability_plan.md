@@ -16,6 +16,17 @@
 > milestones.  **M9 finishes** with `_kForceMediaKitOnAndroid`
 > deletion + plan archival once M5+M6 confirm no regressions.
 >
+> **M9 partial follow-ons landed 2026-05-15 during real-device M5/M6
+> verification on a phone.**  Nine fixes shipped on top of commit
+> `24d3579` to make the ExoPlayer path actually usable on real
+> hardware (LAN cleartext block, aspect-ratio rendering, pinch zoom,
+> Fit-mode cycler, transport relayout, overflow-menu scroll fix,
+> client-side HDR→SDR tonemap renderer factory).  See the
+> [M9 partial follow-ons (2026-05-15)](#m9-partial-follow-ons-2026-05-15)
+> subsection below for the full list.  Test counts unchanged — APK
+> build + `flutter analyze` are the verification artefacts for this
+> batch.
+>
 > **Operator approved 2026-05-15** after stacking three layers of
 > mid-stream track-switch workarounds (plan 22 cubit-level seek,
 > wakelock fix, plan 23 server-restart) failed to produce reliable
@@ -474,6 +485,118 @@ Steps:
 Exit criteria: full mobile test suite green; analyze clean; CI green
 on main.
 
+### M9 partial follow-ons (2026-05-15)
+
+Closeout polish that landed on top of `24d3579` during operator real-
+device M5/M6 verification on a phone.  Folded into M5/M6/M9 status
+rather than spun out as a new plan — these are device-verification
+fixes, not a re-plan.  All nine were uncommitted as of the doc sweep
+that wrote this section; verification artefacts are `flutter build
+apk --debug --no-pub` green + `flutter analyze` clean across
+`apps/mobile` + `packages/fluxora_core`.
+
+1. **Network-security-config for LAN cleartext** —
+   `apps/mobile/android/app/src/main/res/xml/network_security_config.xml`
+   (new) + manifest reference.  Media3's `DefaultHttpDataSource`
+   honours Android 9+'s default-secure cleartext policy (libmpv
+   didn't), so HLS to LAN IPs failed with
+   `CleartextNotPermittedException`.  First attempt used CIDR-style
+   `<domain>` entries — those don't work; Android's `<domain>` only
+   matches DNS hostnames.  Corrected fix: `<base-config
+   cleartextTrafficPermitted="true">` globally + a `<domain-config
+   cleartextTrafficPermitted="false">` carve-out for
+   `fluxora-api.marshalx.dev` so the HTTPS-only stance is preserved
+   off-LAN.  Folds into M5 (the bug surfaced during multi-audio
+   real-device smoke against a LAN server).
+
+2. **`PlayerEngine.videoSize` + `videoSizeStream`** — new fields on
+   the engine interface so the player surface widget can compute
+   aspect-ratio-aware layout.  `MediaKitEngine` subscribes to
+   `player.stream.videoParams`; `ExoPlayerEngine` subscribes to a
+   new channel event `videoSizeChanged`.  Kotlin emits both from
+   `Player.Listener.onVideoSizeChanged` AND from `onTracksChanged`
+   (via a new pure-function helper
+   `firstSelectedVideoFormat(tracks: Tracks)`) so the size is known
+   immediately after manifest parse, not after the first decoded
+   frame.  Pixel-aspect-ratio is baked into the emitted width
+   Kotlin-side for anamorphic sources (DVD MPEG-2, some Blu-ray
+   rips).  Folds into M4 (engine interface completion).
+
+3. **Texture rendering with FitMode + pinch zoom — `_EngineTextureSurface`
+   widget** — the bare `Texture(textureId:)` widget stretches to fill
+   its parent.  New `_EngineTextureSurface` wraps it in
+   `ClipRect → FittedBox → SizedBox(videoW, videoH)` so it renders at
+   the correct aspect.  Discovered + fixed: putting it inside
+   `Center(child: …)` gives `FittedBox` loose parent constraints →
+   no scaling.  Use `Positioned.fill` instead so the FittedBox gets
+   bounded constraints and scales properly.
+
+4. **Three-way `FitMode` enum** — replaced the binary `bool fitCover`
+   on `PlayerControlsController` with `enum FitMode { fit, fill,
+   stretch }`.  Default is `fit` (was Fill).  Top-bar Fit button
+   cycles through the three modes.  Icons + tooltips switch per mode
+   (`fit_screen` / `aspect_ratio` / `crop_free`).  Maps to
+   `BoxFit.contain` / `BoxFit.cover` / `BoxFit.fill` for the video
+   surface.
+
+5. **Pinch zoom via raw `Listener`** — Flutter's gesture arena
+   reliably loses 2-finger scale to single-finger drag when 2 fingers
+   cross slop at slightly different times (or when one lands on an
+   inner widget like the slider).  After two failed attempts using
+   `GestureDetector.onScale*` and then `RawGestureDetector` +
+   `GestureArenaTeam(captain: scale)` (which broke single-finger
+   vertical drag), the working design is: a top-level `Listener`
+   widget that tracks raw pointer positions, computes pinch distance
+   manually, and pipes `controller.setUserScale(initialScale *
+   currentDist / initialDist)` directly.  Single-finger vertical
+   drag (brightness/volume) still goes through the chrome's
+   `GestureDetector` and is gated by `_activePointers >= 2` to
+   prevent the brief 5–15 ms race window from nudging
+   brightness/volume before pinch takes over.  Rollback path:
+   `_beginPinch()` restores the captured drag-start brightness/volume
+   value if a drag was already in flight when the 2nd finger landed.
+
+6. **Drag-HUD signals for zoom + fit mode** — `PlayerDragKind` enum
+   gained `zoom` + `fitMode` cases.  `controller.setUserScale` flashes
+   the HUD with a `"1.25×"`-style label; `controller.cycleFitMode`
+   flashes `"Fit"` / `"Fill"` / `"Stretch"`.  Auto-clears via
+   `_hudAutoHide` timer (900 ms zoom, 1.2 s fit).  `_DragHud` widget
+   accepts the new `label` param; hides its progress bar for zoom +
+   fitMode (only renders the icon + label).
+
+7. **Player UI relayout** — moved play/pause + ±10 s seek transport
+   from centre to **below** the scrubber.  Removed `_MinimizeHandle`
+   (the drag-down-to-close pill) entirely.  Added explicit
+   `DecoratedBox(gradient: …)` backdrops behind the top bar + bottom
+   controls (55% black at the edge → 30% halfway → transparent) so
+   chrome icons + text stay legible over bright video without dimming
+   the middle of the screen.
+
+8. **Overflow-menu scroll fix** — wrapped the 3-dot bottom-sheet's
+   `Column` in `SingleChildScrollView` + set `isScrollControlled: true`
+   on the `showModalBottomSheet` call so the tile list no longer
+   overflows in landscape.
+
+9. **Client-side HDR→SDR tone-mapping via custom Media3 renderer** —
+   `apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/TonemappingRenderersFactory.kt`
+   (new file).  Subclasses `DefaultRenderersFactory` to override
+   `buildVideoRenderers` with a `TonemappingVideoRenderer` (subclass
+   of `MediaCodecVideoRenderer`) that injects
+   `MediaFormat.KEY_COLOR_TRANSFER_REQUEST = COLOR_TRANSFER_SDR_VIDEO`
+   (`"color-transfer-request" = 3`) on Android 13+ (API 33).  The
+   decoder hardware tone-maps HDR (HDR10 / HLG / Dolby Vision) → SDR
+   before frames reach the Flutter `SurfaceProducer` texture, which
+   is an SDR surface.  Without this, HDR PQ-encoded values rendered
+   on an SDR Flutter texture come out washed-out / desaturated — a
+   regression vs. the libmpv path which had its own internal tone-
+   mapper.  No-op on Android <13 or codecs that ignore the request;
+   operator can fall back to the existing server-side `?tonemap=true`
+   flag via the 3-dot menu's "Tone-map HDR to SDR" toggle on those
+   devices.  Wired into `FluxoraExoPlayer.kt` via
+   `ExoPlayer.Builder.setRenderersFactory(TonemappingRenderersFactory(context))`.
+   Folds into M6 — closes the HDR-on-SDR-surface regression that the
+   libmpv path didn't have.
+
 ---
 
 ## Test plan
@@ -486,7 +609,7 @@ Real-device matrix that must be green to ship:
 | Single-audio HEVC + AAC | play / pause / scrub / close | |
 | Multi-audio HEVC + AAC stereo + Hindi AC3 5.1 | play / pause / resume / switch-track mid-play / switch-track while paused | |
 | Multi-audio HDR HEVC | play / audio audible / switch-track | |
-| HDR HEVC single-audio | play / tonemap toggle / close | |
+| HDR HEVC single-audio | play / tonemap toggle / close | 🟢 client-side renderer-factory tonemap on API 33+ (HDR10 / HLG / Dolby Vision → SDR before the SurfaceProducer texture); server-side `?tonemap=true` via 3-dot menu remains the fallback on Android <13 or codecs that ignore `KEY_COLOR_TRANSFER_REQUEST` |
 | Resume from history | starts at correct position with correct audio | |
 | Background → resume foreground | playback resumes cleanly | |
 | Headphone unplug | auto-pause | |

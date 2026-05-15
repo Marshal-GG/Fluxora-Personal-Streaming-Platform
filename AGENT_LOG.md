@@ -731,3 +731,168 @@ New `## Subtitle picker is engine-specific — Android ExoPlayer hides the picke
 3. **Subtitle picker migration (separate plan).** New `setSubtitleTrack(int sourceIndex)` on `PlayerEngine`. `MediaKitEngine` keeps `Player.setSubtitleTrack`. `ExoPlayerEngine` routes to Media3's `TrackSelectionParameters.setOverrideForType` on a text-type `TrackGroup`. Kotlin renders via `SubtitleView`. Probably a half-day milestone.
 4. **HDR-no-audio investigation** (if M6 surfaces it). Plan 24 M6 expects Media3's stricter HLS parser to emit an actual error rather than libmpv's silent drop. If a server-side init.mp4 codec issue surfaces, fix server-side.
 5. **Plan 25 — multi-rendition HLS server output** (`#EXT-X-MEDIA TYPE=AUDIO` groups instead of multiplexed audio in a single rendition). Unblocks future iOS native track switching. Out of scope for plan 24.
+
+## [2026-05-15] [feat] [fix] [refactor] [mobile] [core] [docs] — Plan 24 M9-partial follow-ons (real-device fix-loop) + doc sweep
+
+**Phase:** Plan 24 — Android ExoPlayer migration. Operator opened the app on a real device and reported a cascade of issues that surfaced only at runtime: LAN cleartext block, video stretched to screen aspect, pinch zoom that fights vol/brightness, washed-out HDR, overflow menu overflowing in landscape, dim chrome icons over bright video, etc. Each one resolved in-session via a fix-loop with reinstall-and-retest cycles.
+**Status:** Complete. M5/M6 device-verification fixes shipped; M9-partial scope grew to absorb them. M5 + M6 are now functionally complete from a code perspective; operator real-device sign-off is what's left for plan 24 archival.
+**Commits:** uncommitted at session end — operator to commit in logical chunks (see "Suggested commit chunks" below).
+
+### What Was Done
+
+#### Setup
+
+Spent the first half of the session on plan 24 M9-partial (already shipped as commits `24d3579` code + `4d9c2c9` docs). The second half is this entry: operator flashed the M9-partial APK on a real device and we worked through every bug they hit. Doc sweep at the end used 3 parallel Opus subagents (cross-doc planning / architecture / gotchas) writing into non-overlapping file scopes.
+
+#### 1. LAN cleartext HTTP — `network_security_config.xml`
+
+First real-device session start: `ExoPlayer` died with `CleartextNotPermittedException: Cleartext HTTP traffic to 192.168.0.162 not permitted` on every stream-start. Android 9+'s default-secure policy blocks plaintext HTTP for app traffic. `libmpv` had shipped its own HTTP implementation and silently bypassed the policy; Media3's `DefaultHttpDataSource` respects it.
+
+First fix attempt listed RFC 1918 CIDR blocks in `<domain>` entries — **that doesn't work**: Android's `<domain>` only matches DNS hostnames, not CIDR/IP ranges. The literal `10.0.0.0/8` string never matches a resolved IP. Corrected fix: `<base-config cleartextTrafficPermitted="true">` permits cleartext globally (LAN server IPs are dynamic + mDNS-discovered, can't be scoped), with `<domain-config cleartextTrafficPermitted="false">` carve-out re-enforcing HTTPS-only for the public WAN tunnel `fluxora-api.marshalx.dev`. Manifest wired with `android:networkSecurityConfig="@xml/network_security_config"`.
+
+#### 2. `PlayerEngine.videoSize` + `videoSizeStream` + Kotlin emit from `onTracksChanged`
+
+Once cleartext was unblocked, video played but was stretched to fill the screen regardless of source aspect ratio. Bare `Texture(textureId:)` is a render-to-texture primitive with no intrinsic size or aspect-ratio logic.
+
+Added `({int width, int height})? get videoSize` + `Stream<...> get videoSizeStream` to `PlayerEngine`. `MediaKitEngine` subscribes to `player.stream.videoParams`. `ExoPlayerEngine` subscribes to a new `videoSizeChanged` EventChannel event from Kotlin; resets to `null` on `open()` so tonemap-toggle / audio-switch don't strand the scrubber on stale dimensions.
+
+Kotlin side has two emission paths: `Player.Listener.onVideoSizeChanged(VideoSize)` (real-time, fires later) AND a new pure-function helper `firstSelectedVideoFormat(tracks: Tracks): Format?` called from `onTracksChanged` (fires at manifest parse, much earlier than first decoded frame). Pixel-aspect-ratio (`Format.pixelWidthHeightRatio`) baked into the emitted width for anamorphic sources (DVD MPEG-2, some Blu-ray rips).
+
+#### 3. `_EngineTextureSurface` aspect-ratio wrapping
+
+New widget: `ClipRect → FittedBox(fit: BoxFit.contain/cover/fill) → SizedBox(width: videoW, height: videoH) → Texture`. SizedBox declares natural aspect; FittedBox scales to fit/cover parent.
+
+Hit a sharp edge: bare `Center(child: _EngineTextureSurface(...))` inside a Stack with default `StackFit.loose` gives FittedBox loose constraints → it sizes to its child's natural size (1920×1080 px) and doesn't scale. Fixed with `Positioned.fill`.
+
+#### 4. Three-way `FitMode` enum
+
+Replaced the binary `bool fitCover` on `PlayerControlsController` with `enum FitMode { fit, fill, stretch }`. **Default flipped to `FitMode.fit`** (was Fill/cover). Top-bar Fit button cycles `fit → fill → stretch → fit`. Long-press still resets pinch zoom. Maps to Flutter `BoxFit.contain` / `BoxFit.cover` / `BoxFit.fill`. Top-bar icon + tooltip swap per mode (`fit_screen` / `aspect_ratio` / `crop_free`).
+
+#### 5. Pinch zoom via raw `Listener` (the saga)
+
+Three attempts before landing the working design:
+
+- **Attempt 1: outer `_PinchZoomSurface` widget** with its own `GestureDetector(onScale*)` wrapping the surface. Lost the gesture arena to the chrome's outer `GestureDetector` (higher in the Stack, opaque hit-test).
+- **Attempt 2: add `onScale*` to the chrome's existing `GestureDetector`**. Worked over the video area but still failed near the slider/transport buttons — inner widgets' single-finger drag/tap recognizers claimed the first pointer before scale recognizer got 2 pointers.
+- **Attempt 3: `RawGestureDetector` + `GestureArenaTeam` with `ScaleGestureRecognizer` as captain**. Scale won every arena — including single-finger drags — so brightness/volume broke entirely. Also surfaced `Failed assertion: '_team == null'` on rebuild because `GestureRecognizerFactoryWithHandlers.initializer` re-runs and reassigns `r.team`; fixed with `r.team ??= _gestureTeam`. Red screen still meant captain-as-tie-breaker is the wrong shape.
+- **Working approach: implement pinch entirely at the outer `Listener` widget**. Raw `PointerEvent` callbacks fire regardless of who claims the gesture arena. Track `Map<int, Offset> _pointerPositions` from `onPointerDown` / `onPointerMove` / `onPointerUp`. On second-pointer-down capture `_pinchInitialDistance` + `_pinchInitialScale = controller.userScale`. On move with 2+ pointers compute new distance and pipe `controller.setUserScale(initialScale * currentDist / initialDist)` directly. Single-finger vertical drag still goes through the chrome's `GestureDetector` and is gated on `_activePointers >= 2` to bail when a pinch is in flight. Rollback: `_beginPinch()` restores brightness/volume to drag-start value if the race window already nudged them.
+
+Long-press the Fit button resets `userScale` to 1.0× (existing behaviour, kept).
+
+#### 6. Drag-HUD signals for zoom + fit mode
+
+`PlayerDragKind` enum gained `zoom` + `fitMode` cases. `controller.setUserScale(s)` flashes the HUD with a pre-formatted label (`"1.25×"` style). `controller.cycleFitMode()` flashes `"Fit"` / `"Fill"` / `"Stretch"`. Auto-clears via `_hudAutoHide` timer (900 ms for zoom, 1.2 s for fitMode). `_DragHud` widget accepts a new `label: String?` param; hides its progress bar for the zoom + fitMode cases (icon-only render — `zoom_in` for zoom, `aspect_ratio` for fit mode).
+
+#### 7. Player chrome layout
+
+- Play/pause + ±10 s seek transport moved from CENTER (covering the video) to **below** the scrubber in the bottom Column. Groups temporal controls together.
+- `_MinimizeHandle` (drag-down-to-close pill at the top of the screen) removed entirely. Operator was confused by the dash icon. Player closes via the back button now.
+- Top bar + bottom Column each wrapped in their own `DecoratedBox(gradient: 55% black at edge → 30% halfway → transparent)` for icon/text legibility against bright video. First try used a full-screen 5-stop gradient — invisible because the `DecoratedBox` had no child and `Stack.loose` constraints sized it to 0×0. Second try wrapped in `Positioned.fill`. Third try (current) ditched the global scrim for two per-region backdrops — sized correctly to the actual top/bottom chrome regions, no gradient fade visible mid-screen.
+
+#### 8. Overflow menu landscape fix
+
+3-dot bottom-sheet overflowed by 218 pixels in landscape. 8 tiles + drag pill in a fixed ~240 px sheet doesn't fit. Wrapped the inner `Column` in `SingleChildScrollView` and passed `isScrollControlled: true` to `showModalBottomSheet` so the sheet can grow past 50% of screen height.
+
+#### 9. Client-side HDR→SDR tone-mapping via custom Media3 renderer
+
+Operator reported HDR videos playing with washed-out / desaturated colors. Initial reaction was server-side tonemap (auto-enable `tonemap=true` for HDR sources) — but operator countered that their device can decode HDR natively. The real issue: even on HDR-capable codec hardware, Flutter's `SurfaceProducer` is an **SDR surface**. Media3 writes HDR-encoded PQ values directly onto the SDR surface → Flutter composites them as if SDR → washed out. libmpv had its own internal tone-mapper, so the regression only appeared after the plan-24 migration.
+
+Fix: new `apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/TonemappingRenderersFactory.kt`. Subclasses `DefaultRenderersFactory` to override `buildVideoRenderers` with a `TonemappingVideoRenderer` (subclass of `MediaCodecVideoRenderer`) that injects `MediaFormat.setInteger("color-transfer-request", 3)` (= `KEY_COLOR_TRANSFER_REQUEST = COLOR_TRANSFER_SDR_VIDEO`) on Android 13+ (API 33). Hardware codec then tone-maps HDR → SDR before frames hit the texture. Wired in `FluxoraExoPlayer.kt` via `ExoPlayer.Builder.setRenderersFactory(TonemappingRenderersFactory(context.applicationContext))`. No-op on Android <13 or codecs that ignore the SDR request; the existing 3-dot menu "Tone-map HDR to SDR" toggle remains as the server-side fallback.
+
+#### 10. Doc sweep
+
+3 parallel Opus subagents wrote into non-overlapping file scopes:
+
+- **Agent A** (planning surfaces): `docs/10_planning/24_player_audio_reliability_plan.md`, `docs/00_overview/current_status.md`, `docs/10_planning/01_roadmap.md`, `CLAUDE.md` — added a new `### M9 partial follow-ons (2026-05-15)` subsection inside the plan listing all 9 follow-ons with per-milestone bucketing; new top-of-doc snapshot in current_status; plan 24 row in roadmap + CLAUDE.md plan index updated.
+- **Agent B** (architecture): `docs/08_frontend/01_frontend_architecture.md`, `docs/02_architecture/01_system_overview.md`, `docs/02_architecture/02_tech_stack.md` — new `_VideoSurface` / `FitMode` / pinch-via-Listener / chrome-layout subsections; `PlayerEngine` interface extended in the existing section with `videoSize` + `videoSizeStream` + Kotlin emission paths; `TonemappingRenderersFactory` row added to the Framework & Stack table + system overview + tech stack.
+- **Agent C** (gotchas): `docs/12_guidelines/03_gotchas.md` — 7 new entries: bare `Texture` aspect-ratio stretch, SDR `SurfaceProducer` HDR-washout, raw-Listener pinch over the gesture arena, `GestureRecognizerFactoryWithHandlers` rebuild + `r.team = ...` assertion, `Stack.loose` + bare `Center` gives FittedBox 0×0, chrome scrim 0×0 from same trap, `showModalBottomSheet` landscape overflow.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Modified | apps/mobile/android/app/src/main/res/xml/network_security_config.xml | LAN cleartext base-config + WAN HTTPS carve-out (corrected from first-attempt CIDR-`<domain>`) |
+| Modified | apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/FluxoraExoPlayer.kt | Wire `TonemappingRenderersFactory` into `ExoPlayer.Builder`; emit `videoSizeChanged` from `onVideoSizeChanged` + `onTracksChanged` via `firstSelectedVideoFormat` helper |
+| Created | apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/TonemappingRenderersFactory.kt | Subclass `DefaultRenderersFactory` + `MediaCodecVideoRenderer` for codec-level HDR→SDR tone-mapping on Android 13+ |
+| Modified | packages/fluxora_core/lib/player/player_engine.dart | Add `videoSize` + `videoSizeStream` interface |
+| Modified | packages/fluxora_core/lib/player/media_kit_engine.dart | Subscribe to `player.stream.videoParams`, broadcast videoSize |
+| Modified | packages/fluxora_core/lib/player/exo_player_engine.dart | Subscribe to `videoSizeChanged` event, broadcast videoSize; reset on `open()` |
+| Modified | apps/mobile/lib/features/player/presentation/controllers/player_controls_controller.dart | `FitMode` enum, `userScale` state, HUD signals for zoom + fitMode, auto-clear timer |
+| Modified | apps/mobile/lib/features/player/presentation/screens/player_screen.dart | `_EngineTextureSurface` wrapping with FittedBox; remove `_MinimizeHandle`; `Positioned.fill` for the surface; default-fit (not fill) |
+| Modified | apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart | Raw-Listener pinch zoom, vertical-drag gating on `_activePointers >= 2`, transport moved below scrubber, top/bottom gradient backdrops, Fit button cycles 3-way + long-press resets zoom, overflow menu scroll fix, `_DragHud` zoom + fitMode labels |
+| Modified | apps/mobile/test/features/player/player_cubit_test.dart | `_FakePlayerEngine` no-op stubs for `videoSize` + `videoSizeStream` |
+| Modified | apps/mobile/test/features/player/player_progress_bar_test.dart | Same fake-engine stubs |
+| Modified | apps/mobile/test/goldens/_player_mocks.dart | Same fake-engine stubs |
+| Modified | apps/mobile/test/goldens/top_bar_golden_test.dart | `fitCover: false` → `fitMode: FitMode.fit` |
+| Modified | docs/10_planning/24_player_audio_reliability_plan.md | New `### M9 partial follow-ons (2026-05-15)` subsection covering all 9 fixes |
+| Modified | docs/00_overview/current_status.md | New top-of-doc snapshot for the follow-on batch |
+| Modified | docs/10_planning/01_roadmap.md | Plan 24 row body extended with the follow-on highlights |
+| Modified | CLAUDE.md | Plan 24 index row appended with the 8 follow-on highlights |
+| Modified | docs/08_frontend/01_frontend_architecture.md | `_VideoSurface`, `FitMode`, pinch-via-Listener, chrome layout subsections + `PlayerEngine` interface extension + Framework & Stack table rows |
+| Modified | docs/02_architecture/01_system_overview.md | "Mobile playback engine" row appended with `TonemappingRenderersFactory` note |
+| Modified | docs/02_architecture/02_tech_stack.md | New `TonemappingRenderersFactory` row in the Mobile section |
+| Modified | docs/12_guidelines/03_gotchas.md | 7 new entries (texture aspect, SDR surface HDR-washout, raw-Listener pinch, team-assertion, Stack.loose × Center, scrim 0×0, landscape overflow) |
+
+Also two untracked devtools_options.yaml files from Flutter tooling (apps/desktop + apps/mobile) — gitignore candidates, harmless but should not land in commits.
+
+### Docs Updated
+
+- `docs/10_planning/24_player_audio_reliability_plan.md` — `### M9 partial follow-ons (2026-05-15)` subsection (~125 lines); status header callout; test-matrix HDR row updated.
+- `docs/00_overview/current_status.md` — new top-of-doc snapshot for 2026-05-15 (follow-on batch); prior snapshot demoted to "Earlier 2026-05-15".
+- `docs/10_planning/01_roadmap.md` — plan 24 row body extended with follow-on highlights.
+- `CLAUDE.md` — plan 24 index row appended.
+- `docs/08_frontend/01_frontend_architecture.md` — `PlayerEngine` interface extended; new `_VideoSurface` / `FitMode` / pinch / chrome-layout subsections; Framework & Stack table gained `TonemappingRenderersFactory` + LAN cleartext rows; project-structure tree comments refreshed.
+- `docs/02_architecture/01_system_overview.md` — "Mobile playback engine" component row appended.
+- `docs/02_architecture/02_tech_stack.md` — new `TonemappingRenderersFactory` row.
+- `docs/12_guidelines/03_gotchas.md` — 7 new entries.
+- `AGENT_LOG.md` — this entry.
+
+### Decisions Made
+
+- **Pinch via raw `Listener`, not via gesture-arena recognizers.** Three failed attempts (outer GestureDetector, chrome's onScale*, RawGestureDetector + team-captain-scale) all hit Flutter's gesture-arena rules where a single-finger drag claims the first pointer before scale can win with 2. Listener events bypass the arena entirely. Worth documenting as a gotcha so the next agent doesn't waste a round-trip on the team-captain pattern.
+- **Default fit = Fit (letterbox), not Fill (cover).** Matches Plex / VLC / Jellyfin defaults; Fill was a Fluxora-original choice that surprised users.
+- **HDR tone-mapping via client-side codec request, not server-side FFmpeg.** Server-side works but costs CPU and re-encodes the video; codec-level `KEY_COLOR_TRANSFER_REQUEST` is free on Android 13+ and runs on the SoC's HDR pipeline. Server-side toggle remains as the Android <13 fallback.
+- **Two-system rendering (FittedBox + Transform.scale).** Briefly unified into a single `LayoutBuilder`-driven scalar mid-session; broke portrait-mode aspect handling. Reverted to split design — fit/fill is a Flutter layout concern, pinch zoom is a Transform concern; mixing them was simpler-feeling but wrong.
+
+### Issues / Sharp Edges Discovered
+
+All documented in `docs/12_guidelines/03_gotchas.md`. Highlights:
+
+1. `Texture(textureId:)` stretches to parent bounds — no built-in aspect-ratio; needs FittedBox + SizedBox.
+2. Flutter's `SurfaceProducer` is SDR; HDR content rendered on it looks washed out unless the codec tone-maps to SDR first.
+3. Android's `<domain>` in `network_security_config.xml` doesn't accept CIDR — DNS hostnames only.
+4. Pinch-zoom via `GestureDetector.onScale*` and via `RawGestureDetector + GestureArenaTeam` both reliably fail near inner widgets; raw `Listener` is the working design.
+5. `Center` inside `Stack` (default `StackFit.loose`) hands FittedBox/DecoratedBox loose constraints → 0×0 or no-scale.
+6. `GestureRecognizerFactoryWithHandlers.initializer` runs every rebuild; `r.team = ...` asserts `_team == null`; use `r.team ??= ...`.
+7. `showModalBottomSheet` clips in landscape without `isScrollControlled: true` + inner scroll view.
+
+### Test Counts (unchanged)
+
+- **Core: 20** (unchanged from M9-partial — no new core tests; fake-engine stubs added but no new test cases).
+- **Mobile: 97** (unchanged; existing tests still pass; fakes updated to satisfy new interface).
+- **Server: 830** (untouched).
+- **Desktop: 113** (untouched).
+- **APK build:** `flutter build apk --debug --no-pub` green throughout the session — repeatedly after every change.
+
+### Working-Tree Status
+
+Uncommitted; 20 files modified + 2 untracked files (TonemappingRenderersFactory.kt + 2 devtools_options.yaml). Operator to commit per their preferred chunking.
+
+### Suggested commit chunks
+
+1. **`fix(mobile): allow LAN cleartext HTTP for ExoPlayer (network_security_config)`** — `network_security_config.xml` + manifest reference (already wired earlier this session). Standalone fix; could ship even if nothing else does.
+2. **`feat(mobile,core): plumb video size through PlayerEngine + Kotlin emit at manifest-parse`** — `PlayerEngine` interface + both engine impls + Kotlin `onTracksChanged` / `firstSelectedVideoFormat` + test-fake stubs.
+3. **`feat(mobile): _VideoSurface aspect-ratio rendering + FitMode 3-way cycle`** — `_EngineTextureSurface` widget + `FitMode` enum + cubit/test-fake migration + `top_bar_golden_test.dart` enum update.
+4. **`feat(mobile): pinch zoom via raw Listener + drag-HUD signals for zoom/fitMode`** — `flux_player_controls.dart` Listener wiring + controller HUD scratchpad + `_DragHud` label rendering.
+5. **`feat(mobile): player chrome relayout (transport below scrubber, drop minimize handle, gradient backdrops)`** — same file (`flux_player_controls.dart` + `player_screen.dart`); can either fold into chunk 4 or split.
+6. **`fix(mobile): overflow-menu sheet — scroll instead of overflow in landscape`** — `_showOverflowMenu` edit; small standalone fix.
+7. **`feat(mobile): client-side HDR→SDR tone-mapping via custom Media3 renderer factory`** — `TonemappingRenderersFactory.kt` (new) + `FluxoraExoPlayer.kt` wire-in.
+8. **`docs: plan 24 M9-partial follow-ons sweep — AGENT_LOG + cross-doc updates`** — every doc file touched + this AGENT_LOG entry.
+
+### Next Agent Should
+
+1. **Operator real-device sign-off on M5 + M6.** All the runtime fixes from this session need a clean smoke pass on the Oplus device — single-audio playback, multi-audio AC3 5.1 mid-stream switch, HDR HEVC with the codec tone-map kicking in (look for `FluxoraTonemap` lines in logcat), pinch zoom over slider + buttons, Fit-mode cycle through all three, lockscreen card with file title.
+2. **Plan 24 M9 close-out.** Once M5+M6 are green, delete `_kForceMediaKitOnAndroid` flag from `player_engine_factory.dart` (factory becomes one-liner `return Platform.isAndroid ? ExoPlayerEngine.create() : MediaKitEngine.create();`); archive `docs/10_planning/24_player_audio_reliability_plan.md` to `docs/10_planning/archive/24_player_audio_reliability_plan.md`; mark plan 24 ✅ Done in roadmap + current_status + CLAUDE.md.
+3. **Plan 25 — multi-rendition HLS server output** (server emits `#EXT-X-MEDIA TYPE=AUDIO` rendition groups instead of single-rendition + multiplexed audio). Unblocks iOS native track switching + matches the industry-standard HLS shape Plex/Jellyfin use. Plan stub already in `docs/10_planning/24_player_audio_reliability_plan.md` open-questions; promote to a real planning doc when scheduled.
+4. **Subtitle picker on ExoPlayer engine.** Currently the picker placeholder card says "coming in a future update on this player engine." Add `setSubtitleTrack(int sourceIndex)` to `PlayerEngine`; `ExoPlayerEngine` routes through `TrackSelectionParameters.setOverrideForType` on a text-type `TrackGroup`; Kotlin side renders via `SubtitleView` for OS-style styling. Half-day milestone.
+5. **`apps/desktop/devtools_options.yaml` + `apps/mobile/devtools_options.yaml`** — untracked Flutter-tooling artefacts. Either commit (intentional) or add to `.gitignore` (preferred). Single-line gitignore entry: `**/devtools_options.yaml`.

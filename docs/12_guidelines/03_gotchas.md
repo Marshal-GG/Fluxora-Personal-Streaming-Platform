@@ -1134,15 +1134,11 @@ static const _undefinedLanguageTags = {'und', 'unk', 'mis', 'zxx', ''};
 
 **Root cause:** Android 9 (API 28) flipped the default for `<application android:usesCleartextTraffic>` from `true` to `false`.  libmpv (via `media_kit`) shipped its own HTTP implementation and bypassed `NetworkSecurityPolicy.isCleartextTrafficPermitted` entirely, so Fluxora's LAN HTTP streams worked.  Media3 ExoPlayer uses `DefaultHttpDataSource` → `HttpURLConnectionImpl` → Android's network stack, which respects the policy.  The mobile-redesign manifest never set `usesCleartextTraffic` or `networkSecurityConfig`, so the default-secure policy applied — invisible until ExoPlayer became the default Android engine.
 
-**Fix:** ship `apps/mobile/android/app/src/main/res/xml/network_security_config.xml` that scopes cleartext to LAN-only:
-- IPv4 RFC 1918 — `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
-- IPv4 link-local + loopback — `169.254.0.0/16`, `127.0.0.0/8`
-- IPv6 loopback + link-local + ULA — `::1`, `fe80::/10`, `fc00::/7`
-- mDNS — `local` with `includeSubdomains="true"`
+**The trap that bit the first fix:** `<domain>` in Android's `network_security_config.xml` **only matches DNS hostnames**, not CIDR / IP ranges.  A naive first cut listed `192.168.0.0/16` etc. as `<domain>` entries — those are treated as opaque strings and never match a resolved IP literal, so cleartext stayed blocked.  The Android `NetworkSecurityConfig` schema has no IP-range primitive.  Verify any "allow cleartext for LAN" config against a real LAN IP before declaring it shipped.
 
-`<base-config cleartextTrafficPermitted="false">` keeps the default-secure stance for every other destination so the public tunnel at `fluxora-api.marshalx.dev` (HTTPS) is unaffected.
+**Fix that actually works:** flip the scoping.  `<base-config cleartextTrafficPermitted="true">` allows cleartext globally (necessary because Fluxora's LAN server IPs are dynamic RFC1918 + mDNS-discovered, which the schema can't scope) and a `<domain-config cleartextTrafficPermitted="false">` carve-out re-enforces HTTPS-only for the public WAN tunnel hostname (`fluxora-api.marshalx.dev`).  Belt-and-braces with the Dart-side `ApiClient` which already forces HTTPS for the remote base URL.  Lives at `apps/mobile/android/app/src/main/res/xml/network_security_config.xml`; wired through `<application android:networkSecurityConfig="@xml/network_security_config">`.
 
-**Rule going forward:** any new Android networking dep that uses the platform HTTP stack (Retrofit/OkHttp on its own, `flutter`'s `http` package without overrides, Dio's default `DefaultHttpClientAdapter`, etc.) inherits this same constraint.  Don't blanket-enable `usesCleartextTraffic="true"` — that opens HTTP to arbitrary hosts including hostile Wi-Fi.  Extend the `<domain-config cleartextTrafficPermitted="true">` block above with the specific destination instead.
+**Rule going forward:** any new Android networking dep that uses the platform HTTP stack (Retrofit/OkHttp on its own, `flutter`'s `http` package without overrides, Dio's default `DefaultHttpClientAdapter`, etc.) inherits this same constraint.  If we ever move the WAN tunnel to a new hostname, add it to the `<domain-config>` carve-out above.  Don't add LAN IP ranges as `<domain>` entries — they don't work.
 
 
 ## Subtitle picker is engine-specific — Android ExoPlayer hides the picker behind a "coming later" card
@@ -1200,5 +1196,98 @@ class PlayerTransportBar extends StatelessWidget { ... }
 This rename must be reflected in the widget tree, all internal usages, and the golden test import. Do not use `part of` directives as an alternative — they produce tight coupling between test and production files.
 
 **Flagged in:** M14 §17.3 #7 sharp edge.
+
+
+## Plan 24 — Flutter `Texture(textureId:)` stretches to fill its parent — no built-in aspect-ratio
+
+**Symptom:** Video from `ExoPlayerEngine` (which renders into a `SurfaceProducer`-backed `Texture` widget) renders distorted — a 16:9 source on a 19.5:9 phone screen looks too wide and squished vertically.  Same widget tree with `media_kit_video`'s `Video` widget renders correctly, so the regression only surfaces on the Android ExoPlayer path.
+
+**Root cause:** `Texture` is a render-to-texture primitive; it has no intrinsic size and no aspect-ratio logic.  The widget paints whatever the engine drew into the surface across whatever bounds the layout hands it.  `media_kit_video`'s `Video` widget wraps the texture in its own aspect-ratio handling internally; a bare `Texture` does not.
+
+**Fix:** wrap in `ClipRect → FittedBox(fit: BoxFit.contain) → SizedBox(width: videoW, height: videoH) → Texture`.  The SizedBox declares the child's natural aspect ratio (decoded frame dimensions, read from `engine.videoSize`); FittedBox scales it to fit/cover the parent; ClipRect prevents bleed outside the player surface area.
+
+**Trap to avoid:** putting that pipeline inside `Center(child: …)` inside a `Stack` with default `StackFit.loose` gives FittedBox loose constraints (`0..maxParent`) and FittedBox then sizes to its child's natural size (1920×1080) instead of scaling to the parent.  Result: no fit/cover effect at all — the SizedBox renders at literal source resolution.  Use `Positioned.fill(child: …)` so the Stack hands tight constraints down.
+
+**Rule going forward:** any widget tree that renders a raw `Texture` (not just video — also future camera previews, GL surfaces, etc.) MUST declare the texture's natural aspect via a SizedBox and scale it via FittedBox under tight constraints.  See `_VideoSurface` in `apps/mobile/lib/features/player/presentation/screens/player_screen.dart` for the canonical shape.
+
+
+## Plan 24 — Android Flutter `SurfaceProducer` is an SDR surface — HDR content renders washed out
+
+**Symptom:** HDR10 / HLG / Dolby Vision sources play on HDR-capable phones (decoder works fine) but look desaturated, over-bright, and low-contrast on screen.  The same content rendered correctly through the libmpv path (plan 23 and earlier) — the regression surfaces only on the Android ExoPlayer path.
+
+**Root cause:** Flutter's `TextureRegistry.SurfaceProducer` is an SDR surface.  Media3's `MediaCodecVideoRenderer` doesn't request HDR→SDR tone-mapping automatically when its output surface is a `SurfaceProducer` (the framework has no way to detect "this surface is SDR-only" — there's no surface-side capability flag).  The decoder writes HDR-encoded PQ pixel values directly onto the SDR surface; the Flutter compositor + display pipeline then renders those PQ values as if they were SDR → washed-out / desaturated colors.
+
+libmpv had its own internal tone-mapper that mapped HDR → SDR before writing to its texture, so the regression was invisible until the plan-24 migration to ExoPlayer.
+
+**Fix:** subclass `MediaCodecVideoRenderer` to inject `MediaFormat.setInteger("color-transfer-request", 3)` (= `KEY_COLOR_TRANSFER_REQUEST = COLOR_TRANSFER_SDR_VIDEO`) in `getMediaFormat()` on Android 13+ (API 33).  Wire the subclass through a custom `DefaultRenderersFactory` and pass it to `ExoPlayer.Builder.setRenderersFactory(…)`.  The decoder hardware then tone-maps HDR → SDR before frames hit the surface — free on supported codecs (most flagship Android 13+ chips), no CPU/GPU cost on the app side.  See `TonemappingRenderersFactory.kt` + `TonemappingVideoRenderer` in `apps/mobile/android/app/src/main/kotlin/dev/marshalx/fluxora_mobile/exo/`.
+
+**Fallback for Android <13 or codecs that ignore the SDR request:** the existing server-side `?tonemap=true` flag (FFmpeg `zscale` + Hable filter chain) still works; operator flips the 3-dot menu's "Tone-map HDR to SDR" toggle.  Decoder-side tone-mapping is the preferred path because it's free; the server-side path is the always-available fallback for devices that can't do it.
+
+**Rule going forward:** any future render target on Android that draws to a Flutter texture inherits this constraint.  If we add a second video engine, a webcam preview compositor, or any GL surface that an HDR source could draw to, the same SDR-request injection has to be done at the decoder/source side — the surface itself can't tone-map.
+
+
+## Plan 24 — Flutter `GestureDetector.onScale*` loses to inner widgets' single-finger drag — use raw `Listener` for pinch
+
+**Symptom:** Two-finger pinch-zoom on the player surface doesn't fire (or fires sporadically) in screen regions where inner widgets — slider, transport buttons, audio sheet button — live.  The first finger's vertical-drag or the slider's horizontal-drag claims the gesture arena before the second finger lands; the scale recognizer never accepts.
+
+**Root cause:** Flutter's gesture arena resolves competing recognizers by "who claims first."  A vertical-drag recognizer claims as soon as a single pointer moves past `kTouchSlop` (~18 px).  A scale recognizer only claims when 2+ pointers move with relative motion.  If the user's first finger crosses slop before the 2nd lands (the typical fast pinch), drag wins and pinch is shut out for the rest of the gesture.
+
+**Failed approach #1 — add `onScale*` alongside `onVerticalDrag*`:** the recognizers still compete in the same arena.  Same race, same outcome.
+
+**Failed approach #2 — `RawGestureDetector` + `GestureArenaTeam` with `ScaleGestureRecognizer` as captain:** scale becomes the team's elected winner, but the captain wins WHENEVER it's in the arena, including single-pointer cases.  Single-finger brightness/volume drag breaks entirely.  Plus the factory's `initializer` is called on every rebuild, and `recognizer.team = team` asserts `_team == null`, so naive re-init throws a `Failed assertion: '_team == null'` red screen.  (Use `r.team ??= _gestureTeam` if you ever revisit this approach.)
+
+**Working approach — pinch at the `Listener` widget level (raw `PointerEvent` callbacks):** `Listener` fires for every pointer event regardless of which gesture recognizer claims the gesture — so it sees both fingers in a pinch even when the slider has claimed the first finger.  Track `Map<int, Offset> _pointerPositions` from `onPointerDown` / `onPointerMove` / `onPointerUp`.  On second-pointer-down, capture initial pinch distance + the current `userScale`.  On every move with 2+ pointers, compute new distance and pipe `controller.setUserScale(initialScale * currentDist / initialDist)` directly to the engine.
+
+Single-finger vertical drag (brightness/volume) still goes through `GestureDetector.onVerticalDrag*` and is gated on `_activePointers >= 2` to bail when a pinch is starting.  Rollback path: when the 2nd pointer lands, restore brightness/volume to the captured drag-start value so the brief race window doesn't leave a stray nudge behind.
+
+**Rule going forward:** for any gesture that needs to coexist with inner widgets' single-finger recognizers (pinch, two-finger swipe, rotation), prefer raw `Listener` over `GestureDetector` or `RawGestureDetector` team membership.  Listener sees every pointer event unconditionally; the cost is hand-tracking pointer state, which is a few `Map<int, Offset>` updates.  Pattern lives in `_FluxPlayerControlsState._onRawPointerDown/Move/Up` in `apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart`.
+
+
+## Plan 24 — `GestureRecognizerFactoryWithHandlers.initializer` is called on every rebuild — guard `r.team = …`
+
+**Symptom (if you ever use `RawGestureDetector` with team membership):** red error screen on first chrome rebuild after the player opens — `Failed assertion: line 496 pos 12: '_team == null': is not true.`
+
+**Root cause:** `GestureRecognizerFactoryWithHandlers` calls its factory `() => Recognizer()` once per `RawGestureDetector` lifetime, but the `initializer` callback runs on every rebuild (to refresh handlers — `onScaleStart`, `onScaleUpdate`, etc. are captured fresh each time).  Flutter asserts a recognizer's `team` setter `_team == null` — team can be assigned exactly once.  Naive `r.team = _gestureTeam` in the initializer fails on the second rebuild.
+
+**Fix:** `r.team ??= _gestureTeam` (or guard with `if (r.team == null) r.team = …`).  Same applies to setting `team.captain = r` if you go that route — guard with `if (r.team == null) { r.team = …; team.captain = r; }`.
+
+**Note:** the player chrome no longer uses `RawGestureDetector` (see the pinch entry above — we moved to raw `Listener`).  This entry exists in case a future feature re-introduces the team pattern.  The trap is silent until the second rebuild, which is easy to miss in single-frame golden tests.
+
+
+## Plan 24 — Default `Stack` is `StackFit.loose` — `Center(child: …)` inside it gives FittedBox 0×0
+
+**Symptom:** A child widget that internally uses `FittedBox(fit: BoxFit.contain, child: SizedBox(width: W, height: H))` renders at its child's natural size (the SizedBox's declared W×H) instead of scaling to the parent's bounds.  Visually: a 1920×1080 SizedBox renders at literal 1920×1080 logical pixels, overflowing the screen or appearing in the top-left corner.
+
+**Root cause:** `Stack`'s default `fit: StackFit.loose` hands its non-`Positioned` children loose constraints `(0..maxWidth, 0..maxHeight)`.  Inside a `Center` (which also relaxes constraints — Center is `Align(alignment: center)`, which gives loose constraints to its child too), `FittedBox` receives fully loose constraints and sizes itself to its child's natural size — no scaling happens, because the constraints don't force one.
+
+**Fix:** wrap the FittedBox subtree with `Positioned.fill(child: …)` instead of `Center(child: …)` so the Stack hands tight `(maxWidth, maxHeight)` constraints directly to FittedBox.  FittedBox then has a real outer box to fit/cover its child into.
+
+**Where it bit us:** the `_VideoSurface` widget in the player screen.  A brief unified-pipeline attempt that wrapped the video in `Center(child: AnimatedBuilder(...))` produced a 0-size FittedBox and broke aspect handling in portrait mode (the video disappeared entirely on some layouts).  Fixed same-day by switching to `Positioned.fill`.
+
+**Rule going forward:** any FittedBox / OverflowBox / SizedBox-with-flexible-child pattern that depends on tight outer constraints MUST be placed under `Positioned.fill` or `StackFit.expand`, never under loose `Center`/`Align`/default-Stack.  This is the same family of trap as the `Spacer()` inside a loose Stack gotcha further up — both are "Stack hands loose constraints, child expects tight."
+
+
+## Plan 24 — Chrome scrim with no child and `Stack.loose` fit renders at 0×0
+
+**Symptom:** A `DecoratedBox(decoration: BoxDecoration(gradient: …))` added as a non-`Positioned` child of a Stack inside the player chrome renders invisibly — no gradient visible behind the top bar / bottom controls.  The widget exists in the tree (debug paint shows the slot) but paints nothing.
+
+**Root cause:** Same family as the `Center → FittedBox 0×0` entry above — `DecoratedBox` has no intrinsic size, no child, and receives loose Stack constraints, so it sizes itself to 0×0.  The gradient paints inside an empty box, producing zero visible pixels.
+
+**Fix:** wrap in `Positioned.fill(child: IgnorePointer(ignoring: true, child: DecoratedBox(...)))` so the gradient covers the whole chrome area.  `IgnorePointer` prevents the scrim from absorbing taps meant for chrome buttons underneath.
+
+**Better pattern (what we actually shipped):** instead of one full-screen gradient behind the whole chrome, wrap the top bar widget + bottom Column each in their own `DecoratedBox` with a region-local gradient.  Each backdrop sizes to its visible chrome region automatically (the parent widget has tight constraints from the top-bar / bottom-bar layout shape).  See the `Positioned(top: 0)` + `Positioned(bottom: 0)` sites in `flux_player_controls.dart`.
+
+**Rule going forward:** any "background scrim" widget in a Stack MUST either be wrapped in `Positioned.fill` (full-stack coverage) or be the child of a region widget with its own tight constraints (per-region coverage).  A bare `DecoratedBox` / `ColoredBox` / gradient `Container` directly under a `Stack(fit: loose)` will not paint visibly.
+
+
+## Plan 24 — `showModalBottomSheet` clips landscape content unless `isScrollControlled: true` + inner `SingleChildScrollView`
+
+**Symptom:** Tap the player's 3-dot overflow menu in landscape — yellow-and-black RenderFlex-overflow stripes appear at the bottom of the sheet.  Console says `RenderFlex overflowed by 218 pixels on the bottom`.  Portrait works fine.
+
+**Root cause:** The default `showModalBottomSheet` caps its height at ~50% of the screen.  In landscape on a typical phone that's only ~240 px, much less than the natural height of the 8-tile vertical Column (Audio / Subs / Speed / Quality / Sleep / Cast / Tonemap / Group Watch + the drag pill + padding).  The Column tries to lay out at its natural height, blows past the 240 px cap, and overflows.
+
+**Fix:** pass `isScrollControlled: true` to `showModalBottomSheet` so the sheet can grow past 50% (up to roughly 90% of the screen), and wrap the inner Column in a `SingleChildScrollView` as a safety net so any remaining overflow on extra-short screens scrolls under the user's finger instead of striping.  See `_showOverflowMenu` in `flux_player_controls.dart`.
+
+**Rule going forward:** any bottom sheet that hosts more than ~3 tiles, OR is reachable in landscape mode, MUST use `isScrollControlled: true` + an inner scrollable.  The 50% cap is a footgun for any non-trivial sheet.  The cost of `isScrollControlled: true` for short sheets is zero — the sheet still sizes to its content; the flag just removes the cap.
 
 **Flagged in:** plan 21 M4 agent architectural finding.
