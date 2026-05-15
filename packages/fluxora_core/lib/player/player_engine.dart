@@ -1,11 +1,11 @@
 /// Abstract playback engine — the cubit and UI talk to this, NOT to
 /// `media_kit.Player` or `androidx.media3.exoplayer.ExoPlayer` directly.
 ///
-/// Plan 24 carves this interface out of the previous direct-to-
-/// `media_kit` shape so that:
+/// The interface keeps cubit and UI code engine-agnostic:
 ///
-/// 1. Android can switch to a Media3 ExoPlayer backend (M3+) without
-///    changing a single line of cubit or UI code.
+/// 1. Android can switch between a Media3 ExoPlayer backend and the
+///    libmpv-backed `media_kit` backend without changing a single line
+///    of cubit or UI code.
 /// 2. Desktop + iOS keep using `media_kit` (libmpv on desktop, AVPlayer
 ///    under media_kit_video on iOS).
 /// 3. Future engines (TVOS, web playback) can plug in by implementing
@@ -21,9 +21,9 @@ import 'package:fluxora_core/player/engine_error.dart';
 /// Playback engine contract.  Implementations:
 ///
 /// - [MediaKitEngine] — wraps a `media_kit.Player`.  Used on desktop,
-///   iOS, and on Android until the `ExoPlayerEngine` (M3) ships.
-/// - `ExoPlayerEngine` (Android, ships in M3) — talks to a Kotlin
-///   platform channel that owns a Media3 ExoPlayer.
+///   iOS, and as the fallback path on Android.
+/// - `ExoPlayerEngine` — talks to a Kotlin platform channel that owns
+///   a Media3 ExoPlayer.  Default Android backend.
 abstract class PlayerEngine {
   /// Open [url] for playback.  When [play] is true the engine starts
   /// playback as soon as the first frame is decodable; when false the

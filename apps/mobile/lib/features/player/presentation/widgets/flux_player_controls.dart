@@ -26,15 +26,15 @@ import 'package:fluxora_mobile/features/player/presentation/sheets/quality_sheet
 import 'package:fluxora_mobile/features/player/presentation/sheets/sleep_sheet.dart';
 import 'package:fluxora_mobile/features/player/presentation/sheets/speed_sheet.dart';
 
-// ── Animation timings (M14 polish spec) ────────────────────────────────────
+// ── Animation timings ──────────────────────────────────────────────────────
 // Named so the durations are auditable in one place rather than scattered
 // as magic ints.  All values come from `docs/11_design/mobile_redesign_plan.md`
-// §7 row M14: fade 250 ms, transport press 50 ms, ripple expand 400 ms.
+// §7: fade 250 ms, transport press 50 ms, ripple expand 400 ms.
 //
 // Exceptions intentionally NOT funnelled through these constants:
 //   * `_unlockHoldDuration = 1200ms` — hold-to-unlock affordance timing, not
-//     a fade.  Per plan §7 row M6 this is a deliberate UX hold, not a
-//     visual transition; keeping it as its own const inside the State.
+//     a fade.  This is a deliberate UX hold, not a visual transition;
+//     keeping it as its own const inside the State.
 //   * `_onVerticalDragEnd` 600 ms `Future.delayed` — delay before the drag
 //     HUD is cleared so the value lingers long enough for the operator to
 //     read it, not a fade duration.  Left as-is.
@@ -159,10 +159,9 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
 
   Future<void> _enterPip() async {
     // Source-pixel dimensions drive the PIP window aspect ratio.
-    // Today only the MediaKitEngine path exposes width/height directly;
-    // ExoPlayerEngine (M3+) will surface the same fields via its own
-    // state — until it does we fall back to a 16:9 default which is
-    // what PipService used pre-plan-24 when these were null anyway.
+    // Today only the MediaKitEngine path exposes width/height
+    // directly; other engines fall back to a 16:9 default (matches
+    // PipService's behaviour when these are null).
     int w = 16;
     int h = 9;
     final engine = widget.engine;
@@ -181,8 +180,8 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
   /// "secondary" controls — pickers (Audio / Subs / Speed / Quality /
   /// Sleep / Cast) plus the HDR tonemap toggle (when the source is HDR)
   /// and Group Watch (when the player_screen wired the callback).
-  /// Replaces the pre-2026-05-14 4x2 bottom-of-player grid which was
-  /// crowding the playback area on small phones.
+  /// Frees the bottom of the playback surface for the scrubber on
+  /// small phones.
   Future<void> _showOverflowMenu() async {
     final isHdr = widget.hdrFormat != null;
     final canTonemap = isHdr && widget.onTonemapChanged != null;
@@ -528,8 +527,8 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
       case Sheet.audioSubs:
         // `showFluxBottomSheet` builds in a separate overlay route whose
         // BuildContext doesn't include the PlayerCubit provider above
-        // this widget — plan 22 M4's `BlocBuilder<PlayerCubit>` inside
-        // the sheet threw ProviderNotFoundException on first open.
+        // this widget — a `BlocBuilder<PlayerCubit>` inside the sheet
+        // would throw ProviderNotFoundException on first open.
         // Capture the cubit here (where it IS in scope) and pass it
         // down via BlocProvider.value so the sheet's tree can read it.
         final playerCubit = context.read<PlayerCubit>();
@@ -695,10 +694,10 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                           // play/pause icon flips the instant the
                           // engine toggles state, instead of waiting
                           // for the next ambient setState (controller
-                          // auto-hide tick).  Pre-2026-05-14 the icon
-                          // read the playing snapshot once per build,
-                          // so a tap looked unresponsive until an
-                          // unrelated rebuild caught up.
+                          // auto-hide tick).  Reading the snapshot
+                          // once per build made taps look
+                          // unresponsive until an unrelated rebuild
+                          // caught up.
                           child: StreamBuilder<bool>(
                             stream: widget.engine.isPlayingStream,
                             initialData: widget.engine.isPlaying,
@@ -755,12 +754,12 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                       right: 0,
                       child: SafeArea(
                         top: false,
-                        // Bottom chrome now hosts only the scrubber —
-                        // the 4x2 quick-action grid was moved up into
-                        // the top-bar (Lock + Fit) and the 3-dot
-                        // overflow menu (Audio / Subs / Speed / Quality
-                        // / Sleep / Cast) on 2026-05-14 to keep the
-                        // playback surface visible on small phones.
+                        // Bottom chrome hosts only the scrubber.  The
+                        // 4x2 quick-action grid lives in the top-bar
+                        // (Lock + Fit) and the 3-dot overflow menu
+                        // (Audio / Subs / Speed / Quality / Sleep /
+                        // Cast) to keep the playback surface visible
+                        // on small phones.
                         child: FocusTraversalOrder(
                           order: const NumericFocusOrder(5),
                           child: PlayerProgressBar(
@@ -912,10 +911,8 @@ class PlayerTopBar extends StatelessWidget {
 
   final bool sleepActive;
 
-  /// Lock-controls entry point — moved here from the (now removed) 4x2
-  /// quick-action grid on 2026-05-14 to free up bottom screen real
-  /// estate during playback.  Locks chrome until the operator does a
-  /// 1.2 s hold-to-unlock at the bottom of the lock-mode overlay.
+  /// Lock-controls entry point.  Locks chrome until the operator does
+  /// a 1.2 s hold-to-unlock at the bottom of the lock-mode overlay.
   final VoidCallback onLock;
 
   /// Fit / Fill toggle entry point — same provenance as [onLock].
@@ -1097,7 +1094,7 @@ class PlayerCenterTransport extends StatelessWidget {
           // the current playback state.
           semanticLabel: isPlaying ? 'Pause' : 'Play',
           // Lands the keyboard / D-pad cursor on play-pause when chrome
-          // appears (M14 focus traversal spec).
+          // appears.
           autofocus: true,
         ),
         const SizedBox(width: 24),
@@ -1112,7 +1109,7 @@ class PlayerCenterTransport extends StatelessWidget {
   }
 }
 
-/// Transport circle button with a 50-ms press scale-down (M14 spec).
+/// Transport circle button with a 50-ms press scale-down.
 /// Stateful so the scale animation can run in response to tap-down /
 /// tap-up / tap-cancel without rebuilding the parent transport row on
 /// every press.
@@ -1211,11 +1208,10 @@ class PlayerProgressBar extends StatefulWidget {
   /// cubit can decide between in-player seek and server restart.
   final ValueChanged<Duration>? onSeekCommit;
 
-  /// Server-supplied source-time offset for the playlist's t=0
-  /// (streaming pipeline plan §16 scrubber-offset patch 2026-05-08).
-  /// Added to libmpv's reported position when displaying the scrubber
-  /// so the user sees source-time, not playlist-time, after a server-
-  /// side seek-restart has shifted the playlist.
+  /// Server-supplied source-time offset for the playlist's t=0.
+  /// Added to the engine's reported position when displaying the
+  /// scrubber so the user sees source-time, not playlist-time, after
+  /// a server-side seek-restart has shifted the playlist.
   final double playlistOffsetSec;
 
   /// True while the cubit is mid-server-restart.  When set, the
@@ -1237,16 +1233,14 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
   /// otherwise — the slider then renders the player's actual reported
   /// position via the StreamBuilder.
   ///
-  /// Pre-fix (2026-05-08 evening): the live `onChanged` callback called
-  /// `player.seek(targetPlayerMs)` continuously during drag for visual
-  /// preview.  When the user dragged forward past the current
-  /// playlist's apparent end (because the playlist starts at segment K
-  /// after a prior server-restart), the player-time clamp sent libmpv
-  /// to the playlist's end → scrubber jumped to max → reset to target
-  /// only after release fired the server-restart.  Operator-reported.
-  /// Local drag-state fixes it: during drag we only render the new
-  /// position, no player.seek; on release the cubit decides
-  /// in-player-vs-server-restart with the source-time target.
+  /// During drag we render the new position only — no engine.seek
+  /// call.  Calling engine.seek continuously during drag for visual
+  /// preview means a forward drag past the current playlist's
+  /// apparent end (because the playlist starts at segment K after a
+  /// prior server-restart) clamps to the playlist's end → scrubber
+  /// jumps to max → resets to target only after release fires the
+  /// server-restart.  On release the cubit decides in-player-vs-
+  /// server-restart using the source-time target.
   double? _dragValue;
 
   /// Holds the released drag value across the seek-commit window so
@@ -1269,8 +1263,8 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
   /// stream catches up — clearing the pin then renders a transient
   /// `oldPlayerPos + newOffset` over `newPlayerDur + newOffset` ratio
   /// that exceeds 1.0 and clamps the scrubber to the end of the track
-  /// for one paint, then settles.  Operator-reported "scrubber jumps
-  /// to end then comes back" after the §17 follow-on patch.
+  /// for one paint, then settles ("scrubber jumps to end then comes
+  /// back").
   double? _pendingValue;
   Timer? _pinFallbackTimer;
 
@@ -1349,17 +1343,16 @@ class _PlayerProgressBarState extends State<PlayerProgressBar> {
             //
             // Gate on PLAYER-duration (not source-duration) so the
             // settle check stays disarmed during the post-`open`
-            // transient under ExoPlayer (plan 24 M8).  ExoPlayer's
-            // Kotlin side only emits `durationChanged` once
-            // `STATE_READY` is reached; the Dart engine resets the
-            // cached duration to zero on `open` so `playerDur == 0`
-            // accurately signals "new playlist still preparing, the
-            // pendingMs math is using a stale-or-unknown total and
-            // would clear the pin prematurely against the wrong
-            // denominator".  libmpv's old behaviour matched this
-            // implicitly — `state.duration` resets to zero on
-            // `Player.open` and rises again only after the demuxer
-            // negotiates the new stream.
+            // transient under ExoPlayer.  ExoPlayer's Kotlin side
+            // only emits `durationChanged` once `STATE_READY` is
+            // reached; the Dart engine resets the cached duration to
+            // zero on `open` so `playerDur == 0` accurately signals
+            // "new playlist still preparing, the pendingMs math is
+            // using a stale-or-unknown total and would clear the pin
+            // prematurely against the wrong denominator".  libmpv
+            // matches this implicitly — `state.duration` resets to
+            // zero on `Player.open` and rises again only after the
+            // demuxer negotiates the new stream.
             if (_dragValue == null &&
                 _pendingValue != null &&
                 !widget.isSeeking &&
@@ -1528,20 +1521,20 @@ class PlayerQuickActions extends StatelessWidget {
   final ValueChanged<Sheet> onOpenSheet;
   final bool sleepActive;
 
-  /// Plan 22 — number of audio tracks the source container exposes,
-  /// surfaced from the cubit's `availableAudioTracks`.  When `<= 1`
-  /// the Audio quick-action greys out with a tooltip explaining why
-  /// (the picker would be empty / single-row).  Default `0` keeps the
-  /// action disabled when no `PlayerCubit` is above the widget (golden
+  /// Number of audio tracks the source container exposes, surfaced
+  /// from the cubit's `availableAudioTracks`.  When `<= 1` the Audio
+  /// quick-action greys out with a tooltip explaining why (the picker
+  /// would be empty / single-row).  Default `0` keeps the action
+  /// disabled when no `PlayerCubit` is above the widget (golden
   /// tests, widget previews).
   final int audioTrackCount;
 
   @override
   Widget build(BuildContext context) {
-    // 4x2 grid per plan §14 ("4x2 quick-control grid"). Two Rows of four
-    // Expanded cells fits at portrait widths (412 px) where the prior
-    // single 8-cell Row overflowed by ~111 px. Equal Expanded weights
-    // give the same spacing landscape and portrait, no MediaQuery branch.
+    // 4x2 quick-control grid.  Two Rows of four Expanded cells fits at
+    // portrait widths (412 px) where a single 8-cell Row overflowed by
+    // ~111 px.  Equal Expanded weights give the same spacing landscape
+    // and portrait, no MediaQuery branch.
     final audioDisabled = audioTrackCount <= 1;
     final row1 = [
       _Action(
@@ -1640,16 +1633,16 @@ class _Action extends StatelessWidget {
   final VoidCallback? onTap;
   final bool highlight;
 
-  /// Plan 22 — when true the action renders dimmed and skips its
-  /// InkWell `onTap`.  Currently driven by the Audio quick-action's
-  /// "≤ 1 audio track" gate.  Distinct from `onTap == null` so the
-  /// caller can pass both (the InkWell still mounts so the long-press
+  /// When true the action renders dimmed and skips its InkWell
+  /// `onTap`.  Currently driven by the Audio quick-action's "≤ 1
+  /// audio track" gate.  Distinct from `onTap == null` so the caller
+  /// can pass both (the InkWell still mounts so the long-press
   /// tooltip can fire on the disabled affordance).
   final bool disabled;
 
   /// Optional Material tooltip displayed on long-press / hover.  Used
-  /// by plan 22 to explain why the Audio action is greyed when the
-  /// source carries 0-or-1 audio tracks.
+  /// to explain why the Audio action is greyed when the source
+  /// carries 0-or-1 audio tracks.
   final String? tooltip;
 
   @override
@@ -1778,8 +1771,8 @@ class PlayerSideRail extends StatelessWidget {
 /// Double-tap seek ripple — expands from 0.4 → 1.0 over 400 ms with an
 /// `easeOut` curve, then is removed by the parent's `_rippleTimer`
 /// after the same duration.  Stateful so the animation runs once on
-/// mount instead of every parent rebuild.  Per plan §7 row M14 the
-/// ripple-expand timing target is 400 ms.
+/// mount instead of every parent rebuild.  The ripple-expand timing
+/// target is 400 ms per `docs/11_design/mobile_redesign_plan.md` §7.
 class _SeekRipple extends StatefulWidget {
   const _SeekRipple({required this.position, required this.isForward});
 

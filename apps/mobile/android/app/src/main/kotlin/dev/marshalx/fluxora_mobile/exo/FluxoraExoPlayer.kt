@@ -23,7 +23,7 @@ import io.flutter.view.TextureRegistry
 import java.io.IOException
 
 /**
- * Plan 24 M4 — per-player wrapper around a single Media3 [ExoPlayer].
+ * Per-player wrapper around a single Media3 [ExoPlayer].
  *
  * One instance owns:
  *   - the [ExoPlayer] itself,
@@ -50,7 +50,7 @@ internal class FluxoraExoPlayer(
     /**
      * Application context retained for the life of this player so the
      * Media3 [FluxoraMediaSessionService] can be started/stopped from
-     * the M7 lifecycle calls.  Strictly application-scoped — we never
+     * the lifecycle calls.  Strictly application-scoped — we never
      * store the Activity to avoid leaking it past Flutter detach.
      */
     private val appContext: Context = context.applicationContext
@@ -59,9 +59,9 @@ internal class FluxoraExoPlayer(
 
     /**
      * Backing [ExoPlayer].  Exposed via [exoPlayer] so the plugin's
-     * MediaSessionService (Plan 24 M7) can bind a [androidx.media3.session.
-     * MediaSession] against the currently-active player without having to
-     * reach through every command method individually.  Treat the
+     * MediaSessionService can bind a [androidx.media3.session.
+     * MediaSession] against the currently-active player without having
+     * to reach through every command method individually.  Treat the
      * accessor as a transitional escape hatch — same shape as
      * [MediaKitEngine.mediaKitPlayer] on the Dart side.
      */
@@ -134,8 +134,8 @@ internal class FluxoraExoPlayer(
                 }
             },
         )
-        // Bind the initial surface if it's already available — the M1
-        // spike confirmed this is the common case at construction time.
+        // Bind the initial surface if it's already available — the
+        // common case at construction time.
         val initialSurface = surfaceProducer.surface
         if (initialSurface != null) {
             try {
@@ -179,23 +179,22 @@ internal class FluxoraExoPlayer(
                     player.seekTo(startPositionMs)
                 }
                 player.playWhenReady = play
-                // Plan 24 M7 — hand the prepared player to the OS
-                // MediaSession so lockscreen / shade / Bluetooth-
-                // headset transport is owned natively.  The bind is
-                // idempotent across re-opens against the same player
-                // (this is the common case — `setTonemap` and the
-                // seek-restart path call `open` again with the same
-                // ExoPlayer instance).
+                // Hand the prepared player to the OS MediaSession so
+                // lockscreen / shade / Bluetooth-headset transport is
+                // owned natively.  The bind is idempotent across
+                // re-opens against the same player (this is the
+                // common case — `setTonemap` and the seek-restart
+                // path call `open` again with the same ExoPlayer
+                // instance).
                 try {
                     FluxoraMediaSessionService.bind(appContext, player)
                     // Apply a baseline "Fluxora" metadata so the
                     // lockscreen card never shows a blank title.  The
                     // Dart side does not pass per-file titles to the
-                    // open() bridge today (plan 24 M3 contract); a
-                    // future milestone can plumb the real file name
-                    // through to here.  Do NOT pass `url` — it embeds
-                    // bearer-tokenised paths on some routes (Hard
-                    // Prohibition #8).
+                    // open() bridge today; a future change can plumb
+                    // the real file name through to here.  Do NOT
+                    // pass `url` — it embeds bearer-tokenised paths
+                    // on some routes (Hard Prohibition #8).
                     FluxoraMediaSessionService.applyMetadata(null)
                 } catch (t: Throwable) {
                     Log.w(
@@ -313,10 +312,10 @@ internal class FluxoraExoPlayer(
         if (released) return
         released = true
         Log.i(TAG, "playerId=$playerId release — tearing down")
-        // Plan 24 M7 — detach the OS MediaSession BEFORE releasing the
-        // ExoPlayer so the session never holds a reference to a
-        // released player (Media3 would log a `Player.release()
-        // already called` warning otherwise).
+        // Detach the OS MediaSession BEFORE releasing the ExoPlayer
+        // so the session never holds a reference to a released player
+        // (Media3 would log a `Player.release() already called`
+        // warning otherwise).
         try {
             FluxoraMediaSessionService.unbind()
         } catch (t: Throwable) {
@@ -503,7 +502,7 @@ internal data class AudioMappingResult(
  * Walk a [Tracks] tree, pick out every audio [Format] across every
  * audio [TrackGroup], and assign each a source-stream index using
  * either the `Format.label` (if it parses as a non-negative integer
- * ordinal — that's how plan 22's server-side multiplexing labels its
+ * ordinal — that's how the server's multiplexed playlist labels its
  * audio tracks) or a positional fallback across all audio groups.
  *
  * Pure function so it's unit-testable on the host JVM without a real

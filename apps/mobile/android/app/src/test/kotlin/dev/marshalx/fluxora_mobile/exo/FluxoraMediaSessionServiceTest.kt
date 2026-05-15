@@ -4,7 +4,7 @@ import org.junit.After
 import org.junit.Test
 
 /**
- * Plan 24 M7 — pure JUnit smoke tests for the [FluxoraMediaSessionService]
+ * Pure JUnit smoke tests for the [FluxoraMediaSessionService]
  * companion API.
  *
  * The Android [android.app.Service] lifecycle cannot be exercised on the
@@ -15,7 +15,7 @@ import org.junit.Test
  * subsequent `open()` (which calls `bind` again) when the OS happened
  * to tear the service down between them.
  *
- * Real-device validation of the running-service path is part of M5/M6
+ * Real-device validation of the running-service path is part of
  * operator smoke testing — those scenarios cover the live lockscreen
  * card, swipe-to-dismiss behaviour, and Bluetooth-headset transport.
  */

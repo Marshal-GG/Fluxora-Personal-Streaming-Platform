@@ -15,10 +15,10 @@ import org.junit.Test
 import java.io.IOException
 
 /**
- * Plan 24 M4 — host-JVM unit tests for the pure helpers extracted from
- * [FluxoraExoPlayer].  Media3's [Tracks]/[TrackGroup]/[Format] types are
- * data-classes-with-a-builder; constructing them in a test is the same
- * pattern Media3's own `*Test` files use.
+ * Host-JVM unit tests for the pure helpers extracted from
+ * [FluxoraExoPlayer].  Media3's [Tracks]/[TrackGroup]/[Format] types
+ * are data-classes-with-a-builder; constructing them in a test is the
+ * same pattern Media3's own `*Test` files use.
  */
 class FluxoraExoPlayerTest {
 
@@ -184,7 +184,7 @@ class FluxoraExoPlayerTest {
     // require an android.net.Uri-backed DataSpec, which throws "Stub!" on
     // the host JVM unless we add Robolectric.  We exercise the network/io
     // branches via raw IOException causes instead, and rely on real-device
-    // smoke testing in M5+ for the 401/403 → auth_failed mapping.
+    // smoke testing for the 401/403 → auth_failed mapping.
 
     @Test
     fun `mapPlayerErrorCode reports network_error for raw IOException cause`() {

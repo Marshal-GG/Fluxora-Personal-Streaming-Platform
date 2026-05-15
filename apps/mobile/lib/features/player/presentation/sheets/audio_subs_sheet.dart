@@ -1,20 +1,19 @@
 /// Audio + subtitles bottom sheet — two-tab `FluxBottomSheet`.
 ///
-/// **Audio tab** (plan 22).  Lists the cubit's `availableAudioTracks`
-/// — the server-supplied source-stream metadata captured in
-/// `PlayerReady`.  Tapping a row dispatches
-/// `PlayerCubit.selectAudioTrack(index)` which switches the active
-/// audio track via the server-restart path (plan 23) — no client-side
-/// libmpv-only call.  When the cubit list is empty (pre-plan-22 server
-/// or single-track file) AND we're on the MediaKitEngine path, we fall
-/// back to reading media_kit's own track table — keeps the picker
-/// functional on stale clients and matches the pre-plan-22 behaviour.
+/// **Audio tab**.  Lists the cubit's `availableAudioTracks` — the
+/// server-supplied source-stream metadata captured in `PlayerReady`.
+/// Tapping a row dispatches `PlayerCubit.selectAudioTrack(index)`
+/// which switches the active audio track via the server-restart
+/// path — no client-side libmpv-only call.  When the cubit list is
+/// empty (older server omitting `audio_tracks`, or a single-track
+/// file) AND we're on the MediaKitEngine path, we fall back to
+/// reading media_kit's own track table — keeps the picker functional
+/// on older server builds.
 ///
 /// **Subtitles tab** — reads media_kit's track list directly via the
-/// engine's `mediaKitPlayer` escape hatch.  Subtitle plumbing is plan
-/// 24 M9's responsibility; the ExoPlayerEngine path will route through
-/// its own subtitle API at that point.  Until then this tab simply
-/// hides when running on a non-MediaKit engine.
+/// engine's `mediaKitPlayer` escape hatch.  On a non-MediaKit engine
+/// (ExoPlayerEngine and future engines) this tab hides until those
+/// engines plumb their own subtitle APIs through here.
 library;
 
 import 'package:flutter/material.dart';
@@ -37,9 +36,8 @@ class AudioSubsSheet extends StatefulWidget {
 class _AudioSubsSheetState extends State<AudioSubsSheet> {
   @override
   Widget build(BuildContext context) {
-    // libmpv-specific track tables — only readable on the MediaKitEngine
-    // path.  ExoPlayerEngine (M3+) exposes its own track list via M9's
-    // dedicated plumbing.  Falling through with empty lists when the
+    // libmpv-specific track tables — only readable on the
+    // MediaKitEngine path.  Falling through with empty lists when the
     // engine isn't MediaKit means subtitles + the legacy audio
     // fallback list quietly disappear; the cubit-driven audio path
     // still works because it reads `availableAudioTracks` from the
@@ -77,11 +75,11 @@ class _AudioSubsSheetState extends State<AudioSubsSheet> {
               height: 280,
               child: TabBarView(
                 children: [
-                  // Plan 22 — cubit-driven audio picker.  Falls back to
+                  // Cubit-driven audio picker.  Falls back to
                   // media_kit's own track table when the cubit hasn't
-                  // populated `availableAudioTracks` (pre-plan-22
-                  // server response or no active PlayerReady) — only
-                  // available on the MediaKitEngine path.
+                  // populated `availableAudioTracks` (older server
+                  // build, or no active PlayerReady) — only available
+                  // on the MediaKitEngine path.
                   BlocBuilder<PlayerCubit, PlayerState>(
                     builder: (context, state) {
                       if (state is PlayerReady &&
@@ -97,11 +95,12 @@ class _AudioSubsSheetState extends State<AudioSubsSheet> {
                           },
                         );
                       }
-                      // Fallback — pre-plan-22 server or no cubit
-                      // metadata yet.  Same behaviour as before plan 22:
-                      // read media_kit's own track table.  Hidden when
-                      // the engine isn't MediaKit (the cubit-driven
-                      // picker is the only supported path there).
+                      // Fallback — older server build (no
+                      // `audio_tracks` field) or no cubit metadata
+                      // yet.  Reads media_kit's own track table.
+                      // Hidden when the engine isn't MediaKit (the
+                      // cubit-driven picker is the only supported
+                      // path there).
                       if (mkEngine == null || tracks == null) {
                         return Center(
                           child: Text(
@@ -158,7 +157,7 @@ class _AudioSubsSheetState extends State<AudioSubsSheet> {
   }
 }
 
-/// Plan 22 — picker rows for cubit-driven `AudioTrackInfo` entries.
+/// Picker rows for cubit-driven `AudioTrackInfo` entries.
 /// Distinct from [_TrackList<AudioTrack>] because the cubit's
 /// `AudioTrackInfo` carries server-supplied metadata (codec, channels,
 /// language tag) and selection is by source-stream `index`, not by

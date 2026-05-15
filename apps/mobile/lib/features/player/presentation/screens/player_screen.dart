@@ -384,20 +384,17 @@ class _VideoView extends StatelessWidget {
   /// transcode).
   final bool isSeeking;
 
-  /// Source-time offset for the playlist's t=0 (streaming pipeline
-  /// plan §16 scrubber-offset patch).  Threaded down to the scrubber
-  /// in `FluxPlayerControls` so it displays source-time after a
-  /// server-side seek-restart instead of playlist-local time.
+  /// Source-time offset for the playlist's t=0.  Threaded down to the
+  /// scrubber in `FluxPlayerControls` so it displays source-time after
+  /// a server-side seek-restart instead of playlist-local time.
   final double playlistOffsetSec;
 
   @override
   Widget build(BuildContext context) {
-    // Plan 24 M2 — Option A: for the MediaKitEngine path keep using
-    // the `media_kit_video` `Video` widget so we don't lose its
-    // aspect-ratio / fit-mode handling during the spike phase.  The
-    // ExoPlayerEngine path (M3+) will render `Texture(textureId: id)`
-    // directly — a future patch swaps the branch below once that
-    // engine exists.  Technical debt: M4 unifies the rendering path.
+    // For the MediaKitEngine path keep using the `media_kit_video`
+    // `Video` widget so we don't lose its aspect-ratio / fit-mode
+    // handling.  Non-MediaKit engines render `Texture(textureId:
+    // id)` directly via [_EngineTextureSurface].
     final videoSurface = engine is MediaKitEngine
         ? Video(
             controller: (engine as MediaKitEngine).videoController,
@@ -439,9 +436,7 @@ class _VideoView extends StatelessWidget {
 /// future engines).  Reads `engine.textureId` on every build — the
 /// engine emits texture id changes through its own state machine, and
 /// this widget is rebuilt by the BlocBuilder above when `PlayerReady`
-/// is re-emitted with a new engine.  Plan 24 M3+ will likely upgrade
-/// this to a stream-based listener for finer-grained texture id
-/// changes, but for M2 the engine never re-issues a texture id.
+/// is re-emitted with a new engine.
 class _EngineTextureSurface extends StatelessWidget {
   const _EngineTextureSurface({required this.engine});
 

@@ -13,8 +13,8 @@ import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 
 /**
- * Plan 24 M7 — Media3 [MediaSessionService] that owns the OS-facing
- * [MediaSession] for the Android-ExoPlayer playback path.
+ * Media3 [MediaSessionService] that owns the OS-facing [MediaSession]
+ * for the Android-ExoPlayer playback path.
  *
  * Replaces the Dart-side `FluxoraAudioHandler` binding when
  * [FluxoraExoPlayer] (Media3) is the engine.  The `audio_service` Dart

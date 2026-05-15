@@ -1,8 +1,7 @@
-/// Plan 24 M3 — unit tests for [ExoPlayerEngine].  Stubs both the
-/// MethodChannel (Dart → Kotlin commands) and the EventChannel
-/// (Kotlin → Dart push) with `flutter_test`'s built-in mock messenger
-/// so we can exercise the Dart half of the engine without an Android
-/// platform side.
+/// Unit tests for [ExoPlayerEngine].  Stubs both the MethodChannel
+/// (Dart → Kotlin commands) and the EventChannel (Kotlin → Dart push)
+/// with `flutter_test`'s built-in mock messenger so we can exercise
+/// the Dart half of the engine without an Android platform side.
 library;
 
 import 'package:flutter/services.dart';

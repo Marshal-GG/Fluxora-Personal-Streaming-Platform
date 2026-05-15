@@ -685,12 +685,6 @@ class _StubRow extends StatelessWidget {
   }
 }
 
-// Note: the inline `_BackgroundPlaybackToggleRow` widget that lived here
-// (Phase 3 / Player polish, 2026-05-04) was lifted into the dedicated
-// PlaybackPrefsScreen at M3 of the settings remediation plan
-// (`docs/10_planning/archive/15_*.md`).  The toggle now lives at the new
-// `Routes.playbackPrefs` surface alongside the four other player prefs.
-
 class _PlanPill extends StatelessWidget {
   const _PlanPill({required this.label});
 
@@ -795,12 +789,9 @@ Future<void> _showAboutSheet(BuildContext context) async {
           FutureBuilder<String>(
             future: _readAppVersion(),
             builder: (_, snap) => Center(
-              // Plan 24 M1 — hidden long-press on the About-sheet
-              // version label routes to the ExoPlayer spike page.
-              // Invisible affordance: there's no ripple, no tooltip,
-              // no UI hint — the operator knows it exists because
-              // they (the human author of plan 24) put it here.
-              // Removed in M9.
+              // Hidden long-press on the About-sheet version label
+              // routes to the ExoPlayer spike page.  Invisible
+              // affordance — no ripple, no tooltip, no UI hint.
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onLongPress: () {

@@ -1,7 +1,6 @@
 /// Shared mocks for the mobile player golden tests.
 ///
-/// Plan 24 M2 — switched from mocking `media_kit.Player` to a small
-/// `FakePlayerEngine` that satisfies the [PlayerEngine] interface with
+/// `FakePlayerEngine` satisfies the [PlayerEngine] interface with
 /// deterministic position / duration values.  No native libmpv libs
 /// required — the engine never opens a real stream, just answers the
 /// getters and streams that the chrome widgets read.
@@ -52,10 +51,9 @@ class FakePlayerEngine implements PlayerEngine {
   @override
   int? get textureId => null;
 
-  // Streams: emit the seeded values once, then close.  Mirrors the
-  // pre-plan-24 behaviour where MockPlayer used `Stream.value(...)`
-  // so a `StreamBuilder.initialData -> first-event` transition lands
-  // inside one `pumpAndSettle`.
+  // Streams: emit the seeded values once, then close.  Uses
+  // `Stream.value(...)` so a `StreamBuilder.initialData -> first-event`
+  // transition lands inside one `pumpAndSettle`.
   @override
   Stream<Duration> get positionStream => Stream.value(position);
 
@@ -103,7 +101,7 @@ class FakePlayerEngine implements PlayerEngine {
   Future<void> dispose() async {}
 }
 
-/// Convenience constructor mirroring the pre-plan-24 `buildFakePlayer`.
+/// Convenience constructor for [FakePlayerEngine].
 FakePlayerEngine buildFakeEngine({
   required Duration position,
   required Duration duration,

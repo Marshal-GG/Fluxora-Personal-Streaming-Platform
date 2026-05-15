@@ -1,23 +1,21 @@
 // TODO(plan-24-M9): remove this dev spike page.
 //
-// Throwaway widget for Plan 24 M1 — validates the Android ExoPlayer
-// MethodChannel + SurfaceProducer plumbing end-to-end before we invest
-// in the `PlayerEngine` abstraction (M2) and the full Kotlin module
-// (M4).  No cubit, no DI, no routing chrome — just a hard-coded HLS URL
-// field, an Open button, and the returned texture.
+// Throwaway widget that validates the Android ExoPlayer MethodChannel
+// + SurfaceProducer plumbing end-to-end.  No cubit, no DI, no routing
+// chrome — just a hard-coded HLS URL field, an Open button, and the
+// returned texture.
 //
 // `debugPrint` is used (in violation of CLAUDE.md Hard Prohibition #3)
 // because this file lives under `lib/dev/` and is gated behind the
 // hidden `/dev/exo-spike` deep-link route below — production builds
-// never surface it, and the whole file is deleted in M9.  If the
-// project gains a globally-accessible `Logger` singleton between now
-// and then, swap `debugPrint` for that.
+// never surface it.  If the project gains a globally-accessible
+// `Logger` singleton, swap `debugPrint` for that.
 library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// Hidden dev route — Plan 24 M1.  Not surfaced in any navigation UI.
+/// Hidden dev route.  Not surfaced in any navigation UI.
 const String kExoSpikeRoute = '/dev/exo-spike';
 
 /// Default HLS test stream used when the operator opens the spike
@@ -101,7 +99,8 @@ class _ExoSpikePageState extends State<ExoSpikePage> {
     }
     final id = await _invoke<int>('open', <String, dynamic>{
       'url': url,
-      // M1 carries no real auth headers — M4 wires the bearer token.
+      // Spike carries no real auth headers — the cubit-driven engine
+      // path injects the bearer token via `PlayerEngine.open` headers.
       'headers': <String, String>{},
     });
     if (!mounted) return;
@@ -129,7 +128,7 @@ class _ExoSpikePageState extends State<ExoSpikePage> {
   Widget build(BuildContext context) {
     final tex = _textureId;
     return Scaffold(
-      appBar: AppBar(title: const Text('ExoPlayer spike (Plan 24 M1)')),
+      appBar: AppBar(title: const Text('ExoPlayer spike')),
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),

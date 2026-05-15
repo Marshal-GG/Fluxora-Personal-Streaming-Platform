@@ -15,20 +15,19 @@ class MockPlayerRepository extends Mock implements PlayerRepository {}
 
 class MockSecureStorage extends Mock implements SecureStorage {}
 
-/// Plan 24 M7 — recording stub used to assert that the cubit skips the
-/// Dart-side `FluxoraAudioHandler.bind` whenever the engine is not a
+/// Recording stub used to assert that the cubit skips the Dart-side
+/// `FluxoraAudioHandler.bind` whenever the engine is not a
 /// [MediaKitEngine] (ExoPlayerEngine / fakes / future native engines).
 /// On those paths Media3's `FluxoraMediaSessionService` owns the OS
 /// MediaSession natively and double-registering would surface two
 /// competing sessions.
 class _MockFluxoraAudioHandler extends Mock implements FluxoraAudioHandler {}
 
-/// In-memory [PlayerEngine] for cubit tests.  Plan 24 M2 carved the
-/// engine interface out of the cubit; the test build now substitutes
-/// this fake via [PlayerCubit.engineBuilder] so the cubit can reach
-/// `PlayerReady` without spinning up a real libmpv.  Mirrors the
-/// `FakePlayerEngine` golden-test helper (kept separate to avoid
-/// cross-importing test/goldens/ from test/features/).
+/// In-memory [PlayerEngine] for cubit tests.  Substituted via
+/// [PlayerCubit.engineBuilder] so the cubit can reach `PlayerReady`
+/// without spinning up a real libmpv.  Mirrors the `FakePlayerEngine`
+/// golden-test helper (kept separate to avoid cross-importing
+/// test/goldens/ from test/features/).
 class _FakePlayerEngine implements PlayerEngine {
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
@@ -36,8 +35,8 @@ class _FakePlayerEngine implements PlayerEngine {
   double _rate = 1.0;
   double _volume = 100.0;
 
-  /// Plan 24 M8 — test seam so the seek-restart tests can simulate the
-  /// engine's reported playhead BEFORE issuing the cubit-level seek.
+  /// Test seam so the seek-restart tests can simulate the engine's
+  /// reported playhead BEFORE issuing the cubit-level seek.
   /// Production code never calls this; it bypasses the engine's normal
   /// seek path (which would also push a position emission) so test
   /// arrange-act-assert can keep the position/duration state isolated.
@@ -45,8 +44,8 @@ class _FakePlayerEngine implements PlayerEngine {
     _position = value;
   }
 
-  /// Plan 24 M8 — test seam so the seek-restart tests can simulate the
-  /// engine reporting a non-zero playlist duration (needed for the
+  /// Test seam so the seek-restart tests can simulate the engine
+  /// reporting a non-zero playlist duration (needed for the
   /// `backwardInPlaylist` in-bounds check inside `PlayerCubit.seekTo`).
   void debugSetDuration(Duration value) {
     _duration = value;
@@ -54,8 +53,9 @@ class _FakePlayerEngine implements PlayerEngine {
 
   /// Recorded engine.seek() targets — the test harness asserts on this
   /// to prove the cubit took the in-player path vs. server-restart.
-  /// Includes both M8-test calls and any internal cubit-issued seeks
-  /// (e.g. the post-server-restart sub-segment seek).
+  /// Includes both seek-restart-test calls and any internal
+  /// cubit-issued seeks (e.g. the post-server-restart sub-segment
+  /// seek).
   final List<Duration> seekTargets = <Duration>[];
 
   /// True after dispose() returns — used by tests that assert the
@@ -199,15 +199,14 @@ void main() {
     when(() => secureStorage.getAuthToken()).thenAnswer((_) async => tToken);
     // Default to no server URL so the WebRTC path is skipped — the
     // tests don't exercise the signaling pipeline and stubbing this
-    // out keeps `startStream` deterministic.  Pre-plan-24 this was
-    // implicit because libmpv aborted earlier in the flow; with the
-    // FakePlayerEngine substituted by the test the cubit now reaches
-    // this null-check, so we need the explicit stub.
+    // out keeps `startStream` deterministic.  The FakePlayerEngine
+    // substituted by the test build lets the cubit reach this
+    // null-check, so the explicit stub is required.
     when(
       () => secureStorage.getServerUrl(),
     ).thenAnswer((_) async => null);
-    // Default off so existing startStream tests don't trip the Wi-Fi-only
-    // gate (settings remediation §M3 follow-up).
+    // Default off so existing startStream tests don't trip the
+    // Wi-Fi-only gate.
     when(
       () => secureStorage.getWifiOnlyStreaming(),
     ).thenAnswer((_) async => false);
@@ -221,8 +220,8 @@ void main() {
     when(
       () => repository.updateProgress(any(), any()),
     ).thenAnswer((_) async {});
-    // Plan 21 — default no-op so the watcher path can be exercised
-    // without throwing even when a test doesn't override it.
+    // Default no-op so the audio-fallback watcher path can be
+    // exercised without throwing when a test doesn't override it.
     when(
       () => repository.reportFallbackAudioTranscode(
         sessionId: any(named: 'sessionId'),
@@ -237,10 +236,10 @@ void main() {
     repository: repository,
     secureStorage: secureStorage,
     connectivityChecker: connectivityChecker,
-    // Plan 24 M2 — inject a fake engine so the cubit can reach
-    // `PlayerReady` without instantiating libmpv (which the headless
-    // test environment can't load).  Each test gets a fresh instance
-    // so a prior test's stream subscriptions don't carry over.
+    // Inject a fake engine so the cubit can reach `PlayerReady`
+    // without instantiating libmpv (which the headless test
+    // environment can't load).  Each test gets a fresh instance so a
+    // prior test's stream subscriptions don't carry over.
     engineBuilder: () async => _FakePlayerEngine(),
   );
 
@@ -348,7 +347,7 @@ void main() {
       expect: () => [isA<PlayerLoading>(), isA<PlayerFailure>()],
     );
 
-    // ── Group-gate 403 routing (M5, 2026-05-07) ───────────────────────────
+    // ── Group-gate 403 routing ────────────────────────────────────────────
     //
     // The mobile player must distinguish between three "no can do"
     // outcomes from /stream/start:
@@ -522,7 +521,7 @@ void main() {
       await cubit.close();
     });
 
-    // ── Wi-Fi-only enforcement (settings remediation §M3 follow-up) ──
+    // ── Wi-Fi-only enforcement ───────────────────────────────────────────
 
     test('startStream emits PlayerFailure when wifiOnly is on and connectivity '
         'is cellular-only', () async {
@@ -607,7 +606,7 @@ void main() {
       },
     );
 
-    // ── Streaming pipeline plan §16 — M1: server-side resume seek ──
+    // ── Server-side resume seek ───────────────────────────────────────────
 
     test('startStream forwards serverSeekSec to repository when provided '
         '(HDR-toggle / explicit-resume path)', () async {
@@ -651,11 +650,11 @@ void main() {
       await cubit.close();
     });
 
-    // ── Plan 21 — client-side audio decoding fallback ───────────────────
+    // ── Client-side audio decoding fallback ──────────────────────────────
     //
     // The auto-mode audio watcher runs only when BOTH
     // `streamingMode == 'auto'` AND `audioStreamingMode == 'stream-copy'`.
-    // Like plan 20's video watcher, the watcher arms AFTER `Player(...)`
+    // Like the video watcher, the audio watcher arms AFTER `Player(...)`
     // has been constructed, and the headless test environment cannot
     // instantiate libmpv — so the cubit never reaches the schedule call
     // (the catch path emits `PlayerFailure` first).  These tests still
@@ -665,12 +664,11 @@ void main() {
     //   2. `reportFallbackAudioTranscode` is NEVER invoked before
     //      Player init succeeds — proves the schedule call site is
     //      properly guarded inside the post-PlayerReady block, so a
-    //      future agent can't accidentally hoist it.
+    //      future change can't accidentally hoist it.
     // Detector behaviour itself (audio-tagged error matching, the 4 s
     // audioParams silence-watchdog, the 6 s outer window, cancel-on-
     // first-non-empty-audioParams) is verified by manual integration
-    // test on real device, matching how plan 20's video watcher is
-    // covered.
+    // test on real device, matching how the video watcher is covered.
 
     test(
       'StreamStartResponse.fromJson defaults audioStreamingMode to '
@@ -752,7 +750,7 @@ void main() {
       await cubit.close();
     });
 
-    // ── Plan 22 — multi-audio-track support ─────────────────────────────
+    // ── Multi-audio-track support ────────────────────────────────────────
     //
     // The Audio bottom-sheet picker reads the cubit's
     // `availableAudioTracks` (populated from the server's
@@ -761,17 +759,16 @@ void main() {
     //   1. The entity parses `audio_tracks` correctly (server contract
     //      surface).
     //   2. The entity defaults to `[]` when the server omits the key
-    //      — backward compat with pre-plan-22 servers (sharp edge #7).
+    //      — backward compat with older server builds.
     //   3. The cubit doesn't crash when populating
     //      `availableAudioTracks` — full `PlayerReady` emission can't
     //      be observed in a headless env because libmpv won't
-    //      instantiate, but the gating-only verification matches
-    //      plans 20 / 21.
+    //      instantiate, but the gating-only verification matches the
+    //      audio/video fallback watchers.
     //   4. `selectAudioTrack` is a no-op against `PlayerInitial` (and
-    //      doesn't throw).  Detector behaviour itself —
-    //      media_kit.setAudioTrack dispatch — needs a live Player and
-    //      is covered by manual real-device test like the plan 20/21
-    //      watchers.
+    //      doesn't throw).  Detector behaviour itself — engine
+    //      setAudioTrack dispatch — needs a live Player and is
+    //      covered by manual real-device test.
 
     test(
       'StreamStartResponse.fromJson parses audio_tracks from a 2-track array',
@@ -926,7 +923,7 @@ void main() {
       // refuses to load), so the guard at the top of the method has
       // to be the safety net.  This test pins it: a call against
       // `PlayerInitial` must not throw and must not invoke the
-      // repository (no server round-trip per plan 22).
+      // repository.
       final cubit = buildCubit();
       await cubit.selectAudioTrack(1);
 
@@ -935,16 +932,15 @@ void main() {
       await cubit.close();
     });
 
-    // ── Plan 24 M8 — seek-restart loop through PlayerEngine ───────────
+    // ── Seek-restart loop through PlayerEngine ────────────────────────
     //
-    // M8 is the verification + targeted-fix milestone that confirms the
-    // existing seek paths (in-player vs. server-restart, the back-out-of-
-    // playlist routing, the eager `isSeeking` flag flip for the scrubber
-    // pin) all route through the new `PlayerEngine` abstraction and stay
-    // engine-agnostic.  These tests exercise the cubit's decision tree
-    // end-to-end against the `_FakePlayerEngine` so the same logic works
-    // unchanged under `MediaKitEngine` (desktop+iOS) and `ExoPlayerEngine`
-    // (Android).
+    // Confirms the seek paths (in-player vs. server-restart, the
+    // back-out-of-playlist routing, the eager `isSeeking` flag flip
+    // for the scrubber pin) all route through the `PlayerEngine`
+    // abstraction and stay engine-agnostic.  These tests exercise the
+    // cubit's decision tree end-to-end against the
+    // `_FakePlayerEngine` so the same logic works unchanged under
+    // `MediaKitEngine` (desktop+iOS) and `ExoPlayerEngine` (Android).
     //
     // Each test drives the cubit through `startStream` → sets the fake
     // engine's reported playhead/duration to simulate the playlist
@@ -988,8 +984,8 @@ void main() {
           () => repository.startStream(tFileId),
         ).thenAnswer((_) async => offsetResponse);
         // Server-restart returns a snapped seek value the cubit should
-        // store as the new playlistOffsetSec.  Plan 17 §10 — the server
-        // floors to a segment boundary; here we mimic a 60 s snap.
+        // store as the new playlistOffsetSec.  The server floors to a
+        // segment boundary; here we mimic a 60 s snap.
         when(
           () => repository.seekStream(
             tSessionId,
@@ -1133,7 +1129,7 @@ void main() {
         // Player-time 120 s = source-time 125 s; target 90 s source =
         // player-target 85 s, comfortably inside [0, playerDur].  This
         // is the canonical "I jumped back inside what's already cached"
-        // path that plan 17 §10's follow-on left untouched.
+        // path.
         fakeEngine
           ..debugSetPosition(const Duration(seconds: 120))
           ..debugSetDuration(const Duration(minutes: 30));

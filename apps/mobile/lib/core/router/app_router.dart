@@ -138,10 +138,10 @@ abstract class Routes {
   static String detail(String id) => '/detail/$id';
   static String episodes(String id) => '/episodes/$id';
 
-  /// Plan 24 M1 — hidden ExoPlayer spike route.  Not surfaced in any
-  /// visible navigation; the operator pushes it via
-  /// `context.go('/dev/exo-spike')` (or a future hidden long-press
-  /// affordance).  Deleted in M9 along with the spike page itself.
+  /// Hidden ExoPlayer spike route.  Not surfaced in any visible
+  /// navigation; the operator pushes it via
+  /// `context.go('/dev/exo-spike')` (or via the hidden long-press
+  /// affordance on the About sheet's version label).
   static const String devExoSpike = kExoSpikeRoute;
 }
 
@@ -171,7 +171,7 @@ void setupRouterUnauthorizedBridge() {
   });
 }
 
-/// M14 polish — 250 ms fade page-transition (mobile redesign plan §7).
+/// 250 ms fade page-transition (mobile redesign plan §7).
 ///
 /// Every top-level route (and every deep-link route outside the shell)
 /// uses this helper so route pushes feel like Apple's Photos / Plex —
@@ -425,9 +425,10 @@ final GoRouter appRouter = GoRouter(
         child: DetailScreen(id: state.pathParameters['id']!),
       ),
     ),
-    // Plan 24 M1 — hidden ExoPlayer spike.  Not referenced from any
-    // visible UI; the operator navigates by `go('/dev/exo-spike')`
-    // from a debug console or hot-reload hook.  Removed in M9.
+    // Hidden ExoPlayer spike.  Not referenced from any visible UI;
+    // the operator navigates by `go('/dev/exo-spike')` from a debug
+    // console or via the hidden long-press affordance on the About
+    // sheet's version label.
     GoRoute(
       path: Routes.devExoSpike,
       pageBuilder: (context, state) => _fadePage(
@@ -458,8 +459,8 @@ Future<String?> _guardRedirect(
       state.matchedLocation == Routes.pairing ||
       state.matchedLocation == Routes.reconnect ||
       state.matchedLocation == Routes.scanQr ||
-      // Plan 24 M1 — hidden dev spike route bypasses auth so the
-      // operator can reach it from a fresh install.  Removed in M9.
+      // Hidden dev spike route bypasses auth so the operator can
+      // reach it from a fresh install.
       state.matchedLocation == Routes.devExoSpike;
   final isAuthenticated = token != null && serverUrl != null;
 

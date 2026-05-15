@@ -40,23 +40,21 @@ class PlayerReady extends PlayerState {
   final String sessionId;
   final String fileName;
 
-  /// Plan 24 — the active playback engine.  Was previously a raw
-  /// `media_kit.Player` + `VideoController` pair; refactored to the
-  /// shared [PlayerEngine] abstraction so the rest of the player
-  /// code doesn't depend on which backend (libmpv vs. Media3) is
-  /// running underneath.  For the MediaKitEngine path the embedded
-  /// `Player` + `VideoController` are reachable via the engine's
-  /// own typed accessors (`mediaKitPlayer` / `videoController`) —
-  /// transitional escape hatches that disappear when the remaining
-  /// libmpv-specific call sites (audio_service binding, subtitle
-  /// picker) move to platform-agnostic equivalents (M7+).
+  /// The active playback engine.  Routes through the shared
+  /// [PlayerEngine] abstraction so the rest of the player code
+  /// doesn't depend on which backend (libmpv vs. Media3) is running
+  /// underneath.  For the MediaKitEngine path the embedded `Player`
+  /// + `VideoController` are reachable via the engine's own typed
+  /// accessors (`mediaKitPlayer` / `videoController`) — transitional
+  /// escape hatches that disappear when the remaining libmpv-specific
+  /// call sites (audio_service binding, subtitle picker) move to
+  /// platform-agnostic equivalents.
   final PlayerEngine engine;
 
   /// The position the player was seeked to on open (0 = fresh start).
   final double resumeSec;
 
-  /// Server-supplied source-time offset for the playlist's t=0
-  /// (streaming pipeline plan §16 scrubber-offset patch 2026-05-08).
+  /// Server-supplied source-time offset for the playlist's t=0.
   ///
   /// When `start_stream` / `restart_stream` snap the requested seek to
   /// a segment boundary (`floor(seek / hls_time) * hls_time`), the
@@ -91,18 +89,18 @@ class PlayerReady extends PlayerState {
   /// explain.
   final bool isSeeking;
 
-  /// Plan 22 — every audio track exposed by the source container, as
-  /// returned by `/stream/start`.  Drives the Audio bottom-sheet
-  /// picker.  Empty list (pre-plan-22 server) means the picker greys
-  /// out; single-entry list also greys out per behavior matrix ("UI
-  /// hides picker when only one track").
+  /// Every audio track exposed by the source container, as returned
+  /// by `/stream/start`.  Drives the Audio bottom-sheet picker.  An
+  /// empty list (older server that omits `audio_tracks`) means the
+  /// picker greys out; single-entry list also greys out ("UI hides
+  /// picker when only one track").
   final List<AudioTrackInfo> availableAudioTracks;
 
-  /// Plan 22 — the source stream index (`AudioTrackInfo.index`) of the
-  /// currently-selected audio track.  Defaults to 0 — FFmpeg's first
-  /// audio track, which matches the server's "default track 0" rule.
+  /// Source stream index (`AudioTrackInfo.index`) of the currently-
+  /// selected audio track.  Defaults to 0 — FFmpeg's first audio
+  /// track, which matches the server's "default track 0" rule.
   /// Updated via [PlayerCubit.selectAudioTrack].  Per-session only —
-  /// next playback resets to 0 (sharp edge #4).
+  /// next playback resets to 0.
   final int selectedAudioTrackIndex;
 
   /// True when the source is HDR.  Convenience alias.
@@ -110,8 +108,8 @@ class PlayerReady extends PlayerState {
 
   /// Flutter texture id the player screen should embed.  For the
   /// MediaKitEngine path this round-trips through
-  /// `VideoController.id.value`; for the future ExoPlayerEngine path
-  /// it's the `SurfaceProducer`-issued id.  Null while the engine is
+  /// `VideoController.id.value`; for the ExoPlayerEngine path it's
+  /// the `SurfaceProducer`-issued id.  Null while the engine is
   /// initialising.
   int? get textureId => engine.textureId;
 

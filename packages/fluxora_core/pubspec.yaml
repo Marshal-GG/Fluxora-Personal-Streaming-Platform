@@ -19,8 +19,8 @@ dependencies:
   equatable: ^2.0.8
   flutter_svg: ^2.2.4
   cached_network_image: ^3.4.1
-  # Plan 24 — `MediaKitEngine` lives in this package so desktop + iOS
-  # (and Android pre-ExoPlayer-rollout) can share one Dart-side player
+  # `MediaKitEngine` lives in this package so desktop + iOS (and the
+  # Android libmpv fallback path) can share one Dart-side player
   # abstraction.  Native libmpv binaries themselves are bundled by the
   # consuming app via `media_kit_libs_video` to keep this package free
   # of platform-specific binary deps.

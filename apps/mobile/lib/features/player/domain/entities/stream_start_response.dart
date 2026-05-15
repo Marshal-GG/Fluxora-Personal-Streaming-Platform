@@ -1,9 +1,9 @@
-/// Per-audio-track metadata returned by the server in `/stream/start`
-/// (plan 22 §Server changes).  Each track is one entry in the source
-/// container; the operator picks one via the Audio bottom-sheet and the
-/// client tells media_kit to switch via `Player.setAudioTrack`.  No
-/// server round-trip — server multiplexes every track in the fmp4 init
-/// segment + segments, the picker is purely client-side.
+/// Per-audio-track metadata returned by the server in `/stream/start`.
+/// Each track is one entry in the source container; the operator picks
+/// one via the Audio bottom-sheet and the client tells the engine to
+/// switch.  The server multiplexes every track in the fmp4 init
+/// segment + segments, so the picker is purely client-side on engines
+/// that support mid-stream track switching.
 ///
 /// JSON shape (server-side `AudioTrackInfo` model):
 ///   { "index": int, "codec": str, "language": str?, "title": str?,
@@ -175,10 +175,9 @@ class StreamStartResponse {
   /// Segment-aligned seek position FFmpeg actually started at — equals
   /// `floor(resumeSec / hls_time) * hls_time`.  The playlist's t=0
   /// corresponds to this source-time, NOT to t=0 of the file.  The
-  /// cubit stores this as `_playlistOffsetSec` and adds it to libmpv's
-  /// reported position when rendering the scrubber so the user sees
-  /// source-time, not playlist-time (streaming pipeline plan §16
-  /// scrubber-offset patch 2026-05-08).
+  /// cubit stores this as `_playlistOffsetSec` and adds it to the
+  /// engine's reported position when rendering the scrubber so the
+  /// user sees source-time, not playlist-time.
   final double appliedSeekSec;
 
   /// Source HDR format from ffprobe at scan time:
@@ -192,30 +191,30 @@ class StreamStartResponse {
   /// is HDR).  Drives the toggle's on/off state in the player UI.
   final bool tonemapped;
 
-  /// Plan 20 — the operator's effective `streaming_mode` setting for
-  /// this session.  Mobile uses it to decide whether to arm the
+  /// The operator's effective `streaming_mode` setting for this
+  /// session.  Mobile uses it to decide whether to arm the
   /// auto-fallback watcher: only `'auto'` may trigger a fallback POST.
   /// Strict `'client-decode'` and `'server-transcode'` sessions ignore
   /// decode errors and surface them to the user as a normal failure.
   final String streamingMode;
 
-  /// Plan 21 — server's effective audio-streaming decision for this
-  /// session: `'stream-copy'` when the source audio codec is on the
-  /// client allowlist (`{aac, ac3, eac3, opus, flac}` minus the
-  /// per-client audio-codec blocklist), `'transcode'` otherwise.  Only
+  /// Server's effective audio-streaming decision for this session:
+  /// `'stream-copy'` when the source audio codec is on the client
+  /// allowlist (`{aac, ac3, eac3, opus, flac}` minus the per-client
+  /// audio-codec blocklist), `'transcode'` otherwise.  Only
   /// meaningful when [streamingMode] is `'auto'` — the audio fallback
   /// watcher arms exclusively for `auto + stream-copy`.  Defaults to
-  /// `'transcode'` so older servers (pre-plan-21) and any session that
+  /// `'transcode'` so older server builds and any session that
   /// already re-encodes audio never trigger an audio-fallback POST.
   final String audioStreamingMode;
 
-  /// Plan 22 — every audio track in the source file's container,
-  /// returned alongside `/stream/start` so the mobile picker can list
-  /// them without re-probing.  Defaults to `[]` for backward compat
-  /// with pre-plan-22 servers: the Audio quick-action greys out when
-  /// the list has 0-or-1 entries.  Track 0 is the default selection;
-  /// the operator picks a different one via the picker which dispatches
-  /// `Player.setAudioTrack` — no server round-trip.
+  /// Every audio track in the source file's container, returned
+  /// alongside `/stream/start` so the mobile picker can list them
+  /// without re-probing.  Defaults to `[]` when the server omits the
+  /// `audio_tracks` field (older server builds); the Audio
+  /// quick-action greys out when the list has 0-or-1 entries.  Track
+  /// 0 is the default selection; the operator picks a different one
+  /// via the picker.
   final List<AudioTrackInfo> audioTracks;
 
   factory StreamStartResponse.fromJson(Map<String, dynamic> json) =>
@@ -237,8 +236,8 @@ class StreamStartResponse {
   /// they always are, but a future server-side bug shouldn't crash the
   /// player) and entries missing required scalar keys (the `as int` /
   /// `as String` casts inside `AudioTrackInfo.fromJson` would throw
-  /// otherwise).  Missing key → empty list, matching the pre-plan-22
-  /// default for backward compat.
+  /// otherwise).  Missing key → empty list, matching the default for
+  /// older server builds that omit the field.
   static List<AudioTrackInfo> _parseAudioTracks(Object? raw) {
     if (raw is! List) return const [];
     final out = <AudioTrackInfo>[];

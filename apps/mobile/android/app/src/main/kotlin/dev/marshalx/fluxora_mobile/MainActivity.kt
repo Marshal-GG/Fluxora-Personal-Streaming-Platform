@@ -16,7 +16,6 @@ import io.flutter.plugin.common.MethodChannel
 // hook is needed — the engine releases the plugin (and the plugin
 // releases its ExoPlayer + SurfaceProducer) when the engine tears down.
 
-// Player polish round (2026-05-04):
 // - `FlutterFragmentActivity` (vs `FlutterActivity`) gives us fragment
 //   hosting if any future plugin needs it.  Drop-in replacement otherwise.
 // - `provideFlutterEngine` is overridden to return the engine cached by
@@ -40,7 +39,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // ── ExoPlayer plugin (Plan 24 M4) ────────────────────────────────────
+        // ── ExoPlayer plugin ────────────────────────────────────────────────
         // Standard FlutterPlugin registration.  The engine drives
         // onAttachedToEngine / onDetachedFromEngine which in turn
         // manage the MethodChannel + EventChannel + ExoPlayer lifecycle.
@@ -77,12 +76,12 @@ class MainActivity : FlutterFragmentActivity() {
         }
 
         // ── Picture-in-Picture ──────────────────────────────────────────────
-        // Player polish round (2026-05-04).  Dart side posts the source
-        // video's intrinsic width/height — we wrap that in a Rational and
-        // hand it to the system's PIP API.  Aspect ratios outside Android's
-        // accepted range (≈[0.4, 2.4]) are clamped to a safe value so the
-        // call never throws.  Pre-Android 8.0 has no PIP at all; we report
-        // unsupported so the Dart layer can hide the button.
+        // Dart side posts the source video's intrinsic width/height — we
+        // wrap that in a Rational and hand it to the system's PIP API.
+        // Aspect ratios outside Android's accepted range (≈[0.4, 2.4]) are
+        // clamped to a safe value so the call never throws.  Pre-Android
+        // 8.0 has no PIP at all; we report unsupported so the Dart layer
+        // can hide the button.
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "dev.marshalx.fluxora/pip",
@@ -144,7 +143,7 @@ class MainActivity : FlutterFragmentActivity() {
         multicastLock?.takeIf { it.isHeld }?.release()
         // ExoPlayerPlugin is released by the FlutterEngine via its
         // onDetachedFromEngine callback — no Activity-side teardown
-        // needed (cf. Plan 24 M4 wiring above).
+        // needed.
         super.onDestroy()
     }
 }

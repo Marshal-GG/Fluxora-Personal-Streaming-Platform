@@ -1,14 +1,11 @@
 /// `MediaKitEngine` — concrete [PlayerEngine] backed by a libmpv-based
 /// `media_kit.Player` + `VideoController`.  Used on desktop and iOS
-/// platforms today, and on Android until the `ExoPlayerEngine` (M3)
-/// ships.
+/// platforms, and as the fallback path on Android.
 ///
-/// Plan 24 M2 — this class is a no-op refactor of the previous direct
-/// `media_kit.Player` usage in `PlayerCubit`.  Every behaviour the
-/// cubit relied on (buffer-size config, the Android-only
-/// `ao=audiotrack` libmpv property override, VideoController
-/// construction) lives here now so the cubit can talk to one
-/// abstraction without caring which engine is underneath.
+/// Every libmpv-specific behaviour the cubit needs (buffer-size config,
+/// the Android-only `ao=audiotrack` libmpv property override,
+/// VideoController construction) lives here so the cubit can talk to
+/// one abstraction without caring which engine is underneath.
 library;
 
 import 'dart:async';
@@ -21,10 +18,10 @@ import 'package:media_kit_video/media_kit_video.dart' show VideoController;
 import 'package:fluxora_core/player/engine_error.dart';
 import 'package:fluxora_core/player/player_engine.dart';
 
-/// libmpv demuxer cache cap (streaming pipeline plan §16 M3).  Default
-/// is 32 MB which gates first-frame latency on 3-5 segments worth of
-/// readahead — visible to the user as a "Loading…" spinner of 18-30 s
-/// on transcode sessions.  4 MB still buffers ~3 segments at typical
+/// libmpv demuxer cache cap.  Default is 32 MB which gates first-frame
+/// latency on 3-5 segments worth of readahead — visible to the user as
+/// a "Loading…" spinner of 18-30 s on transcode sessions.  4 MB still
+/// buffers ~3 segments at typical
 /// 1080p HEVC bitrate (≈8 Mbps) but lets playback start as soon as
 /// libmpv has decoded the first segment's first GOP.  Trade-off: a
 /// >2 s network stall mid-playback will rebuffer instead of riding
@@ -59,10 +56,9 @@ class MediaKitEngine implements PlayerEngine {
   /// applies the Android-only `ao=audiotrack` libmpv property override
   /// before any media is opened (so libmpv picks it on first init).
   ///
-  /// Carry-over from the pre-plan-24 cubit constructor — see the long
-  /// rationale inline below.  Best-effort: a failure to set the
-  /// property logs and falls back to the default `opensles` AO, which
-  /// is the same behaviour as before this override existed.
+  /// Best-effort: a failure to set the property logs and falls back to
+  /// the default `opensles` AO.  See the rationale inline below for
+  /// why the override exists.
   static Future<MediaKitEngine> create() async {
     final player = mk.Player(
       configuration: const mk.PlayerConfiguration(
@@ -73,8 +69,7 @@ class MediaKitEngine implements PlayerEngine {
     // Core audio-output fix for Android: switch libmpv from the
     // default `opensles` AO to `audiotrack`.  Symptoms with the
     // OpenSL ES backend on Oplus/OnePlus (and likely other vendor
-    // skins) — every one of these visible in operator debug logs
-    // 2026-05-14/15:
+    // skins):
     //   * `libOpenSLES: Emulating old channel mask behavior` on
     //     every track init — channel mask negotiation broken, falls
     //     back to stereo regardless of source channel count.
@@ -139,16 +134,15 @@ class MediaKitEngine implements PlayerEngine {
   /// subtitle-track picker, the speed sheet's track-list fallback in
   /// `AudioSubsSheet`).  Treat this as a transitional escape hatch —
   /// it disappears when those callers move to platform-agnostic
-  /// equivalents (plan 24 M7+).
+  /// equivalents.
   mk.Player get mediaKitPlayer => _player;
 
   /// The `VideoController` paired with [_player].  The
-  /// `media_kit_video` `Video` widget consumes this directly; per plan
-  /// 24 M2 "Option A" the player screen keeps using `Video` for the
-  /// MediaKitEngine path rather than rendering a raw `Texture` widget,
-  /// because `Video` carries the aspect-ratio / fit-mode logic.  The
-  /// ExoPlayerEngine path (M3+) renders [Texture(textureId: id)]
-  /// directly.
+  /// `media_kit_video` `Video` widget consumes this directly.  The
+  /// player screen keeps using `Video` for the MediaKitEngine path
+  /// rather than rendering a raw `Texture` widget, because `Video`
+  /// carries the aspect-ratio / fit-mode logic.  The ExoPlayerEngine
+  /// path renders [Texture(textureId: id)] directly.
   VideoController get videoController => _videoController;
 
   // ── PlayerEngine — commands ──────────────────────────────────────
@@ -181,14 +175,11 @@ class MediaKitEngine implements PlayerEngine {
   /// match.  Worst-case (no match) we log and leave the engine alone
   /// rather than crashing.
   ///
-  /// Plan 22's cubit-level switching had a more elaborate mapping
-  /// that we deliberately don't replicate here — plan 23 then moved
-  /// to server-restart switching for libmpv-on-Android (see cubit
-  /// `selectAudioTrack`).  This method is the fallback for callers
-  /// that want pure client-side switching on a backend where it
-  /// works (desktop libmpv).  The cubit on Android currently routes
-  /// through server-restart and never calls this; future ExoPlayer
-  /// engine will use its own TrackSelectionParameters path.
+  /// This method is the fallback for callers that want pure
+  /// client-side switching on a backend where it works (desktop
+  /// libmpv).  The cubit on Android currently routes through
+  /// server-restart and never calls this; the ExoPlayer engine uses
+  /// its own TrackSelectionParameters path.
   @override
   Future<void> setAudioTrack(int trackIndex) async {
     final tracks = _player.state.tracks.audio;

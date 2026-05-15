@@ -1,8 +1,7 @@
 /// `ExoPlayerEngine` — concrete [PlayerEngine] backed by a Media3
 /// ExoPlayer instance owned by Kotlin code on the Android platform
-/// side.  Plan 24 M3 — the Dart half of the migration; the Kotlin half
-/// lands in M4.  The two communicate over two `flutter/services`
-/// channels:
+/// side.  The Dart and Kotlin halves communicate over two
+/// `flutter/services` channels:
 ///
 ///   * `MethodChannel`  `dev.marshalx.fluxora/exo_player`
 ///     — Dart → Kotlin commands (`create`, `open`, `play`, `pause`,
@@ -12,8 +11,7 @@
 ///
 ///   * `EventChannel` `dev.marshalx.fluxora/exo_player_events`
 ///     — Kotlin → Dart push.  Every event payload starts with the
-///       `playerId` field so listeners can demultiplex.  See the
-///       payload spec in plan 24 M3.
+///       `playerId` field so listeners can demultiplex.
 ///
 /// This engine never imports anything from `media_kit` — it talks only
 /// to the platform channels, so it works on host-test runs (where the
@@ -29,11 +27,11 @@ import 'package:logger/logger.dart';
 import 'package:fluxora_core/player/engine_error.dart';
 import 'package:fluxora_core/player/player_engine.dart';
 
-/// Method-channel namespace.  Must match the Kotlin side (plan 24 M4).
+/// Method-channel namespace.  Must match the Kotlin side.
 @visibleForTesting
 const String kExoPlayerMethodChannel = 'dev.marshalx.fluxora/exo_player';
 
-/// Event-channel namespace.  Must match the Kotlin side (plan 24 M4).
+/// Event-channel namespace.  Must match the Kotlin side.
 @visibleForTesting
 const String kExoPlayerEventChannel = 'dev.marshalx.fluxora/exo_player_events';
 
@@ -236,8 +234,8 @@ class ExoPlayerEngine implements PlayerEngine {
     );
   }
 
-  /// Plan 24 M3 — the locked Kotlin → Dart error code vocabulary.  Any
-  /// other string lands in [EngineError.generic] with the original code
+  /// The locked Kotlin → Dart error code vocabulary.  Any other
+  /// string lands in [EngineError.generic] with the original code
   /// preserved on [EngineErrorEvent.cause] for diagnostic logging.
   static EngineError _mapErrorCode(String code) {
     switch (code) {
@@ -270,36 +268,35 @@ class ExoPlayerEngine implements PlayerEngine {
     bool play = true,
   }) async {
     // Reset cached state to "fresh source" semantics BEFORE issuing the
-    // channel call (plan 24 M8).  libmpv's `Player.open` clears
-    // `state.position` / `state.duration` to zero as a side effect; the
-    // Kotlin ExoPlayer side has no analogous "everything-resets-now"
-    // event — it deduplicates `durationChanged` (only fires on
-    // `STATE_READY` when the new duration differs from the last
-    // emitted) and doesn't synthesise a position-zero discontinuity on
-    // `stop()` + `clearMediaItems()`.  Without this reset, the Dart
-    // caches keep the *previous* playlist's position + duration while
-    // the new one is preparing — observable as a transient where the
-    // scrubber renders `oldPlayerPos + newOffsetMs` over
-    // `oldPlayerDur + newOffsetMs`, exactly the libmpv post-restart
-    // visual we already pinned the scrubber against (plan 17 §10 fix,
-    // 2026-05-09).
+    // channel call.  libmpv's `Player.open` clears `state.position` /
+    // `state.duration` to zero as a side effect; the Kotlin ExoPlayer
+    // side has no analogous "everything-resets-now" event — it
+    // deduplicates `durationChanged` (only fires on `STATE_READY` when
+    // the new duration differs from the last emitted) and doesn't
+    // synthesise a position-zero discontinuity on `stop()` +
+    // `clearMediaItems()`.  Without this reset, the Dart caches keep
+    // the *previous* playlist's position + duration while the new one
+    // is preparing — observable as a transient where the scrubber
+    // renders `oldPlayerPos + newOffsetMs` over `oldPlayerDur +
+    // newOffsetMs`, the same shape the scrubber is already pinned
+    // against on the libmpv path.
     //
     // Resetting + emitting matches the contract `MediaKitEngine` gets
     // for free via libmpv state-reset.  The pin-hold logic in
-    // `PlayerProgressBar` gates its settle check on `playerDur > 0`
-    // (see the M8 widget test): while we're in the open→STATE_READY
-    // transient the pin stays held to the user's release value, then
-    // clears once the Kotlin side emits the new `durationChanged`.
+    // `PlayerProgressBar` gates its settle check on `playerDur > 0`:
+    // while we're in the open→STATE_READY transient the pin stays
+    // held to the user's release value, then clears once the Kotlin
+    // side emits the new `durationChanged`.
     _position = Duration.zero;
     _duration = Duration.zero;
     _positionController.add(_position);
     _durationController.add(_duration);
 
     // The cubit drives all seek decisions via [seek]; `open` always
-    // starts at position 0 unless the cubit later issues a seek.  Plan
-    // 24's locked contract allows the Kotlin side to honour a
-    // `startPositionMs` for future use, but today the Dart side does
-    // not need it.
+    // starts at position 0 unless the cubit later issues a seek.  The
+    // locked channel contract allows the Kotlin side to honour a
+    // `startPositionMs` for future use, but the Dart side does not
+    // need it today.
     await _methodChannel.invokeMethod<void>(
       'open',
       _args({

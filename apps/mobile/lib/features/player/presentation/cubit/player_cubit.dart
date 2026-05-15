@@ -15,8 +15,7 @@ import 'package:fluxora_mobile/features/player/presentation/cubit/player_state.d
 /// Function-typed connectivity probe — defaults to
 /// `Connectivity().checkConnectivity()` in production but can be
 /// substituted in tests so the cubit doesn't depend on a real network
-/// interface.  Mobile-settings remediation plan §M3 follow-up
-/// (Wi-Fi-only enforcement).
+/// interface.  Drives the Wi-Fi-only-streaming gate.
 typedef ConnectivityChecker = Future<List<ConnectivityResult>> Function();
 
 /// Factory function for the playback engine.  Default points at
@@ -40,15 +39,14 @@ const _kWebRtcTimeoutSec = 8;
 /// threshold leaves the user staring at a 404 retry storm.
 const _kSeekRestartThresholdSec = 5;
 
-/// How long (in seconds) the auto-fallback watcher listens for libmpv
+/// How long (in seconds) the auto-fallback watcher listens for engine
 /// `error` events after `PlayerReady` is emitted.  Six seconds covers
 /// the worst-case "device-cannot-decode" window — libmpv typically
 /// emits the error within ~1 s of the first segment download
-/// completing, but slower handsets / WAN paths can lag.  Picked to
-/// match plan 20's "first 6 s" wording.
+/// completing, but slower handsets / WAN paths can lag.
 const _kFallbackWatcherSec = 6;
 
-/// Plan 21 — how long the audio watcher waits for the FIRST non-empty
+/// How long the audio watcher waits for the FIRST non-empty
 /// `audioParams` emission before treating silence as a stream-copied
 /// audio decode failure.  libmpv populates `audioParams` after it
 /// successfully decodes the first audio frame; if nothing has arrived
@@ -129,7 +127,7 @@ class PlayerCubit extends Cubit<PlayerState> {
   Timer? _seekDebounceTimer;
   Duration? _pendingSeekTarget;
 
-  // Plan 20 — auto-mode client-error fallback watcher.  When the global
+  // Auto-mode client-error fallback watcher.  When the global
   // `streaming_mode` is `auto`, the server starts the session in stream-
   // copy mode.  If the device can't decode the source codec, the engine
   // emits an error within the first few seconds; we POST to
@@ -142,10 +140,10 @@ class PlayerCubit extends Cubit<PlayerState> {
   Timer? _fallbackWatcherTimer;
   bool _fallbackTriggered = false;
 
-  // Plan 21 — auto-mode client-side audio fallback watcher.  Runs
-  // INDEPENDENTLY of the video watcher above so a session can recover
-  // a stream-copied audio failure even when the video leg decodes
-  // fine.  Two parallel detectors per plan 21 sharp edge #1:
+  // Auto-mode client-side audio fallback watcher.  Runs INDEPENDENTLY
+  // of the video watcher above so a session can recover a stream-
+  // copied audio failure even when the video leg decodes fine.  Two
+  // parallel detectors:
   //   1. Engine error events whose message contains `audio` / `aac` /
   //      `codec` (case-insensitive).
   //   2. A 4 s silence-watchdog over libmpv's `audioParams` stream
@@ -165,11 +163,11 @@ class PlayerCubit extends Cubit<PlayerState> {
   // Public
   // ---------------------------------------------------------------------------
 
-  /// Wi-Fi-only-mode gate (settings remediation plan §M3).  Returns
-  /// `true` when the user has Wi-Fi-only on AND the device is currently
-  /// on cellular without a Wi-Fi link.  Connectivity-probe failures
-  /// fail-open (return `false`) — a permission glitch on the
-  /// connectivity API shouldn't trap the user with no playback.
+  /// Wi-Fi-only-mode gate.  Returns `true` when the user has Wi-Fi-only
+  /// on AND the device is currently on cellular without a Wi-Fi link.
+  /// Connectivity-probe failures fail-open (return `false`) — a
+  /// permission glitch on the connectivity API shouldn't trap the user
+  /// with no playback.
   Future<bool> _shouldRefuseOverCellular() async {
     try {
       final wifiOnly = await _secureStorage.getWifiOnlyStreaming();
@@ -196,18 +194,18 @@ class PlayerCubit extends Cubit<PlayerState> {
     bool tonemap = false,
     double? serverSeekSec,
   }) async {
-    // M7: when the cubit is a long-lived singleton, a second `startStream`
+    // When the cubit is a long-lived singleton, a second `startStream`
     // must clean up the previous session before opening the next one.
     // First-call (no prior session) is cheap — every dispose is null-guarded.
     await _disposeCurrentSession();
 
-    // Plan 20 — reset the one-shot auto-fallback latch.  Each new stream
-    // gets its own 6 s probe window.
+    // Reset the one-shot auto-fallback latch.  Each new stream gets its
+    // own 6 s probe window.
     _fallbackTriggered = false;
-    // Plan 21 — same reset for the audio-leg latch.  Independent of the
-    // video latch above so both watchers can fire on the same session
-    // when the source happens to have both an unsupported video codec
-    // AND an unsupported audio codec.
+    // Same reset for the audio-leg latch.  Independent of the video
+    // latch above so both watchers can fire on the same session when
+    // the source happens to have both an unsupported video codec AND
+    // an unsupported audio codec.
     _audioFallbackTriggered = false;
 
     // Remember the call args so `setTonemap` can restart with the same
@@ -217,12 +215,11 @@ class PlayerCubit extends Cubit<PlayerState> {
     _lastFileName = fileName;
     _lastPosterUrl = posterUrl;
 
-    // Wi-Fi-only enforcement (settings remediation plan §M3 follow-up).
-    // The pref is set in Profile → Playback → Wi-Fi only streaming and
-    // persisted in SecureStorage.  When on, refuse to start a stream
-    // over cellular.  Failure is non-fatal in the sense that the user
-    // can flip the toggle off and try again — the gate is intentional,
-    // not a hard error.
+    // Wi-Fi-only enforcement.  The pref is set in Profile → Playback →
+    // Wi-Fi only streaming and persisted in SecureStorage.  When on,
+    // refuse to start a stream over cellular.  Failure is non-fatal in
+    // the sense that the user can flip the toggle off and try again —
+    // the gate is intentional, not a hard error.
     if (await _shouldRefuseOverCellular()) {
       emit(
         const PlayerFailure(
@@ -238,7 +235,7 @@ class PlayerCubit extends Cubit<PlayerState> {
       // Pass `serverSeekSec` through when present (HDR-toggle path knows
       // the live playhead more precisely than the DB).  Server falls
       // back to `media_files.last_progress_sec` when omitted (initial-
-      // play resume path) — streaming pipeline plan §16 M1.
+      // play resume path).
       final response = await _repository.startStream(
         fileId,
         tonemap: tonemap,
@@ -269,13 +266,12 @@ class PlayerCubit extends Cubit<PlayerState> {
           ? <String, String>{'Authorization': 'Bearer $token'}
           : <String, String>{};
 
-      // Plan 24 M2 — engine construction is delegated to the factory
-      // which today always picks `MediaKitEngine` regardless of
-      // platform.  M3 will branch in `PlayerEngineFactory.create` so
-      // Android gets `ExoPlayerEngine` instead, without touching this
-      // cubit.  The Android-only `ao=audiotrack` libmpv property
-      // override moved into `MediaKitEngine.create` along with the
-      // shared buffer-size constant.
+      // Engine construction is delegated to the factory; the factory
+      // picks the right backend (MediaKitEngine on desktop / iOS / the
+      // Android libmpv fallback, ExoPlayerEngine on the Android default
+      // path).  The Android-only `ao=audiotrack` libmpv property
+      // override + the shared buffer-size constant live inside
+      // `MediaKitEngine.create`.
       final engine = await _engineBuilder();
       _engine = engine;
 
@@ -283,30 +279,28 @@ class PlayerCubit extends Cubit<PlayerState> {
       _lastPlaylistHeaders = headers;
       await engine.open(response.playlistUrl, headers: headers);
 
-      // No client-side `engine.seek(...)` here.  The server now lands
-      // FFmpeg at the resume position via `-ss` (streaming pipeline
-      // plan §16 M1) and shifts the static VOD playlist's media-
-      // sequence accordingly so segment 0 of the playlist IS the
-      // segment containing the resume timestamp.  A post-open seek
-      // would race the initial buffer fill and either be a no-op or
-      // throw the engine into a 404-retry loop on a not-yet-encoded
-      // segment.
+      // No client-side `engine.seek(...)` here.  The server lands
+      // FFmpeg at the resume position via `-ss` and shifts the static
+      // VOD playlist's media-sequence accordingly so segment 0 of the
+      // playlist IS the segment containing the resume timestamp.  A
+      // post-open seek would race the initial buffer fill and either
+      // be a no-op or throw the engine into a 404-retry loop on a
+      // not-yet-encoded segment.
       final seekSec = response.resumeSec > 0 ? response.resumeSec : resumeSec;
 
       // Hook the OS media session (lockscreen / notification card / BT
       // headset).  Best-effort — if audio_service hasn't initialised
       // (unit tests, embedded preview) this is a no-op.
       //
-      // Plan 24 M7 — gate to MediaKitEngine only.  The
-      // `FluxoraAudioHandler` binds to a `media_kit.Player` directly,
-      // so it's only valid on that engine path.  On the
-      // `ExoPlayerEngine` path the Kotlin-side
-      // `FluxoraMediaSessionService` owns the OS media session via
-      // Media3's first-party `MediaSession.Builder(this, exoPlayer)`,
-      // which wires every transport command back into ExoPlayer
-      // automatically.  Binding the audio_service handler on top would
-      // produce two competing sessions fighting for audio focus and
-      // the lockscreen card would flicker between them.
+      // Gated to the MediaKitEngine path: the `FluxoraAudioHandler`
+      // binds to a `media_kit.Player` directly, so it's only valid on
+      // that engine path.  On the `ExoPlayerEngine` path the Kotlin-
+      // side `FluxoraMediaSessionService` owns the OS media session
+      // via Media3's first-party `MediaSession.Builder(this,
+      // exoPlayer)`, which wires every transport command back into
+      // ExoPlayer automatically.  Binding the audio_service handler on
+      // top would produce two competing sessions fighting for audio
+      // focus and the lockscreen card would flicker between them.
       if (engine is MediaKitEngine) {
         try {
           await _audioHandler?.bind(
@@ -335,18 +329,15 @@ class PlayerCubit extends Cubit<PlayerState> {
           resumeSec: seekSec,
           // Server-supplied: the segment-snapped source-time at which
           // the playlist's t=0 sits.  The scrubber adds this to the
-          // player's reported position so the user sees source-time
-          // (streaming pipeline plan §16 scrubber-offset patch).
+          // player's reported position so the user sees source-time.
           playlistOffsetSec: response.appliedSeekSec,
           streamPath: path,
           hdrFormat: response.hdrFormat,
           tonemapped: response.tonemapped,
-          // Plan 22 — multi-audio-track support.  Server returns every
-          // audio track in the source container; default selection is
-          // FFmpeg's track 0 (the first audio stream), matching the
-          // server's `-map 0:a?` ordering.  Operator can switch via
-          // [selectAudioTrack] which only changes the decoded track —
-          // no server round-trip.
+          // Server returns every audio track in the source container;
+          // default selection is FFmpeg's track 0 (the first audio
+          // stream), matching the server's `-map 0:a?` ordering.
+          // Operator switches via [selectAudioTrack].
           availableAudioTracks: response.audioTracks,
           selectedAudioTrackIndex: response.audioTracks.isNotEmpty
               ? response.audioTracks.first.index
@@ -354,8 +345,8 @@ class PlayerCubit extends Cubit<PlayerState> {
         ),
       );
 
-      // Plan 20 — auto-fallback watcher only fires when the operator has
-      // opted into `streaming_mode='auto'`.  Strict `'client-decode'` is
+      // Auto-fallback watcher only fires when the operator has opted
+      // into `streaming_mode='auto'`.  Strict `'client-decode'` is
       // documented as "modern devices only" and `'server-transcode'` is
       // already transcoding, so the watcher would be a no-op in both
       // cases; arming it would race a successful playback against a
@@ -368,15 +359,15 @@ class PlayerCubit extends Cubit<PlayerState> {
         );
       }
 
-      // Plan 21 — audio-leg watcher.  Runs independently of the video
-      // watcher above, but only when BOTH `streamingMode='auto'` AND
+      // Audio-leg watcher.  Runs independently of the video watcher
+      // above, but only when BOTH `streamingMode='auto'` AND
       // `audioStreamingMode='stream-copy'`.  `'transcode'` audio is
       // already going through the encoder so a client-side audio
       // decode failure can't happen; `'client-decode'`/
       // `'server-transcode'` video modes are out of the auto-fallback
       // contract entirely.  The 6 s outer watcher + 4 s audioParams
-      // silence-watchdog both live inside _scheduleAutoAudioFallback
-      // Watcher.
+      // silence-watchdog both live inside
+      // _scheduleAutoAudioFallbackWatcher.
       if (response.streamingMode == 'auto' &&
           response.audioStreamingMode == 'stream-copy') {
         _scheduleAutoAudioFallbackWatcher(
@@ -386,15 +377,15 @@ class PlayerCubit extends Cubit<PlayerState> {
         );
       }
 
-      // Streaming pipeline plan §16 M4 — diagnostics only.  libmpv
-      // populates `audioParams` after the first audio frame decodes
-      // (typically a few hundred ms post-open).  Subscribe to the
-      // stream, log the FIRST non-empty value so an operator
-      // diagnosing AV-sync issues can grep for `audio_negotiated`
-      // and pair it with the server's `audio_probe` line.  Stream is
-      // torn down by `_disposeCurrentSession` so we don't bother
-      // canceling the subscription manually.  Only meaningful on the
-      // MediaKitEngine path — libmpv-specific.
+      // Diagnostics only.  libmpv populates `audioParams` after the
+      // first audio frame decodes (typically a few hundred ms post-
+      // open).  Subscribe to the stream, log the FIRST non-empty
+      // value so an operator diagnosing AV-sync issues can grep for
+      // `audio_negotiated` and pair it with the server's
+      // `audio_probe` line.  Stream is torn down by
+      // `_disposeCurrentSession` so we don't bother canceling the
+      // subscription manually.  Only meaningful on the MediaKitEngine
+      // path — libmpv-specific.
       if (engine is MediaKitEngine) {
         final mk = engine.mediaKitPlayer;
         mk.stream.audioParams
@@ -480,7 +471,7 @@ class PlayerCubit extends Cubit<PlayerState> {
     // Pass the live playhead as `serverSeekSec` so the new FFmpeg
     // session lands at the toggle's actual position — not the DB's
     // `last_progress_sec` (which lags by up to 5 s due to the
-    // progress-write throttle).  Streaming pipeline plan §16 M1.
+    // progress-write throttle).
     await startStream(
       fileId,
       fileName,
@@ -494,20 +485,19 @@ class PlayerCubit extends Cubit<PlayerState> {
   /// Switch the active session's audio track to the one whose source
   /// stream index matches [sourceIndex] (i.e. [AudioTrackInfo.index]).
   ///
-  /// Plan 23 — server-restart switching.  Every client-side approach
-  /// we tried (bare setAudioTrack, pause+swap+seek+play, self-seek,
-  /// 1-s-back seek, ao=audiotrack) hit the same wall: libmpv-on-
-  /// Android can't reliably swap audio decoders mid-stream against a
-  /// multi-track fmp4 init.  Going server-side means the respawned
-  /// FFmpeg only emits ONE audio track, so the engine never has to
-  /// switch — it just opens a fresh stream with the desired track
-  /// already selected.  ~2 s visible gap (server restart + buffer
-  /// fill); rock-solid in exchange.
+  /// Server-restart switching.  Every client-side approach we tried
+  /// (bare setAudioTrack, pause+swap+seek+play, self-seek, 1-s-back
+  /// seek, ao=audiotrack) hit the same wall: libmpv-on-Android can't
+  /// reliably swap audio decoders mid-stream against a multi-track
+  /// fmp4 init.  Going server-side means the respawned FFmpeg only
+  /// emits ONE audio track, so the engine never has to switch — it
+  /// just opens a fresh stream with the desired track already
+  /// selected.  ~2 s visible gap (server restart + buffer fill);
+  /// rock-solid in exchange.
   ///
-  /// Plan 24 follow-up — when M3 ships ExoPlayerEngine, Android moves
-  /// to native client-side switching via TrackSelectionParameters and
-  /// the server-restart path becomes a fallback for clients without
-  /// native track support.
+  /// On the ExoPlayerEngine path, native client-side switching via
+  /// TrackSelectionParameters is available; the server-restart path
+  /// stays as the fallback for clients without native track support.
   ///
   /// No-op when there is no active session.  Failures from the
   /// engine (track index out of range, decoder error) log and DO NOT
@@ -604,10 +594,9 @@ class PlayerCubit extends Cubit<PlayerState> {
     if (engine == null || currentState is! PlayerReady) return;
     if (position.isNegative) position = Duration.zero;
 
-    // Source-time vs player-time bookkeeping (streaming pipeline plan
-    // §16 scrubber-offset patch).  `position` is the user's target in
-    // SOURCE time (what the scrubber shows).  The engine's reported
-    // position runs in PLAYER time which is offset by
+    // Source-time vs player-time bookkeeping.  `position` is the user's
+    // target in SOURCE time (what the scrubber shows).  The engine's
+    // reported position runs in PLAYER time which is offset by
     // `playlistOffsetSec` when a seek-restart has shifted the playlist.
     // Compute the delta in source-time for the threshold compare; pass
     // player-time to `engine.seek` since the backend operates in
@@ -714,8 +703,7 @@ class PlayerCubit extends Cubit<PlayerState> {
       // Server returns the segment-snapped value it actually applied
       // (`applied_seek_sec` from the response body) — the cubit uses
       // this as the new `_playlistOffsetSec` so the scrubber displays
-      // source-time after the restart instead of playlist-time
-      // (streaming pipeline plan §16 scrubber-offset patch).
+      // source-time after the restart instead of playlist-time.
       final appliedSeekSec = await _repository.seekStream(
         sid,
         target.inMilliseconds / 1000.0,
@@ -735,10 +723,10 @@ class PlayerCubit extends Cubit<PlayerState> {
       // The new playlist starts at `appliedSeekSec` of source-time
       // (segment-snapped by the server).  Seek WITHIN the playlist to
       // the sub-segment offset between the user's exact target and the
-      // segment boundary.  Was previously `await engine.seek(target)` which
-      // tried to seek to source-time T inside a playlist whose own
-      // timeline runs 0..(N-K)*hls_time — the engine would either clamp
-      // or reset, manifesting as "scrubber jumps back to 0".
+      // segment boundary.  Seeking with the raw source-time would put
+      // the engine outside its playlist's [0, (N-K)*hls_time] timeline
+      // and the engine would clamp or reset (manifesting as "scrubber
+      // jumps back to 0").
       final withinPlaylistSec =
           target.inMilliseconds / 1000.0 - appliedSeekSec;
       if (withinPlaylistSec > 0) {
@@ -778,7 +766,7 @@ class PlayerCubit extends Cubit<PlayerState> {
   }
 
   // ---------------------------------------------------------------------------
-  // Auto-fallback watcher (plan 20)
+  // Auto-fallback watcher — video leg
   // ---------------------------------------------------------------------------
 
   /// Subscribe to [PlayerEngine.errorStream] for [_kFallbackWatcherSec]
@@ -852,7 +840,7 @@ class PlayerCubit extends Cubit<PlayerState> {
     _fallbackWatcherTimer = null;
   }
 
-  /// Reports the client-side decode failure to the server (plan 20) and
+  /// Reports the client-side decode failure to the server and
   /// re-opens the playlist URL so the engine re-fetches the now-
   /// transcoded segments.  Best-effort — a failure here just logs (the
   /// engine will surface its own error via the existing `errorStream`).
@@ -888,7 +876,7 @@ class PlayerCubit extends Cubit<PlayerState> {
   }
 
   // ---------------------------------------------------------------------------
-  // Auto-fallback watcher — audio leg (plan 21)
+  // Auto-fallback watcher — audio leg
   // ---------------------------------------------------------------------------
 
   /// Detects a stream-copied audio decode failure within the
@@ -896,7 +884,7 @@ class PlayerCubit extends Cubit<PlayerState> {
   /// `/fallback-audio-transcode` so the server flips the audio leg into
   /// transcode mode while leaving video stream-copy intact.  Mirrors
   /// the structure of [_scheduleAutoFallbackWatcher] but uses two
-  /// detectors that together cover plan 21 sharp edge #1:
+  /// detectors that together cover the audio decode failure modes:
   ///
   ///   1. [PlayerEngine.errorStream] events whose lower-case message
   ///      contains `audio`, `aac`, or `codec` — libmpv tags audio-
@@ -999,11 +987,11 @@ class PlayerCubit extends Cubit<PlayerState> {
     _audioFallbackParamsTimeoutTimer = null;
   }
 
-  /// Reports the client-side audio decode failure to the server (plan
-  /// 21) and re-opens the playlist URL so the engine re-fetches the
-  /// audio-transcoded segments.  Best-effort — a failure here just
-  /// logs (the engine will surface its own error via the existing
-  /// error stream).
+  /// Reports the client-side audio decode failure to the server and
+  /// re-opens the playlist URL so the engine re-fetches the audio-
+  /// transcoded segments.  Best-effort — a failure here just logs
+  /// (the engine will surface its own error via the existing error
+  /// stream).
   Future<void> _handleAutoAudioFallback({
     required String sessionId,
     required String streamPath,
@@ -1158,10 +1146,9 @@ class PlayerCubit extends Cubit<PlayerState> {
     _pendingSeekTarget = null;
     _lastPlaylistUrl = null;
     _lastPlaylistHeaders = null;
-    // Plan 20 — make sure the watcher subscription doesn't outlive the
-    // engine.  `_cancelAutoFallbackWatcher` is idempotent.
+    // Make sure the watcher subscriptions don't outlive the engine.
+    // Both cancel helpers are idempotent.
     _cancelAutoFallbackWatcher();
-    // Plan 21 — same for the audio-leg watcher.
     _cancelAutoAudioFallbackWatcher();
     if (_sessionId != null) {
       // Best-effort final progress report; swallow per the original

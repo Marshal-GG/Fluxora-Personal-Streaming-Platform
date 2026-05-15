@@ -10,11 +10,10 @@ abstract class PlayerRepository {
   /// [seekSec] (optional) overrides the server's DB-stored
   /// `last_progress_sec` fallback — use this when the caller knows
   /// the live playhead more precisely than the DB does (e.g. the
-  /// HDR↔SDR toggle path, where `setTonemap` captures
-  /// `_player.state.position` at toggle time).  When omitted, the
-  /// server reads `media_files.last_progress_sec` so a half-watched
-  /// file resumes from where the user left off.  Streaming pipeline
-  /// plan §16 M1.
+  /// HDR↔SDR toggle path, where `setTonemap` captures the engine's
+  /// live position at toggle time).  When omitted, the server reads
+  /// `media_files.last_progress_sec` so a half-watched file resumes
+  /// from where the user left off.
   Future<StreamStartResponse> startStream(
     String fileId, {
     bool tonemap = false,
@@ -28,8 +27,7 @@ abstract class PlayerRepository {
   /// Returns the segment-snapped seek value the server actually applied
   /// (`applied_seek_sec` in the response) — the cubit uses this as the
   /// new `_playlistOffsetSec` so the scrubber displays source-time
-  /// rather than playlist-time after the restart (streaming pipeline
-  /// plan §16 scrubber-offset patch).
+  /// rather than playlist-time after the restart.
   ///
   /// The playlist URL is unchanged but its *contents* are rewritten
   /// with new segment numbering + a discontinuity marker — the caller
@@ -43,12 +41,12 @@ abstract class PlayerRepository {
     bool tonemap = false,
   });
 
-  /// `POST /api/v1/stream/{session_id}/fallback-transcode` (plan 20) —
+  /// `POST /api/v1/stream/{session_id}/fallback-transcode` —
   /// tells the server that the client just failed to decode the current
   /// stream-copy session and asks it to flip the same session into
   /// transcode mode from [currentPositionSec] onwards.  The playlist URL
   /// is unchanged on success; the caller is expected to re-open it so
-  /// libmpv re-fetches the rewritten segments.
+  /// the engine re-fetches the rewritten segments.
   ///
   /// Returns when the server has acknowledged the switch (200) — no
   /// payload of interest to the caller.  Bubbles errors so the caller
@@ -59,26 +57,26 @@ abstract class PlayerRepository {
     required double currentPositionSec,
   });
 
-  /// `POST /api/v1/stream/{session_id}/fallback-audio-transcode` (plan
-  /// 21) — tells the server that the client just failed to decode the
+  /// `POST /api/v1/stream/{session_id}/fallback-audio-transcode` —
+  /// tells the server that the client just failed to decode the
   /// current stream-copied audio track and asks it to re-encode audio
   /// from [currentPositionSec] onwards.  Video continues stream-copying
   /// when it was already working; only the audio leg flips.  Returns
   /// when the server acknowledges (200) — the playlist URL stays the
-  /// same and the caller is expected to re-open it so libmpv re-fetches
-  /// the rewritten segments.  Bubbles errors so the cubit can log and
-  /// continue without crashing the player.
+  /// same and the caller is expected to re-open it so the engine
+  /// re-fetches the rewritten segments.  Bubbles errors so the cubit
+  /// can log and continue without crashing the player.
   Future<void> reportFallbackAudioTranscode({
     required String sessionId,
     required double currentPositionSec,
   });
 
-  /// `POST /api/v1/stream/{session_id}/audio-track` (plan 23) —
+  /// `POST /api/v1/stream/{session_id}/audio-track` —
   /// switch the source audio track the server demuxes by respawning
   /// FFmpeg with `-map 0:a:<index>?` pinning the chosen track.
   /// Sidesteps the broken libmpv-on-Android client-side
   /// `setAudioTrack` path (mid-stream switching reliably hangs the
-  /// player; operator-reported 2026-05-15).
+  /// player).
   ///
   /// Returns the segment-snapped seek the server applied so the
   /// cubit can update `_playlistOffsetSec` (the playlist URL is the

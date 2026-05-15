@@ -43,34 +43,22 @@ flutter {
     source = "../.."
 }
 
-// Plan 24 — Android playback migration to Media3 ExoPlayer.
+// Media3 ExoPlayer — Google's first-party HLS engine; the Android
+// default playback backend.  Desktop + iOS stay on `media_kit`
+// (libmpv / AVPlayer).  Version skew within the media3 family is
+// unsafe (shared internal AIDL), so every media3 artefact is pinned
+// to the same version.
 //
-// `media_kit` (libmpv-on-Android) shipped two unfixable defects on real
-// devices: mid-stream `setAudioTrack` hung the player when the HLS fmp4
-// init/segment contract changed, and HDR multi-audio sources played
-// silent.  Media3 is Google's first-party HLS engine (the one Plex,
-// Jellyfin, Netflix, YouTube and every modern Android video product
-// ships) and replaces the libmpv path on Android only — desktop + iOS
-// stay on media_kit per Plan 24 §D1.  Version pinned to the latest
-// stable at the time of M1 (1.10.1, released 2026-05-12) per
-// developer.android.com/jetpack/androidx/releases/media3.
-//
-// Four artefacts are required for M1's HLS playback spike + M7's
-// MediaSession integration:
+// Artefacts:
 //   - media3-exoplayer        — core Player + DefaultRenderersFactory
 //   - media3-exoplayer-hls    — HlsMediaSource + HLS playlist parser
-//   - media3-ui               — PlayerView (kept for future surface +
-//                                subtitle rendering — see Plan 24 M9
-//                                open-question on Kotlin-side subtitles)
-//   - media3-session          — Plan 24 M7.  MediaSession + MediaSession
-//                                Service for lockscreen / notification /
-//                                Bluetooth-headset transport controls.
-//                                Replaces the audio_service Dart-side
-//                                binding when the ExoPlayerEngine owns
-//                                playback (Android default).  Same 1.10.1
-//                                pin as the other media3 artefacts —
-//                                version skew within the media3 family
-//                                is unsafe (shared internal AIDL).
+//   - media3-ui               — PlayerView (kept for future subtitle
+//                                rendering on the Kotlin side)
+//   - media3-session          — MediaSession + MediaSessionService for
+//                                lockscreen / notification / Bluetooth-
+//                                headset transport.  Replaces the
+//                                audio_service Dart-side binding when
+//                                the ExoPlayerEngine owns playback.
 dependencies {
     val media3Version = "1.10.1"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
@@ -78,10 +66,10 @@ dependencies {
     implementation("androidx.media3:media3-ui:$media3Version")
     implementation("androidx.media3:media3-session:$media3Version")
 
-    // Plan 24 M4 — JUnit unit tests for the rendition→source-index
-    // mapping helper in FluxoraExoPlayer.  Host-JVM only; we don't
-    // mock the full ExoPlayer — the test exercises pure helper
-    // functions over Media3's public Format/TrackGroup/Tracks types
-    // which are already on the implementation classpath.
+    // JUnit unit tests for the rendition→source-index mapping helper
+    // in FluxoraExoPlayer.  Host-JVM only; we don't mock the full
+    // ExoPlayer — the tests exercise pure helper functions over
+    // Media3's public Format/TrackGroup/Tracks types which are
+    // already on the implementation classpath.
     testImplementation("junit:junit:4.13.2")
 }

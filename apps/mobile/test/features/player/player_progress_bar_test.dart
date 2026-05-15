@@ -1,11 +1,11 @@
-/// Widget tests for [PlayerProgressBar] — plan 24 M8.
+/// Widget tests for [PlayerProgressBar].
 ///
 /// The scrubber pin behaviour (`_pendingValue` + `_pinFallbackTimer`)
-/// was tuned against libmpv's post-server-restart emit cadence (plan 17
-/// §10 fix, 2026-05-09): libmpv briefly emits `oldPlayerPos + newOffset`
-/// over `newPlayerDur + newOffset` for one paint after `Player.open`,
-/// which clamps the displayed ratio to 1.0 and visually jumps the thumb
-/// to the end of the track before settling.
+/// is tuned against libmpv's post-server-restart emit cadence: libmpv
+/// briefly emits `oldPlayerPos + newOffset` over `newPlayerDur +
+/// newOffset` for one paint after `Player.open`, which clamps the
+/// displayed ratio to 1.0 and visually jumps the thumb to the end of
+/// the track before settling.
 ///
 /// ExoPlayer's emission shape after `prepare()` differs:
 ///
@@ -22,7 +22,7 @@
 ///      the streams BEFORE the channel call, so the
 ///      [PlayerProgressBar] sees `playerDur == 0` during the
 ///      open→STATE_READY window.  The settle check is gated on
-///      `playerDur > 0` to hold the pin through that window — these
+///      `playerDur > 0` to hold the pin through that window; these
 ///      tests pin the contract.
 library;
 
@@ -36,7 +36,7 @@ import 'package:fluxora_mobile/features/player/presentation/widgets/flux_player_
 /// Stream-driven [PlayerEngine] fake.  Production engines update their
 /// cached `position` / `duration` synchronously alongside emitting on
 /// the streams; this fake mirrors that contract via [setPosition] /
-/// [setDuration] so the M8 transient-sequence tests can pump the same
+/// [setDuration] so the transient-sequence tests can pump the same
 /// (position, duration, isSeeking) tuples that ExoPlayer would emit
 /// during a server-restart and assert the pin holds.
 class _StreamableFakeEngine implements PlayerEngine {
@@ -215,10 +215,9 @@ void main() {
         // ExoPlayer takes a few hundred ms to emit the new
         // `durationChanged` (only fires on STATE_READY).  In that
         // window the Dart-side `_position` + `_duration` caches have
-        // been reset to zero by `ExoPlayerEngine.open` (plan 24 M8)
-        // — and the pin's `playerDur > 0` settle gate is exactly what
-        // keeps the released target visible until the new duration
-        // catches up.
+        // been reset to zero by `ExoPlayerEngine.open` — and the
+        // pin's `playerDur > 0` settle gate is exactly what keeps the
+        // released target visible until the new duration catches up.
 
         final engine = _StreamableFakeEngine(
           position: const Duration(seconds: 30),
@@ -254,7 +253,7 @@ void main() {
 
         // Mid-restart: cubit emits the new playlistOffsetSec then
         // ExoPlayerEngine.open resets player-position + player-
-        // duration to zero (plan 24 M8 patch).  Pin must hold.
+        // duration to zero.  Pin must hold.
         engine.setPosition(Duration.zero);
         engine.setDuration(Duration.zero);
         harness.playlistOffsetSec.value = 1800.0;
