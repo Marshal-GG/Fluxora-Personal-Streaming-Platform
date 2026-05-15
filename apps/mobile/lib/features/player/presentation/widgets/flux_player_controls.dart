@@ -134,6 +134,28 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
   double _dragStartValue = 0.0;
   bool _dragIsLeftHalf = false;
 
+  /// Raw pointer positions, keyed by Flutter's pointer id.  Driven by
+  /// the outer [Listener] that observes all touches on the chrome
+  /// before the gesture arena resolves who owns them.  We compute
+  /// pinch zoom directly from these positions instead of going
+  /// through `GestureDetector.onScale*` — Flutter's gesture arena
+  /// hands single-finger drags to `VerticalDragGestureRecognizer`
+  /// (and the slider's `HorizontalDragGestureRecognizer`) before
+  /// scale can claim a 2nd pointer, so scale-via-arena fails over
+  /// inner widgets.  Listener events propagate regardless of who
+  /// wins the arena, so reading positions here is always reliable.
+  final Map<int, Offset> _pointerPositions = <int, Offset>{};
+
+  /// Distance between the two active pointers at the moment a pinch
+  /// gesture started (second pointer landed).  Captured once;
+  /// reads `widget.controller.userScale` at that moment as the base.
+  double _pinchInitialDistance = 0.0;
+  double _pinchInitialScale = 1.0;
+  bool _pinchActive = false;
+
+  int get _activePointers => _pointerPositions.length;
+
+
   // Lock-hold progress ring.
   Timer? _unlockTimer;
   DateTime? _unlockHoldStart;
@@ -207,20 +229,26 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
+      // `isScrollControlled: true` so the sheet can grow past its
+      // default 50% cap when landscape squeezes it, and the inner
+      // `SingleChildScrollView` so any remaining overflow scrolls
+      // instead of painting yellow/black stripes.
+      isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(2),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
+              const SizedBox(height: 12),
             _OverflowTile(
               icon: Icons.audiotrack_outlined,
               label: 'Audio tracks',
@@ -308,8 +336,9 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                   widget.onGroupWatch?.call();
                 },
               ),
-            const SizedBox(height: 8),
-          ],
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
@@ -432,6 +461,11 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
 
   Future<void> _onVerticalDragStart(DragStartDetails d) async {
     if (widget.controller.lockMode) return;
+    // A second finger may have already landed by the time the
+    // single-finger drag crosses the slop threshold and fires this
+    // callback — bail so the pinch-zoom can take over without
+    // brightness / volume getting nudged.
+    if (_activePointers >= 2) return;
     final width = MediaQuery.of(context).size.width;
     _dragIsLeftHalf = d.localPosition.dx < width / 2;
     _dragStartY = d.localPosition.dy;
@@ -448,6 +482,10 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
 
   Future<void> _onVerticalDragUpdate(DragUpdateDetails d) async {
     if (widget.controller.lockMode || _dragStartY == null) return;
+    // If a second finger landed mid-drag, abandon the brightness /
+    // volume drag immediately — `_onPinchStart` rolls back any change
+    // already applied during this drag.
+    if (_activePointers >= 2) return;
     final height = MediaQuery.of(context).size.height;
     final delta = (_dragStartY! - d.localPosition.dy) / height;
     final value = (_dragStartValue + delta).clamp(0.0, 1.0);
@@ -471,13 +509,72 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
     });
   }
 
-  void _onPinchEnd(ScaleEndDetails _) {
-    // Use scale-end so a single pinch gesture toggles fit once. The plan
-    // calls for "pinch = fit toggle" — we just flip on every pinch
-    // regardless of magnitude.
+  // ── Raw-pointer pinch-zoom ──
+  //
+  // Implemented as a [Listener]-level handler rather than via the
+  // chrome's `GestureDetector.onScale*` because Flutter's gesture
+  // arena hands single-finger drags to the chrome's vertical-drag
+  // recognizer (and the bottom slider's horizontal-drag recognizer)
+  // before scale can claim a 2nd pointer.  Raw pointer events still
+  // reach the [Listener] regardless of who wins the arena, so we
+  // compute pinch directly from the two pointers' positions.
+
+  void _onRawPointerDown(PointerDownEvent e) {
+    _pointerPositions[e.pointer] = e.position;
+    if (_pointerPositions.length == 2 && !_pinchActive) {
+      _beginPinch();
+    }
+  }
+
+  void _onRawPointerMove(PointerMoveEvent e) {
+    if (!_pointerPositions.containsKey(e.pointer)) return;
+    _pointerPositions[e.pointer] = e.position;
+    if (_pinchActive && _pointerPositions.length >= 2) {
+      final positions = _pointerPositions.values.toList(growable: false);
+      final dist = (positions[0] - positions[1]).distance;
+      if (_pinchInitialDistance <= 0) return;
+      final scale = dist / _pinchInitialDistance;
+      widget.controller.setUserScale(_pinchInitialScale * scale);
+    }
+  }
+
+  void _onRawPointerUp(PointerEvent e) {
+    _pointerPositions.remove(e.pointer);
+    if (_pointerPositions.length < 2 && _pinchActive) {
+      _pinchActive = false;
+      // Long-press the Fit button to snap back to 1.0.  No
+      // auto-reset on release.
+    }
+  }
+
+  void _beginPinch() {
     if (widget.controller.lockMode) return;
-    widget.controller.toggleFit();
-    HapticFeedback.lightImpact();
+    if (_pointerPositions.length < 2) return;
+    final positions = _pointerPositions.values.toList(growable: false);
+    _pinchInitialDistance = (positions[0] - positions[1]).distance;
+    if (_pinchInitialDistance <= 0) return;
+    _pinchInitialScale = widget.controller.userScale;
+    _pinchActive = true;
+    // Roll back any brightness / volume change the first finger
+    // already triggered before the 2nd pointer landed — drag handlers
+    // are gated on `_activePointers >= 2` so they stop here, but the
+    // last value applied stays unless we restore the drag-start
+    // capture.
+    if (_dragStartY != null) {
+      if (_dragIsLeftHalf) {
+        ScreenBrightness.instance
+            .setApplicationScreenBrightness(_dragStartValue)
+            .catchError((Object _) {});
+        widget.controller.setBrightnessHud(_dragStartValue);
+      } else {
+        widget.engine.setVolume(_dragStartValue * 100.0);
+        widget.controller.setVolumeHud(_dragStartValue);
+      }
+      _dragStartY = null;
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) widget.controller.clearHud();
+      });
+    }
   }
 
   // ── Lock hold-to-unlock ────────────────────────────────────────────────────
@@ -589,38 +686,73 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
         MediaQuery.of(context).orientation == Orientation.landscape;
 
     return Positioned.fill(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: c.lockMode ? null : c.toggle,
-        onDoubleTapDown: _onDoubleTapDown,
-        onDoubleTap: () {
-          // Required by Flutter to register onDoubleTapDown — handled there.
-        },
-        onLongPressStart: _onLongPressStart,
-        onLongPressEnd: _onLongPressEnd,
-        onVerticalDragStart: _onVerticalDragStart,
-        onVerticalDragUpdate: _onVerticalDragUpdate,
-        onVerticalDragEnd: _onVerticalDragEnd,
-        onScaleEnd: _onPinchEnd,
+      child: Listener(
+        // `Listener` sees raw pointer events before the GestureDetector
+        // below has decided whether to claim them.  Tracking the live
+        // pointer count lets the vertical-drag handlers refuse to act
+        // while a second finger is already down — without this guard,
+        // the brief 5–15 ms window between the first finger crossing
+        // slop and the second finger landing nudges brightness / volume
+        // before pinch-zoom takes over.
+        behavior: HitTestBehavior.deferToChild,
+        onPointerDown: _onRawPointerDown,
+        onPointerMove: _onRawPointerMove,
+        onPointerUp: _onRawPointerUp,
+        onPointerCancel: _onRawPointerUp,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: c.lockMode ? null : c.toggle,
+          onDoubleTapDown: _onDoubleTapDown,
+          onDoubleTap: () {
+            // Required by Flutter to register onDoubleTapDown — handled there.
+          },
+          onLongPressStart: _onLongPressStart,
+          onLongPressEnd: _onLongPressEnd,
+          onVerticalDragStart: _onVerticalDragStart,
+          onVerticalDragUpdate: _onVerticalDragUpdate,
+          onVerticalDragEnd: _onVerticalDragEnd,
         child: Stack(
           children: [
-            AnimatedOpacity(
-              opacity: c.visible ? 1.0 : 0.0,
-              duration: _kFadeMs,
-              curve: Curves.easeOut,
-              child: const DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
+            // `Positioned.fill` so the scrim's `DecoratedBox` actually
+            // gets tight parent constraints — otherwise the Stack's
+            // default loose fit hands it 0×0 and the gradient renders
+            // invisibly.
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: true,
+                child: AnimatedOpacity(
+                  opacity: c.visible ? 1.0 : 0.0,
+                  duration: _kFadeMs,
+                  curve: Curves.easeOut,
+                  child: const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                    // Five-stop gradient so the top + bottom chrome
+                    // regions each get a generous dark band that
+                    // fades quickly into a transparent middle.  This
+                    // keeps the icons/text legible against bright
+                    // video frames without dimming the centre of the
+                    // playback surface.
+                    //   0% top — opaque black (88%)
+                    //   25%   — half-opaque (40%) so the fade isn't
+                    //           visible past the top bar's footprint
+                    //   50%   — fully transparent
+                    //   75%   — half-opaque again, mirrored
+                    //   100% bottom — opaque black (88%)
                     colors: [
-                      Color(0x99000000),
-                      Color(0x33000000),
-                      Color(0x99000000),
+                      Color(0xE0000000),
+                      Color(0x66000000),
+                      Color(0x00000000),
+                      Color(0x66000000),
+                      Color(0xE0000000),
                     ],
-                    stops: [0.0, 0.5, 1.0],
+                    stops: [0.0, 0.25, 0.5, 0.75, 1.0],
                   ),
                 ),
+              ),
+            ),
               ),
             ),
 
@@ -651,7 +783,11 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                     opacity: c.dragHudVisible ? 1.0 : 0.0,
                     duration: _kFadeMs,
                     curve: Curves.easeOut,
-                    child: _DragHud(kind: c.activeDrag, value: c.dragHudValue),
+                    child: _DragHud(
+                      kind: c.activeDrag,
+                      value: c.dragHudValue,
+                      label: c.dragHudLabel,
+                    ),
                   ),
                 ),
               ),
@@ -666,54 +802,48 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                       top: 0,
                       left: 0,
                       right: 0,
-                      child: SafeArea(
-                        bottom: false,
-                        child: FocusTraversalOrder(
-                          order: const NumericFocusOrder(1),
-                          child: PlayerTopBar(
-                            title: widget.title,
-                            onBack: widget.onBack,
-                            onMore: _showOverflowMenu,
-                            onPip: _pipSupported == true ? _enterPip : null,
-                            onXRay: widget.onXRay,
-                            sleepActive: _sleepDuration != null,
-                            onLock: c.lock,
-                            onFit: c.toggleFit,
-                            fitCover: c.fitCover,
-                            hdrFormat: widget.hdrFormat,
-                            tonemapped: widget.tonemapped,
+                      child: DecoratedBox(
+                        // Solid-edge → fade-to-transparent gradient
+                        // directly behind the top bar.  Sized to the
+                        // top bar's height by the inner SafeArea +
+                        // PlayerTopBar; the gradient's bottom 30% is
+                        // the fade-out so the dark band doesn't show
+                        // a hard edge against the video.
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            // 55% black at the edge, 30% halfway,
+                            // transparent at the inner edge.  Just
+                            // enough contrast to read white icons +
+                            // text against bright video without
+                            // feeling like a solid dark bar.
+                            colors: [
+                              Color(0x8C000000),
+                              Color(0x4D000000),
+                              Color(0x00000000),
+                            ],
+                            stops: [0.0, 0.55, 1.0],
                           ),
                         ),
-                      ),
-                    ),
-                    Positioned.fill(
-                      child: Center(
-                        child: FocusTraversalOrder(
-                          order: const NumericFocusOrder(2),
-                          // Stream `engine.isPlayingStream` so the
-                          // play/pause icon flips the instant the
-                          // engine toggles state, instead of waiting
-                          // for the next ambient setState (controller
-                          // auto-hide tick).  Reading the snapshot
-                          // once per build made taps look
-                          // unresponsive until an unrelated rebuild
-                          // caught up.
-                          child: StreamBuilder<bool>(
-                            stream: widget.engine.isPlayingStream,
-                            initialData: widget.engine.isPlaying,
-                            builder: (context, snap) {
-                              final isPlaying = snap.data ?? false;
-                              return PlayerCenterTransport(
-                                isPlaying: isPlaying,
-                                onRewind: () => _seekRelative(
-                                  const Duration(seconds: -10),
-                                ),
-                                onPlayPause: _togglePlay,
-                                onForward: () => _seekRelative(
-                                  const Duration(seconds: 10),
-                                ),
-                              );
-                            },
+                        child: SafeArea(
+                          bottom: false,
+                          child: FocusTraversalOrder(
+                            order: const NumericFocusOrder(1),
+                            child: PlayerTopBar(
+                              title: widget.title,
+                              onBack: widget.onBack,
+                              onMore: _showOverflowMenu,
+                              onPip: _pipSupported == true ? _enterPip : null,
+                              onXRay: widget.onXRay,
+                              sleepActive: _sleepDuration != null,
+                              onLock: c.lock,
+                              onFit: c.cycleFitMode,
+                              onFitLongPress: c.resetUserScale,
+                              fitMode: c.fitMode,
+                              hdrFormat: widget.hdrFormat,
+                              tonemapped: widget.tonemapped,
+                            ),
                           ),
                         ),
                       ),
@@ -752,23 +882,70 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
                       bottom: 0,
                       left: 0,
                       right: 0,
-                      child: SafeArea(
-                        top: false,
-                        // Bottom chrome hosts only the scrubber.  The
-                        // 4x2 quick-action grid lives in the top-bar
-                        // (Lock + Fit) and the 3-dot overflow menu
-                        // (Audio / Subs / Speed / Quality / Sleep /
-                        // Cast) to keep the playback surface visible
-                        // on small phones.
-                        child: FocusTraversalOrder(
-                          order: const NumericFocusOrder(5),
-                          child: PlayerProgressBar(
-                            engine: widget.engine,
-                            onSeekCommit: _emitSeek,
-                            playlistOffsetSec: widget.playlistOffsetSec,
-                            isSeeking: widget.isSeeking,
+                      child: DecoratedBox(
+                        // Solid-edge → fade-to-transparent gradient
+                        // behind the bottom controls (scrubber +
+                        // transport).  Mirror of the top bar's
+                        // backdrop so both chrome regions sit on a
+                        // dark band against bright video.
+                        decoration: const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.bottomCenter,
+                            end: Alignment.topCenter,
+                            colors: [
+                              Color(0x8C000000),
+                              Color(0x4D000000),
+                              Color(0x00000000),
+                            ],
+                            stops: [0.0, 0.55, 1.0],
                           ),
                         ),
+                        child: SafeArea(
+                          top: false,
+                          // Bottom chrome stacks the scrubber on top
+                          // of the transport row (play/pause + ±10s).
+                          child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            FocusTraversalOrder(
+                              order: const NumericFocusOrder(5),
+                              child: PlayerProgressBar(
+                                engine: widget.engine,
+                                onSeekCommit: _emitSeek,
+                                playlistOffsetSec: widget.playlistOffsetSec,
+                                isSeeking: widget.isSeeking,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            FocusTraversalOrder(
+                              order: const NumericFocusOrder(2),
+                              // Stream `engine.isPlayingStream` so the
+                              // play/pause icon flips the instant the
+                              // engine toggles state, instead of
+                              // waiting for the next ambient setState
+                              // (controller auto-hide tick).
+                              child: StreamBuilder<bool>(
+                                stream: widget.engine.isPlayingStream,
+                                initialData: widget.engine.isPlaying,
+                                builder: (context, snap) {
+                                  final isPlaying = snap.data ?? false;
+                                  return PlayerCenterTransport(
+                                    isPlaying: isPlaying,
+                                    onRewind: () => _seekRelative(
+                                      const Duration(seconds: -10),
+                                    ),
+                                    onPlayPause: _togglePlay,
+                                    onForward: () => _seekRelative(
+                                      const Duration(seconds: 10),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                        ),
+                      ),
                       ),
                     ),
                   ],
@@ -865,6 +1042,7 @@ class _FluxPlayerControlsState extends State<FluxPlayerControls> {
               ),
           ],
         ),
+        ),
       ),
     );
   }
@@ -891,7 +1069,8 @@ class PlayerTopBar extends StatelessWidget {
     required this.sleepActive,
     required this.onLock,
     required this.onFit,
-    required this.fitCover,
+    required this.fitMode,
+    this.onFitLongPress,
     this.hdrFormat,
     this.tonemapped = false,
   });
@@ -919,10 +1098,15 @@ class PlayerTopBar extends StatelessWidget {
   /// Drives the aspect-ratio fit mode (letterbox vs. cover).
   final VoidCallback onFit;
 
-  /// True when the player is currently in "fill" (cover) mode; flips
-  /// the icon between `Icons.fit_screen` and `Icons.aspect_ratio` so
-  /// the affordance hints at the *destination* state after a tap.
-  final bool fitCover;
+  /// Long-press on the Fit button — resets the free-form pinch-zoom
+  /// scale back to 1.0.  Null leaves the long-press as a no-op.
+  final VoidCallback? onFitLongPress;
+
+  /// Current discrete fit mode (fit / fill / stretch).  Tapping the
+  /// button cycles to the next mode; the icon + tooltip update to
+  /// reflect the *current* mode so the operator can see what they
+  /// just switched to.
+  final FitMode fitMode;
 
   /// HDR format of the source — drives the `HDR10` / `HLG` / `DV` chip
   /// next to the PIP icon.  Null hides the chip entirely (SDR sources).
@@ -997,18 +1181,39 @@ class PlayerTopBar extends StatelessWidget {
             ),
           ),
           Semantics(
-            label: fitCover
-                ? 'Switch to fit (letterbox) mode'
-                : 'Switch to fill (cover) mode',
+            label: switch (fitMode) {
+              FitMode.fit =>
+                'Aspect: Fit (letterbox) — tap to switch to Fill, '
+                    'long-press to reset zoom',
+              FitMode.fill =>
+                'Aspect: Fill (cover) — tap to switch to Stretch, '
+                    'long-press to reset zoom',
+              FitMode.stretch =>
+                'Aspect: Stretch (ignore aspect) — tap to switch to Fit, '
+                    'long-press to reset zoom',
+            },
             button: true,
-            child: IconButton(
-              tooltip: fitCover ? 'Fit' : 'Fill',
-              icon: Icon(
-                fitCover ? Icons.fit_screen : Icons.aspect_ratio,
-                color: Colors.white,
+            child: GestureDetector(
+              // Long-press resets free-form pinch-zoom back to 1.0.
+              // Same button cycles fit modes on tap.
+              onLongPress: onFitLongPress,
+              child: IconButton(
+                tooltip: switch (fitMode) {
+                  FitMode.fit => 'Fit · long-press resets zoom',
+                  FitMode.fill => 'Fill · long-press resets zoom',
+                  FitMode.stretch => 'Stretch · long-press resets zoom',
+                },
+                icon: Icon(
+                  switch (fitMode) {
+                    FitMode.fit => Icons.fit_screen,
+                    FitMode.fill => Icons.aspect_ratio,
+                    FitMode.stretch => Icons.crop_free,
+                  },
+                  color: Colors.white,
+                ),
+                onPressed: onFit,
+                splashRadius: 22,
               ),
-              onPressed: onFit,
-              splashRadius: 22,
             ),
           ),
           if (onXRay != null)
@@ -1720,6 +1925,8 @@ class PlayerSideRail extends StatelessWidget {
       case PlayerDragKind.volume:
         return 'Drag up or down on the right half of the screen to change volume';
       case PlayerDragKind.seek:
+      case PlayerDragKind.zoom:
+      case PlayerDragKind.fitMode:
         return '';
     }
   }
@@ -1865,39 +2072,58 @@ class _PeekBadge extends StatelessWidget {
 }
 
 class _DragHud extends StatelessWidget {
-  const _DragHud({required this.kind, required this.value});
+  const _DragHud({required this.kind, required this.value, this.label});
 
   final PlayerDragKind? kind;
   final double value;
 
+  /// Pre-formatted label supplied by the controller for the zoom and
+  /// fitMode HUD variants (e.g. `"1.50×"` or `"Fit"`).  Ignored for
+  /// brightness / volume / seek where the legacy progress-bar shape
+  /// still uses the value-driven format.
+  final String? label;
+
   IconData get _icon {
-    if (kind == PlayerDragKind.brightness) {
-      if (value < 0.33) return Icons.brightness_low;
-      if (value < 0.66) return Icons.brightness_medium;
-      return Icons.brightness_high;
+    switch (kind) {
+      case PlayerDragKind.brightness:
+        if (value < 0.33) return Icons.brightness_low;
+        if (value < 0.66) return Icons.brightness_medium;
+        return Icons.brightness_high;
+      case PlayerDragKind.volume:
+        if (value == 0) return Icons.volume_off;
+        if (value < 0.5) return Icons.volume_down;
+        return Icons.volume_up;
+      case PlayerDragKind.zoom:
+        return Icons.zoom_in;
+      case PlayerDragKind.fitMode:
+        return Icons.aspect_ratio;
+      case PlayerDragKind.seek:
+      case null:
+        return Icons.drag_handle;
     }
-    if (kind == PlayerDragKind.volume) {
-      if (value == 0) return Icons.volume_off;
-      if (value < 0.5) return Icons.volume_down;
-      return Icons.volume_up;
-    }
-    return Icons.drag_handle;
   }
 
-  String get _label {
+  String get _legacyLabel {
     switch (kind) {
       case PlayerDragKind.brightness:
         return 'Brightness';
       case PlayerDragKind.volume:
         return 'Volume';
       case PlayerDragKind.seek:
+      case PlayerDragKind.zoom:
+      case PlayerDragKind.fitMode:
       case null:
         return '';
     }
   }
 
+  bool get _showProgressBar =>
+      kind == PlayerDragKind.brightness || kind == PlayerDragKind.volume;
+
   @override
   Widget build(BuildContext context) {
+    final isPreformatted = label != null && kind != null &&
+        (kind == PlayerDragKind.zoom || kind == PlayerDragKind.fitMode);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
       decoration: BoxDecoration(
@@ -1909,19 +2135,24 @@ class _DragHud extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(_icon, color: Colors.white, size: 28),
-          const SizedBox(height: 8),
-          SizedBox(
-            width: 120,
-            child: LinearProgressIndicator(
-              value: value.clamp(0.0, 1.0),
-              backgroundColor: const Color(0x33FFFFFF),
-              valueColor: const AlwaysStoppedAnimation<Color>(AppColors.violet),
-              minHeight: 3,
+          if (_showProgressBar) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: 120,
+              child: LinearProgressIndicator(
+                value: value.clamp(0.0, 1.0),
+                backgroundColor: const Color(0x33FFFFFF),
+                valueColor:
+                    const AlwaysStoppedAnimation<Color>(AppColors.violet),
+                minHeight: 3,
+              ),
             ),
-          ),
+          ],
           const SizedBox(height: 6),
           Text(
-            '$_label  ${(value * 100).round()}%',
+            isPreformatted
+                ? label!
+                : '$_legacyLabel  ${(value * 100).round()}%',
             style: AppTypography.captionV2.copyWith(
               color: Colors.white,
               fontWeight: FontWeight.w600,

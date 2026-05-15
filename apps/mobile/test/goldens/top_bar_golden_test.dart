@@ -9,6 +9,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fluxora_mobile/features/player/presentation/controllers/player_controls_controller.dart';
 import 'package:fluxora_mobile/features/player/presentation/widgets/flux_player_controls.dart';
 import 'package:golden_toolkit/golden_toolkit.dart';
 
@@ -34,7 +35,7 @@ void main() {
             sleepActive: false,
             onLock: _noop,
             onFit: _noop,
-            fitCover: false,
+            fitMode: FitMode.fit,
             hdrFormat: 'HDR10',
           ),
         ),

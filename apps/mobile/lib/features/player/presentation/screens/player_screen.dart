@@ -37,6 +37,15 @@ class PlayerScreen extends StatelessWidget {
     if (!_resume && file != null) {
       // Fire-and-forget — the cubit is a singleton, this just (re)attaches
       // a stream session. `_disposeCurrentSession` cleans up any prior.
+      //
+      // HDR sources stream with their HDR bitstream intact — the
+      // Android ExoPlayer engine requests codec-level HDR→SDR
+      // tone-mapping via `MediaFormat.KEY_COLOR_TRANSFER_REQUEST`
+      // (see `TonemappingRenderersFactory.kt`), which is free and
+      // hardware-accelerated on Android 13+ devices that support
+      // it.  Operator can fall back to the server-side tonemap via
+      // the 3-dot menu's "Tone-map HDR to SDR" toggle on older
+      // Android or unsupported codec paths.
       cubit.startStream(
         file!.id,
         file!.title ?? file!.name,
@@ -65,10 +74,6 @@ class _PlayerViewState extends State<_PlayerView>
   bool _showResumeBanner = false;
   bool _showTransportBadge = false;
   bool _readyOnce = false;
-
-  // Drag-down-to-minimize state.
-  double _dragOffset = 0.0;
-  static const double _dismissThreshold = 150.0;
 
   // Background-playback first-time prompt — Phase 3.  Set when the
   // cubit auto-paused on backgrounding AND the user hasn't yet been
@@ -196,33 +201,11 @@ class _PlayerViewState extends State<_PlayerView>
     }
   }
 
-  void _onMinimizeUpdate(DragUpdateDetails d) {
-    if (d.delta.dy <= 0) return;
-    setState(() => _dragOffset = (_dragOffset + d.delta.dy).clamp(0, 600));
-  }
-
-  void _onMinimizeEnd(DragEndDetails _) {
-    if (_dragOffset >= _dismissThreshold) {
-      // Pop the route — the singleton cubit keeps streaming, mini-player
-      // picks it up.
-      context.pop();
-    } else {
-      setState(() => _dragOffset = 0);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final scale = (1.0 - (_dragOffset / 1200)).clamp(0.85, 1.0);
-    final opacity = (1.0 - (_dragOffset / 400)).clamp(0.4, 1.0);
-
     return Scaffold(
-      backgroundColor: Colors.black.withValues(alpha: opacity),
-      body: Transform.translate(
-        offset: Offset(0, _dragOffset),
-        child: Transform.scale(
-          scale: scale,
-          child: BlocConsumer<PlayerCubit, PlayerState>(
+      backgroundColor: Colors.black,
+      body: BlocConsumer<PlayerCubit, PlayerState>(
             listenWhen: (_, current) => current is PlayerReady,
             listener: (context, state) {
               if (state is PlayerReady) {
@@ -265,10 +248,6 @@ class _PlayerViewState extends State<_PlayerView>
                         isSeeking: state.isSeeking,
                         playlistOffsetSec: state.playlistOffsetSec,
                       ),
-                      _MinimizeHandle(
-                        onUpdate: _onMinimizeUpdate,
-                        onEnd: _onMinimizeEnd,
-                      ),
                       if (_showResumeBanner && state.resumeSec > 0)
                         _ResumeBanner(resumeSec: state.resumeSec),
                       if (_showTransportBadge)
@@ -279,47 +258,6 @@ class _PlayerViewState extends State<_PlayerView>
               PlayerGated(:final reason) => _GatedView(reason: reason),
               PlayerFailure(:final message) => _ErrorView(message: message),
             },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Small drag affordance at the very top of the player. Listens only for
-/// vertical drags, leaves all other gestures (tap, double-tap, long-press
-/// inside `FluxPlayerControls`) untouched.
-class _MinimizeHandle extends StatelessWidget {
-  const _MinimizeHandle({required this.onUpdate, required this.onEnd});
-
-  final ValueChanged<DragUpdateDetails> onUpdate;
-  final ValueChanged<DragEndDetails> onEnd;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      top: 0,
-      left: 0,
-      right: 0,
-      child: SafeArea(
-        bottom: false,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onVerticalDragUpdate: onUpdate,
-          onVerticalDragEnd: onEnd,
-          child: Container(
-            height: 24,
-            alignment: Alignment.center,
-            child: Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -391,27 +329,42 @@ class _VideoView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // For the MediaKitEngine path keep using the `media_kit_video`
-    // `Video` widget so we don't lose its aspect-ratio / fit-mode
-    // handling.  Non-MediaKit engines render `Texture(textureId:
-    // id)` directly via [_EngineTextureSurface].
-    final videoSurface = engine is MediaKitEngine
-        ? Video(
-            controller: (engine as MediaKitEngine).videoController,
-            controls: (state) => const SizedBox.shrink(),
-            // Disable media_kit_video's per-play-state wakelock
-            // toggling — we hold KEEP_SCREEN_ON for the entire player-
-            // screen lifetime in `_PlayerViewState.initState` instead.
-            // The toggle on play/pause was triggering Oplus's window
-            // manager to recreate the surface every time, which tore
-            // down the AudioTrack mid-playback and produced the "audio
-            // dies after ~32 ms" pattern.
-            wakelock: false,
-          )
-        : _EngineTextureSurface(engine: engine);
     return Stack(
       children: [
-        Center(child: videoSurface),
+        // Two independent systems sized into the surface:
+        //   * fit/fill — handled per engine (`Video(fit:)` for the
+        //     MediaKit path, `FittedBox(fit:)` inside the texture
+        //     surface for the ExoPlayer path).  Keeps the layout
+        //     pipeline native to each engine, which is what worked
+        //     correctly in portrait + landscape before unification.
+        //   * pinch zoom — wraps the surface in `Transform.scale
+        //     (userScale)` on top of whatever the fit mode produced.
+        // Operator feedback was unambiguous: unifying these into one
+        // scalar broke portrait-mode aspect handling.  Keep them
+        // separate.
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: controlsController,
+            builder: (context, _) => Transform.scale(
+              scale: controlsController.userScale,
+              child: engine is MediaKitEngine
+                  ? Video(
+                      controller: (engine as MediaKitEngine).videoController,
+                      controls: (state) => const SizedBox.shrink(),
+                      fit: _fitModeToBoxFit(controlsController.fitMode),
+                      // Disable media_kit_video's per-play-state
+                      // wakelock toggling — we hold KEEP_SCREEN_ON
+                      // for the entire player-screen lifetime in
+                      // `_PlayerViewState.initState` instead.
+                      wakelock: false,
+                    )
+                  : _EngineTextureSurface(
+                      engine: engine,
+                      fitMode: controlsController.fitMode,
+                    ),
+            ),
+          ),
+        ),
         FluxPlayerControls(
           engine: engine,
           controller: controlsController,
@@ -432,24 +385,70 @@ class _VideoView extends StatelessWidget {
   }
 }
 
-/// Raw-texture rendering path for non-MediaKit engines (ExoPlayerEngine,
-/// future engines).  Reads `engine.textureId` on every build — the
-/// engine emits texture id changes through its own state machine, and
-/// this widget is rebuilt by the BlocBuilder above when `PlayerReady`
-/// is re-emitted with a new engine.
+
+/// Raw-texture rendering for the ExoPlayer path.  Reads
+/// `engine.textureId` on every build; the engine emits texture id
+/// changes through its own state machine and the parent rebuilds
+/// when `PlayerReady` re-emits.
+///
+/// Fit / fill goes through `FittedBox(fit: BoxFit.contain | cover)`
+/// wrapping a `SizedBox(videoWidth, videoHeight)` so the texture is
+/// rendered at the decoded frame's aspect ratio and Flutter layouts
+/// it correctly in portrait + landscape.  Pinch zoom is applied
+/// separately one level up via `Transform.scale(userScale)`.
 class _EngineTextureSurface extends StatelessWidget {
-  const _EngineTextureSurface({required this.engine});
+  const _EngineTextureSurface({required this.engine, required this.fitMode});
 
   final PlayerEngine engine;
+
+  /// Discrete fit mode driven by [PlayerControlsController.fitMode]:
+  /// fit (letterbox) / fill (cover) / stretch (ignore aspect).
+  final FitMode fitMode;
 
   @override
   Widget build(BuildContext context) {
     final id = engine.textureId;
     if (id == null) {
-      return const SizedBox.shrink();
+      return const ColoredBox(color: Colors.black);
     }
-    return Texture(textureId: id);
+    return StreamBuilder<({int width, int height})?>(
+      stream: engine.videoSizeStream,
+      initialData: engine.videoSize,
+      builder: (context, snap) {
+        final size = snap.data;
+        final texture = Texture(textureId: id);
+        if (size == null || size.width <= 0 || size.height <= 0) {
+          // Pre-size-known: stretched Texture at parent size.  Lasts
+          // only until the engine emits the first videoSize event
+          // (Media3 fires it as soon as `onTracksChanged` parses the
+          // playlist — much earlier than first-decoded-frame).
+          return texture;
+        }
+        return ClipRect(
+          child: FittedBox(
+            fit: _fitModeToBoxFit(fitMode),
+            child: SizedBox(
+              width: size.width.toDouble(),
+              height: size.height.toDouble(),
+              child: texture,
+            ),
+          ),
+        );
+      },
+    );
   }
+}
+
+/// Map the discrete [FitMode] enum to Flutter's [BoxFit].
+/// * fit → `contain` (letterbox/pillarbox)
+/// * fill → `cover` (crop to fill viewport)
+/// * stretch → `fill` (ignore aspect, distort to viewport)
+BoxFit _fitModeToBoxFit(FitMode mode) {
+  return switch (mode) {
+    FitMode.fit => BoxFit.contain,
+    FitMode.fill => BoxFit.cover,
+    FitMode.stretch => BoxFit.fill,
+  };
 }
 
 /// Translucent dimming scrim + centred spinner shown while a server
