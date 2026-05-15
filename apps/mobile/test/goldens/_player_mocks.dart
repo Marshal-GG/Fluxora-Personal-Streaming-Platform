@@ -98,6 +98,9 @@ class FakePlayerEngine implements PlayerEngine {
   Future<void> setVolume(double volume0to100) async {}
 
   @override
+  Future<void> setMetadata(String? title) async {}
+
+  @override
   Future<void> dispose() async {}
 }
 

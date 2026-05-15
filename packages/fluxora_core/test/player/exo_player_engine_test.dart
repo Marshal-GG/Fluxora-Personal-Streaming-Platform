@@ -308,6 +308,40 @@ void main() {
       await engine.dispose();
     });
 
+    test('setMetadata sends title to the channel', () async {
+      methodMock.handler = (call) async {
+        if (call.method == 'create') {
+          return <String, dynamic>{'playerId': 7, 'textureId': 0};
+        }
+        return null;
+      };
+
+      final engine = await ExoPlayerEngine.createWithChannels(
+        methodChannel: methodChannel,
+        eventChannel: eventChannel,
+      );
+
+      methodMock.calls.clear();
+      await engine.setMetadata('Inception');
+
+      expect(methodMock.calls, hasLength(1));
+      expect(methodMock.calls.first.method, 'setMetadata');
+      final args =
+          Map<String, dynamic>.from(methodMock.calls.first.arguments as Map);
+      expect(args['playerId'], 7);
+      expect(args['title'], 'Inception');
+
+      methodMock.calls.clear();
+      await engine.setMetadata(null);
+      expect(methodMock.calls, hasLength(1));
+      final nullArgs =
+          Map<String, dynamic>.from(methodMock.calls.first.arguments as Map);
+      expect(nullArgs.containsKey('title'), isTrue);
+      expect(nullArgs['title'], isNull);
+
+      await engine.dispose();
+    });
+
     test('open / play / pause / seek / setAudioTrack / setRate '
         'all carry playerId and the documented args', () async {
       methodMock.handler = (call) async {

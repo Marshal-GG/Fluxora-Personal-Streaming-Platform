@@ -216,6 +216,12 @@ class MediaKitEngine implements PlayerEngine {
   Future<void> setVolume(double volume0to100) =>
       _player.setVolume(volume0to100);
 
+  /// libmpv doesn't manage the OS MediaSession directly — that lives in
+  /// `FluxoraAudioHandler` (audio_service plugin) which the cubit binds
+  /// separately for the MediaKitEngine path.  No-op here.
+  @override
+  Future<void> setMetadata(String? title) async {}
+
   @override
   Future<void> dispose() async {
     await _errorBridgeSub?.cancel();

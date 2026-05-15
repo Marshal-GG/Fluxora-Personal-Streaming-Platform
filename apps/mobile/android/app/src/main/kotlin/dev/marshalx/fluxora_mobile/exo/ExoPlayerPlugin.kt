@@ -206,6 +206,7 @@ class ExoPlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 "setAudioTrack" -> handleSetAudioTrack(call, result)
                 "setRate" -> handleSetRate(call, result)
                 "setVolume" -> handleSetVolume(call, result)
+                "setMetadata" -> handleSetMetadata(call, result)
                 "dispose" -> handleDispose(call, result)
                 else -> {
                     Log.w(TAG, "onMethodCall — unimplemented method=${call.method}")
@@ -309,6 +310,13 @@ class ExoPlayerPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val volume = (call.argument<Number>("volume0to1")
             ?: throw IllegalArgumentException("Missing 'volume0to1' argument")).toDouble()
         requirePlayer(call).setVolume(volume)
+        result.success(emptyMap<String, Any>())
+    }
+
+    private fun handleSetMetadata(call: MethodCall, result: MethodChannel.Result) {
+        // title is optional — null clears back to the default ("Fluxora").
+        val title = call.argument<String?>("title")
+        requirePlayer(call).setMetadata(title)
         result.success(emptyMap<String, Any>())
     }
 

@@ -308,6 +308,18 @@ internal class FluxoraExoPlayer(
         }
     }
 
+    fun setMetadata(title: String?) {
+        ensureAlive()
+        mainHandler.post {
+            if (released) return@post
+            try {
+                FluxoraMediaSessionService.applyMetadata(title)
+            } catch (t: Throwable) {
+                Log.w(TAG, "playerId=$playerId setMetadata — failed title=${title ?: "<null>"}", t)
+            }
+        }
+    }
+
     fun release() {
         if (released) return
         released = true

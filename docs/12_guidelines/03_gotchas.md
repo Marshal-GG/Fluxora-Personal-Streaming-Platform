@@ -1128,6 +1128,17 @@ static const _undefinedLanguageTags = {'und', 'unk', 'mis', 'zxx', ''};
 3. Don't try to compute the integer literal for a missing constant — that breaks the moment ExoPlayer renumbers (which they have done at minor versions in the past). If a code legitimately needs to be handled and is missing at the pinned version, fall it through to the catch-all `else -> "unknown"` and document the version requirement in a comment.
 
 
+## Subtitle picker is engine-specific — Android ExoPlayer hides the picker behind a "coming later" card
+
+**Context:** The `audio_subs_sheet`'s Subtitles tab reads libmpv's `state.tracks` directly via the `MediaKitEngine.mediaKitPlayer` escape hatch. On the desktop + iOS + Android-rollback paths (`MediaKitEngine`) it works as before. On the Android ExoPlayer path (`ExoPlayerEngine`) there's no libmpv to read from — Media3's subtitle pipeline is a different API surface (`SubtitleView` + `Tracks.Group` of type `C.TRACK_TYPE_TEXT`).
+
+**Today's behaviour:** the tab stays visible and renders a placeholder card explaining a future update will land the picker on this engine. Playback isn't affected — embedded subtitles + sidecar tracks the player auto-selects continue to render. Only the manual picker is gated.
+
+**Migration path (separate plan):** add `setSubtitleTrack(int sourceIndex)` to `PlayerEngine`; `MediaKitEngine` keeps its current `Player.setSubtitleTrack` call; `ExoPlayerEngine` routes through the platform channel to `TrackSelectionParameters.setOverrideForType` on a text-type `TrackGroup`. Kotlin side also wires Media3's `SubtitleView` if we want the same OS-rendered subtitle styling.
+
+**Rule going forward:** any code that grep-hits `_mediaKitPlayer.state.tracks` outside `MediaKitEngine` is the same kind of layer leak the engine abstraction is meant to prevent. The Subtitles tab placeholder is the documented exit; new callers don't get to add new ones.
+
+
 ## Desktop has no player feature — "mirror player to desktop" is net-new architecture
 
 **Context:** The desktop app (`apps/desktop/`) is a pure server control panel — it has no `lib/features/player/` directory and no media playback infrastructure whatsoever. Plans 20 and 21 both originally included "mirror mobile player cubit change to desktop" as a milestone item. Both times the subagent confirmed that `apps/desktop/lib/features/player/` does not exist.

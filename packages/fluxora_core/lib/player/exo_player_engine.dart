@@ -359,6 +359,18 @@ class ExoPlayerEngine implements PlayerEngine {
     );
   }
 
+  /// Pushes the title to the Kotlin side so Media3's `MediaSession`
+  /// renders it on the lockscreen card / notification.  Null sends as
+  /// a null value; the native side falls back to its default
+  /// (`"Fluxora"` today).
+  @override
+  Future<void> setMetadata(String? title) async {
+    await _methodChannel.invokeMethod<void>(
+      'setMetadata',
+      _args({'title': title}),
+    );
+  }
+
   @override
   Future<void> dispose() async {
     if (_disposed) return;

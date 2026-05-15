@@ -63,6 +63,12 @@ abstract class PlayerEngine {
   /// existing volume range — the ExoPlayerEngine converts internally).
   Future<void> setVolume(double volume0to100);
 
+  /// Update the OS-side metadata the engine surfaces (lockscreen card /
+  /// notification card / Bluetooth-headset transport title).  Engines
+  /// without an OS MediaSession should no-op.  Passing `null` clears
+  /// the title back to whatever the engine's default is.
+  Future<void> setMetadata(String? title);
+
   /// Release all resources held by the engine.  After this call no
   /// other method on this engine instance is valid.
   Future<void> dispose();

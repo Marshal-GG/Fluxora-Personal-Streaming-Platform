@@ -125,9 +125,28 @@ class _AudioSubsSheetState extends State<AudioSubsSheet> {
                       );
                     },
                   ),
-                  if (mkEngine != null &&
-                      tracks != null &&
-                      selectedSubtitle != null)
+                  if (mkEngine == null)
+                    // Non-MediaKit engine (Android ExoPlayer today) —
+                    // the libmpv `state.tracks` surface doesn't exist
+                    // here; Media3's subtitle pipeline is a separate
+                    // API the picker hasn't been migrated to yet.
+                    // Embedded subtitle tracks the player auto-selects
+                    // still render; only the manual picker is gated.
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Text(
+                          'Subtitle picker is coming in a future update on '
+                          'this player engine. Embedded subtitles still '
+                          'render when the player picks them up.',
+                          textAlign: TextAlign.center,
+                          style: AppTypography.captionV2.copyWith(
+                            color: AppColors.textDim,
+                          ),
+                        ),
+                      ),
+                    )
+                  else if (tracks != null && selectedSubtitle != null)
                     _TrackList<SubtitleTrack>(
                       tracks: tracks.subtitle,
                       selected: selectedSubtitle,

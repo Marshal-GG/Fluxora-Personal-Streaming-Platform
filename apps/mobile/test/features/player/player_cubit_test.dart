@@ -157,6 +157,13 @@ class _FakePlayerEngine implements PlayerEngine {
     _volume = volume0to100;
   }
 
+  String? lastMetadataTitle;
+
+  @override
+  Future<void> setMetadata(String? title) async {
+    lastMetadataTitle = title;
+  }
+
   @override
   Future<void> dispose() async {
     _disposed = true;

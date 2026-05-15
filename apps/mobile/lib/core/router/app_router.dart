@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 import 'package:fluxora_core/entities/media_file.dart';
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
-import 'package:fluxora_mobile/dev/exo_spike_page.dart';
 import 'package:fluxora_mobile/features/auth/presentation/screens/pairing_screen.dart';
 import 'package:fluxora_mobile/features/auth/presentation/screens/reconnect_screen.dart';
 import 'package:fluxora_mobile/features/connect/domain/entities/discovered_server.dart';
@@ -137,12 +136,6 @@ abstract class Routes {
 
   static String detail(String id) => '/detail/$id';
   static String episodes(String id) => '/episodes/$id';
-
-  /// Hidden ExoPlayer spike route.  Not surfaced in any visible
-  /// navigation; the operator pushes it via
-  /// `context.go('/dev/exo-spike')` (or via the hidden long-press
-  /// affordance on the About sheet's version label).
-  static const String devExoSpike = kExoSpikeRoute;
 }
 
 /// Listens to [ApiClient.unauthorizedStream] so a dead token triggered by
@@ -425,17 +418,6 @@ final GoRouter appRouter = GoRouter(
         child: DetailScreen(id: state.pathParameters['id']!),
       ),
     ),
-    // Hidden ExoPlayer spike.  Not referenced from any visible UI;
-    // the operator navigates by `go('/dev/exo-spike')` from a debug
-    // console or via the hidden long-press affordance on the About
-    // sheet's version label.
-    GoRoute(
-      path: Routes.devExoSpike,
-      pageBuilder: (context, state) => _fadePage(
-        key: state.pageKey,
-        child: const ExoSpikePage(),
-      ),
-    ),
     GoRoute(
       path: '/episodes/:id',
       pageBuilder: (context, state) => _fadePage(
@@ -458,10 +440,7 @@ Future<String?> _guardRedirect(
       state.matchedLocation == Routes.connect ||
       state.matchedLocation == Routes.pairing ||
       state.matchedLocation == Routes.reconnect ||
-      state.matchedLocation == Routes.scanQr ||
-      // Hidden dev spike route bypasses auth so the operator can
-      // reach it from a fresh install.
-      state.matchedLocation == Routes.devExoSpike;
+      state.matchedLocation == Routes.scanQr;
   final isAuthenticated = token != null && serverUrl != null;
 
   // Authenticated users hitting /splash, /connect or /pairing get bounced

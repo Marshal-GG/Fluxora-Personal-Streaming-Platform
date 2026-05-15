@@ -321,6 +321,16 @@ class PlayerCubit extends Cubit<PlayerState> {
         );
       }
 
+      // Push the file title to the engine so engines with a native
+      // MediaSession (ExoPlayer) can render it on the lockscreen card.
+      // MediaKitEngine no-ops — its lockscreen path runs through the
+      // `_audioHandler.bind` call above which already carried the title.
+      try {
+        await engine.setMetadata(fileName);
+      } catch (e, st) {
+        _log.i('engine.setMetadata failed', error: e, stackTrace: st);
+      }
+
       emit(
         PlayerReady(
           sessionId: response.sessionId,
