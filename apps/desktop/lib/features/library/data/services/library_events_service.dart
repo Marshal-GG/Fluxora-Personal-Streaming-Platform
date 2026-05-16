@@ -3,12 +3,15 @@
 /// Replaces the periodic polling the cubits used to do.  The server's
 /// `/api/v1/ws/notifications` channel broadcasts ephemeral `event`
 /// frames (in addition to persistent notifications); this service
-/// filters for `library_changed` / `storage_changed` kinds and exposes
-/// them as broadcast streams the cubits subscribe to.
+/// filters for `library_changed` / `storage_changed` /
+/// `thumbnails_progress` kinds and exposes them as broadcast streams
+/// the cubits subscribe to.
 ///
 /// Wire format on the wire (server side):
 ///   {"type": "event", "kind": "library_changed"}
 ///   {"type": "event", "kind": "storage_changed"}
+///   {"type": "event", "kind": "thumbnails_progress",
+///    "data": {"library_id": "...", "pending": N, "ready": M, "total": T}}
 ///
 /// Connection lifecycle:
 ///   - `start()` opens the WS.  Idempotent.
@@ -41,12 +44,21 @@ class LibraryEventsService {
 
   final _libraryChanged = StreamController<void>.broadcast();
   final _storageChanged = StreamController<void>.broadcast();
+  final _thumbnailsProgress = StreamController<ThumbnailProgress>.broadcast();
 
   /// Fires once per server-emitted `library_changed` event.
   Stream<void> get libraryChanged => _libraryChanged.stream;
 
   /// Fires once per server-emitted `storage_changed` event.
   Stream<void> get storageChanged => _storageChanged.stream;
+
+  /// Fires for every `thumbnails_progress` event emitted by the
+  /// server-side thumbnail worker.  Carries the per-library pending /
+  /// ready / total counts so the cubit can drive the in-progress chip
+  /// on each library card.  Frequency: one event per worker completion
+  /// (typically 1–2 / s under default CONCURRENCY=2).
+  Stream<ThumbnailProgress> get thumbnailsProgress =>
+      _thumbnailsProgress.stream;
 
   Future<void> start() async {
     _stopped = false;
@@ -106,6 +118,12 @@ class LibraryEventsService {
           _libraryChanged.add(null);
         case 'storage_changed':
           _storageChanged.add(null);
+        case 'thumbnails_progress':
+          final payload = json['data'];
+          if (payload is Map<String, dynamic>) {
+            final progress = ThumbnailProgress.tryParse(payload);
+            if (progress != null) _thumbnailsProgress.add(progress);
+          }
       }
     } catch (e, st) {
       _log.w('LibraryEventsService failed to parse frame',
@@ -127,6 +145,51 @@ class LibraryEventsService {
     await stop();
     await _libraryChanged.close();
     await _storageChanged.close();
+    await _thumbnailsProgress.close();
+  }
+}
+
+/// Per-library thumbnail-generation progress snapshot, carried on
+/// `thumbnails_progress` WS frames.  `pending` includes rows in both
+/// `pending` and `generating` server-side status so the bar counts
+/// claim-but-not-done work as outstanding.
+class ThumbnailProgress {
+  const ThumbnailProgress({
+    required this.libraryId,
+    required this.pending,
+    required this.ready,
+    required this.total,
+  });
+
+  final String libraryId;
+  final int pending;
+  final int ready;
+  final int total;
+
+  /// True when there are no longer any pending or generating rows for
+  /// this library — the cubit / card can hide the chip.
+  bool get isComplete => pending <= 0;
+
+  /// Returns null on any shape mismatch instead of throwing — the WS
+  /// frame parser swallows it so a malformed payload doesn't crash the
+  /// listener.
+  static ThumbnailProgress? tryParse(Map<String, dynamic> json) {
+    final libraryId = json['library_id'];
+    final pending = json['pending'];
+    final ready = json['ready'];
+    final total = json['total'];
+    if (libraryId is! String ||
+        pending is! int ||
+        ready is! int ||
+        total is! int) {
+      return null;
+    }
+    return ThumbnailProgress(
+      libraryId: libraryId,
+      pending: pending,
+      ready: ready,
+      total: total,
+    );
   }
 }
 

@@ -1,5 +1,6 @@
 import 'package:fluxora_core/entities/library.dart';
 import 'package:fluxora_core/entities/media_file.dart';
+import 'package:fluxora_desktop/features/library/data/services/library_events_service.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/library.dart' as desktop;
 
 sealed class LibraryState {
@@ -20,6 +21,7 @@ class LibraryLoaded extends LibraryState {
     required this.files,
     this.selectedLibraryId,
     this.codecOverrides = const {},
+    this.thumbnailProgress = const {},
   });
 
   final List<Library> libraries;
@@ -29,6 +31,13 @@ class LibraryLoaded extends LibraryState {
   /// Per-library codec passthrough overrides — plan 19 §M8.  Keyed by
   /// library id; missing keys default to [LibraryCodecOverrides.empty].
   final Map<String, desktop.LibraryCodecOverrides> codecOverrides;
+
+  /// Per-library thumbnail-generation progress driven by server-side
+  /// `thumbnails_progress` WS frames.  Missing keys mean "no progress
+  /// reported yet" — the card hides the chip in that case.  The map
+  /// survives refresh so the chip stays visible across cubit reloads.
+  /// Plan 27 post-ship.
+  final Map<String, ThumbnailProgress> thumbnailProgress;
 
   /// Files currently displayed — all if no library selected, else filtered.
   List<MediaFile> get visibleFiles => selectedLibraryId == null

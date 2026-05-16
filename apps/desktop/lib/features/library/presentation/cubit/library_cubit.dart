@@ -18,17 +18,46 @@ class LibraryCubit extends Cubit<LibraryState> {
     // refresh.  When the WS isn't wired (e.g. test harness) `events` is
     // null and the cubit falls back to manual Refresh-button-only.
     _eventsSub = events?.libraryChanged.listen((_) => refresh());
+    // Per-library thumbnail-generation progress updates from the BG
+    // worker — drives the chip on each library card.  Updates the
+    // local map in place + re-emits LibraryLoaded so the UI repaints.
+    _progressSub = events?.thumbnailsProgress.listen(_applyProgress);
   }
 
   final LibraryRepository _repository;
   static final _log = Logger();
 
   StreamSubscription<void>? _eventsSub;
+  StreamSubscription<ThumbnailProgress>? _progressSub;
 
   @override
   Future<void> close() {
     _eventsSub?.cancel();
+    _progressSub?.cancel();
     return super.close();
+  }
+
+  /// Merge a freshly-received [ThumbnailProgress] into the current
+  /// LibraryLoaded state.  No-op when the cubit isn't in [LibraryLoaded].
+  /// When `isComplete` is true (no pending+generating rows left for the
+  /// library), the entry is removed from the map so the chip disappears
+  /// on next paint.
+  void _applyProgress(ThumbnailProgress progress) {
+    final current = state;
+    if (current is! LibraryLoaded) return;
+    final next = Map<String, ThumbnailProgress>.from(current.thumbnailProgress);
+    if (progress.isComplete) {
+      next.remove(progress.libraryId);
+    } else {
+      next[progress.libraryId] = progress;
+    }
+    emit(LibraryLoaded(
+      libraries: current.libraries,
+      files: current.files,
+      selectedLibraryId: current.selectedLibraryId,
+      codecOverrides: current.codecOverrides,
+      thumbnailProgress: next,
+    ));
   }
 
   Future<void> load() async {
@@ -51,18 +80,20 @@ class LibraryCubit extends Cubit<LibraryState> {
   }
 
   /// Refresh quietly: re-fetches without flipping back to [LibraryLoading],
-  /// so the UI doesn't flash a spinner after every mutation.
+  /// so the UI doesn't flash a spinner after every mutation.  Preserves
+  /// the thumbnail-progress map across refreshes so the chip stays
+  /// visible while cover_urls reload.
   Future<void> refresh() async {
     try {
       final payload = await _repository.getLibrariesWithOverrides();
       final files = await _repository.getFiles();
+      final prev = state is LibraryLoaded ? state as LibraryLoaded : null;
       emit(LibraryLoaded(
         libraries: payload.libraries,
         files: files,
         codecOverrides: payload.overrides,
-        selectedLibraryId: state is LibraryLoaded
-            ? (state as LibraryLoaded).selectedLibraryId
-            : null,
+        selectedLibraryId: prev?.selectedLibraryId,
+        thumbnailProgress: prev?.thumbnailProgress ?? const {},
       ));
     } on ApiException catch (e, st) {
       _log.e('Library refresh failed', error: e, stackTrace: st);
@@ -81,6 +112,7 @@ class LibraryCubit extends Cubit<LibraryState> {
       files: current.files,
       selectedLibraryId: libraryId,
       codecOverrides: current.codecOverrides,
+      thumbnailProgress: current.thumbnailProgress,
     ));
   }
 
@@ -153,6 +185,9 @@ class LibraryCubit extends Cubit<LibraryState> {
             current.files.where((f) => f.libraryId != libraryId).toList();
         final remainingOverrides =
             Map.of(current.codecOverrides)..remove(libraryId);
+        final remainingProgress =
+            Map<String, ThumbnailProgress>.from(current.thumbnailProgress)
+              ..remove(libraryId);
         emit(LibraryLoaded(
           libraries: remaining,
           files: remainingFiles,
@@ -160,6 +195,7 @@ class LibraryCubit extends Cubit<LibraryState> {
           selectedLibraryId: current.selectedLibraryId == libraryId
               ? null
               : current.selectedLibraryId,
+          thumbnailProgress: remainingProgress,
         ));
       }
     } on ApiException catch (e, st) {

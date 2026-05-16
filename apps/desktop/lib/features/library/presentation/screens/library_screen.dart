@@ -11,6 +11,7 @@ import 'package:fluxora_core/entities/enums.dart';
 import 'package:fluxora_core/entities/library.dart';
 import 'package:fluxora_core/entities/media_file.dart';
 import 'package:fluxora_desktop/core/router/app_router.dart';
+import 'package:fluxora_desktop/features/library/data/services/library_events_service.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/library.dart' as desktop;
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_cubit.dart';
@@ -1294,6 +1295,7 @@ class _LoadedBody extends StatelessWidget {
             onScan: onScan,
             onEdit: onEdit,
             onRemove: onRemove,
+            thumbnailProgress: state.thumbnailProgress,
           )
         else
           _LibraryList(
@@ -1561,6 +1563,7 @@ class _LibraryGrid extends StatelessWidget {
     required this.onScan,
     required this.onEdit,
     required this.onRemove,
+    this.thumbnailProgress = const {},
   });
 
   final List<Library> libraries;
@@ -1570,6 +1573,10 @@ class _LibraryGrid extends StatelessWidget {
   final ValueChanged<Library> onScan;
   final ValueChanged<Library> onEdit;
   final ValueChanged<Library> onRemove;
+
+  /// Per-library thumbnail-generation snapshots (plan 27 post-ship).
+  /// Forwarded into each `_LibraryCard` so the progress chip can render.
+  final Map<String, ThumbnailProgress> thumbnailProgress;
 
   @override
   Widget build(BuildContext context) {
@@ -1598,6 +1605,7 @@ class _LibraryGrid extends StatelessWidget {
                 child: _LibraryCard(
                   library: lib,
                   isSelected: lib.id == selectedId,
+                  thumbnailProgress: thumbnailProgress[lib.id],
                   onTap: () => onSelect(lib),
                   onScan: () => onScan(lib),
                   onEdit: () => onEdit(lib),
@@ -1624,6 +1632,7 @@ class _LibraryCard extends StatefulWidget {
     required this.onEdit,
     required this.onRemove,
     required this.onOpenFiles,
+    this.thumbnailProgress,
   });
 
   final Library library;
@@ -1633,6 +1642,12 @@ class _LibraryCard extends StatefulWidget {
   final VoidCallback onEdit;
   final VoidCallback onRemove;
   final VoidCallback onOpenFiles;
+
+  /// In-flight thumbnail-generation snapshot for this library (plan 27
+  /// post-ship).  Null = no progress reported yet (chip hidden).
+  /// Driven by `thumbnails_progress` WS frames demuxed by
+  /// [LibraryEventsService] and fanned out via [LibraryCubit].
+  final ThumbnailProgress? thumbnailProgress;
 
   @override
   State<_LibraryCard> createState() => _LibraryCardState();
@@ -1893,12 +1908,92 @@ class _LibraryCardState extends State<_LibraryCard> {
                     ],
                   ),
                 ),
+                // Thumbnail-generation progress strip — pinned to the
+                // top edge of the card, above every other Stack child so
+                // it sits over the sandwich gradient.  Visible only while
+                // the BG worker is still chewing through this library.
+                if (widget.thumbnailProgress != null &&
+                    !widget.thumbnailProgress!.isComplete)
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: _ThumbnailProgressStrip(
+                      progress: widget.thumbnailProgress!,
+                    ),
+                  ),
               ],
             ),
           ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Thin 3-px progress bar pinned at the top edge of a library card +
+/// a compact count pill at the right (e.g. `23 / 89`).  Renders only
+/// while a `_LibraryCard` has an in-progress thumbnail snapshot.  Plan
+/// 27 post-ship visibility surface.
+class _ThumbnailProgressStrip extends StatelessWidget {
+  const _ThumbnailProgressStrip({required this.progress});
+
+  final ThumbnailProgress progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = progress.total <= 0 ? 1 : progress.total;
+    final fraction = (progress.ready / total).clamp(0.0, 1.0);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Thin progress bar across the top of the card.
+        Stack(
+          children: [
+            Container(height: 3, color: const Color(0x33000000)),
+            FractionallySizedBox(
+              widthFactor: fraction,
+              child: Container(
+                height: 3,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [AppColors.violet, Color(0xFF22D3EE)],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        // Small count pill, right-aligned, so the operator gets the
+        // exact "M / T" without having to read the bar's fill amount.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(0, 6, 6, 0),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: const Color(0xCC000000),
+                border: Border.all(color: const Color(0x33FFFFFF)),
+                borderRadius: BorderRadius.circular(AppRadii.xs),
+              ),
+              child: Text(
+                'Thumbs ${progress.ready} / ${progress.total}',
+                style: const TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
