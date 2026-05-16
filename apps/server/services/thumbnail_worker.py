@@ -45,10 +45,12 @@ logger = logging.getLogger(__name__)
 # ── Tunables (module-level so tests can monkeypatch) ───────────────────────
 
 # Number of worker coroutines.  Each owns one in-flight FFmpeg / PyMuPDF
-# subprocess at a time.  2 is the sweet spot on a typical home server:
-# enough to overlap CPU + I/O, low enough to leave headroom for the
-# streaming pipeline.
-CONCURRENCY = 2
+# subprocess at a time.  Bumped 2 → 4 post-ship (2026-05-16) — most home
+# servers have ≥ 8 logical cores idle when not actively transcoding, and
+# operator feedback was that thumbnail generation felt much slower than
+# Windows Explorer's thumbnail provider.  If the streaming pipeline
+# starts feeling CPU contention during heavy scans, dial back to 2.
+CONCURRENCY = 4
 
 # Sleep between empty-queue probes.  Keeps CPU near-zero when there's
 # nothing to do.
@@ -76,6 +78,13 @@ _WORKER_TASKS: list[asyncio.Task] = []
 _SWEEPER_TASK: asyncio.Task | None = None
 _STOP_EVENT: asyncio.Event | None = None
 _THUMBNAILS_DIR: Path | None = None
+
+# Per-library completion counter for throttling `library_changed` event
+# emissions.  Reset to 0 on emit + always emitted on the last-pending
+# completion so cards refresh even when scan size < 5 files.  See
+# `_emit_progress`.
+_PROGRESS_REFRESH_COUNTERS: dict[str, int] = {}
+_PROGRESS_REFRESH_THRESHOLD = 5
 
 
 def _thumbnails_dir() -> Path:
@@ -346,6 +355,78 @@ async def _mark_failed(
         await _maybe_emit_failure_notification(db, library_id)
 
 
+async def _emit_progress(
+    db: aiosqlite.Connection, library_id: str | None
+) -> None:
+    """Emit a `thumbnails_progress` WS event for this library + throttled
+    `library_changed` so cover_urls refresh as thumbs land.
+
+    Per-library counter throttles the `library_changed` emit to every
+    Nth completion (default 5) or whenever the queue empties — so a
+    1000-file scan generates ~200 cover_urls refreshes, not 1000, but a
+    small 3-file library still sees its final completion trigger a
+    refresh.
+
+    The `thumbnails_progress` frame is fan-out unthrottled — bandwidth
+    is negligible (~100 bytes per frame) and the client wants prompt
+    updates to the progress bar.  Frame shape:
+        {"type": "event", "kind": "thumbnails_progress",
+         "data": {"library_id": "...", "pending": N, "ready": M, "total": T}}
+    """
+    if library_id is None:
+        return
+    # Pending includes 'generating' since those are claim-but-not-done
+    # rows — visually the operator wants the bar to count them.
+    async with db.execute(
+        """
+        SELECT
+            SUM(CASE WHEN t.status IN ('pending', 'generating') THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN t.status = 'ready' THEN 1 ELSE 0 END) AS ready,
+            COUNT(*) AS total
+          FROM media_thumbnails t
+          JOIN media_files m ON m.id = t.file_id
+         WHERE m.library_id = ?
+        """,
+        (library_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return
+
+    pending = int(row["pending"] or 0)
+    ready = int(row["ready"] or 0)
+    total = int(row["total"] or 0)
+
+    try:
+        notification_service.broadcast_event(
+            "thumbnails_progress",
+            data={
+                "library_id": library_id,
+                "pending": pending,
+                "ready": ready,
+                "total": total,
+            },
+        )
+    except Exception:
+        logger.warning("Failed to emit thumbnails_progress event", exc_info=True)
+
+    # Throttled cover_urls refresh: bump per-library counter; emit
+    # `library_changed` every Nth completion + always when queue empties
+    # for the library (so the operator sees the final cards land).
+    count = _PROGRESS_REFRESH_COUNTERS.get(library_id, 0) + 1
+    if count >= _PROGRESS_REFRESH_THRESHOLD or pending == 0:
+        _PROGRESS_REFRESH_COUNTERS[library_id] = 0
+        try:
+            notification_service.broadcast_event("library_changed")
+        except Exception:
+            logger.warning(
+                "Failed to emit library_changed after thumbnail completion",
+                exc_info=True,
+            )
+    else:
+        _PROGRESS_REFRESH_COUNTERS[library_id] = count
+
+
 async def _maybe_emit_failure_notification(
     db: aiosqlite.Connection, library_id: str
 ) -> None:
@@ -516,6 +597,7 @@ async def _process_one(db: aiosqlite.Connection, claim: dict) -> None:
 
     if result.success:
         await _mark_ready(db, file_id, next_attempts)
+        await _emit_progress(db, library_id)
         return
     if result.skipped:
         # Permanent — clean partial output (defensive; skipped paths
@@ -527,6 +609,7 @@ async def _process_one(db: aiosqlite.Connection, claim: dict) -> None:
         except OSError:
             pass
         await _mark_skipped(db, file_id, result.error or "skipped")
+        await _emit_progress(db, library_id)
         return
 
     # Transient failure — partial output likely useless; remove so the
@@ -542,6 +625,7 @@ async def _process_one(db: aiosqlite.Connection, claim: dict) -> None:
         error=result.error or "extractor reported failure",
         library_id=library_id,
     )
+    await _emit_progress(db, library_id)
 
 
 async def _worker_loop(slot_id: int) -> None:

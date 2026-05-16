@@ -154,7 +154,8 @@ async def test_extract_video_sdr_path(synthetic_video: Path, tmp_path: Path):
 def test_video_filter_chain_sdr():
     """SDR path: scale + format=yuv420p in one pass."""
     vf = _build_video_filter_chain(width=320, hdr=False)
-    assert "scale=320:-2:flags=lanczos" in vf
+    # Bilinear post-ship — faster scaler, indistinguishable at 320 px.
+    assert "scale=320:-2:flags=bilinear" in vf
     assert "format=yuv420p" in vf
     # SDR path must NOT include the tonemap operator
     assert "tonemap=" not in vf
@@ -171,10 +172,10 @@ def test_video_filter_chain_hdr_includes_tonemap():
     assert "zscale=p=bt709" in vf
     assert "zscale=t=bt709:m=bt709" in vf
     # Final downscale runs AFTER the tonemap so resize works on SDR pixels.
-    assert vf.endswith(f"scale=320:-2:flags=lanczos")
+    assert vf.endswith(f"scale=320:-2:flags=bilinear")
     # Width is plumbed correctly.
     vf_640 = _build_video_filter_chain(width=640, hdr=True)
-    assert "scale=640:-2:flags=lanczos" in vf_640
+    assert "scale=640:-2:flags=bilinear" in vf_640
 
 
 # Note: there's no end-to-end HDR pipeline test here.  An accurate test

@@ -534,3 +534,171 @@ async def test_settings_reader_returns_default_width_pre_migration_038(test_db):
     enabled, width = await thumbnail_worker._get_current_settings(test_db)
     assert enabled is True  # user_settings.generate_thumbnails default = 1
     assert width == 320
+
+
+# ── Progress emission (post-ship visibility) ───────────────────────────────
+
+
+async def test_emit_progress_counts_pending_ready_total(
+    test_db, monkeypatch
+):
+    """`_emit_progress` should compute pending+generating, ready, total for
+    a library and fire a thumbnails_progress event with those counts."""
+    lib_id = await _insert_library(test_db)
+    f_pending = await _insert_file(test_db, library_id=lib_id)
+    f_ready = await _insert_file(test_db, library_id=lib_id)
+    f_other = await _insert_file(test_db, library_id=lib_id)
+    now = datetime.now(UTC).isoformat()
+    await test_db.execute(
+        "UPDATE media_thumbnails SET status='ready', generated_at=?, "
+        "updated_at=? WHERE file_id=?",
+        (now, now, f_ready),
+    )
+    await test_db.commit()
+
+    captured: list[tuple[str, dict | None]] = []
+    monkeypatch.setattr(
+        "services.notification_service.broadcast_event",
+        lambda kind, data=None: captured.append((kind, data)),
+    )
+
+    # Reset throttle so the dedup doesn't interfere with this test.
+    thumbnail_worker._PROGRESS_REFRESH_COUNTERS.clear()
+    await thumbnail_worker._emit_progress(test_db, lib_id)
+
+    # Exactly one thumbnails_progress event.
+    progress_events = [c for c in captured if c[0] == "thumbnails_progress"]
+    assert len(progress_events) == 1
+    payload = progress_events[0][1]
+    assert payload is not None
+    assert payload["library_id"] == lib_id
+    assert payload["pending"] == 2  # f_pending + f_other
+    assert payload["ready"] == 1
+    assert payload["total"] == 3
+
+    # Suppress unused warning
+    assert f_pending != f_other
+
+
+async def test_emit_progress_throttles_library_changed(
+    test_db, monkeypatch
+):
+    """`library_changed` should fire every Nth call OR on the last-pending
+    completion, not on every progress emission."""
+    lib_id = await _insert_library(test_db)
+    fid = await _insert_file(test_db, library_id=lib_id)
+    # Mark this file ready so pending > 0 stays false-ish across calls
+    # (we just want to drive the throttle logic).
+    captured: list[tuple[str, dict | None]] = []
+    monkeypatch.setattr(
+        "services.notification_service.broadcast_event",
+        lambda kind, data=None: captured.append((kind, data)),
+    )
+    thumbnail_worker._PROGRESS_REFRESH_COUNTERS.clear()
+
+    # 4 calls below the threshold (5) — should NOT emit library_changed.
+    # All 4 will see pending>0 because f stays in 'pending' status.
+    for _ in range(4):
+        await thumbnail_worker._emit_progress(test_db, lib_id)
+    library_changed_events = [c for c in captured if c[0] == "library_changed"]
+    assert len(library_changed_events) == 0, (
+        f"unexpected library_changed before threshold: {captured}"
+    )
+
+    # 5th call — counter hits threshold → emit.
+    await thumbnail_worker._emit_progress(test_db, lib_id)
+    library_changed_events = [c for c in captured if c[0] == "library_changed"]
+    assert len(library_changed_events) == 1
+    # Counter resets to 0; another 4 calls below threshold should stay silent.
+    captured.clear()
+    for _ in range(4):
+        await thumbnail_worker._emit_progress(test_db, lib_id)
+    library_changed_events = [c for c in captured if c[0] == "library_changed"]
+    assert len(library_changed_events) == 0
+
+    # Suppress unused warning
+    assert fid is not None
+
+
+async def test_emit_progress_force_emits_when_queue_empties(
+    test_db, monkeypatch
+):
+    """Even below the throttle threshold, library_changed should fire if
+    the library has zero pending+generating rows (last completion)."""
+    lib_id = await _insert_library(test_db)
+    fid = await _insert_file(test_db, library_id=lib_id)
+    # Flip the only file to ready — pending should now read 0
+    now = datetime.now(UTC).isoformat()
+    await test_db.execute(
+        "UPDATE media_thumbnails SET status='ready', generated_at=?, "
+        "updated_at=? WHERE file_id=?",
+        (now, now, fid),
+    )
+    await test_db.commit()
+
+    captured: list[tuple[str, dict | None]] = []
+    monkeypatch.setattr(
+        "services.notification_service.broadcast_event",
+        lambda kind, data=None: captured.append((kind, data)),
+    )
+    thumbnail_worker._PROGRESS_REFRESH_COUNTERS.clear()
+
+    # First call — pending==0 short-circuits the throttle.
+    await thumbnail_worker._emit_progress(test_db, lib_id)
+    library_changed_events = [c for c in captured if c[0] == "library_changed"]
+    assert len(library_changed_events) == 1
+
+
+async def test_emit_progress_ignores_null_library_id(test_db, monkeypatch):
+    """Files with library_id=NULL (orphan uploads) shouldn't trigger
+    progress events — there's no library to scope the count to."""
+    captured: list[tuple[str, dict | None]] = []
+    monkeypatch.setattr(
+        "services.notification_service.broadcast_event",
+        lambda kind, data=None: captured.append((kind, data)),
+    )
+    await thumbnail_worker._emit_progress(test_db, None)
+    assert captured == []
+
+
+async def test_process_one_emits_progress_after_success(
+    test_db, monkeypatch, tmp_path
+):
+    """End-to-end: completing a thumbnail through _process_one fires
+    thumbnails_progress for the parent library."""
+    lib_id = await _insert_library(test_db)
+    fid = await _insert_file(test_db, library_id=lib_id, extension=".mp4")
+
+    async def fake_extract(*_args, **_kwargs):
+        return ThumbnailResult(success=True)
+
+    monkeypatch.setattr(
+        "services.thumbnail_service.extract_thumbnail", fake_extract
+    )
+    monkeypatch.setattr(thumbnail_worker, "_THUMBNAILS_DIR", tmp_path)
+
+    captured: list[tuple[str, dict | None]] = []
+    monkeypatch.setattr(
+        "services.notification_service.broadcast_event",
+        lambda kind, data=None: captured.append((kind, data)),
+    )
+    thumbnail_worker._PROGRESS_REFRESH_COUNTERS.clear()
+
+    claim = {
+        "file_id": fid,
+        "attempts": 0,
+        "path": "/tmp/fake.mp4",
+        "extension": ".mp4",
+        "duration_sec": 100.0,
+        "hdr_format": None,
+        "library_id": lib_id,
+    }
+    await thumbnail_worker._process_one(test_db, claim)
+
+    progress_events = [c for c in captured if c[0] == "thumbnails_progress"]
+    assert len(progress_events) == 1
+    payload = progress_events[0][1]
+    assert payload["library_id"] == lib_id
+    assert payload["ready"] == 1
+    assert payload["pending"] == 0
+    assert payload["total"] == 1

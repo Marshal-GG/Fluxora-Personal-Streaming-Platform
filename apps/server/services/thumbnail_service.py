@@ -208,38 +208,83 @@ async def _extract_video(
     HDR sources (HDR10 / HLG / DolbyVision) run through the Hable
     tonemap chain so the JPEG isn't washed out / blown out on an SDR
     display.
+
+    SDR path uses `-hwaccel auto` to let FFmpeg pick GPU decode when
+    supported (cuda / qsv / videotoolbox / vaapi), with an automatic
+    software-fallback retry if the hwaccel attempt fails — covers
+    drivers that report a hwaccel as available but error on specific
+    codecs.  HDR path stays CPU-only since `zscale` doesn't accept
+    hardware-side frame formats without an explicit `hwdownload`
+    step, and HDR libraries are rare enough that the extra complexity
+    isn't worth the speed-up there.
     """
     ffmpeg = _ffmpeg_bin()
     seek_sec = _pick_seek_seconds(duration_sec)
-    vf_chain = _build_video_filter_chain(width=width, hdr=bool(hdr_format))
+    is_hdr = bool(hdr_format)
+    vf_chain = _build_video_filter_chain(width=width, hdr=is_hdr)
 
     # Input-side seek (`-ss` before `-i`) is fast but slightly imprecise;
     # we don't need frame-accurate timing for a thumbnail.
-    argv = [
-        ffmpeg,
-        "-y",
-        "-ss",
-        f"{seek_sec:.3f}",
-        "-i",
-        str(file_path),
-        "-vframes",
-        "1",
-        "-vf",
-        vf_chain,
-        "-q:v",
-        "5",
-        "-loglevel",
-        "error",
-        str(output_path),
-    ]
+    def _build_argv(use_hwaccel: bool) -> list[str]:
+        argv = [ffmpeg, "-y"]
+        if use_hwaccel:
+            # `auto` lets FFmpeg pick the available hwaccel per platform
+            # (cuda, qsv, videotoolbox, vaapi, d3d11va, …).  Modern FFmpeg
+            # gracefully falls back to software when the chosen accel
+            # can't decode the codec; older builds occasionally error
+            # out, which is why we have the second-attempt fallback
+            # below.
+            argv += ["-hwaccel", "auto"]
+        argv += [
+            "-ss",
+            f"{seek_sec:.3f}",
+            "-i",
+            str(file_path),
+            "-vframes",
+            "1",
+            "-vf",
+            vf_chain,
+            "-q:v",
+            "8",
+            "-loglevel",
+            "error",
+            str(output_path),
+        ]
+        return argv
 
+    # First attempt: hwaccel auto on SDR; software on HDR (zscale isn't
+    # hwaccel-friendly without an extra hwdownload step).
     try:
-        returncode, stderr = await _run_subprocess(argv, timeout=_VIDEO_TIMEOUT_SEC)
+        returncode, stderr = await _run_subprocess(
+            _build_argv(use_hwaccel=not is_hdr),
+            timeout=_VIDEO_TIMEOUT_SEC,
+        )
     except (OSError, FileNotFoundError) as e:
         return ThumbnailResult(success=False, error=f"ffmpeg spawn failed: {e}")
 
     if returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
         return ThumbnailResult(success=True)
+
+    # SDR + hwaccel failure → retry without hwaccel.  HDR already
+    # software-only on the first try, so no retry.
+    if not is_hdr:
+        try:
+            # Clean any partial output before the second attempt so the
+            # success check below doesn't see a stale 0-byte file.
+            if output_path.exists():
+                output_path.unlink()
+        except OSError:
+            pass
+        try:
+            returncode, stderr = await _run_subprocess(
+                _build_argv(use_hwaccel=False),
+                timeout=_VIDEO_TIMEOUT_SEC,
+            )
+        except (OSError, FileNotFoundError) as e:
+            return ThumbnailResult(success=False, error=f"ffmpeg spawn failed: {e}")
+        if returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
+            return ThumbnailResult(success=True)
+
     tail = _stderr_tail(stderr)
     return ThumbnailResult(
         success=False,
@@ -249,10 +294,14 @@ async def _extract_video(
 
 def _build_video_filter_chain(*, width: int, hdr: bool) -> str:
     """Compose the `-vf` chain.  Scale is the last step so it operates
-    on yuv420p frames in both SDR and HDR-tonemapped paths."""
+    on yuv420p frames in both SDR and HDR-tonemapped paths.
+
+    Uses `bilinear` (post-ship 2026-05-16, was `lanczos`) — ~30 % faster
+    and visually indistinguishable at the 320 px default thumbnail size.
+    """
     if hdr:
-        return f"{_HDR_TO_SDR_VF},scale={width}:-2:flags=lanczos"
-    return f"scale={width}:-2:flags=lanczos,format=yuv420p"
+        return f"{_HDR_TO_SDR_VF},scale={width}:-2:flags=bilinear"
+    return f"scale={width}:-2:flags=bilinear,format=yuv420p"
 
 
 async def _extract_image(
@@ -273,9 +322,9 @@ async def _extract_image(
         "-i",
         str(file_path),
         "-vf",
-        f"scale={width}:-2:flags=lanczos",
+        f"scale={width}:-2:flags=bilinear",
         "-q:v",
-        "5",
+        "8",
         "-loglevel",
         "error",
         str(output_path),
