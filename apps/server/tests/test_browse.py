@@ -569,3 +569,232 @@ async def test_browse_respects_windows_hidden_attribute(
     )
     names2 = [e["name"] for e in r2.json()["entries"]]
     assert "marked_hidden.bin" in names2
+
+
+# ── Phase C: index-file / regenerate-thumbnail / scan-subtree ──────────────
+
+
+async def test_index_file_inserts_media_files_row(client, test_db, tree):
+    """Phase C: POST /library/{id}/index-file inserts a media_files row
+    + enqueues a thumbnail, returns the new file_id."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/index-file?path=movie.mp4"
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["already_indexed"] is False
+    assert body["queued_thumbnail"] is True
+    assert len(body["file_id"]) > 0
+
+    # media_files row was inserted at the absolute path
+    async with test_db.execute(
+        "SELECT id, path FROM media_files WHERE id = ?",
+        (body["file_id"],),
+    ) as cur:
+        row = await cur.fetchone()
+    assert row is not None
+    assert row["path"] == str(tree / "movie.mp4")
+
+    # Thumbnail row was enqueued at priority=10
+    async with test_db.execute(
+        "SELECT status, priority FROM media_thumbnails WHERE file_id = ?",
+        (body["file_id"],),
+    ) as cur:
+        thumb_row = await cur.fetchone()
+    assert thumb_row is not None
+    assert thumb_row["status"] == "pending"
+    assert thumb_row["priority"] == 10
+
+
+async def test_index_file_is_idempotent(client, test_db, tree):
+    """A second call against the same path returns the same file_id +
+    already_indexed=True; doesn't re-INSERT or re-enqueue."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+
+    r1 = await client.post(
+        f"/api/v1/library/{lib_id}/index-file?path=movie.mp4"
+    )
+    assert r1.status_code == 200
+    first_id = r1.json()["file_id"]
+
+    r2 = await client.post(
+        f"/api/v1/library/{lib_id}/index-file?path=movie.mp4"
+    )
+    assert r2.status_code == 200
+    body = r2.json()
+    assert body["file_id"] == first_id
+    assert body["already_indexed"] is True
+
+
+async def test_index_file_rejects_directory(client, test_db, tree):
+    """Pointing index-file at a directory returns 400."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/index-file?path=sub"
+    )
+    assert r.status_code == 400
+    assert "directory" in r.json()["detail"].lower()
+
+
+async def test_index_file_rejects_unsupported_extension(
+    client, test_db, tree
+):
+    """`readme.txt` (kind='other') is rejected with 400."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/index-file?path=readme.txt"
+    )
+    assert r.status_code == 400
+    assert "unsupported" in r.json()["detail"].lower()
+
+
+async def test_index_file_rejects_path_escape(client, test_db, tree):
+    """`..`-style escapes return 403/404 — never 200."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/index-file?path=../escape.mp4"
+    )
+    # Resolves outside the root => 403 (escapes) or 404 (not found
+    # after resolution) — either is acceptable so long as we don't
+    # silently 200.
+    assert r.status_code in (403, 404)
+
+
+async def test_index_file_404_when_library_missing(client, test_db):
+    """Library id that doesn't exist returns 404."""
+    r = await client.post(
+        "/api/v1/library/nonexistent-lib/index-file?path=movie.mp4"
+    )
+    assert r.status_code == 404
+
+
+async def test_index_file_404_when_path_missing(client, test_db, tree):
+    """File doesn't exist on disk => 404."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/index-file?path=does_not_exist.mp4"
+    )
+    assert r.status_code == 404
+
+
+async def test_regenerate_file_thumbnail_resets_status(client, test_db, tree):
+    """Phase C: POST /files/{id}/regenerate-thumbnail flips an existing
+    `ready` row back to `pending` with priority=10 + deletes the JPEG."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    movie = tree / "movie.mp4"
+    file_id = await _insert_indexed_file(
+        test_db, library_id=lib_id, absolute_path=movie
+    )
+    await _insert_thumbnail_row(
+        test_db,
+        file_id=file_id,
+        status="ready",
+        generated_at=datetime.now(UTC).isoformat(),
+    )
+
+    r = await client.post(
+        f"/api/v1/files/{file_id}/regenerate-thumbnail"
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["file_id"] == file_id
+    assert body["status"] == "pending"
+
+    async with test_db.execute(
+        "SELECT status, priority, generated_at"
+        "  FROM media_thumbnails WHERE file_id = ?",
+        (file_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["status"] == "pending"
+    assert row["priority"] == 10
+    assert row["generated_at"] is None
+
+
+async def test_regenerate_file_thumbnail_inserts_when_missing(
+    client, test_db, tree
+):
+    """File has no `media_thumbnails` row yet — endpoint INSERT OR
+    IGNOREs a fresh pending row at priority=10 instead of 404'ing."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    movie = tree / "movie.mp4"
+    file_id = await _insert_indexed_file(
+        test_db, library_id=lib_id, absolute_path=movie
+    )
+
+    r = await client.post(
+        f"/api/v1/files/{file_id}/regenerate-thumbnail"
+    )
+    assert r.status_code == 200
+
+    async with test_db.execute(
+        "SELECT status, priority FROM media_thumbnails WHERE file_id = ?",
+        (file_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    assert row is not None
+    assert row["status"] == "pending"
+    assert row["priority"] == 10
+
+
+async def test_regenerate_file_thumbnail_404_when_file_missing(
+    client, test_db
+):
+    """Unknown file_id => 404."""
+    r = await client.post(
+        "/api/v1/files/nonexistent-file-id/regenerate-thumbnail"
+    )
+    assert r.status_code == 404
+
+
+async def test_scan_subtree_walks_only_one_directory(client, test_db, tree):
+    """Phase C: POST /library/{id}/scan-subtree only ingests files under
+    the requested subdir, not the rest of the library root."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/scan-subtree?path=sub"
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["library_id"] == lib_id
+    # `sub/` contains `song.mp3` + `sub/nested/doc.pdf` — both are
+    # _MEDIA_EXTENSIONS members.  Top-level `movie.mp4` / `photo.jpg`
+    # are NOT in the subtree and must not be ingested.
+    assert body["files_added"] == 2
+
+    # Verify only sub-tree files landed in media_files
+    async with test_db.execute(
+        "SELECT path FROM media_files WHERE library_id = ?", (lib_id,)
+    ) as cur:
+        rows = await cur.fetchall()
+    paths = {r["path"] for r in rows}
+    assert str(tree / "sub" / "song.mp3") in paths
+    assert str(tree / "sub" / "nested" / "doc.pdf") in paths
+    assert str(tree / "movie.mp4") not in paths
+
+
+async def test_scan_subtree_rejects_file_path(client, test_db, tree):
+    """Pointing scan-subtree at a file (not a directory) returns 400."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/scan-subtree?path=movie.mp4"
+    )
+    assert r.status_code == 400
+
+
+async def test_scan_subtree_rejects_path_escape(client, test_db, tree):
+    """`..`-style escape returns 403/404."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/scan-subtree?path=../outside"
+    )
+    assert r.status_code in (403, 404)

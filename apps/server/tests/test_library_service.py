@@ -578,11 +578,11 @@ async def test_scan_library_serialises_concurrent_calls(test_db) -> None:
     inflight = {"value": 0, "max_seen": 0}
     real_locked = library_service._scan_library_locked
 
-    async def _slow_scan(db, lib_id, key):
+    async def _slow_scan(db, lib_id, key, subtree=None):
         inflight["value"] += 1
         inflight["max_seen"] = max(inflight["max_seen"], inflight["value"])
         await asyncio.sleep(0.05)
-        result = await real_locked(db, lib_id, key)
+        result = await real_locked(db, lib_id, key, subtree)
         inflight["value"] -= 1
         return result
 
@@ -619,11 +619,11 @@ async def test_scan_library_lock_does_not_block_different_libraries(test_db) -> 
     inflight = {"value": 0, "max_seen": 0}
     real_locked = library_service._scan_library_locked
 
-    async def _slow_scan(db, lib_id, key):
+    async def _slow_scan(db, lib_id, key, subtree=None):
         inflight["value"] += 1
         inflight["max_seen"] = max(inflight["max_seen"], inflight["value"])
         await asyncio.sleep(0.05)
-        result = await real_locked(db, lib_id, key)
+        result = await real_locked(db, lib_id, key, subtree)
         inflight["value"] -= 1
         return result
 

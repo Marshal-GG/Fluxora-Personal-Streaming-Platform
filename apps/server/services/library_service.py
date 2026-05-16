@@ -735,6 +735,7 @@ async def scan_library(
     db: aiosqlite.Connection,
     library_id: str,
     tmdb_api_key: str | None = None,
+    subtree_abs: str | None = None,
 ) -> int:
     """Walk root_paths, insert new media files; return count of new files added.
 
@@ -747,21 +748,36 @@ async def scan_library(
     call waits for the first to finish, then sees no new files and
     returns 0 — much cheaper than the duplicate enrichment storm the
     races used to produce.
+
+    When *subtree_abs* is provided, the walk is constrained to that
+    absolute directory (which the caller has already validated to live
+    under one of the library's `root_paths` — see
+    `browse_service.resolve_subtree_for_scan`).  Backs the right-click
+    "Scan this folder" action so the operator can rescan a single
+    subdir without paying for a full library walk.
     """
     async with _get_scan_lock(library_id):
-        return await _scan_library_locked(db, library_id, tmdb_api_key)
+        return await _scan_library_locked(
+            db, library_id, tmdb_api_key, subtree_abs
+        )
 
 
 async def _scan_library_locked(
     db: aiosqlite.Connection,
     library_id: str,
     tmdb_api_key: str | None,
+    subtree_abs: str | None = None,
 ) -> int:
     row = await get_library(db, library_id)
     if row is None:
         raise ValueError(f"Library not found: {library_id}")
 
-    root_paths: list[str] = row["root_paths"]
+    if subtree_abs is not None:
+        # Subtree mode: walk just the operator-selected directory.  The
+        # caller has already enforced containment under root_paths.
+        root_paths: list[str] = [subtree_abs]
+    else:
+        root_paths = row["root_paths"]
     now = datetime.now(UTC).isoformat()
     added = 0
     new_file_ids: list[tuple[str, str]] = []  # (file_id, stem for TMDB query)
@@ -1010,6 +1026,122 @@ async def _persist_probe(
             file_id,
         ),
     )
+
+
+async def index_single_file(
+    db: aiosqlite.Connection,
+    *,
+    library_id: str,
+    absolute_path: Path,
+    tmdb_api_key: str | None = None,
+) -> dict:
+    """Insert a single `media_files` row for *absolute_path*.
+
+    Returns ``{file_id, already_indexed: bool, enriched: bool}``.  When
+    the file already lives in `media_files` the existing row's id is
+    returned with ``already_indexed=True`` and no further work is done.
+
+    Caller is responsible for path resolution + containment.  Backs
+    `POST /library/{id}/index-file?path=<relative>` (the right-click
+    "Index this file" action).
+
+    Best-effort TMDB enrichment when *tmdb_api_key* is set + the
+    filename stem doesn't look like a DVR capture.  ffprobe metadata
+    runs inline; thumbnail extraction is enqueued (worker picks up).
+    """
+    path_str = str(absolute_path)
+    if not _is_valid_absolute_media_path(path_str):
+        raise ValueError(f"invalid media path: {path_str!r}")
+
+    # Idempotency check.  An already-indexed file just returns its id;
+    # the operator sees the row flip to indexed and the menu reshuffles.
+    async with db.execute(
+        "SELECT id, library_id FROM media_files WHERE path = ?",
+        (path_str,),
+    ) as cur:
+        existing = await cur.fetchone()
+    if existing is not None:
+        # Re-claim orphan rows whose owner library was deleted (matches
+        # scan_library's behaviour).
+        now = datetime.now(UTC).isoformat()
+        if existing["library_id"] is None:
+            await db.execute(
+                "UPDATE media_files"
+                "   SET library_id = ?, created_at = ?, updated_at = ?"
+                " WHERE id = ?",
+                (library_id, now, now, existing["id"]),
+            )
+            await db.commit()
+        return {
+            "file_id": existing["id"],
+            "already_indexed": True,
+            "enriched": False,
+        }
+
+    file_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    try:
+        size = await asyncio.to_thread(
+            lambda p=absolute_path: p.stat().st_size
+        )
+    except OSError:
+        size = 0
+
+    await db.execute(
+        """
+        INSERT INTO media_files
+            (id, path, name, extension, size_bytes,
+             library_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_id,
+            path_str,
+            absolute_path.name,
+            absolute_path.suffix.lower(),
+            size,
+            library_id,
+            now,
+            now,
+        ),
+    )
+    await _persist_probe(db, file_id, absolute_path)
+
+    # Thumbnail enqueue — priority=10 so the operator sees the result
+    # before unrelated pending rows from a recent scan.
+    try:
+        from services import thumbnail_worker
+
+        await thumbnail_worker.enqueue(db, file_id, priority=10)
+    except Exception:
+        logger.warning(
+            "thumbnail enqueue failed for %s", file_id, exc_info=True
+        )
+
+    enriched = False
+    if tmdb_api_key and not _looks_like_dvr_capture(absolute_path.stem):
+        try:
+            n = await _enrich_with_tmdb(
+                db, [(file_id, absolute_path.stem)], tmdb_api_key
+            )
+            enriched = n > 0
+        except Exception:
+            logger.warning(
+                "TMDB enrichment failed for %s", file_id, exc_info=True
+            )
+
+    await db.commit()
+    logger.info(
+        "Indexed single file: library=%s file_id=%s enriched=%s",
+        library_id,
+        file_id,
+        enriched,
+    )
+    return {
+        "file_id": file_id,
+        "already_indexed": False,
+        "enriched": enriched,
+    }
 
 
 async def backfill_missing_durations(

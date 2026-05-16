@@ -359,6 +359,76 @@ async def reset_progress(
     await db.commit()
 
 
+@router.post(
+    "/{file_id}/regenerate-thumbnail",
+    status_code=status.HTTP_200_OK,
+)
+async def regenerate_file_thumbnail(
+    file_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> dict:
+    """Reset a single file's thumbnail to pending + priority=10.
+
+    Backs the right-click "Generate thumbnail" action for indexed files
+    whose current thumbnail is failed / stale / pending.  Worker picks
+    up the reset row on its next tick.
+
+    Bearer-token callers receive 404 (not 403) when the file's library
+    is outside their content space — matches `get_thumbnail` /
+    `get_file_content` so the regenerate action can't be used to
+    enumerate gated content.  Localhost skips the visibility filter.
+
+    Returns ``{file_id, status: 'pending'}``.
+    """
+    row = await library_service.get_file(db, file_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
+        )
+    if _client is not None and row["library_id"] is not None:
+        visible = await group_service.get_visible_libraries(db, _client["id"])
+        if row["library_id"] not in visible.library_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
+            )
+
+    try:
+        ok = await thumbnail_worker.regenerate_file(db, file_id)
+    except Exception:
+        logger.error(
+            "Per-file thumbnail regenerate failed for %s",
+            file_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Thumbnail regeneration failed",
+        )
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
+        )
+
+    try:
+        await activity_service.record(
+            db,
+            type="file.thumbnail_regenerated",
+            summary=f"Regenerated thumbnail for {row.get('name', file_id)}",
+            actor_kind="operator" if _client is None else "client",
+            actor_id=_client["id"] if _client else None,
+            target_kind="file",
+            target_id=file_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to record file.thumbnail_regenerated event",
+            exc_info=True,
+        )
+
+    return {"file_id": file_id, "status": "pending"}
+
+
 @router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_file(
     file_id: str,

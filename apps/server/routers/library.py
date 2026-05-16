@@ -377,6 +377,145 @@ async def browse_library(
 
 
 @router.post(
+    "/{library_id}/index-file",
+    status_code=status.HTTP_200_OK,
+)
+async def index_single_file(
+    library_id: str,
+    path: str = Query(
+        ...,
+        description="relative path under the library root identifying "
+        "the file to index",
+    ),
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> dict:
+    """Index a single file by its `<root>/<relative>` path.
+
+    Used by the desktop folder browser's right-click "Index this file"
+    action so the operator can add an unindexed file to the catalog
+    without rescanning the whole library.  Returns
+    ``{file_id, already_indexed, enriched, queued_thumbnail: True}``.
+
+    Path security: the same containment + canonicalisation checks
+    `browse_service.browse_library` uses.  403 on escape; 404 when the
+    file or library is missing.  400 for unsupported extensions or
+    when the path points at a directory.
+    """
+    try:
+        absolute_path, _kind = await browse_service.resolve_file_for_index(
+            db, library_id=library_id, relative_path=path
+        )
+    except BrowseError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+
+    try:
+        result = await library_service.index_single_file(
+            db,
+            library_id=library_id,
+            absolute_path=absolute_path,
+            tmdb_api_key=settings.fluxora_tmdb_key or None,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
+    except Exception:
+        logger.error(
+            "Index single file failed for library %s path %r",
+            library_id,
+            path,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Index failed",
+        )
+
+    if not result["already_indexed"]:
+        try:
+            await activity_service.record(
+                db,
+                type="file.indexed",
+                summary=f"Indexed {absolute_path.name}",
+                actor_kind="operator" if _client is None else "client",
+                actor_id=_client["id"] if _client else None,
+                target_kind="file",
+                target_id=result["file_id"],
+                payload={"library_id": library_id},
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record file.indexed activity event",
+                exc_info=True,
+            )
+        notification_service.broadcast_event("library_changed")
+        notification_service.broadcast_event("storage_changed")
+
+    return {
+        "file_id": result["file_id"],
+        "already_indexed": result["already_indexed"],
+        "enriched": result["enriched"],
+        "queued_thumbnail": True,
+    }
+
+
+@router.post(
+    "/{library_id}/scan-subtree",
+    status_code=status.HTTP_200_OK,
+)
+async def scan_subtree(
+    library_id: str,
+    path: str = Query(
+        ...,
+        description="relative path under the library root identifying "
+        "the directory to rescan",
+    ),
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> dict:
+    """Rescan a single subtree under one of the library's `root_paths`.
+
+    Used by the desktop folder browser's right-click "Scan this folder"
+    action so the operator can pick up newly-added files in a single
+    directory without paying for a full library walk.  Returns
+    ``{library_id, files_added}``.
+
+    Path security mirrors `/browse`: 403 on escape, 404 on missing,
+    400 when the path resolves to a file.
+    """
+    try:
+        absolute_dir = await browse_service.resolve_subtree_for_scan(
+            db, library_id=library_id, relative_path=path
+        )
+    except BrowseError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+
+    try:
+        added = await library_service.scan_library(
+            db,
+            library_id,
+            tmdb_api_key=settings.fluxora_tmdb_key or None,
+            subtree_abs=str(absolute_dir),
+        )
+    except Exception:
+        logger.error(
+            "Subtree scan failed for library %s path %r",
+            library_id,
+            path,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Scan failed",
+        )
+
+    notification_service.broadcast_event("library_changed")
+    notification_service.broadcast_event("storage_changed")
+    return {"library_id": library_id, "files_added": added}
+
+
+@router.post(
     "/{library_id}/regenerate-thumbnails",
     status_code=status.HTTP_200_OK,
 )

@@ -151,6 +151,68 @@ async def boost_library(db: aiosqlite.Connection, library_id: str) -> int:
     return rows
 
 
+async def regenerate_file(
+    db: aiosqlite.Connection, file_id: str
+) -> bool:
+    """Reset a single thumbnail row to pending + delete the cached JPEG.
+
+    Returns True when a `media_thumbnails` row was reset or freshly
+    inserted; False when the source `media_files` row doesn't exist
+    (caller should 404).
+
+    Backs `POST /files/{file_id}/regenerate-thumbnail` — the right-click
+    "Generate thumbnail" action for indexed entries (failed / stale /
+    pending rows that the operator wants jumped to the front of the
+    queue).  Mirror of `regenerate_library` scoped to one file with
+    priority=10.
+    """
+    async with db.execute(
+        "SELECT id FROM media_files WHERE id = ?", (file_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return False
+
+    # Best-effort JPEG cleanup.  Missing file is fine — about to re-render.
+    jpeg = _thumbnails_dir() / f"{file_id}.jpg"
+    try:
+        jpeg.unlink(missing_ok=True)
+    except OSError:
+        logger.warning(
+            "Failed to delete thumbnail for regenerate: %s",
+            jpeg,
+            exc_info=True,
+        )
+
+    now = datetime.now(UTC).isoformat()
+    await db.execute(
+        """
+        UPDATE media_thumbnails
+           SET status = 'pending',
+               attempts = 0,
+               error_message = NULL,
+               generated_at = NULL,
+               priority = 10,
+               updated_at = ?
+         WHERE file_id = ?
+        """,
+        (now, file_id),
+    )
+    # INSERT OR IGNORE covers the "row never existed" case (file added
+    # before the worker was wired up, or thumbnail enqueue failed at
+    # scan time).
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO media_thumbnails
+            (file_id, status, priority, created_at, updated_at)
+        VALUES (?, 'pending', 10, ?, ?)
+        """,
+        (file_id, now, now),
+    )
+    await db.commit()
+    return True
+
+
 async def regenerate_library(
     db: aiosqlite.Connection, library_id: str
 ) -> int:

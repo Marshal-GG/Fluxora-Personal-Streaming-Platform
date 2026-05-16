@@ -241,23 +241,25 @@ def _normalise_relative(relative: str) -> str:
     return rel
 
 
-def _resolve_under_root(
+def _resolve_path_under_root(
     roots: list[Path], relative: str
 ) -> tuple[Path, Path]:
     """Resolve `relative` against one of `roots`.
 
-    Returns `(matched_root, resolved_absolute)`.  Raises `BrowseError`
-    when the request escapes every root, references a nonexistent
-    location, or points at a non-directory.
+    Returns `(matched_root, resolved_absolute)`.  The target may be a
+    file, a directory, or the library root itself.  Raises
+    `BrowseError(403)` when the request escapes every root and
+    `BrowseError(404)` when nothing matches on disk.
+
+    Caller is responsible for kind-checking the returned path
+    (directory listings want is_dir; index/scan flows want
+    is_file or is_dir).
     """
     rel = _normalise_relative(relative)
 
-    # Empty relative means the library root.  Need to figure out WHICH
-    # root the client wants: if the library has a single root_path we
-    # use it; multi-root libraries use the first root for the empty
-    # case and surface the siblings via a synthetic "Library Roots"
-    # listing in a future iteration (out of scope for v1; client should
-    # navigate via the breadcrumb to explore other roots).
+    # Empty relative means the library root.  Multi-root libraries use
+    # the first root for the empty case and surface siblings via the
+    # breadcrumb (see browse_library's behaviour for the empty case).
     if not rel:
         if not roots:
             raise BrowseError(404, "library has no root_paths configured")
@@ -268,10 +270,6 @@ def _resolve_under_root(
             raise BrowseError(
                 404, f"library root not found on disk: {candidate}"
             ) from e
-        if not resolved.is_dir():
-            raise BrowseError(
-                400, f"library root is not a directory: {resolved}"
-            )
         return candidate, resolved
 
     # When a non-empty relative path is supplied, attempt resolution
@@ -299,15 +297,106 @@ def _resolve_under_root(
         if not candidate.exists():
             last_err = FileNotFoundError(str(candidate))
             continue
-        if not candidate.is_dir():
-            raise BrowseError(
-                400, f"target is not a directory: {candidate}"
-            )
         return root_resolved, candidate
 
     if isinstance(last_err, FileNotFoundError):
         raise BrowseError(404, "path not found under any library root")
     raise BrowseError(403, "path escapes every library root")
+
+
+def _resolve_under_root(
+    roots: list[Path], relative: str
+) -> tuple[Path, Path]:
+    """Directory-only resolver used by `browse_library`.
+
+    Delegates to `_resolve_path_under_root` then enforces is_dir.
+    """
+    matched_root, resolved = _resolve_path_under_root(roots, relative)
+    if not resolved.is_dir():
+        raise BrowseError(400, f"target is not a directory: {resolved}")
+    return matched_root, resolved
+
+
+async def _load_library_roots(
+    db: aiosqlite.Connection, library_id: str
+) -> list[Path]:
+    """Common helper: load + parse a library's `root_paths` column.
+
+    Raises `BrowseError(404)` when the library doesn't exist or has no
+    usable roots; `BrowseError(500)` when the JSON column is corrupted.
+    Returned list is non-empty by construction.
+    """
+    async with db.execute(
+        "SELECT root_paths FROM libraries WHERE id = ?",
+        (library_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        raise BrowseError(404, "library not found")
+    raw_roots = row["root_paths"]
+    try:
+        decoded = (
+            json.loads(raw_roots) if isinstance(raw_roots, str) else raw_roots
+        )
+    except (TypeError, ValueError) as e:
+        raise BrowseError(500, "library root_paths corrupted") from e
+    if not isinstance(decoded, list) or not decoded:
+        raise BrowseError(404, "library has no root_paths configured")
+    roots = [Path(str(r)) for r in decoded if isinstance(r, str) and r]
+    if not roots:
+        raise BrowseError(404, "library has no usable root_paths")
+    return roots
+
+
+async def resolve_file_for_index(
+    db: aiosqlite.Connection,
+    *,
+    library_id: str,
+    relative_path: str,
+) -> tuple[Path, str]:
+    """Resolve `<root>/<relative_path>` for the per-file index endpoint.
+
+    Returns `(absolute_path, kind)` where `kind` is the same
+    `FileKind` literal `_kind_for_path` emits.  Raises `BrowseError`
+    when the path escapes the roots, doesn't exist, points at a
+    directory, or has an unknown extension.
+
+    Phase C — backs `POST /library/{id}/index-file?path=<relative>`.
+    """
+    roots = await _load_library_roots(db, library_id)
+    _matched_root, resolved = _resolve_path_under_root(roots, relative_path)
+    if resolved.is_dir():
+        raise BrowseError(400, "target is a directory, not a file")
+    if not resolved.is_file():
+        raise BrowseError(400, "target is not a regular file")
+    kind = _kind_for_path(resolved, is_dir=False)
+    if kind == "other":
+        raise BrowseError(
+            400,
+            "unsupported file kind — only video / image / audio / pdf "
+            "files can be indexed",
+        )
+    return resolved, kind
+
+
+async def resolve_subtree_for_scan(
+    db: aiosqlite.Connection,
+    *,
+    library_id: str,
+    relative_path: str,
+) -> Path:
+    """Resolve `<root>/<relative_path>` for the scan-subtree endpoint.
+
+    Returns the absolute directory path.  Raises `BrowseError` when the
+    path escapes the roots, doesn't exist, or points at a file.
+
+    Phase C — backs `POST /library/{id}/scan-subtree?path=<relative>`.
+    """
+    roots = await _load_library_roots(db, library_id)
+    _matched_root, resolved = _resolve_path_under_root(roots, relative_path)
+    if not resolved.is_dir():
+        raise BrowseError(400, "target is not a directory")
+    return resolved
 
 
 # ── Listing ────────────────────────────────────────────────────────────────
@@ -555,26 +644,7 @@ async def browse_library(
     validation/security/IO error so the router can map to the right
     HTTP status without leaking internals.
     """
-    async with db.execute(
-        "SELECT id, root_paths FROM libraries WHERE id = ?",
-        (library_id,),
-    ) as cur:
-        row = await cur.fetchone()
-    if row is None:
-        raise BrowseError(404, "library not found")
-
-    raw_roots = row["root_paths"]
-    try:
-        decoded = json.loads(raw_roots) if isinstance(raw_roots, str) else raw_roots
-    except (TypeError, ValueError) as e:
-        raise BrowseError(500, "library root_paths corrupted") from e
-    if not isinstance(decoded, list) or not decoded:
-        raise BrowseError(404, "library has no root_paths configured")
-
-    roots = [Path(str(r)) for r in decoded if isinstance(r, str) and r]
-    if not roots:
-        raise BrowseError(404, "library has no usable root_paths")
-
+    roots = await _load_library_roots(db, library_id)
     matched_root, target = _resolve_under_root(roots, relative_path)
     entries = _list_entries(target, show_hidden=show_hidden)
     entries = await _attach_index_status(db, target, entries)
