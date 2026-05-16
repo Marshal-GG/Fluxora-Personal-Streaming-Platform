@@ -17,6 +17,8 @@ import 'package:fluxora_desktop/features/library/presentation/cubit/library_cubi
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_state.dart';
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_storage.dart';
 import 'package:fluxora_desktop/features/transcode/domain/repositories/transcode_repository.dart';
+import 'package:fluxora_desktop/features/transcode/presentation/widgets/storage_strip.dart'
+    show openPathInFileManager;
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_cubit.dart';
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_state.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
@@ -1739,18 +1741,18 @@ class _LibraryCardState extends State<_LibraryCard> {
                 if (lib.coverUrls.isNotEmpty)
                   Positioned.fill(child: _PosterMosaic(urls: lib.coverUrls))
                 else
-                  // Larger faded type icon centered behind the chrome —
-                  // gives the gradient-only card a visual anchor when no
-                  // TMDB posters exist (Music / Documents libraries, or
-                  // movies without enrichment).  Sits behind the dark
-                  // gradient overlay so text stays readable.
+                  // Fallback when no TMDB posters exist (Music / Documents,
+                  // or movie libraries without enrichment).  Libraries with
+                  // files render a 2×2 mosaic of deterministic gradient
+                  // tiles seeded by library id so the card still reads as
+                  // a populated surface; empty libraries keep the single
+                  // centered icon so the operator can tell at a glance the
+                  // library has nothing in it yet.
                   Positioned.fill(
-                    child: Center(
-                      child: Icon(
-                        _iconFor(lib.type),
-                        size: 72,
-                        color: Colors.white.withValues(alpha: 0.10),
-                      ),
+                    child: _GradientMosaicFallback(
+                      libraryId: lib.id,
+                      typeIcon: _iconFor(lib.type),
+                      showMosaic: lib.fileCount > 0,
                     ),
                   ),
                 // Dark gradient overlay — darker at both top (behind the
@@ -2016,6 +2018,116 @@ class _Poster extends StatelessWidget {
   }
 }
 
+/// Deterministic gradient-mosaic fallback for libraries without TMDB
+/// poster art.  Same six gradients as the mobile `AppGradientPlaceholders`
+/// palette so the visual language stays consistent across surfaces; key is
+/// `<libraryId>-<tileIndex>` so a single library always renders the same
+/// colour band per slot (stable across scroll / rebuild).
+class _GradientMosaicFallback extends StatelessWidget {
+  const _GradientMosaicFallback({
+    required this.libraryId,
+    required this.typeIcon,
+    required this.showMosaic,
+  });
+
+  final String libraryId;
+  final IconData typeIcon;
+  final bool showMosaic;
+
+  static const _palette = <LinearGradient>[
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFFA855F7), Color(0xFF22D3EE)],
+    ),
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFFEC4899), Color(0xFFF59E0B)],
+    ),
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF10B981), Color(0xFF3B82F6)],
+    ),
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF8B5CF6), Color(0xFFA855F7), Color(0xFFEC4899)],
+    ),
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFF6366F1), Color(0xFF22D3EE)],
+    ),
+    LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFFF59E0B), Color(0xFFEF4444)],
+    ),
+  ];
+
+  static LinearGradient _gradientForKey(String key) {
+    if (key.isEmpty) return _palette.first;
+    final h = key.hashCode & 0x7fffffff;
+    return _palette[h % _palette.length];
+  }
+
+  Widget _tile(int index) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: _gradientForKey('$libraryId-$index'),
+      ),
+      child: Center(
+        child: Icon(
+          typeIcon,
+          size: 26,
+          color: Colors.white.withValues(alpha: 0.28),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!showMosaic) {
+      // No files — keep the single centered faded icon so it's obvious the
+      // library is empty (not "we couldn't fetch posters").
+      return Center(
+        child: Icon(
+          typeIcon,
+          size: 72,
+          color: Colors.white.withValues(alpha: 0.10),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        Expanded(
+          child: Row(
+            children: [
+              Expanded(child: _tile(0)),
+              const SizedBox(width: 1),
+              Expanded(child: _tile(1)),
+            ],
+          ),
+        ),
+        const SizedBox(height: 1),
+        Expanded(
+          child: Row(
+            children: [
+              Expanded(child: _tile(2)),
+              const SizedBox(width: 1),
+              Expanded(child: _tile(3)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 // ── Add Library placeholder tile ───────────────────────────────────────────────
 
 class _AddLibraryPlaceholder extends StatefulWidget {
@@ -2144,7 +2256,6 @@ class _LibraryDetailPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final accent = _accentFor(library.type);
-    final path = library.rootPaths.isNotEmpty ? library.rootPaths.first : '—';
 
     return Container(
       width: 300,
@@ -2189,11 +2300,10 @@ class _LibraryDetailPanel extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.edit_outlined,
-                      size: 14, color: AppColors.textMutedV2),
+                _HeaderIconButton(
+                  icon: Icons.edit_outlined,
                   tooltip: 'Edit library',
-                  onPressed: onEdit,
+                  onTap: onEdit,
                 ),
               ],
             ),
@@ -2206,42 +2316,7 @@ class _LibraryDetailPanel extends StatelessWidget {
                   color: AppColors.textMutedV2, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: AppSpacing.s6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0x08FFFFFF),
-                border: Border.all(color: const Color(0x0DFFFFFF)),
-                borderRadius: BorderRadius.circular(7),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.folder_outlined,
-                      size: 12, color: AppColors.violet),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      path,
-                      style: const TextStyle(
-                        fontFamily: 'JetBrains Mono',
-                        fontSize: 12,
-                        color: AppColors.textBody,
-                        height: 1.4,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (library.rootPaths.length > 1) ...[
-              const SizedBox(height: 4),
-              Text(
-                '+${library.rootPaths.length - 1} more',
-                style: AppTypography.bodySmall
-                    .copyWith(color: AppColors.textFaint),
-              ),
-            ],
+            _LibraryPathsList(paths: library.rootPaths),
             const SizedBox(height: AppSpacing.s18),
 
             // ── Statistics ────────────────────────────────────────────
@@ -2319,6 +2394,242 @@ class _LibraryDetailPanel extends StatelessWidget {
   }
 }
 
+class _HeaderIconButton extends StatefulWidget {
+  const _HeaderIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  State<_HeaderIconButton> createState() => _HeaderIconButtonState();
+}
+
+class _HeaderIconButtonState extends State<_HeaderIconButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Tooltip(
+          message: widget.tooltip,
+          waitDuration: const Duration(milliseconds: 600),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 80),
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: _hovered
+                  ? const Color(0x0DA855F7)
+                  : Colors.transparent,
+              border: Border.all(
+                color: _hovered
+                    ? const Color(0x1AA855F7)
+                    : Colors.transparent,
+              ),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(
+              widget.icon,
+              size: 14,
+              color: _hovered ? AppColors.violet : AppColors.textMutedV2,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LibraryPathsList extends StatefulWidget {
+  const _LibraryPathsList({required this.paths});
+
+  final List<String> paths;
+
+  static const int _kCollapsedCount = 2;
+
+  @override
+  State<_LibraryPathsList> createState() => _LibraryPathsListState();
+}
+
+class _LibraryPathsListState extends State<_LibraryPathsList> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final paths = widget.paths;
+    if (paths.isEmpty) {
+      return const _PathTile(path: '—');
+    }
+
+    const collapsed = _LibraryPathsList._kCollapsedCount;
+    final hasMore = paths.length > collapsed;
+    final visible =
+        (_expanded || !hasMore) ? paths : paths.sublist(0, collapsed);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < visible.length; i++) ...[
+          if (i > 0) const SizedBox(height: 4),
+          _PathTile(path: visible[i]),
+        ],
+        if (hasMore) ...[
+          const SizedBox(height: 6),
+          _ViewAllToggle(
+            expanded: _expanded,
+            hiddenCount: paths.length - collapsed,
+            onTap: () => setState(() => _expanded = !_expanded),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _PathTile extends StatefulWidget {
+  const _PathTile({required this.path});
+
+  final String path;
+
+  @override
+  State<_PathTile> createState() => _PathTileState();
+}
+
+class _PathTileState extends State<_PathTile> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final canOpen = widget.path.isNotEmpty && widget.path != '—';
+    final hovered = _hovered && canOpen;
+
+    return MouseRegion(
+      cursor: canOpen ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: canOpen
+            ? () => openPathInFileManager(
+                  widget.path,
+                  messenger: ScaffoldMessenger.maybeOf(context),
+                )
+            : null,
+        child: Tooltip(
+          message: canOpen ? widget.path : '',
+          waitDuration: const Duration(milliseconds: 600),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 80),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: hovered
+                  ? const Color(0x0DA855F7)
+                  : const Color(0x08FFFFFF),
+              border: Border.all(
+                color: hovered
+                    ? const Color(0x1AA855F7)
+                    : const Color(0x0DFFFFFF),
+              ),
+              borderRadius: BorderRadius.circular(7),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.folder_outlined,
+                    size: 12, color: AppColors.violet),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    widget.path,
+                    style: const TextStyle(
+                      fontFamily: 'JetBrains Mono',
+                      fontSize: 12,
+                      color: AppColors.textBody,
+                      height: 1.4,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.open_in_new_rounded,
+                  size: 12,
+                  color: hovered
+                      ? AppColors.violet
+                      : AppColors.textMutedV2,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ViewAllToggle extends StatelessWidget {
+  const _ViewAllToggle({
+    required this.expanded,
+    required this.hiddenCount,
+    required this.onTap,
+  });
+
+  final bool expanded;
+  final int hiddenCount;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(4),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(4),
+          hoverColor: const Color(0x0DA855F7),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  expanded ? 'Show less' : 'View all ($hiddenCount more)',
+                  style: AppTypography.bodySmall.copyWith(
+                    color: AppColors.violet,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(width: 2),
+                Icon(
+                  expanded
+                      ? Icons.keyboard_arrow_up_rounded
+                      : Icons.keyboard_arrow_down_rounded,
+                  size: 14,
+                  color: AppColors.violet,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _DetailRow extends StatelessWidget {
   const _DetailRow({
     required this.label,
@@ -2393,9 +2704,10 @@ class _ActionTileState extends State<_ActionTile> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
           child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
+            duration: const Duration(milliseconds: 80),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             decoration: BoxDecoration(
               color: _hovered
@@ -2467,9 +2779,10 @@ class _DangerActionTileState extends State<_DangerActionTile> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+          duration: const Duration(milliseconds: 80),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
             color: _hovered
