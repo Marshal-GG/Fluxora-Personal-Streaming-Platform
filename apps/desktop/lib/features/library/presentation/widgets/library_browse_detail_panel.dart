@@ -65,6 +65,15 @@ class LibraryBrowseDetailPanel extends StatelessWidget {
           if (response == null) {
             return const _EmptyState();
           }
+          if (cubit.hasMultiSelect) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(AppSpacing.s20),
+              child: _MultiSelectBody(
+                response: response,
+                selectedNames: cubit.selectedNames,
+              ),
+            );
+          }
           return SingleChildScrollView(
             padding: const EdgeInsets.all(AppSpacing.s20),
             child: _DetailBody(entry: entry, response: response),
@@ -173,6 +182,133 @@ class _DetailBody extends StatelessWidget {
         const SizedBox(height: AppSpacing.s20),
         _ActionsRow(entry: entry, absolutePath: absolutePath),
       ],
+    );
+  }
+}
+
+// ─── Multi-select summary body ─────────────────────────────────────────────
+
+class _MultiSelectBody extends StatelessWidget {
+  const _MultiSelectBody({
+    required this.response,
+    required this.selectedNames,
+  });
+
+  final BrowseResponse response;
+  final Set<String> selectedNames;
+
+  @override
+  Widget build(BuildContext context) {
+    final names = selectedNames.toList();
+    // Resolve entries for the selected names so we can run aggregate
+    // stats (folder vs file split, total size) without coupling to
+    // any particular cubit field.
+    final entries = response.entries
+        .where((e) => selectedNames.contains(e.name))
+        .toList();
+    final folderCount = entries.where((e) => e.isDir).length;
+    final fileCount = entries.length - folderCount;
+    final totalBytes = entries
+        .where((e) => !e.isDir)
+        .fold<int>(0, (sum, e) => sum + e.sizeBytes);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${entries.length} items selected',
+          style: AppTypography.h1.copyWith(color: AppColors.textBright),
+        ),
+        const SizedBox(height: AppSpacing.s6),
+        Text(
+          '$folderCount folder${folderCount == 1 ? '' : 's'} · '
+          '$fileCount file${fileCount == 1 ? '' : 's'} · '
+          '${_humanBytes(totalBytes)} total',
+          style: AppTypography.bodySmall
+              .copyWith(color: AppColors.textMutedV2),
+        ),
+        const SizedBox(height: AppSpacing.s20),
+        Text(
+          'Quick Actions',
+          style: AppTypography.h2.copyWith(color: AppColors.textBright),
+        ),
+        const SizedBox(height: AppSpacing.s10),
+        Wrap(
+          spacing: AppSpacing.s8,
+          runSpacing: AppSpacing.s8,
+          children: [
+            FluxButton(
+              icon: Icons.content_copy_rounded,
+              size: FluxButtonSize.sm,
+              onPressed: () =>
+                  _copyPaths(context, response: response, names: names),
+              child: const Text('Copy paths'),
+            ),
+            FluxButton(
+              icon: Icons.close_rounded,
+              size: FluxButtonSize.sm,
+              variant: FluxButtonVariant.secondary,
+              onPressed: () =>
+                  context.read<LibraryBrowseCubit>().clearSelection(),
+              child: const Text('Clear'),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.s18),
+        Text(
+          'Selected',
+          style: AppTypography.captionV2.copyWith(
+            color: AppColors.textMutedV2,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.s6),
+        // Truncate the visible name list at 20 entries — at that point
+        // it's a wall of text + the operator already has the count.
+        ...entries.take(20).map(
+              (e) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  e.name,
+                  style: const TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 11.5,
+                    color: AppColors.textBody,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+        if (entries.length > 20)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '… and ${entries.length - 20} more',
+              style: AppTypography.captionV2
+                  .copyWith(color: AppColors.textMutedV2),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _copyPaths(
+    BuildContext context, {
+    required BrowseResponse response,
+    required List<String> names,
+  }) async {
+    final lines = names
+        .map((n) => _absolutePath(
+              rootPath: response.rootPath,
+              relativePath: response.relativePath,
+              entryName: n,
+            ))
+        .join('\n');
+    await Clipboard.setData(ClipboardData(text: lines));
+    if (!context.mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text('Copied ${names.length} path(s) to clipboard')),
     );
   }
 }

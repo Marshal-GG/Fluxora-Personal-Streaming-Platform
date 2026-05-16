@@ -24,6 +24,7 @@ import 'package:flutter/services.dart'
     show
         Clipboard,
         ClipboardData,
+        HardwareKeyboard,
         KeyDownEvent,
         KeyEvent,
         KeyRepeatEvent,
@@ -45,6 +46,7 @@ import 'package:fluxora_desktop/core/router/app_router.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_browse_cubit.dart';
+import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_context_menu.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_count_footer.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_detail_panel.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_filter_chips.dart';
@@ -144,6 +146,11 @@ class _LibraryBrowseViewState extends State<_LibraryBrowseView> {
     }
     if (key == LogicalKeyboardKey.slash) {
       _searchFocus.requestFocus();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyA &&
+        HardwareKeyboard.instance.isControlPressed) {
+      cubit.selectAllVisible();
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -314,6 +321,11 @@ class _HeaderActions extends StatelessWidget {
               tooltip: 'Refresh',
               onTap: () => cubit.refresh(),
             ),
+            const SizedBox(width: AppSpacing.s8),
+            // Density cycle button — Compact / Cosy / Comfortable.
+            // One-shot icon button that cycles forward; icon + tooltip
+            // reflect the current mode.
+            _DensityCycleButton(density: cubit.density),
             const SizedBox(width: AppSpacing.s10),
             // List ↔ Grid view toggle (Phase A — segmented control).
             const LibraryBrowseViewToggle(),
@@ -366,12 +378,76 @@ Future<void> _openCurrentInFileManager(
 
 // ── Breadcrumb bar ─────────────────────────────────────────────────────────
 
-class _BreadcrumbBar extends StatelessWidget {
+class _BreadcrumbBar extends StatefulWidget {
   const _BreadcrumbBar({this.searchFocusNode});
 
   /// Optional focus node passed down to the embedded search bar so the
   /// screen-level `/` shortcut can yank focus into the field.
   final FocusNode? searchFocusNode;
+
+  @override
+  State<_BreadcrumbBar> createState() => _BreadcrumbBarState();
+}
+
+class _BreadcrumbBarState extends State<_BreadcrumbBar> {
+  bool _editing = false;
+  final TextEditingController _pathController = TextEditingController();
+  final FocusNode _pathFocus = FocusNode(debugLabel: 'browse-path-edit');
+  String? _validationError;
+
+  @override
+  void dispose() {
+    _pathController.dispose();
+    _pathFocus.dispose();
+    super.dispose();
+  }
+
+  void _beginEdit(LibraryBrowseLoaded loaded) {
+    final response = loaded.response;
+    final separator = response.rootPath.contains(r'\') ? r'\' : '/';
+    final tail = response.relativePath.isEmpty
+        ? ''
+        : response.relativePath.replaceAll('/', separator);
+    final initial = tail.isEmpty
+        ? response.rootPath
+        : '${response.rootPath}$separator$tail';
+    _pathController.text = initial;
+    _pathController.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: initial.length,
+    );
+    setState(() {
+      _editing = true;
+      _validationError = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pathFocus.requestFocus();
+    });
+  }
+
+  void _cancelEdit() {
+    setState(() {
+      _editing = false;
+      _validationError = null;
+    });
+  }
+
+  Future<void> _commitEdit() async {
+    final input = _pathController.text.trim();
+    final cubit = context.read<LibraryBrowseCubit>();
+    final ok = await cubit.navigateToAbsolute(input);
+    if (!mounted) return;
+    if (!ok) {
+      setState(() {
+        _validationError = 'Path is outside this library or does not exist';
+      });
+      return;
+    }
+    setState(() {
+      _editing = false;
+      _validationError = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -382,6 +458,92 @@ class _BreadcrumbBar extends StatelessWidget {
         }
         final response = state.response;
         final cubit = context.read<LibraryBrowseCubit>();
+
+        // Common left affordance + trailing search + copy.
+        final upButton = _ToolbarIconButton(
+          icon: Icons.arrow_upward_rounded,
+          tooltip: response.parentPath == null
+              ? 'At library root'
+              : 'Go up one level',
+          onTap: response.parentPath == null
+              ? null
+              : () => cubit.goUp(),
+        );
+
+        if (_editing) {
+          return Row(
+            children: [
+              upButton,
+              const SizedBox(width: AppSpacing.s8),
+              Expanded(
+                child: Focus(
+                  onKeyEvent: (_, event) {
+                    if (event is KeyDownEvent &&
+                        event.logicalKey == LogicalKeyboardKey.escape) {
+                      _cancelEdit();
+                      return KeyEventResult.handled;
+                    }
+                    return KeyEventResult.ignored;
+                  },
+                  child: TextField(
+                    controller: _pathController,
+                    focusNode: _pathFocus,
+                    onSubmitted: (_) => _commitEdit(),
+                    style: const TextStyle(
+                      fontFamily: 'JetBrains Mono',
+                      fontSize: 12,
+                      color: AppColors.textBright,
+                    ),
+                    cursorColor: AppColors.violet,
+                    decoration: InputDecoration(
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
+                      filled: true,
+                      fillColor: const Color(0x0AFFFFFF),
+                      hintText: r'D:\Library\Subdir',
+                      hintStyle: const TextStyle(
+                        fontFamily: 'JetBrains Mono',
+                        fontSize: 12,
+                        color: AppColors.textFaint,
+                      ),
+                      errorText: _validationError,
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius:
+                            BorderRadius.circular(AppRadii.sm - 1),
+                        borderSide:
+                            const BorderSide(color: Color(0x14FFFFFF)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius:
+                            BorderRadius.circular(AppRadii.sm - 1),
+                        borderSide: const BorderSide(
+                          color: AppColors.violet,
+                          width: 1.5,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.s8),
+              _ToolbarIconButton(
+                icon: Icons.check_rounded,
+                tooltip: 'Navigate (Enter)',
+                onTap: _commitEdit,
+              ),
+              const SizedBox(width: AppSpacing.s4),
+              _ToolbarIconButton(
+                icon: Icons.close_rounded,
+                tooltip: 'Cancel (Esc)',
+                onTap: _cancelEdit,
+              ),
+            ],
+          );
+        }
+
         final segments = response.relativePath.isEmpty
             ? const <String>[]
             : response.relativePath.split('/');
@@ -411,32 +573,36 @@ class _BreadcrumbBar extends StatelessWidget {
             ));
         }
 
-        // Trailing icon row: "go up" (parent) + raw-path copy +
-        // search field for filtering the current directory by name
-        // (Phase A — purely client-side substring filter).
+        // Trailing icon row: "go up" (parent) + edit affordance +
+        // search field + raw-path copy.
         return Row(
           children: [
-            // Up button — disabled when at the root.
-            _ToolbarIconButton(
-              icon: Icons.arrow_upward_rounded,
-              tooltip: response.parentPath == null
-                  ? 'At library root'
-                  : 'Go up one level',
-              onTap: response.parentPath == null
-                  ? null
-                  : () => cubit.goUp(),
-            ),
+            upButton,
             const SizedBox(width: AppSpacing.s8),
             Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(children: chips),
+              child: Tooltip(
+                message: 'Click to edit path',
+                waitDuration: const Duration(milliseconds: 600),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _beginEdit(state),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(children: chips),
+                  ),
+                ),
               ),
+            ),
+            const SizedBox(width: AppSpacing.s6),
+            _ToolbarIconButton(
+              icon: Icons.edit_rounded,
+              tooltip: 'Edit path',
+              onTap: () => _beginEdit(state),
             ),
             const SizedBox(width: AppSpacing.s10),
             LibraryBrowseSearchBar(
               width: 240,
-              focusNode: searchFocusNode,
+              focusNode: widget.searchFocusNode,
             ),
             const SizedBox(width: AppSpacing.s8),
             _ToolbarIconButton(
@@ -630,11 +796,13 @@ class _BrowseBody extends StatelessWidget {
                 sortBy: cubit.sortBy,
                 sortAsc: cubit.sortAsc,
                 onSort: cubit.setSort,
+                density: cubit.density,
               )
             : _BrowseGridView(
                 response: response,
                 entries: filtered,
                 selectedNames: cubit.selectedNames,
+                density: cubit.density,
               );
       },
     );
@@ -698,6 +866,7 @@ class _BrowseListView extends StatelessWidget {
     required this.sortBy,
     required this.sortAsc,
     required this.onSort,
+    required this.density,
   });
 
   final BrowseResponse response;
@@ -706,6 +875,7 @@ class _BrowseListView extends StatelessWidget {
   final BrowseSortColumn sortBy;
   final bool sortAsc;
   final ValueChanged<BrowseSortColumn> onSort;
+  final BrowseDensity density;
 
   @override
   Widget build(BuildContext context) {
@@ -729,6 +899,7 @@ class _BrowseListView extends StatelessWidget {
                 rootPath: response.rootPath,
                 relativePath: response.relativePath,
                 isSelected: selectedNames.contains(entry.name),
+                density: density,
               );
             },
           ),
@@ -863,19 +1034,26 @@ class _BrowseGridView extends StatelessWidget {
     required this.response,
     required this.entries,
     required this.selectedNames,
+    required this.density,
   });
 
   final BrowseResponse response;
   final List<BrowseEntry> entries;
   final Set<String> selectedNames;
+  final BrowseDensity density;
 
   @override
   Widget build(BuildContext context) {
+    final (extent, mainExtent) = switch (density) {
+      BrowseDensity.compact => (140.0, 160.0),
+      BrowseDensity.cosy => (160.0, 180.0),
+      BrowseDensity.comfortable => (180.0, 200.0),
+    };
     return GridView.builder(
       padding: const EdgeInsets.only(top: 6, bottom: AppSpacing.s14),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 180,
-        mainAxisExtent: 200,
+      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: extent,
+        mainAxisExtent: mainExtent,
         crossAxisSpacing: 10,
         mainAxisSpacing: 10,
       ),
@@ -901,12 +1079,14 @@ class _BrowseRow extends StatefulWidget {
     required this.rootPath,
     required this.relativePath,
     required this.isSelected,
+    required this.density,
   });
 
   final BrowseEntry entry;
   final String rootPath;
   final String relativePath;
   final bool isSelected;
+  final BrowseDensity density;
 
   @override
   State<_BrowseRow> createState() => _BrowseRowState();
@@ -915,6 +1095,12 @@ class _BrowseRow extends StatefulWidget {
 class _BrowseRowState extends State<_BrowseRow> {
   bool _hovered = false;
   DateTime? _lastTapAt;
+
+  double get _verticalPad => switch (widget.density) {
+        BrowseDensity.compact => 4,
+        BrowseDensity.cosy => 6,
+        BrowseDensity.comfortable => 8,
+      };
 
   @override
   Widget build(BuildContext context) {
@@ -937,9 +1123,11 @@ class _BrowseRowState extends State<_BrowseRow> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: _handleTap,
+        onSecondaryTapDown: (details) =>
+            _showContextMenu(details.globalPosition),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 80),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: _verticalPad),
           decoration: BoxDecoration(
             color: bgColor,
             border: Border.all(color: borderColor),
@@ -1050,8 +1238,23 @@ class _BrowseRowState extends State<_BrowseRow> {
   /// Single-click → select; double-click within 300 ms → open.  Same
   /// `_lastTapAt` timestamp pattern `_LibraryCardState` uses (Flutter's
   /// `onDoubleTap` adds 300 ms latency to `onTap` while the arena
-  /// disambiguates).
+  /// disambiguates).  Ctrl/Cmd-click toggles membership; Shift-click
+  /// extends from the anchor.  Plan 28 Phase C multi-select.
   void _handleTap() {
+    final cubit = context.read<LibraryBrowseCubit>();
+    final kbd = HardwareKeyboard.instance;
+    final ctrl = kbd.isControlPressed || kbd.isMetaPressed;
+    final shift = kbd.isShiftPressed;
+    if (ctrl) {
+      _lastTapAt = null;
+      cubit.toggleSelection(widget.entry.name);
+      return;
+    }
+    if (shift) {
+      _lastTapAt = null;
+      cubit.extendSelection(widget.entry.name);
+      return;
+    }
     final now = DateTime.now();
     if (_lastTapAt != null &&
         now.difference(_lastTapAt!).inMilliseconds < 300) {
@@ -1060,7 +1263,7 @@ class _BrowseRowState extends State<_BrowseRow> {
       return;
     }
     _lastTapAt = now;
-    context.read<LibraryBrowseCubit>().selectOnly(widget.entry.name);
+    cubit.selectOnly(widget.entry.name);
   }
 
   void _handleOpen() {
@@ -1073,6 +1276,23 @@ class _BrowseRowState extends State<_BrowseRow> {
     }
     // File open → OS default app via url_launcher's Uri.file.
     _openInDefaultApp();
+  }
+
+  Future<void> _showContextMenu(Offset position) async {
+    final cubit = context.read<LibraryBrowseCubit>();
+    // Right-click on an unselected row also makes it the current
+    // selection so the menu's "selected entry" actions are visually
+    // accurate.
+    if (!widget.isSelected) {
+      cubit.selectOnly(widget.entry.name);
+    }
+    await showBrowseEntryContextMenu(
+      context: context,
+      position: position,
+      entry: widget.entry,
+      rootPath: widget.rootPath,
+      relativePath: widget.relativePath,
+    );
   }
 
   Future<void> _openInDefaultApp() async {
@@ -1176,6 +1396,8 @@ class _BrowseGridTileState extends State<_BrowseGridTile> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: _handleTap,
+        onSecondaryTapDown: (details) =>
+            _showContextMenu(details.globalPosition),
         child: Tooltip(
           message: entry.name,
           waitDuration: const Duration(milliseconds: 800),
@@ -1302,6 +1524,20 @@ class _BrowseGridTileState extends State<_BrowseGridTile> {
   }
 
   void _handleTap() {
+    final cubit = context.read<LibraryBrowseCubit>();
+    final kbd = HardwareKeyboard.instance;
+    final ctrl = kbd.isControlPressed || kbd.isMetaPressed;
+    final shift = kbd.isShiftPressed;
+    if (ctrl) {
+      _lastTapAt = null;
+      cubit.toggleSelection(widget.entry.name);
+      return;
+    }
+    if (shift) {
+      _lastTapAt = null;
+      cubit.extendSelection(widget.entry.name);
+      return;
+    }
     final now = DateTime.now();
     if (_lastTapAt != null &&
         now.difference(_lastTapAt!).inMilliseconds < 300) {
@@ -1310,7 +1546,7 @@ class _BrowseGridTileState extends State<_BrowseGridTile> {
       return;
     }
     _lastTapAt = now;
-    context.read<LibraryBrowseCubit>().selectOnly(widget.entry.name);
+    cubit.selectOnly(widget.entry.name);
   }
 
   void _handleOpen() {
@@ -1334,6 +1570,20 @@ class _BrowseGridTileState extends State<_BrowseGridTile> {
         );
       }
     });
+  }
+
+  Future<void> _showContextMenu(Offset position) async {
+    final cubit = context.read<LibraryBrowseCubit>();
+    if (!widget.isSelected) {
+      cubit.selectOnly(widget.entry.name);
+    }
+    await showBrowseEntryContextMenu(
+      context: context,
+      position: position,
+      entry: widget.entry,
+      rootPath: widget.rootPath,
+      relativePath: widget.relativePath,
+    );
   }
 }
 
@@ -1397,6 +1647,42 @@ class _KindIconBackground extends StatelessWidget {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/// One-shot icon button that cycles the listing density through the
+/// three `BrowseDensity` modes (Compact → Cosy → Comfortable → ...).
+/// Icon + tooltip update per mode.  Plan 28 Phase C.
+class _DensityCycleButton extends StatelessWidget {
+  const _DensityCycleButton({required this.density});
+
+  final BrowseDensity density;
+
+  @override
+  Widget build(BuildContext context) {
+    final cubit = context.read<LibraryBrowseCubit>();
+    final icon = switch (density) {
+      BrowseDensity.compact => Icons.density_small_rounded,
+      BrowseDensity.cosy => Icons.density_medium_rounded,
+      BrowseDensity.comfortable => Icons.density_large_rounded,
+    };
+    final tooltip = switch (density) {
+      BrowseDensity.compact => 'Density: Compact (click for Cosy)',
+      BrowseDensity.cosy => 'Density: Cosy (click for Comfortable)',
+      BrowseDensity.comfortable => 'Density: Comfortable (click for Compact)',
+    };
+    return _ToolbarIconButton(
+      icon: icon,
+      tooltip: tooltip,
+      onTap: () {
+        final next = switch (density) {
+          BrowseDensity.compact => BrowseDensity.cosy,
+          BrowseDensity.cosy => BrowseDensity.comfortable,
+          BrowseDensity.comfortable => BrowseDensity.compact,
+        };
+        cubit.setDensity(next);
+      },
+    );
+  }
+}
 
 class _ToolbarIconButton extends StatefulWidget {
   const _ToolbarIconButton({

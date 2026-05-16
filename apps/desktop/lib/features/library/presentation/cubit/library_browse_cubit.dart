@@ -11,6 +11,13 @@ enum BrowseSortColumn { name, size, modified }
 /// Two display modes for the folder browser body.  Phase A of plan 28.
 enum BrowseViewMode { list, grid }
 
+/// Row-density for the listing.  `comfortable` is the default and
+/// matches the Phase A row height (44 px in list view, 200 px tile in
+/// grid view).  `compact` shrinks to ~28 px rows / ~140 px tiles for
+/// scanning huge directories without scrolling.  `cosy` sits in
+/// between (~38 px rows / ~170 px tiles).
+enum BrowseDensity { compact, cosy, comfortable }
+
 /// Type-filter chip values for the chip group.  `all` is the default;
 /// any other value restricts the visible entries to the matching
 /// [BrowseKind] (or directories for `folders`).  Phase B of plan 28.
@@ -74,6 +81,12 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   BrowseViewMode _viewMode = BrowseViewMode.list;
   String _search = '';
   BrowseKindFilter _kindFilter = BrowseKindFilter.all;
+  BrowseDensity _density = BrowseDensity.comfortable;
+
+  /// Anchor for shift-click range selection.  Set on every plain click
+  /// + ctrl-click; the next shift-click selects the inclusive range
+  /// from this anchor through the shift-clicked entry.
+  String? _selectionAnchor;
 
   /// Currently-selected entries — keyed by their `name` field (unique
   /// inside a single directory).  Single-element on click, grows on
@@ -88,7 +101,11 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   BrowseViewMode get viewMode => _viewMode;
   String get search => _search;
   BrowseKindFilter get kindFilter => _kindFilter;
+  BrowseDensity get density => _density;
   Set<String> get selectedNames => Set.unmodifiable(_selectedNames);
+
+  /// True when more than one entry is selected.
+  bool get hasMultiSelect => _selectedNames.length > 1;
 
   /// The single selected entry's `BrowseEntry`, or `null` when nothing
   /// is selected or the state isn't [LibraryBrowseLoaded].  Drives the
@@ -152,6 +169,103 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     await _fetch(path);
   }
 
+  /// Index a single un-indexed entry (Phase C right-click action).
+  /// Returns the result so callers can surface a toast.  The current
+  /// directory is refreshed on success so the listing flips to
+  /// `is_indexed=true` for that row.
+  Future<IndexFileResult?> indexEntry(BrowseEntry entry) async {
+    if (entry.isDir) return null;
+    final relativePath = _relativePathFor(entry);
+    if (relativePath == null) return null;
+    try {
+      final result = await _repository.indexFile(
+        libraryId: libraryId,
+        relativePath: relativePath,
+      );
+      // The new file_id needs to be reflected in the listing, so re-
+      // fetch the current directory (cheap — same /browse call).
+      await refresh();
+      return result;
+    } on ApiException catch (e, st) {
+      _log.e('indexEntry failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  /// Regenerate the selected entry's thumbnail.  Worker picks up the
+  /// reset row on its next tick; no refresh needed because the
+  /// thumbnail-progress WS event will trigger a card refresh upstream.
+  Future<void> regenerateEntryThumbnail(BrowseEntry entry) async {
+    if (entry.fileId == null) return;
+    try {
+      await _repository.regenerateFileThumbnail(entry.fileId!);
+      await refresh();
+    } on ApiException catch (e, st) {
+      _log.e('regenerateEntryThumbnail failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  /// Rescan a subdir (Phase C right-click on a folder).  Returns the
+  /// number of newly-ingested files so callers can render a toast.
+  Future<int> scanEntrySubtree(BrowseEntry entry) async {
+    if (!entry.isDir) return 0;
+    final relativePath = _relativePathFor(entry);
+    if (relativePath == null) return 0;
+    try {
+      final added = await _repository.scanSubtree(
+        libraryId: libraryId,
+        relativePath: relativePath,
+      );
+      await refresh();
+      return added;
+    } on ApiException catch (e, st) {
+      _log.e('scanEntrySubtree failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  /// Navigate to an absolute or library-relative path entered into the
+  /// editable path textbox (Phase C).  Strips any matched root prefix
+  /// to produce a relative path the server's `/browse?path=` accepts;
+  /// returns false (without navigating) when the input doesn't sit
+  /// under the loaded library's `root_path`.
+  Future<bool> navigateToAbsolute(String input) async {
+    final current = state;
+    if (current is! LibraryBrowseLoaded) return false;
+    final root = current.response.rootPath;
+    final normalised = input.trim().replaceAll(r'\', '/');
+    final normalisedRoot = root.replaceAll(r'\', '/');
+    if (normalised.isEmpty) {
+      await navigateTo('');
+      return true;
+    }
+    final rootLower = normalisedRoot.toLowerCase();
+    final inputLower = normalised.toLowerCase();
+    String? relative;
+    if (inputLower == rootLower) {
+      relative = '';
+    } else if (inputLower.startsWith('$rootLower/')) {
+      relative = normalised.substring(normalisedRoot.length + 1);
+    } else if (!normalised.contains(':') && !normalised.startsWith('/')) {
+      // Looks like an already-relative path.
+      relative = normalised;
+    }
+    if (relative == null) return false;
+    await navigateTo(relative);
+    final next = state;
+    return next is LibraryBrowseLoaded;
+  }
+
+  /// Compose `<currentRelativePath>/<entry.name>` for an entry in the
+  /// current directory.  Returns null when state isn't [LibraryBrowseLoaded].
+  String? _relativePathFor(BrowseEntry entry) {
+    final current = state;
+    if (current is! LibraryBrowseLoaded) return null;
+    final base = current.response.relativePath;
+    return base.isEmpty ? entry.name : '$base/${entry.name}';
+  }
+
   // ── UI-only methods (no network) ────────────────────────────────────────
 
   /// Toggle indexed-only filter.  Pure client-side filter on the
@@ -197,12 +311,69 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     _reemit();
   }
 
-  /// Single-click selection.  Replaces any prior selection.  Phase C
-  /// adds [toggleSelection] / [extendSelection] for Ctrl + Shift click.
+  /// Single-click selection.  Replaces any prior selection.  Plain
+  /// clicks also set the shift-click anchor to this entry.
   void selectOnly(String entryName) {
     _selectedNames
       ..clear()
       ..add(entryName);
+    _selectionAnchor = entryName;
+    _reemit();
+  }
+
+  /// Ctrl/Cmd + click — toggle the clicked entry's membership in the
+  /// selection without clearing the rest.  The anchor flips to the
+  /// most-recently-toggled entry (matches Explorer + macOS Finder).
+  void toggleSelection(String entryName) {
+    if (_selectedNames.contains(entryName)) {
+      _selectedNames.remove(entryName);
+    } else {
+      _selectedNames.add(entryName);
+    }
+    _selectionAnchor = entryName;
+    _reemit();
+  }
+
+  /// Shift + click — select the inclusive range from the last anchor
+  /// through [entryName] in the currently-visible (filtered + sorted)
+  /// list.  Replaces the prior selection.  Falls back to [selectOnly]
+  /// when no anchor exists or the anchor is no longer in the visible
+  /// list (e.g. operator changed the search filter between clicks).
+  void extendSelection(String entryName) {
+    final visible = _currentVisible();
+    if (visible.isEmpty) return;
+    final anchor = _selectionAnchor;
+    if (anchor == null) {
+      selectOnly(entryName);
+      return;
+    }
+    int anchorIdx = -1;
+    int targetIdx = -1;
+    for (var i = 0; i < visible.length; i++) {
+      if (visible[i].name == anchor) anchorIdx = i;
+      if (visible[i].name == entryName) targetIdx = i;
+    }
+    if (anchorIdx < 0 || targetIdx < 0) {
+      selectOnly(entryName);
+      return;
+    }
+    final lo = anchorIdx < targetIdx ? anchorIdx : targetIdx;
+    final hi = anchorIdx < targetIdx ? targetIdx : anchorIdx;
+    _selectedNames.clear();
+    for (var i = lo; i <= hi; i++) {
+      _selectedNames.add(visible[i].name);
+    }
+    _reemit();
+  }
+
+  /// Ctrl+A — select every currently-visible entry.  No-op when empty.
+  void selectAllVisible() {
+    final visible = _currentVisible();
+    if (visible.isEmpty) return;
+    _selectedNames
+      ..clear()
+      ..addAll(visible.map((e) => e.name));
+    _selectionAnchor = visible.first.name;
     _reemit();
   }
 
@@ -210,6 +381,15 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   void clearSelection() {
     if (_selectedNames.isEmpty) return;
     _selectedNames.clear();
+    _selectionAnchor = null;
+    _reemit();
+  }
+
+  /// Change the listing density.  Pure local state; affects row + tile
+  /// dimensions without touching the response.
+  void setDensity(BrowseDensity density) {
+    if (_density == density) return;
+    _density = density;
     _reemit();
   }
 

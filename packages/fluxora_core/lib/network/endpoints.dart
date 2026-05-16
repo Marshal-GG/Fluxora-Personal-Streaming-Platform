@@ -50,6 +50,23 @@ class Endpoints {
   static String libraryBrowse(String libraryId) =>
       '$_base/library/$libraryId/browse';
 
+  /// `POST /api/v1/library/{libraryId}/index-file?path=<relative>` —
+  /// index a single file by its `<root>/<relative>` path.  Backs the
+  /// folder-browser right-click "Index this file" action.
+  static String libraryIndexFile(String libraryId) =>
+      '$_base/library/$libraryId/index-file';
+
+  /// `POST /api/v1/library/{libraryId}/scan-subtree?path=<relative>` —
+  /// rescan a single subdir under one of the library's root_paths.
+  static String libraryScanSubtree(String libraryId) =>
+      '$_base/library/$libraryId/scan-subtree';
+
+  /// `POST /api/v1/files/{fileId}/regenerate-thumbnail` — per-file
+  /// thumbnail regenerate (priority=10).  Right-click "Generate
+  /// thumbnail" action.
+  static String fileRegenerateThumbnail(String fileId) =>
+      '$_base/files/$fileId/regenerate-thumbnail';
+
   // Stream
   static String streamStart(String fileId) => '$_base/stream/start/$fileId';
   static String streamSession(String sessionId) => '$_base/stream/$sessionId';

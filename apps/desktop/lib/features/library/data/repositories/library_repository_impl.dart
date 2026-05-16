@@ -193,6 +193,49 @@ class LibraryRepositoryImpl implements LibraryRepository {
       );
 
   @override
+  Future<IndexFileResult> indexFile({
+    required String libraryId,
+    required String relativePath,
+  }) =>
+      _apiClient.post<IndexFileResult>(
+        Endpoints.libraryIndexFile(libraryId),
+        queryParameters: {'path': relativePath},
+        fromJson: (data) {
+          final json = data as Map<String, dynamic>;
+          return IndexFileResult(
+            fileId: json['file_id'] as String,
+            alreadyIndexed: (json['already_indexed'] as bool?) ?? false,
+            enriched: (json['enriched'] as bool?) ?? false,
+          );
+        },
+      );
+
+  @override
+  Future<void> regenerateFileThumbnail(String fileId) =>
+      _apiClient.post<void>(
+        Endpoints.fileRegenerateThumbnail(fileId),
+        fromJson: (_) {},
+      );
+
+  @override
+  Future<int> scanSubtree({
+    required String libraryId,
+    required String relativePath,
+  }) =>
+      _apiClient.post<int>(
+        Endpoints.libraryScanSubtree(libraryId),
+        queryParameters: {'path': relativePath},
+        fromJson: (data) {
+          if (data is Map<String, dynamic>) {
+            final v = data['files_added'];
+            if (v is int) return v;
+            if (v is num) return v.toInt();
+          }
+          return 0;
+        },
+      );
+
+  @override
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath}) async {
     final formData = FormData.fromMap({
       'library_id': libraryId,

@@ -86,7 +86,41 @@ abstract interface class LibraryRepository {
     bool showHidden = false,
   });
 
+  /// Index a single file at the given `<root>/<relativePath>` path.
+  /// Returns the new (or already-existing) file id.  Backs the folder-
+  /// browser right-click "Index this file" action.
+  Future<IndexFileResult> indexFile({
+    required String libraryId,
+    required String relativePath,
+  });
+
+  /// Reset a single file's thumbnail row back to pending + priority=10
+  /// + delete the cached JPEG so the worker re-renders it.  Backs the
+  /// "Generate thumbnail" right-click action.
+  Future<void> regenerateFileThumbnail(String fileId);
+
+  /// Rescan a single subdir under one of the library's root_paths.
+  /// Returns the count of newly-ingested files.  Backs the "Scan this
+  /// folder" right-click action.
+  Future<int> scanSubtree({
+    required String libraryId,
+    required String relativePath,
+  });
+
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath});
+}
+
+/// Result of an [LibraryRepository.indexFile] call.
+class IndexFileResult {
+  const IndexFileResult({
+    required this.fileId,
+    required this.alreadyIndexed,
+    required this.enriched,
+  });
+
+  final String fileId;
+  final bool alreadyIndexed;
+  final bool enriched;
 }
 
 /// 3-state update sentinel for the codec passthrough fields — disambiguates
