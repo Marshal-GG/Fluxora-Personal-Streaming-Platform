@@ -15,11 +15,13 @@ from models.library import (
 from routers.deps import validate_token_or_local
 from services import (
     activity_service,
+    browse_service,
     group_service,
     library_service,
     notification_service,
     thumbnail_worker,
 )
+from services.browse_service import BrowseError
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +334,46 @@ async def enrich_library_tmdb(
     # Posters / titles changed, but file counts didn't — only library_changed.
     notification_service.broadcast_event("library_changed")
     return {"library_id": library_id, **result}
+
+
+@router.get("/{library_id}/browse", status_code=status.HTTP_200_OK)
+async def browse_library(
+    library_id: str,
+    path: str = Query(default="", description="relative path under the library root"),
+    show_hidden: bool = Query(
+        default=False,
+        description="when True, include dotfiles + Windows hidden attribute "
+        "entries in the listing",
+    ),
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> dict:
+    """Walk the actual filesystem under the library's `root_paths` and
+    return an Explorer-style directory listing.  Joins against
+    `media_files.path` so each entry carries `is_indexed` +
+    (when indexed) `file_id` for client-side smart dispatch.
+
+    Security: the `path` parameter is normalised + path-traversal-
+    checked against the canonicalised `root_paths`.  Any escape attempt
+    returns 403.  Symlinks are followed once but their resolved
+    target must still live under a root.
+
+    Hidden semantics: dotfile names on every platform + Windows
+    `FILE_ATTRIBUTE_HIDDEN` / `FILE_ATTRIBUTE_SYSTEM` flags.  Toggle
+    via `?show_hidden=true`.
+
+    Response shape: see `services.browse_service.BrowseResponse.to_json`.
+    """
+    try:
+        response = await browse_service.browse_library(
+            db,
+            library_id=library_id,
+            relative_path=path,
+            show_hidden=show_hidden,
+        )
+    except BrowseError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+    return response.to_json()
 
 
 @router.post(
