@@ -17,11 +17,21 @@ import 'package:fluxora_desktop/features/library/presentation/cubit/library_brow
 /// cubit clearing `search` to `''` on `navigateTo`) clear the visible
 /// field as well.
 class LibraryBrowseSearchBar extends StatefulWidget {
-  const LibraryBrowseSearchBar({super.key, this.width = 260});
+  const LibraryBrowseSearchBar({
+    super.key,
+    this.width = 260,
+    this.focusNode,
+  });
 
   /// Fixed pixel width of the search field — keeps the toolbar layout
   /// stable regardless of typed content.
   final double width;
+
+  /// Optional externally-owned focus node so a parent keyboard handler
+  /// can `requestFocus()` (e.g. screen-level `/` shortcut focuses the
+  /// search field).  When null, an internal node is created.  Plan 28
+  /// Phase B keyboard navigation.
+  final FocusNode? focusNode;
 
   @override
   State<LibraryBrowseSearchBar> createState() => _LibraryBrowseSearchBarState();
@@ -29,6 +39,10 @@ class LibraryBrowseSearchBar extends StatefulWidget {
 
 class _LibraryBrowseSearchBarState extends State<LibraryBrowseSearchBar> {
   late final TextEditingController _controller;
+  FocusNode? _ownFocusNode;
+
+  FocusNode get _focusNode =>
+      widget.focusNode ?? (_ownFocusNode ??= FocusNode());
 
   @override
   void initState() {
@@ -40,6 +54,7 @@ class _LibraryBrowseSearchBarState extends State<LibraryBrowseSearchBar> {
   @override
   void dispose() {
     _controller.dispose();
+    _ownFocusNode?.dispose();
     super.dispose();
   }
 
@@ -78,6 +93,7 @@ class _LibraryBrowseSearchBarState extends State<LibraryBrowseSearchBar> {
             final hasQuery = value.text.isNotEmpty;
             return TextField(
               controller: _controller,
+              focusNode: _focusNode,
               cursorColor: AppColors.violet,
               style: const TextStyle(
                 fontFamily: 'Inter',

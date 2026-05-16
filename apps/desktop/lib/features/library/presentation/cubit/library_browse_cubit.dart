@@ -11,6 +11,36 @@ enum BrowseSortColumn { name, size, modified }
 /// Two display modes for the folder browser body.  Phase A of plan 28.
 enum BrowseViewMode { list, grid }
 
+/// Type-filter chip values for the chip group.  `all` is the default;
+/// any other value restricts the visible entries to the matching
+/// [BrowseKind] (or directories for `folders`).  Phase B of plan 28.
+enum BrowseKindFilter {
+  all,
+  folders,
+  videos,
+  images,
+  audio,
+  pdfs,
+  other;
+
+  /// Whether an entry of the given [BrowseKind] passes this filter.
+  /// Folders are special-cased: only `all` + `folders` admit them.
+  bool admits(BrowseEntry entry) {
+    if (this == BrowseKindFilter.all) return true;
+    if (this == BrowseKindFilter.folders) return entry.isDir;
+    if (entry.isDir) return false;
+    return switch (this) {
+      BrowseKindFilter.videos => entry.kind == BrowseKind.video,
+      BrowseKindFilter.images => entry.kind == BrowseKind.image,
+      BrowseKindFilter.audio => entry.kind == BrowseKind.audio,
+      BrowseKindFilter.pdfs => entry.kind == BrowseKind.pdf,
+      BrowseKindFilter.other => entry.kind == BrowseKind.other,
+      BrowseKindFilter.all || BrowseKindFilter.folders =>
+        true, // unreachable; covered above
+    };
+  }
+}
+
 /// Drives the folder-browser surface inside the library files screen.
 ///
 /// State splits in two:
@@ -43,6 +73,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   bool _sortAsc = true;
   BrowseViewMode _viewMode = BrowseViewMode.list;
   String _search = '';
+  BrowseKindFilter _kindFilter = BrowseKindFilter.all;
 
   /// Currently-selected entries — keyed by their `name` field (unique
   /// inside a single directory).  Single-element on click, grows on
@@ -56,6 +87,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   bool get sortAsc => _sortAsc;
   BrowseViewMode get viewMode => _viewMode;
   String get search => _search;
+  BrowseKindFilter get kindFilter => _kindFilter;
   Set<String> get selectedNames => Set.unmodifiable(_selectedNames);
 
   /// The single selected entry's `BrowseEntry`, or `null` when nothing
@@ -130,6 +162,14 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     _reemit();
   }
 
+  /// Set the kind-filter chip.  Pure client-side filter on the
+  /// loaded response — no re-fetch.  Phase B of plan 28.
+  void setKindFilter(BrowseKindFilter filter) {
+    if (_kindFilter == filter) return;
+    _kindFilter = filter;
+    _reemit();
+  }
+
   /// Click on a column header.  Same column → toggle direction; new
   /// column → switch to it and reset to ascending.
   void setSort(BrowseSortColumn column) {
@@ -171,6 +211,91 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     if (_selectedNames.isEmpty) return;
     _selectedNames.clear();
     _reemit();
+  }
+
+  // ── Keyboard navigation helpers (Phase B) ───────────────────────────────
+  //
+  // All [step*] methods operate on the **filtered + sorted** visible
+  // list — they re-derive it from the current state so the cubit owner
+  // doesn't need to plumb the visible list back in.  No-op when state
+  // isn't [LibraryBrowseLoaded] OR when the visible list is empty.
+
+  List<BrowseEntry> _currentVisible() {
+    final current = state;
+    if (current is! LibraryBrowseLoaded) return const [];
+    return applyBrowseFilters(
+      current.response.entries,
+      indexedOnly: _indexedOnly,
+      kindFilter: _kindFilter,
+      search: _search,
+      sortBy: _sortBy,
+      sortAsc: _sortAsc,
+    );
+  }
+
+  int _currentVisibleIndex(List<BrowseEntry> visible) {
+    if (_selectedNames.isEmpty) return -1;
+    final last = _selectedNames.last;
+    for (var i = 0; i < visible.length; i++) {
+      if (visible[i].name == last) return i;
+    }
+    return -1;
+  }
+
+  /// Move selection N positions (positive = down, negative = up).
+  /// Wraps from no-selection to the first/last entry depending on
+  /// direction.  Used by arrow keys + Page Up/Down.
+  void stepSelection(int delta) {
+    final visible = _currentVisible();
+    if (visible.isEmpty) return;
+    final current = _currentVisibleIndex(visible);
+    int next;
+    if (current < 0) {
+      next = delta > 0 ? 0 : visible.length - 1;
+    } else {
+      next = (current + delta).clamp(0, visible.length - 1);
+    }
+    selectOnly(visible[next].name);
+  }
+
+  /// Select the first visible entry.  No-op when empty.
+  void selectFirst() {
+    final visible = _currentVisible();
+    if (visible.isEmpty) return;
+    selectOnly(visible.first.name);
+  }
+
+  /// Select the last visible entry.  No-op when empty.
+  void selectLast() {
+    final visible = _currentVisible();
+    if (visible.isEmpty) return;
+    selectOnly(visible.last.name);
+  }
+
+  /// Return the currently-selected entry plus its absolute path, ready
+  /// for an "open" action.  Null when nothing selected.  Centralises
+  /// the absolute-path build (separator handling + relative join) so
+  /// the screen's keyboard handler and row click handler share the
+  /// same shape.
+  ({BrowseEntry entry, String absolutePath, String relativePath})?
+      resolveSelected() {
+    final entry = selectedEntry;
+    final current = state;
+    if (entry == null || current is! LibraryBrowseLoaded) return null;
+    final response = current.response;
+    final separator = response.rootPath.contains(r'\') ? r'\' : '/';
+    final relTail = response.relativePath.isEmpty
+        ? entry.name
+        : '${response.relativePath}/${entry.name}';
+    final relForFolder = response.relativePath.isEmpty
+        ? entry.name
+        : '${response.relativePath}/${entry.name}';
+    final tailWithSep = relTail.replaceAll('/', separator);
+    return (
+      entry: entry,
+      absolutePath: '${response.rootPath}$separator$tailWithSep',
+      relativePath: relForFolder,
+    );
   }
 
   // ── Internal ────────────────────────────────────────────────────────────
@@ -225,6 +350,12 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
 /// response.  Pure function — kept outside the cubit so widgets can
 /// recompute incrementally as prefs change without firing a re-emit.
 ///
+/// Filter order: kind filter → indexed-only → search.  Search is the
+/// most operator-tweaked input so it runs last to avoid recomputing
+/// the broader filters on every keystroke (the predicate's branches
+/// short-circuit anyway, but ordering the cheap checks first keeps
+/// the visible-list update snappy on large directories).
+///
 /// Sort order: directories always first (matches Explorer + the server
 /// default).  Within each group, the operator's selected column +
 /// direction wins.
@@ -234,9 +365,11 @@ List<BrowseEntry> applyBrowseFilters(
   required String search,
   required BrowseSortColumn sortBy,
   required bool sortAsc,
+  BrowseKindFilter kindFilter = BrowseKindFilter.all,
 }) {
   final query = search.trim().toLowerCase();
   var filtered = entries.where((e) {
+    if (!kindFilter.admits(e)) return false;
     if (indexedOnly && !e.isIndexed && !e.isDir) return false;
     if (query.isNotEmpty &&
         !e.name.toLowerCase().contains(query)) {

@@ -20,7 +20,14 @@ library;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter/services.dart'
+    show
+        Clipboard,
+        ClipboardData,
+        KeyDownEvent,
+        KeyEvent,
+        KeyRepeatEvent,
+        LogicalKeyboardKey;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
 import 'package:go_router/go_router.dart';
@@ -38,7 +45,9 @@ import 'package:fluxora_desktop/core/router/app_router.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_browse_cubit.dart';
+import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_count_footer.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_detail_panel.dart';
+import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_filter_chips.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_search_bar.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_view_toggle.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
@@ -62,12 +71,111 @@ class LibraryFilesScreen extends StatelessWidget {
   }
 }
 
-class _LibraryBrowseView extends StatelessWidget {
+class _LibraryBrowseView extends StatefulWidget {
   const _LibraryBrowseView();
 
   @override
+  State<_LibraryBrowseView> createState() => _LibraryBrowseViewState();
+}
+
+class _LibraryBrowseViewState extends State<_LibraryBrowseView> {
+  // Body-level focus node so the keyboard handler captures arrows /
+  // Enter / Backspace / etc.  Autofocus on first build so the operator
+  // doesn't have to click the body before keyboard nav works.  Plan 28
+  // §5.3.
+  final FocusNode _bodyFocus = FocusNode(debugLabel: 'browse-body');
+  // Search-bar focus node owned at the screen level so `/` can yank
+  // focus into the field from anywhere in the body.
+  final FocusNode _searchFocus = FocusNode(debugLabel: 'browse-search');
+
+  @override
+  void dispose() {
+    _bodyFocus.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  /// Keyboard-event handler routing arrows / Enter / Backspace / Esc /
+  /// Home / End / PageUp/Down / `/` to cubit methods or focus changes.
+  /// Plan 28 §5.3.  Returns [KeyEventResult.handled] when the event
+  /// was consumed so the widget tree doesn't double-fire.
+  KeyEventResult _onKey(FocusNode _, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final cubit = context.read<LibraryBrowseCubit>();
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      cubit.stepSelection(1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      cubit.stepSelection(-1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.pageDown) {
+      cubit.stepSelection(10);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.pageUp) {
+      cubit.stepSelection(-10);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.home) {
+      cubit.selectFirst();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.end) {
+      cubit.selectLast();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      _openSelected();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.backspace) {
+      cubit.goUp();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      cubit.clearSelection();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.slash) {
+      _searchFocus.requestFocus();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  void _openSelected() {
+    final cubit = context.read<LibraryBrowseCubit>();
+    final resolved = cubit.resolveSelected();
+    if (resolved == null) return;
+    if (resolved.entry.isDir) {
+      cubit.navigateTo(resolved.relativePath);
+      return;
+    }
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    launchUrl(Uri.file(resolved.absolutePath)).then((ok) {
+      if (!ok && mounted) {
+        messenger?.showSnackBar(
+          SnackBar(
+            content: Text('Could not open: ${resolved.entry.name}'),
+          ),
+        );
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
+    return Focus(
+      focusNode: _bodyFocus,
+      autofocus: true,
+      onKeyEvent: _onKey,
+      child: Container(
       color: AppColors.bgRoot,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -92,11 +200,28 @@ class _LibraryBrowseView extends StatelessWidget {
               verticalPadding: AppSpacing.s16,
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(
-              AppSpacing.s28, 0, AppSpacing.s28, AppSpacing.s10,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.s28, 0, AppSpacing.s28, AppSpacing.s8,
             ),
-            child: _BreadcrumbBar(),
+            child: _BreadcrumbBar(searchFocusNode: _searchFocus),
+          ),
+          // Type-filter chip row — only shown when the body is loaded
+          // (no point cluttering the loading skeleton).  Plan 28 §5.1.
+          BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
+            buildWhen: (a, b) =>
+                a.runtimeType != b.runtimeType,
+            builder: (context, state) {
+              if (state is! LibraryBrowseLoaded) {
+                return const SizedBox.shrink();
+              }
+              return const Padding(
+                padding: EdgeInsets.fromLTRB(
+                  AppSpacing.s28, 0, AppSpacing.s28, AppSpacing.s10,
+                ),
+                child: LibraryBrowseFilterChips(),
+              );
+            },
           ),
           // Body is a Row: scrolling listing on the left + fixed-width
           // detail panel on the right.  Phase A of plan 28 — panel
@@ -106,22 +231,39 @@ class _LibraryBrowseView extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(
-                      left: AppSpacing.s28,
-                      right: AppSpacing.s14,
-                    ),
-                    child: BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
-                      builder: (context, state) => switch (state) {
-                        LibraryBrowseInitial() ||
-                        LibraryBrowseLoading() =>
-                          const _BrowseLoadingBody(),
-                        LibraryBrowseLoaded(:final response) =>
-                          _BrowseBody(response: response),
-                        LibraryBrowseFailure(:final message) =>
-                          _BrowseFailureBody(message: message),
-                      },
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.only(
+                            left: AppSpacing.s28,
+                            right: AppSpacing.s14,
+                          ),
+                          child: BlocBuilder<LibraryBrowseCubit,
+                              LibraryBrowseState>(
+                            builder: (context, state) => switch (state) {
+                              LibraryBrowseInitial() ||
+                              LibraryBrowseLoading() =>
+                                const _BrowseLoadingBody(),
+                              LibraryBrowseLoaded(:final response) =>
+                                _BrowseBody(response: response),
+                              LibraryBrowseFailure(:final message) =>
+                                _BrowseFailureBody(message: message),
+                            },
+                          ),
+                        ),
+                      ),
+                      // Count footer pinned below the body.  Plan 28 §5.2.
+                      const Padding(
+                        padding: EdgeInsets.only(
+                          left: AppSpacing.s28,
+                          right: AppSpacing.s14,
+                          bottom: AppSpacing.s6,
+                        ),
+                        child: LibraryBrowseCountFooter(),
+                      ),
+                    ],
                   ),
                 ),
                 const LibraryBrowseDetailPanel(),
@@ -130,6 +272,7 @@ class _LibraryBrowseView extends StatelessWidget {
           ),
         ],
       ),
+    ),
     );
   }
 }
@@ -161,20 +304,6 @@ class _HeaderActions extends StatelessWidget {
                   : 'Show hidden files',
               active: cubit.showHidden,
               onTap: () => cubit.setShowHidden(!cubit.showHidden),
-            ),
-            const SizedBox(width: AppSpacing.s8),
-            // Indexed-only filter toggle (Phase A cubit method; Phase B
-            // moves this into the chip group).  Pure client-side filter
-            // over the loaded response — no re-fetch.
-            _ToolbarIconButton(
-              icon: cubit.indexedOnly
-                  ? Icons.bookmark_rounded
-                  : Icons.bookmark_outline_rounded,
-              tooltip: cubit.indexedOnly
-                  ? 'Show every file'
-                  : 'Show only indexed files',
-              active: cubit.indexedOnly,
-              onTap: () => cubit.setIndexedOnly(!cubit.indexedOnly),
             ),
             const SizedBox(width: AppSpacing.s8),
             // Refresh re-fetches the current directory listing — useful
@@ -238,7 +367,11 @@ Future<void> _openCurrentInFileManager(
 // ── Breadcrumb bar ─────────────────────────────────────────────────────────
 
 class _BreadcrumbBar extends StatelessWidget {
-  const _BreadcrumbBar();
+  const _BreadcrumbBar({this.searchFocusNode});
+
+  /// Optional focus node passed down to the embedded search bar so the
+  /// screen-level `/` shortcut can yank focus into the field.
+  final FocusNode? searchFocusNode;
 
   @override
   Widget build(BuildContext context) {
@@ -301,7 +434,10 @@ class _BreadcrumbBar extends StatelessWidget {
               ),
             ),
             const SizedBox(width: AppSpacing.s10),
-            const LibraryBrowseSearchBar(width: 240),
+            LibraryBrowseSearchBar(
+              width: 240,
+              focusNode: searchFocusNode,
+            ),
             const SizedBox(width: AppSpacing.s8),
             _ToolbarIconButton(
               icon: Icons.copy_rounded,
@@ -471,6 +607,7 @@ class _BrowseBody extends StatelessWidget {
         final filtered = applyBrowseFilters(
           response.entries,
           indexedOnly: cubit.indexedOnly,
+          kindFilter: cubit.kindFilter,
           search: cubit.search,
           sortBy: cubit.sortBy,
           sortAsc: cubit.sortAsc,
@@ -479,7 +616,9 @@ class _BrowseBody extends StatelessWidget {
         if (filtered.isEmpty) {
           return _EmptyBody(
             response: response,
-            hasActiveFilters: cubit.indexedOnly || cubit.search.isNotEmpty,
+            hasActiveFilters: cubit.indexedOnly ||
+                cubit.search.isNotEmpty ||
+                cubit.kindFilter != BrowseKindFilter.all,
           );
         }
 
@@ -846,9 +985,22 @@ class _BrowseRowState extends State<_BrowseRow> {
                         const SizedBox(width: 6),
                         const _MutedTag(label: '▶ live', accent: true),
                       ],
+                      if (entry.media?.hasThumbnailFailed == true) ...[
+                        const SizedBox(width: 6),
+                        const Tooltip(
+                          message: 'Thumbnail generation failed. '
+                              'Use the right-click menu to retry.',
+                          waitDuration: Duration(milliseconds: 400),
+                          child: Icon(
+                            Icons.warning_amber_rounded,
+                            size: 13,
+                            color: AppColors.amber,
+                          ),
+                        ),
+                      ],
                       if (entry.isIndexed) ...[
                         const SizedBox(width: 6),
-                        const _MutedTag(label: 'Indexed', accent: true),
+                        _IndexedTag(indexedAtIso: entry.media?.indexedAtIso),
                       ],
                     ],
                   ),
@@ -1051,7 +1203,10 @@ class _BrowseGridTileState extends State<_BrowseGridTile> {
                         _GridTileVisual(
                           entry: entry,
                         ),
-                        // Corner badges — top-right
+                        // Corner badges — top-right.  Failed-thumb
+                        // warning icon piggy-backs on the indexed
+                        // signal since only indexed entries can have
+                        // a failure state.
                         if (entry.isHidden || entry.isIndexed)
                           Positioned(
                             top: 6,
@@ -1062,10 +1217,25 @@ class _BrowseGridTileState extends State<_BrowseGridTile> {
                                   const _MutedTag(label: 'Hidden'),
                                 if (entry.isHidden && entry.isIndexed)
                                   const SizedBox(width: 4),
+                                if (entry.media?.hasThumbnailFailed == true)
+                                  const Padding(
+                                    padding: EdgeInsets.only(right: 4),
+                                    child: Tooltip(
+                                      message:
+                                          'Thumbnail generation failed.',
+                                      waitDuration:
+                                          Duration(milliseconds: 400),
+                                      child: Icon(
+                                        Icons.warning_amber_rounded,
+                                        size: 13,
+                                        color: AppColors.amber,
+                                      ),
+                                    ),
+                                  ),
                                 if (entry.isIndexed)
-                                  const _MutedTag(
-                                    label: 'Indexed',
-                                    accent: true,
+                                  _IndexedTag(
+                                    indexedAtIso:
+                                        entry.media?.indexedAtIso,
                                   ),
                               ],
                             ),
@@ -1323,6 +1493,46 @@ class _MutedTag extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Variant of `_MutedTag` for the `Indexed` badge — long-hover reveals
+/// the row's `indexed_at_iso` date so the operator can tell when the
+/// scanner last touched the file.  Plan 28 §5.5 polish.
+class _IndexedTag extends StatelessWidget {
+  const _IndexedTag({this.indexedAtIso});
+
+  /// ISO-8601 timestamp from `BrowseEntry.media.indexedAtIso`.  Null
+  /// means the indexed-status came from a backfill row that pre-dated
+  /// the media_files.created_at column — render the tag without a
+  /// tooltip date.
+  final String? indexedAtIso;
+
+  @override
+  Widget build(BuildContext context) {
+    final tooltip = _formatIndexedTooltip(indexedAtIso);
+    return Tooltip(
+      message: tooltip,
+      waitDuration: const Duration(milliseconds: 600),
+      child: const _MutedTag(label: 'Indexed', accent: true),
+    );
+  }
+
+  static String _formatIndexedTooltip(String? iso) {
+    if (iso == null || iso.isEmpty) {
+      return 'Tracked in the streaming catalog';
+    }
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      final y = dt.year.toString();
+      final mo = dt.month.toString().padLeft(2, '0');
+      final d = dt.day.toString().padLeft(2, '0');
+      final h = dt.hour.toString().padLeft(2, '0');
+      final mi = dt.minute.toString().padLeft(2, '0');
+      return 'Indexed $y-$mo-$d $h:$mi';
+    } catch (_) {
+      return 'Tracked in the streaming catalog';
+    }
   }
 }
 
