@@ -77,6 +77,7 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `POST` | `/api/v1/library/{library_id}/scan` | Token or localhost | Walk root paths, index files, run TMDB enrichment (per-library lock — concurrent calls serialise) |
 | `POST` | `/api/v1/library/{library_id}/enrich-tmdb` | Token or localhost | Re-run TMDB enrichment on rows where `tmdb_id IS NULL`; `?include_dvr=true` overrides DVR-filename skip |
 | `POST` | `/api/v1/library/{library_id}/regenerate-thumbnails` | Token or localhost | Reset every thumbnail row for files in this library to `pending` + delete the on-disk JPEGs.  Background worker re-renders at current settings (width, HDR tonemap).  Returns `{queued}`.  Plan 27. |
+| `GET` | `/api/v1/library/{library_id}/browse` | Token or localhost | Filesystem-walk one directory under the library's `root_paths`.  Query: `?path=<relative>&show_hidden=<bool>`.  Returns dirs-first sorted listing + JOIN with `media_files.path` for `is_indexed` + `file_id`.  Path-traversal-secured.  Powers the desktop folder browser.  Plan 27 post-ship. |
 
 ### `stream` router
 

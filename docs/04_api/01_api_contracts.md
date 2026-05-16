@@ -686,6 +686,43 @@ When `FLUXORA_TMDB_KEY` is not configured, returns zeros + a `detail` field inst
 
 ---
 
+### `GET /api/v1/library/{library_id}/browse`
+**Description:** Filesystem-walk the actual contents of a directory under one of the library's `root_paths`.  Returns directory entries (files + folders) with kind, size, modified time, hidden flag, plus a JOIN against `media_files.path` so the client knows which entries are indexed in the streaming catalog.  Powers the desktop control panel's folder-browser view (replaces the v1 curated-media-only `library_files_screen.dart`).
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).
+**Status:** ✅ Implemented
+
+**Query params:**
+- `path` (str, default `""`) — relative path under the matched library root.  Empty string lists the root itself.  Normalised + path-traversal-checked: any `..` that escapes every root returns 403, any path that doesn't exist returns 404.  Path separators are forgiving — backslashes get folded to forward slashes before resolution.
+- `show_hidden` (bool, default `false`) — when True, include dotfile-named entries + entries with the Windows `FILE_ATTRIBUTE_HIDDEN` or `FILE_ATTRIBUTE_SYSTEM` flag.
+
+**Response:**
+```json
+{
+  "library_id": "uuid",
+  "root_path": "D:/Movies",               // absolute path of the matched root
+  "relative_path": "Action/2024",         // normalised request path, empty at root
+  "parent_path": "Action",                // one level up, or null at the root
+  "entries": [
+    {
+      "name": "John Wick 4.mkv",
+      "kind": "video",                    // 'directory' | 'video' | 'image' | 'audio' | 'pdf' | 'other'
+      "is_dir": false,
+      "is_hidden": false,
+      "size_bytes": 4827392112,
+      "modified_iso": "2026-05-12T14:32:08Z",
+      "is_indexed": true,                 // has a media_files row pointing at this absolute path
+      "file_id": "uuid-of-media_files-row"  // null when not indexed
+    }
+  ]
+}
+```
+
+Entries are sorted **directories-first then files-alphabetical (case-insensitive)** server-side.  Symlinks are followed once for `is_dir` classification; the resolved target must still live under one of the roots.
+
+**Errors:** `403` path escapes every library root · `403` permission denied reading directory · `404` library not found / path doesn't exist / library has no root_paths · `500` library `root_paths` JSON corrupted
+
+---
+
 ### `POST /api/v1/library/{library_id}/regenerate-thumbnails`
 **Description:** Reset every thumbnail row for files in the library to `status='pending'` and delete the on-disk JPEGs.  The background thumbnail worker re-renders them at current settings (`thumbnail_width`, HDR tonemap, etc).  Operator-driven recovery for failed thumbs OR after changing `thumbnail_width`.  Records a `library.thumbnails_regenerated` activity event.  Plan 27 M3.
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).
@@ -1788,7 +1825,16 @@ Two frame `type`s are multiplexed on the same socket:
 }
 ```
 
-Optional `data` payload is allowed but currently unused (`kind` alone is sufficient). Consumers that don't recognise a `kind` MUST ignore the frame — new event kinds may be added without bumping the protocol.
+Some event kinds carry a `data` payload — e.g. `thumbnails_progress` (added 2026-05-16) ships per-library counts so the desktop can render a progress bar on each library card without making an extra HTTP request:
+```json
+{
+  "type": "event",
+  "kind": "thumbnails_progress",
+  "data": {"library_id": "uuid", "pending": 12, "ready": 47, "total": 89}
+}
+```
+
+`pending` counts both `pending` + `generating` rows so the bar tracks claim-but-not-yet-done work as outstanding.  Consumers that don't recognise a `kind` MUST ignore the frame — new event kinds may be added without bumping the protocol.
 
 **Notification producers** (persistent — write a notification row, then `_broadcast` the frame):
 
@@ -1809,6 +1855,7 @@ Optional `data` payload is allowed but currently unused (`kind` alone is suffici
 | `routers/library.py delete_library` | `library_changed` + `storage_changed` | `DELETE /library/{id}` — library row + file index rows torched (sidecar files may also be wiped) |
 | `routers/library.py scan_library` | `library_changed` + `storage_changed` | `POST /library/{id}/scan` — file index added/updated; storage breakdown changed |
 | `routers/library.py enrich_library_tmdb` | `library_changed` | `POST /library/{id}/enrich-tmdb` — files gained TMDB metadata (title, poster_url) |
+| `services/thumbnail_worker.py _emit_progress` | `thumbnails_progress` (always) + `library_changed` (throttled) | Fires after every worker completion (ready / skipped / failed).  The `thumbnails_progress` event always emits with `{library_id, pending, ready, total}`.  `library_changed` is throttled to every 5th completion per library + always on the last-pending completion so cover_urls refresh during a scan without spamming GETs. |
 
 All emitter call-sites are wrapped in `try/except` with logging — a notification-write or event-broadcast failure never breaks the underlying flow.
 

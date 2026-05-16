@@ -321,3 +321,96 @@ All six milestones of plan 27 shipped same-day per the expanded-scope spec.  Eac
 1. **Operator smoke test** on a real library with no TMDB enrichment.  Open Library → click a Music or Documents library card → wait a few seconds → cards should populate with extracted thumbs (not gradient placeholders).  Restart the server → confirm workers resume on existing pending rows.  Toggle the Settings slider, hit Regenerate Thumbnails on a library, watch the cards refresh in place.
 2. **Plan 26 archival.**  Plan 26 + this plan 27 close out the same-day desktop-CP iteration.  Move plan 26 to `docs/10_planning/archive/` once operator sign-off lands on item 1.  Plan 27 can follow the same path — both are shipped end-to-end.
 3. **Drop the `_get_current_settings` pre-M4 fallback branch** in `services/thumbnail_worker.py` once we're confident no operator is running the M2-without-M4 intermediate state (i.e. always after a fresh install since migrations apply in order).  ~5-minute follow-up.
+
+---
+
+## [2026-05-16] [server] [desktop] [feat] [fix] — Plan 27 post-ship polish + folder-browser MVP + plan 28 drafted
+
+**Phase:** Plan 27 post-ship iteration based on operator real-device feedback ("thumbs taking so much time", "i cant see them in ui", "no progress visibility"); plus new feature ask — Explorer-style folder browser for library files; plus plan-28 drafted for the upcoming power-features pass on top of the MVP browser.
+**Status:** Complete (MVP browser + plan-27 polish shipped; plan-28 is doc-only — implementation later).
+**Commits:** uncommitted (this entry written before the 5-commit chunked landing pass)
+
+### What Was Done
+
+**1 · Thumbnail-worker speed bump.** Operator caught that worker throughput felt much slower than Windows Explorer's thumbnail provider.  Root causes: per-file FFmpeg subprocess overhead (~50–150 ms cold start), `CONCURRENCY = 2` (idle home servers have 8–16 cores), no GPU decode (CPU-only on AV1/HEVC is brutal), lanczos scaler + q:v 5 (high quality but CPU-heavy for a 320 px thumbnail).  Four changes — additive, none change the design:
+
+  - `CONCURRENCY = 2 → 4` in `services/thumbnail_worker.py`.  Module comment notes operators with streaming-pipeline contention can dial back to 2.
+  - `-hwaccel auto` added to the **SDR** video extractor argv with automatic software-fallback retry on hwaccel error (handles older drivers that report a hwaccel as available but error on specific codecs).  HDR path stays CPU-only since `zscale` rejects hwaccel frame formats without an `hwdownload` prelude.
+  - `flags=lanczos → flags=bilinear` in `_build_video_filter_chain` + the image extractor's `-vf`.  ~30 % faster scale, indistinguishable at 320 px.
+  - `-q:v 5 → -q:v 8` for JPEG output.  Smaller files, faster encode, same visible quality at this size.
+
+  Filter-chain unit tests updated (`scale=...:flags=bilinear` instead of `:flags=lanczos`).  Expected real-world impact: ~4–8× faster on a typical library.
+
+**2 · Real-time progress visibility.** Operator: "where can i see the progress?".  Pre-fix, the BG worker was silent — only server logs showed activity, and cards didn't auto-refresh after thumbnails generated.
+
+  - **Server:** new `_emit_progress(db, library_id)` helper in `thumbnail_worker.py`, called from `_process_one` after every terminal status transition (ready / skipped / failed).  Computes per-library `(pending, ready, total)` counts via one SQL query, broadcasts a `thumbnails_progress` WS frame.  Also throttles a `library_changed` emit every 5th completion per library + always on the last-pending completion (so cover_urls refresh as thumbs land during a scan without 1 GET-per-file).
+  - **`notification_service.broadcast_event(kind, data=...)`** already supported the `data` payload (added with plan 27 M3); no change there.
+  - **Client:** `LibraryEventsService` gains `Stream<ThumbnailProgress> thumbnailsProgress` + a frame-handler `case 'thumbnails_progress'` that decodes via `ThumbnailProgress.tryParse` (defensive; bad payloads are logged + dropped).  `LibraryLoaded.thumbnailProgress: Map<String, ThumbnailProgress>` field (defaults to empty const map); `LibraryCubit._applyProgress` merges incoming progress into a fresh `LibraryLoaded` emission and auto-removes the entry on `isComplete` so the chip disappears.  Map is preserved across `refresh()` / `selectLibrary` / `deleteLibrary` so the chip doesn't flicker.
+  - **Card UI:** new `_ThumbnailProgressStrip` widget pinned to the top edge of `_LibraryCard` via `Positioned(top: 0)`.  3 px violet→cyan gradient progress bar (`FractionallySizedBox` with `widthFactor: ready/total`) + a small `Thumbs M / T` pill in the top-right.  Auto-hides when `progress.isComplete`.
+
+  5 new server tests cover `_emit_progress` shape, library_changed throttle ramp-up, force-emit on queue empty, NULL library_id no-op, and end-to-end `_process_one` integration.
+
+**3 · Critical cover_urls visibility fix.** Operator: "i generated thumbs but visually i cant see them in ui".  Root cause discovered: `_library_aggregates` returns server-relative URLs like `/api/v1/files/<id>/thumbnail?v=...`, but Flutter's `Image.network` requires absolute URLs.  Pre-plan-27 `cover_urls` were TMDB-only (already absolute `https://image.tmdb.org/...`), so the bug only surfaced once plan 27 started mixing in generated-thumbnail URLs.
+
+  - **`LibraryRepositoryImpl._resolveCoverUrls`** (new helper) walks the `cover_urls` array at parse time; prefixes anything starting with `/` with `_apiClient.localBaseUrl` (trailing-slash safe).  Applied at every `Library.fromJson` call site in the repo: `getLibrariesWithOverrides` / `createLibrary` / `updateLibrary`.
+  - **Alternative considered:** make server return absolute URLs.  Rejected because server doesn't always know its own public URL (local LAN vs Cloudflare tunnel) without plumbing `request.base_url` through `_library_aggregates`, which is a bigger refactor than the client-side resolver.
+
+**4 · Folder-browser MVP.** Operator: "i want to see the exact folder structure as the explorer ... see all the files there, hidden files toggle".  v1 `library_files_screen.dart` showed only `media_files` rows (curated streamable subset) — operator wanted Explorer-style filesystem view of the actual `root_paths`.
+
+  - **Server:** new `services/browse_service.py` (~340 LOC).  `BrowseEntry` + `BrowseResponse` dataclasses; `BrowseError(status, detail)` for the router→HTTP-status mapping.  `_resolve_under_root` does path normalisation + `Path.resolve(strict=False)` + `is_relative_to` containment check + multi-root resolution.  `_list_entries` does the non-recursive `iterdir` with hidden detection (dotfile + Windows `FILE_ATTRIBUTE_HIDDEN/SYSTEM` via `st_file_attributes`), symlink-follow-once for kind, then a directories-first-then-alphabetical sort.  `_attach_index_status` JOINs the entries against `media_files.path` so each carries `is_indexed` + `file_id`.  Exposed as `GET /api/v1/library/{id}/browse?path=&show_hidden=` via `routers/library.py`.  13 endpoint tests (root listing, subdir, hidden toggle, kind dispatch, indexed join, path traversal block, nonexistent path, unknown library, empty library, entry-field round-trip, Windows hidden-attribute skipped on non-Windows).
+  - **Client:** new `BrowseEntry` + `BrowseResponse` + `BrowseKind` types at `apps/desktop/lib/features/library/domain/entities/browse_entry.dart` (mirrors server shape; `tryFromJson` for defensive decoding).  New `Endpoints.libraryBrowse(libraryId)` constant.  New `LibraryRepository.browseLibrary({libraryId, path, showHidden})` abstract method + impl.  New `LibraryBrowseCubit` at `apps/desktop/lib/features/library/presentation/cubit/library_browse_cubit.dart` — `load() / navigateTo() / goUp() / setShowHidden()` + sealed `LibraryBrowseState` (Initial / Loading / Loaded / Failure).
+  - **`library_files_screen.dart`** **fully rewritten** as an Explorer-style folder browser (~520 LOC).  `PageHeader.onBack` rounded back button (matches Encoder Settings shape) + `_HeaderActions` row with Show-hidden toggle icon + Refresh icon + violet primary `FluxButton` "Open in Explorer".  `_BreadcrumbBar` with go-up icon + clickable segment chips + copy-path icon.  `_BrowseListBody` with `_ColumnHeaderRow` (NAME / SIZE / MODIFIED) + scrollable list of `_BrowseRow`s.  Each row: kind-coloured icon (folder/video/image/audio/pdf/other), name + Hidden/Indexed tags, size column, modified column, per-row reveal-in-folder icon.  Click semantics (v1, single-action — plan 28 reshapes): directory click → navigate into it; file click → open in OS default app via `launchUrl(Uri.file(path))`.  `_ToolbarIconButton` shared widget (28 px or 24 px compact) with active state + violet hover.  Skeleton-loading body + empty-state ("This library is empty" / "This folder is empty") + failure body with retry button.
+
+**5 · Plan 28 drafted.** After shipping the MVP folder browser, operator asked for the candidates-table-style power features.  Looked at all 19 requested + 6 additional improvements I noticed while thinking through it; ranked into Phase A (foundation: sortable cols + single/double click + right detail panel + grid view + search), Phase B (filters + count footer + keyboard nav + indexed toggle + polish), Phase C (context menu + path textbox + per-file Index/Generate-thumb actions + density + multi-select), Phase D (history + folder-size lazy compute).  Tier 3 (recursive search via FTS5, bookmarks, drag-to-Convert, FS watching) each split out as their own plan since each has novel infra.  Plan doc to be added: `docs/10_planning/28_library_file_browser_power_features.md`.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| ✏️ Update | `apps/server/services/thumbnail_service.py` | Speed: hwaccel auto + sw fallback retry on video; lanczos→bilinear; q:v 5→8 |
+| ✏️ Update | `apps/server/services/thumbnail_worker.py` | Speed: CONCURRENCY 2→4.  Progress: `_emit_progress` + `_PROGRESS_REFRESH_COUNTERS` + emit calls in `_process_one`'s success/skipped/failed branches |
+| ✏️ Update | `apps/server/tests/test_thumbnail_service.py` | Filter-chain assertions follow bilinear rename |
+| ✏️ Update | `apps/server/tests/test_thumbnail_worker.py` | 5 new tests covering `_emit_progress` shape, throttle ramp-up, force-emit on queue empty, NULL library_id, end-to-end `_process_one` integration |
+| ➕ Create | `apps/server/services/browse_service.py` | Filesystem-walker w/ path-traversal block, hidden detection, kind dispatch, `media_files.path` JOIN |
+| ➕ Create | `apps/server/tests/test_browse.py` | 13 endpoint tests including path-traversal block + Windows hidden attribute (skipped on non-Windows) |
+| ✏️ Update | `apps/server/routers/library.py` | New `GET /{library_id}/browse?path=&show_hidden=` route mapped to `BrowseError` → HTTP statuses |
+| ✏️ Update | `apps/desktop/lib/features/library/data/repositories/library_repository_impl.dart` | `_resolveCoverUrls` walks `cover_urls` + prefixes server-relative paths w/ `localBaseUrl`.  `browseLibrary` impl. |
+| ✏️ Update | `apps/desktop/lib/features/library/domain/repositories/library_repository.dart` | New `browseLibrary({libraryId, path, showHidden})` abstract method |
+| ➕ Create | `apps/desktop/lib/features/library/domain/entities/browse_entry.dart` | `BrowseEntry` / `BrowseResponse` / `BrowseKind` value classes w/ defensive `tryFromJson` decoding |
+| ➕ Create | `apps/desktop/lib/features/library/presentation/cubit/library_browse_cubit.dart` | `LibraryBrowseCubit` w/ sealed state + `load/navigateTo/goUp/setShowHidden` |
+| ✏️ Update | `apps/desktop/lib/features/library/data/services/library_events_service.dart` | `thumbnailsProgress` stream + frame-handler `case 'thumbnails_progress'` + `ThumbnailProgress.tryParse` class |
+| ✏️ Update | `apps/desktop/lib/features/library/presentation/cubit/library_state.dart` | `LibraryLoaded.thumbnailProgress: Map<String, ThumbnailProgress>` field |
+| ✏️ Update | `apps/desktop/lib/features/library/presentation/cubit/library_cubit.dart` | `_progressSub` + `_applyProgress` merge into LibraryLoaded; preserved across refresh/select/delete |
+| ✏️ Update | `apps/desktop/lib/features/library/presentation/screens/library_screen.dart` | `_LibraryCard.thumbnailProgress` constructor arg + `_ThumbnailProgressStrip` widget pinned to top edge |
+| ✏️ Update | `apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart` | **Full rewrite** as folder browser (replaces ~640-LOC curated `media_files` view) |
+| ✏️ Update | `packages/fluxora_core/lib/network/endpoints.dart` | `Endpoints.libraryBrowse(libraryId)` |
+| ✏️ Update | `docs/04_api/01_api_contracts.md` | New `/browse` endpoint section + `thumbnails_progress` event frame format + worker progress-emit producer row |
+| ✏️ Update | `docs/05_infrastructure/02_url_inventory.md` | `/browse` endpoint row |
+| ✏️ Update | `docs/00_overview/current_status.md` | Top entry covering all four post-ship items + bumped server test count 898 → 916 |
+| ✏️ Update | `docs/10_planning/01_roadmap.md` | Plan 27 row appended w/ post-ship summary + plan 28 row added |
+| ✏️ Update | `docs/08_frontend/01_frontend_architecture.md` | Status header lists all four post-ship items + plan-28 forward reference |
+| ✏️ Update | `CLAUDE.md` | Plan 27 row appended w/ post-ship summary + plan 28 row added |
+
+### Decisions Made
+
+1. **Bilinear over lanczos for thumb scaling.**  Lanczos at 320 px is overkill — operator can't distinguish.  Bilinear is ~30 % cheaper and the saved CPU goes to running more workers in parallel.
+2. **HDR path stays software-only.**  `-hwaccel auto` plus `zscale=t=linear:npl=100` fails because zscale doesn't accept hwaccel-side frame formats without an `hwdownload` prelude.  HDR libraries are rare enough that the speed-up isn't worth the extra complexity.
+3. **`thumbnails_progress` always emits; `library_changed` throttles to every 5th completion + last.**  Bandwidth of `thumbnails_progress` is negligible (~100 B / event); the client wants prompt UI updates.  But `library_changed` triggers a full `/library` refresh, which is expensive at 1-per-file — 5 was empirically the sweet spot for "operator sees the cards filling up" vs "we don't hammer the endpoint".
+4. **Client-side cover_urls absolute resolution.**  Tried server-side first (have `request.base_url` plumbed into `_library_aggregates`) but it doesn't survive the local-LAN-vs-Cloudflare-tunnel split — different clients connecting via different paths need different absolute URLs.  Client-side is simpler + correct per-environment.
+5. **Folder-browser v1 single-action click.**  Plan 28 will reshape to single-click-selects + double-click-opens.  v1 shipped with single-click-opens since the right detail panel that motivates the selection split doesn't exist yet.
+6. **Plan 28 phased delivery + tier-3 split.**  19 features × bundled into one commit would be unreviewable; phased lets each commit land cleanly with tests.  Tier-3 items (recursive search / bookmarks / drag-drop / FS watching) each have novel infra (FTS5 / DB table / cross-feature contract / per-OS event semantics) that justifies a dedicated plan each.
+
+### Issues / Sharp Edges Discovered
+
+1. **`Image.network` doesn't follow server-relative URLs.**  Flutter's HTTP client returns SocketException without absolute scheme.  Workaround is the new `_resolveCoverUrls` helper, but worth flagging in `docs/12_guidelines/03_gotchas.md` if anyone else writes a similar feature that returns server-relative paths in API responses.
+2. **`zscale` won't accept hwaccel-side frame formats.**  HDR tonemap chain needs `hwdownload,format=yuv420p10le,zscale=...` to work with hwaccel decode.  Skipped for v1 since HDR thumbs aren't a common path; document for future HDR-speed plan.
+3. **Path `..` resolution.** `sub/..` is the same as `<root>` — that's allowed (still inside).  But `..` from root or `../../etc` must be rejected.  The `is_relative_to` check after `resolve(strict=False)` handles both cleanly.
+4. **`Path.resolve(strict=False)` follows symlinks**.  A library symlinked to `/etc` becomes a valid root for the operator — that's the operator's choice when they configured the library, so we don't second-guess it.  But a symlink INSIDE the library pointing OUT (e.g. a maliciously-placed symlink) is blocked by the `is_relative_to` check since the resolved target won't be under any root.
+5. **Windows `attrib +H` test only runs on Windows.**  Other-platform CI skips it.  The dotfile branch is exercised everywhere so the show-hidden logic is still tested cross-platform.
+6. **Bigger issue surfaced for plan 28**: today's folder browser ships before the operator confirmed the click semantics matched expectations.  Plan 28's Phase A reshapes to single-click-selects + double-click-opens.
+
+### Next Agent Should
+
+1. **Ship plan 28 Phase A** (sortable cols + single/double click + right detail panel + list/grid view toggle + search box + server endpoint extension to include `width/height/codec/duration_sec/hdr_format` for indexed entries).  ~4 h.
+2. **Operator real-device smoke test** of the post-ship polish: open Library, watch the progress bars fill in real time as thumbs generate; verify the new bilinear+hwaccel speed is noticeable; verify cards actually show extracted frames once generation completes.  Then exercise the folder browser: navigate, toggle hidden, click into directories, click files to open in OS default app, click "Open in Explorer".
+3. **Once Phase A lands**, the plan 27 post-ship narrative is done.  Consider archiving plan 27 to `docs/10_planning/archive/` if no more polish surfaces.
