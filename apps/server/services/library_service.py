@@ -865,6 +865,17 @@ async def _scan_library_locked(
             added += 1
             new_file_ids.append((file_id, file_path.stem))
             await _persist_probe(db, file_id, file_path)
+            # Best-effort enqueue for thumbnail generation.  Plan 27:
+            # the worker pool consumes the queue asynchronously; this is
+            # a single INSERT OR IGNORE — no FFmpeg in the scan path.
+            try:
+                from services import thumbnail_worker
+
+                await thumbnail_worker.enqueue(db, file_id)
+            except Exception:
+                logger.warning(
+                    "thumbnail enqueue failed for %s", file_id, exc_info=True
+                )
             if added % 50 == 0:
                 await asyncio.sleep(0)
 

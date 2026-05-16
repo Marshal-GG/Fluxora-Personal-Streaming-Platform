@@ -330,6 +330,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         logger.warning("Transcode worker failed to start", exc_info=True)
 
+    # 8f. Start the per-file thumbnail-generation worker pool
+    # (`docs/10_planning/27_thumbnail_generation_plan.md`).  Consumes the
+    # `media_thumbnails` queue populated by the scan path; writes JPEGs
+    # to `<data_dir>/thumbnails/<file_id>.jpg`.  Best-effort: a failure
+    # here must never block the server starting.  Crash-recovery is
+    # handled inside `start_worker` (resets orphan `generating` rows).
+    try:
+        from services import thumbnail_worker as _thumbs
+
+        await _thumbs.start_worker()
+    except Exception:
+        logger.warning("Thumbnail worker failed to start", exc_info=True)
+
     # 9. Start mDNS broadcast
     await start_discovery(settings.fluxora_server_name, settings.fluxora_port)
 
@@ -351,6 +364,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await _transcode.stop_worker()
     except Exception:
         logger.warning("Transcode worker shutdown raised", exc_info=True)
+    try:
+        from services import thumbnail_worker as _thumbs
+
+        await _thumbs.stop_worker()
+    except Exception:
+        logger.warning("Thumbnail worker shutdown raised", exc_info=True)
     await stop_discovery()
     await close_db()
     logger.info("Fluxora Server stopped")
