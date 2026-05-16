@@ -32,6 +32,74 @@ enum BrowseKind {
   }
 }
 
+/// Per-indexed-entry metadata block returned alongside the browse-entry
+/// shape.  Phase A — pulled from `media_files` + `media_thumbnails` +
+/// `stream_sessions` server-side in one JOIN so the desktop right
+/// detail panel renders without a second HTTP call.
+class IndexedMedia {
+  const IndexedMedia({
+    this.width,
+    this.height,
+    this.durationSec,
+    this.codecName,
+    this.hdrFormat,
+    this.audioCodec,
+    this.thumbnailStatus,
+    this.thumbnailGeneratedAtUnix,
+    this.indexedAtIso,
+    this.isStreaming = false,
+  });
+
+  final int? width;
+  final int? height;
+  final double? durationSec;
+  final String? codecName;
+  final String? hdrFormat;     // HDR10 / HLG / DolbyVision / null
+  final String? audioCodec;    // primary track's codec from audio_tracks
+  /// 'pending' / 'generating' / 'ready' / 'failed' / 'skipped' / 'stale'
+  /// — 'stale' is synthesised server-side when the source file was
+  /// modified after the current thumbnail was rendered (worker has
+  /// already been re-queued).
+  final String? thumbnailStatus;
+  final int? thumbnailGeneratedAtUnix;
+  final String? indexedAtIso;
+  /// True when an active `stream_sessions` row points at this file.
+  /// Refreshes on the next browse request — client doesn't subscribe
+  /// to a separate event stream for this (cheap to recompute).
+  final bool isStreaming;
+
+  bool get hasThumbnailReady => thumbnailStatus == 'ready';
+  bool get isThumbnailStale => thumbnailStatus == 'stale';
+  bool get isThumbnailInFlight =>
+      thumbnailStatus == 'pending' ||
+      thumbnailStatus == 'generating' ||
+      thumbnailStatus == 'stale';
+  bool get hasThumbnailFailed =>
+      thumbnailStatus == 'failed' || thumbnailStatus == 'skipped';
+
+  static IndexedMedia? tryFromJson(Map<String, dynamic> json) {
+    try {
+      return IndexedMedia(
+        width: (json['width'] as num?)?.toInt(),
+        height: (json['height'] as num?)?.toInt(),
+        durationSec: (json['duration_sec'] as num?)?.toDouble(),
+        codecName: json['codec_name'] as String?,
+        hdrFormat: json['hdr_format'] as String?,
+        audioCodec: json['audio_codec'] as String?,
+        thumbnailStatus: json['thumbnail_status'] as String?,
+        thumbnailGeneratedAtUnix:
+            (json['thumbnail_generated_at_unix'] as num?)?.toInt(),
+        indexedAtIso: json['indexed_at_iso'] as String?,
+        isStreaming: json['is_streaming'] as bool? ?? false,
+      );
+    } catch (e, st) {
+      _log.w('IndexedMedia.tryFromJson — bad payload',
+          error: e, stackTrace: st);
+      return null;
+    }
+  }
+}
+
 class BrowseEntry {
   const BrowseEntry({
     required this.name,
@@ -40,8 +108,10 @@ class BrowseEntry {
     required this.isHidden,
     required this.sizeBytes,
     required this.modifiedIso,
+    required this.mtimeUnix,
     required this.isIndexed,
     this.fileId,
+    this.media,
   });
 
   /// Display name (file or directory basename).
@@ -65,18 +135,27 @@ class BrowseEntry {
   /// ISO-8601 UTC mtime — formatted client-side via [DateTime.parse].
   final String modifiedIso;
 
+  /// Raw mtime as a Unix timestamp.  Lets the client do its own
+  /// stale-thumb comparisons without re-parsing the ISO string.
+  final int mtimeUnix;
+
   /// True when a `media_files` row points at this absolute path —
   /// surfaces as a small "Indexed" badge in the UI.
   final bool isIndexed;
 
-  /// The matched `media_files.id` (when `isIndexed`).  Reserved for
-  /// future smart-dispatch flows (stream this file via the existing
-  /// `/stream/start/{file_id}` endpoint).  v1 doesn't use it — every
-  /// file click on desktop opens the OS default app.
+  /// The matched `media_files.id` (when `isIndexed`).  Used for
+  /// stream-test / regenerate-thumbnail / open-via-streaming flows.
   final String? fileId;
+
+  /// Phase A: when `isIndexed`, this carries width / height / codec /
+  /// duration / HDR / audio codec / thumbnail status + generated_at /
+  /// indexed_at + currently-streaming flag.  `null` for non-indexed
+  /// entries and directories.
+  final IndexedMedia? media;
 
   static BrowseEntry? tryFromJson(Map<String, dynamic> json) {
     try {
+      final mediaJson = json['media'];
       return BrowseEntry(
         name: json['name'] as String,
         kind: BrowseKind.fromWire(json['kind'] as String? ?? 'other'),
@@ -84,8 +163,12 @@ class BrowseEntry {
         isHidden: json['is_hidden'] as bool? ?? false,
         sizeBytes: (json['size_bytes'] as num?)?.toInt() ?? 0,
         modifiedIso: json['modified_iso'] as String? ?? '',
+        mtimeUnix: (json['mtime_unix'] as num?)?.toInt() ?? 0,
         isIndexed: json['is_indexed'] as bool? ?? false,
         fileId: json['file_id'] as String?,
+        media: mediaJson is Map<String, dynamic>
+            ? IndexedMedia.tryFromJson(mediaJson)
+            : null,
       );
     } catch (e, st) {
       _log.w('BrowseEntry.tryFromJson — bad payload',

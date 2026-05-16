@@ -31,12 +31,16 @@ import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_radii.dart';
 import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
+import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 
 import 'package:fluxora_desktop/core/router/app_router.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_browse_cubit.dart';
+import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_detail_panel.dart';
+import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_search_bar.dart';
+import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_view_toggle.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 
 final _log = Logger();
@@ -94,20 +98,34 @@ class _LibraryBrowseView extends StatelessWidget {
             ),
             child: _BreadcrumbBar(),
           ),
+          // Body is a Row: scrolling listing on the left + fixed-width
+          // detail panel on the right.  Phase A of plan 28 — panel
+          // shows metadata for the currently-selected entry.
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s28),
-              child: BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
-                builder: (context, state) => switch (state) {
-                  LibraryBrowseInitial() ||
-                  LibraryBrowseLoading() =>
-                    const _BrowseLoadingBody(),
-                  LibraryBrowseLoaded(:final response) =>
-                    _BrowseListBody(response: response),
-                  LibraryBrowseFailure(:final message) =>
-                    _BrowseFailureBody(message: message),
-                },
-              ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(
+                      left: AppSpacing.s28,
+                      right: AppSpacing.s14,
+                    ),
+                    child: BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
+                      builder: (context, state) => switch (state) {
+                        LibraryBrowseInitial() ||
+                        LibraryBrowseLoading() =>
+                          const _BrowseLoadingBody(),
+                        LibraryBrowseLoaded(:final response) =>
+                          _BrowseBody(response: response),
+                        LibraryBrowseFailure(:final message) =>
+                          _BrowseFailureBody(message: message),
+                      },
+                    ),
+                  ),
+                ),
+                const LibraryBrowseDetailPanel(),
+              ],
             ),
           ),
         ],
@@ -145,16 +163,31 @@ class _HeaderActions extends StatelessWidget {
               onTap: () => cubit.setShowHidden(!cubit.showHidden),
             ),
             const SizedBox(width: AppSpacing.s8),
+            // Indexed-only filter toggle (Phase A cubit method; Phase B
+            // moves this into the chip group).  Pure client-side filter
+            // over the loaded response — no re-fetch.
+            _ToolbarIconButton(
+              icon: cubit.indexedOnly
+                  ? Icons.bookmark_rounded
+                  : Icons.bookmark_outline_rounded,
+              tooltip: cubit.indexedOnly
+                  ? 'Show every file'
+                  : 'Show only indexed files',
+              active: cubit.indexedOnly,
+              onTap: () => cubit.setIndexedOnly(!cubit.indexedOnly),
+            ),
+            const SizedBox(width: AppSpacing.s8),
             // Refresh re-fetches the current directory listing — useful
             // when files were added / removed externally and the
             // operator wants a fresh view without manual navigation.
             _ToolbarIconButton(
               icon: Icons.refresh_rounded,
               tooltip: 'Refresh',
-              onTap: () => cubit.navigateTo(
-                loaded != null ? loaded.response.relativePath : '',
-              ),
+              onTap: () => cubit.refresh(),
             ),
+            const SizedBox(width: AppSpacing.s10),
+            // List ↔ Grid view toggle (Phase A — segmented control).
+            const LibraryBrowseViewToggle(),
             const SizedBox(width: AppSpacing.s12),
             // Primary action — opens the current directory in the OS
             // file manager.  Matches the "Save" pattern from Encoder
@@ -245,7 +278,9 @@ class _BreadcrumbBar extends StatelessWidget {
             ));
         }
 
-        // Trailing icon row: "go up" (parent) + raw-path copy.
+        // Trailing icon row: "go up" (parent) + raw-path copy +
+        // search field for filtering the current directory by name
+        // (Phase A — purely client-side substring filter).
         return Row(
           children: [
             // Up button — disabled when at the root.
@@ -265,6 +300,8 @@ class _BreadcrumbBar extends StatelessWidget {
                 child: Row(children: chips),
               ),
             ),
+            const SizedBox(width: AppSpacing.s10),
+            const LibraryBrowseSearchBar(width: 240),
             const SizedBox(width: AppSpacing.s8),
             _ToolbarIconButton(
               icon: Icons.copy_rounded,
@@ -418,50 +455,141 @@ class _BrowseFailureBody extends StatelessWidget {
   }
 }
 
-class _BrowseListBody extends StatelessWidget {
-  const _BrowseListBody({required this.response});
+/// Body switcher between list + grid views; applies the cubit's UI
+/// prefs (sort / filter / search / indexed-only) before rendering.
+/// Phase A of plan 28.
+class _BrowseBody extends StatelessWidget {
+  const _BrowseBody({required this.response});
 
   final BrowseResponse response;
 
   @override
   Widget build(BuildContext context) {
-    if (response.entries.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.folder_off_outlined,
-                size: 48, color: AppColors.textMutedV2),
-            const SizedBox(height: AppSpacing.s12),
-            Text(
-              response.relativePath.isEmpty
-                  ? 'This library is empty.'
-                  : 'This folder is empty.',
+    return BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
+      builder: (context, _) {
+        final cubit = context.read<LibraryBrowseCubit>();
+        final filtered = applyBrowseFilters(
+          response.entries,
+          indexedOnly: cubit.indexedOnly,
+          search: cubit.search,
+          sortBy: cubit.sortBy,
+          sortAsc: cubit.sortAsc,
+        );
+
+        if (filtered.isEmpty) {
+          return _EmptyBody(
+            response: response,
+            hasActiveFilters: cubit.indexedOnly || cubit.search.isNotEmpty,
+          );
+        }
+
+        return cubit.viewMode == BrowseViewMode.list
+            ? _BrowseListView(
+                response: response,
+                entries: filtered,
+                selectedNames: cubit.selectedNames,
+                sortBy: cubit.sortBy,
+                sortAsc: cubit.sortAsc,
+                onSort: cubit.setSort,
+              )
+            : _BrowseGridView(
+                response: response,
+                entries: filtered,
+                selectedNames: cubit.selectedNames,
+              );
+      },
+    );
+  }
+}
+
+/// Distinct empty-state copy per scenario.  At root: "empty library."
+/// In subdir: "empty folder."  With filters active: "no matches."
+class _EmptyBody extends StatelessWidget {
+  const _EmptyBody({
+    required this.response,
+    required this.hasActiveFilters,
+  });
+
+  final BrowseResponse response;
+  final bool hasActiveFilters;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, body) = switch ((hasActiveFilters, response.relativePath.isEmpty)) {
+      (true, _) => (
+        Icons.search_off_rounded,
+        'No entries match the current filters.',
+      ),
+      (false, true) => (
+        Icons.folder_off_outlined,
+        'This library is empty.  Add files under one of its root paths.',
+      ),
+      (false, false) => (
+        Icons.folder_open_outlined,
+        'This folder is empty.',
+      ),
+    };
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 48, color: AppColors.textMutedV2),
+          const SizedBox(height: AppSpacing.s12),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 380),
+            child: Text(
+              body,
               style: AppTypography.bodySmall
                   .copyWith(color: AppColors.textMutedV2),
+              textAlign: TextAlign.center,
             ),
-          ],
-        ),
-      );
-    }
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-    // Column-header row — non-interactive in v1 (server-sorted dirs-first
-    // then files-alphabetical).  Sort menu can land later.
+class _BrowseListView extends StatelessWidget {
+  const _BrowseListView({
+    required this.response,
+    required this.entries,
+    required this.selectedNames,
+    required this.sortBy,
+    required this.sortAsc,
+    required this.onSort,
+  });
+
+  final BrowseResponse response;
+  final List<BrowseEntry> entries;
+  final Set<String> selectedNames;
+  final BrowseSortColumn sortBy;
+  final bool sortAsc;
+  final ValueChanged<BrowseSortColumn> onSort;
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       children: [
-        const _ColumnHeaderRow(),
+        _SortableColumnHeaderRow(
+          sortBy: sortBy,
+          sortAsc: sortAsc,
+          onSort: onSort,
+        ),
         const SizedBox(height: 4),
         Expanded(
           child: ListView.separated(
             padding: const EdgeInsets.only(bottom: AppSpacing.s14),
-            itemCount: response.entries.length,
+            itemCount: entries.length,
             separatorBuilder: (_, _) => const SizedBox(height: 4),
             itemBuilder: (_, i) {
-              final entry = response.entries[i];
+              final entry = entries[i];
               return _BrowseRow(
                 entry: entry,
                 rootPath: response.rootPath,
                 relativePath: response.relativePath,
+                isSelected: selectedNames.contains(entry.name),
               );
             },
           ),
@@ -471,28 +599,157 @@ class _BrowseListBody extends StatelessWidget {
   }
 }
 
-class _ColumnHeaderRow extends StatelessWidget {
-  const _ColumnHeaderRow();
+/// Sortable column headers.  Click toggles direction (desc / asc / desc /
+/// ...); active column shows the arrow indicator.  Plan 28 Phase A.
+class _SortableColumnHeaderRow extends StatelessWidget {
+  const _SortableColumnHeaderRow({
+    required this.sortBy,
+    required this.sortAsc,
+    required this.onSort,
+  });
+
+  final BrowseSortColumn sortBy;
+  final bool sortAsc;
+  final ValueChanged<BrowseSortColumn> onSort;
 
   @override
   Widget build(BuildContext context) {
-    final style = AppTypography.captionV2.copyWith(
-      color: AppColors.textMutedV2,
-      fontWeight: FontWeight.w500,
-      letterSpacing: 0.4,
-    );
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         children: [
           // 24px icon column + 8px gap
           const SizedBox(width: 32),
-          Expanded(child: Text('NAME', style: style)),
-          SizedBox(width: 100, child: Text('SIZE', style: style)),
-          SizedBox(width: 160, child: Text('MODIFIED', style: style)),
-          const SizedBox(width: 80, child: SizedBox()),
+          Expanded(
+            child: _SortHeaderLabel(
+              label: 'NAME',
+              column: BrowseSortColumn.name,
+              activeColumn: sortBy,
+              ascending: sortAsc,
+              onTap: () => onSort(BrowseSortColumn.name),
+            ),
+          ),
+          SizedBox(
+            width: 100,
+            child: _SortHeaderLabel(
+              label: 'SIZE',
+              column: BrowseSortColumn.size,
+              activeColumn: sortBy,
+              ascending: sortAsc,
+              onTap: () => onSort(BrowseSortColumn.size),
+            ),
+          ),
+          SizedBox(
+            width: 160,
+            child: _SortHeaderLabel(
+              label: 'MODIFIED',
+              column: BrowseSortColumn.modified,
+              activeColumn: sortBy,
+              ascending: sortAsc,
+              onTap: () => onSort(BrowseSortColumn.modified),
+            ),
+          ),
+          const SizedBox(width: 80),
         ],
       ),
+    );
+  }
+}
+
+class _SortHeaderLabel extends StatefulWidget {
+  const _SortHeaderLabel({
+    required this.label,
+    required this.column,
+    required this.activeColumn,
+    required this.ascending,
+    required this.onTap,
+  });
+
+  final String label;
+  final BrowseSortColumn column;
+  final BrowseSortColumn activeColumn;
+  final bool ascending;
+  final VoidCallback onTap;
+
+  @override
+  State<_SortHeaderLabel> createState() => _SortHeaderLabelState();
+}
+
+class _SortHeaderLabelState extends State<_SortHeaderLabel> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final isActive = widget.column == widget.activeColumn;
+    final color = (isActive || _hovered)
+        ? AppColors.violet
+        : AppColors.textMutedV2;
+    final style = AppTypography.captionV2.copyWith(
+      color: color,
+      fontWeight: FontWeight.w500,
+      letterSpacing: 0.4,
+    );
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(widget.label, style: style),
+            const SizedBox(width: 4),
+            if (isActive)
+              Icon(
+                widget.ascending
+                    ? Icons.arrow_upward_rounded
+                    : Icons.arrow_downward_rounded,
+                size: 12,
+                color: color,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Grid-view body — fixed-size tiles (160 × 200) with thumbnail-or-icon
+/// + name + small kind icon footer.  Plan 28 Phase A.
+class _BrowseGridView extends StatelessWidget {
+  const _BrowseGridView({
+    required this.response,
+    required this.entries,
+    required this.selectedNames,
+  });
+
+  final BrowseResponse response;
+  final List<BrowseEntry> entries;
+  final Set<String> selectedNames;
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      padding: const EdgeInsets.only(top: 6, bottom: AppSpacing.s14),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 180,
+        mainAxisExtent: 200,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+      ),
+      itemCount: entries.length,
+      itemBuilder: (_, i) {
+        final entry = entries[i];
+        return _BrowseGridTile(
+          entry: entry,
+          rootPath: response.rootPath,
+          relativePath: response.relativePath,
+          isSelected: selectedNames.contains(entry.name),
+        );
+      },
     );
   }
 }
@@ -504,11 +761,13 @@ class _BrowseRow extends StatefulWidget {
     required this.entry,
     required this.rootPath,
     required this.relativePath,
+    required this.isSelected,
   });
 
   final BrowseEntry entry;
   final String rootPath;
   final String relativePath;
+  final bool isSelected;
 
   @override
   State<_BrowseRow> createState() => _BrowseRowState();
@@ -516,12 +775,21 @@ class _BrowseRow extends StatefulWidget {
 
 class _BrowseRowState extends State<_BrowseRow> {
   bool _hovered = false;
+  DateTime? _lastTapAt;
 
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
     final iconData = _iconForKind(entry.kind);
     final iconColor = _colorForKind(entry.kind);
+    final showHdrBadge = entry.media?.hdrFormat != null &&
+        entry.media!.hdrFormat!.isNotEmpty;
+    final bgColor = widget.isSelected
+        ? const Color(0x1AA855F7)
+        : (_hovered ? const Color(0x0DA855F7) : const Color(0x05FFFFFF));
+    final borderColor = widget.isSelected
+        ? const Color(0x66A855F7)
+        : (_hovered ? const Color(0x1AA855F7) : const Color(0x0AFFFFFF));
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -534,14 +802,8 @@ class _BrowseRowState extends State<_BrowseRow> {
           duration: const Duration(milliseconds: 80),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: _hovered
-                ? const Color(0x0DA855F7)
-                : const Color(0x05FFFFFF),
-            border: Border.all(
-              color: _hovered
-                  ? const Color(0x1AA855F7)
-                  : const Color(0x0AFFFFFF),
-            ),
+            color: bgColor,
+            border: Border.all(color: borderColor),
             borderRadius: BorderRadius.circular(7),
           ),
           child: Row(
@@ -572,6 +834,17 @@ class _BrowseRowState extends State<_BrowseRow> {
                       if (entry.isHidden) ...[
                         const SizedBox(width: 6),
                         const _MutedTag(label: 'Hidden'),
+                      ],
+                      if (showHdrBadge) ...[
+                        const SizedBox(width: 6),
+                        _MutedTag(
+                          label: entry.media!.hdrFormat!.toUpperCase(),
+                          accent: true,
+                        ),
+                      ],
+                      if (entry.media?.isStreaming == true) ...[
+                        const SizedBox(width: 6),
+                        const _MutedTag(label: '▶ live', accent: true),
                       ],
                       if (entry.isIndexed) ...[
                         const SizedBox(width: 6),
@@ -622,7 +895,23 @@ class _BrowseRowState extends State<_BrowseRow> {
     );
   }
 
+  /// Single-click → select; double-click within 300 ms → open.  Same
+  /// `_lastTapAt` timestamp pattern `_LibraryCardState` uses (Flutter's
+  /// `onDoubleTap` adds 300 ms latency to `onTap` while the arena
+  /// disambiguates).
   void _handleTap() {
+    final now = DateTime.now();
+    if (_lastTapAt != null &&
+        now.difference(_lastTapAt!).inMilliseconds < 300) {
+      _lastTapAt = null;
+      _handleOpen();
+      return;
+    }
+    _lastTapAt = now;
+    context.read<LibraryBrowseCubit>().selectOnly(widget.entry.name);
+  }
+
+  void _handleOpen() {
     if (widget.entry.isDir) {
       final target = widget.relativePath.isEmpty
           ? widget.entry.name
@@ -630,9 +919,7 @@ class _BrowseRowState extends State<_BrowseRow> {
       context.read<LibraryBrowseCubit>().navigateTo(target);
       return;
     }
-    // File click — open with OS default app.  url_launcher's
-    // `Uri.file(...)` resolves to `file://...` which Windows + macOS
-    // + Linux all hand off to the registered viewer / player.
+    // File open → OS default app via url_launcher's Uri.file.
     _openInDefaultApp();
   }
 
@@ -690,6 +977,252 @@ class _BrowseRowState extends State<_BrowseRow> {
     final idx = path.lastIndexOf(sep);
     if (idx <= 0) return path;
     return path.substring(0, idx);
+  }
+}
+
+// ── Grid tile ──────────────────────────────────────────────────────────────
+
+/// Grid-view tile for a single entry.  Top 60 % is the visual (icon or
+/// real thumbnail when indexed media is ready); bottom 40 % is the
+/// name + small kind icon footer.  Click semantics match `_BrowseRow`
+/// (single-click selects, double-click opens).  Plan 28 Phase A.
+class _BrowseGridTile extends StatefulWidget {
+  const _BrowseGridTile({
+    required this.entry,
+    required this.rootPath,
+    required this.relativePath,
+    required this.isSelected,
+  });
+
+  final BrowseEntry entry;
+  final String rootPath;
+  final String relativePath;
+  final bool isSelected;
+
+  @override
+  State<_BrowseGridTile> createState() => _BrowseGridTileState();
+}
+
+class _BrowseGridTileState extends State<_BrowseGridTile> {
+  bool _hovered = false;
+  DateTime? _lastTapAt;
+
+  @override
+  Widget build(BuildContext context) {
+    final entry = widget.entry;
+    final bgColor = widget.isSelected
+        ? const Color(0x1AA855F7)
+        : (_hovered ? const Color(0x0DA855F7) : const Color(0x05FFFFFF));
+    final borderColor = widget.isSelected
+        ? const Color(0x66A855F7)
+        : (_hovered ? const Color(0x1AA855F7) : const Color(0x0AFFFFFF));
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: _handleTap,
+        child: Tooltip(
+          message: entry.name,
+          waitDuration: const Duration(milliseconds: 800),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 80),
+            decoration: BoxDecoration(
+              color: bgColor,
+              border: Border.all(color: borderColor),
+              borderRadius: BorderRadius.circular(AppRadii.md),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Top 60% — thumbnail OR kind icon
+                Expanded(
+                  flex: 6,
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(AppRadii.md - 1),
+                      topRight: Radius.circular(AppRadii.md - 1),
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _GridTileVisual(
+                          entry: entry,
+                        ),
+                        // Corner badges — top-right
+                        if (entry.isHidden || entry.isIndexed)
+                          Positioned(
+                            top: 6,
+                            right: 6,
+                            child: Row(
+                              children: [
+                                if (entry.isHidden)
+                                  const _MutedTag(label: 'Hidden'),
+                                if (entry.isHidden && entry.isIndexed)
+                                  const SizedBox(width: 4),
+                                if (entry.isIndexed)
+                                  const _MutedTag(
+                                    label: 'Indexed',
+                                    accent: true,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        if (entry.media?.isStreaming == true)
+                          const Positioned(
+                            top: 6,
+                            left: 6,
+                            child: _MutedTag(label: '▶ live', accent: true),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                // Bottom 40% — name + kind footer
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        entry.name,
+                        style: TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: entry.isHidden
+                              ? AppColors.textFaint
+                              : AppColors.textBody,
+                          height: 1.25,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Icon(
+                            _iconForKind(entry.kind),
+                            size: 11,
+                            color: _colorForKind(entry.kind),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            entry.isDir ? '—' : _humanBytes(entry.sizeBytes),
+                            style: const TextStyle(
+                              fontFamily: 'JetBrains Mono',
+                              fontSize: 10,
+                              color: AppColors.textMutedV2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _handleTap() {
+    final now = DateTime.now();
+    if (_lastTapAt != null &&
+        now.difference(_lastTapAt!).inMilliseconds < 300) {
+      _lastTapAt = null;
+      _handleOpen();
+      return;
+    }
+    _lastTapAt = now;
+    context.read<LibraryBrowseCubit>().selectOnly(widget.entry.name);
+  }
+
+  void _handleOpen() {
+    if (widget.entry.isDir) {
+      final target = widget.relativePath.isEmpty
+          ? widget.entry.name
+          : '${widget.relativePath}/${widget.entry.name}';
+      context.read<LibraryBrowseCubit>().navigateTo(target);
+      return;
+    }
+    final separator = widget.rootPath.contains(r'\') ? r'\' : '/';
+    final tail = widget.relativePath.isEmpty
+        ? widget.entry.name
+        : '${widget.relativePath}/${widget.entry.name}';
+    final absolute =
+        '${widget.rootPath}$separator${tail.replaceAll('/', separator)}';
+    launchUrl(Uri.file(absolute)).then((ok) {
+      if (!ok && mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text('Could not open: ${widget.entry.name}')),
+        );
+      }
+    });
+  }
+}
+
+/// The visual half of a grid tile — thumbnail if the media is indexed
+/// and ready, otherwise a large kind icon on a tinted background.
+class _GridTileVisual extends StatelessWidget {
+  const _GridTileVisual({required this.entry});
+
+  final BrowseEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasThumb = entry.isIndexed &&
+        entry.fileId != null &&
+        entry.media?.hasThumbnailReady == true;
+    if (hasThumb) {
+      var base = GetIt.I<ApiClient>().localBaseUrl ?? '';
+      if (base.endsWith('/')) base = base.substring(0, base.length - 1);
+      final v = entry.media?.thumbnailGeneratedAtUnix ?? 0;
+      final url = '$base/api/v1/files/${entry.fileId}/thumbnail?v=$v';
+      return Image.network(
+        url,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _KindIconBackground(entry: entry),
+        loadingBuilder: (_, child, progress) =>
+            progress == null ? child : _KindIconBackground(entry: entry),
+      );
+    }
+    return _KindIconBackground(entry: entry);
+  }
+}
+
+class _KindIconBackground extends StatelessWidget {
+  const _KindIconBackground({required this.entry});
+
+  final BrowseEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = _colorForKind(entry.kind);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            color.withValues(alpha: 0.15),
+            color.withValues(alpha: 0.03),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          _iconForKind(entry.kind),
+          size: 44,
+          color: color.withValues(alpha: 0.55),
+        ),
+      ),
+    );
   }
 }
 
