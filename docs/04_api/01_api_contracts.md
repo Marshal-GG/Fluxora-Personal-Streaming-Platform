@@ -1719,11 +1719,15 @@ All fields except `avatar_letter` are nullable and will be `null` if not yet con
 ---
 
 ### `WebSocket /api/v1/ws/notifications`
-**Description:** Live notification stream. The server pushes a frame whenever a new notification is created (by any producer — pairing requests, license expiry, transcode failures, storage warnings). Each connected client gets its own asyncio queue (max 100 items). Slow consumers drop frames rather than blocking producers.  
+**Description:** Dual-purpose push channel. Multiplexes two frame types over a single socket: (1) **persistent notifications** for the bell / toast UI (pairing requests, license expiry, transcode failures, storage warnings — backed by a DB row); (2) **ephemeral events** (`type: "event"`) for real-time refresh signals to drive cached cubits (e.g. desktop's `LibraryEventsService` listens for `library_changed` / `storage_changed` to drop the 15 s polling timer for library + storage state — added 2026-05-16). Each connected client gets its own asyncio queue (max 100 items). Slow consumers drop frames rather than blocking producers.  
 **Auth:** Loopback connections skip auth (desktop control panel on the server machine). Non-loopback connections must send the same `{"type":"auth","token":"<bearer>"}` first-message handshake used by `/ws/stats`.  
 **Status:** ✅ Implemented
 
 **Frame format (server → client):**
+
+Two frame `type`s are multiplexed on the same socket:
+
+**1. Persistent notification** (`type: "notification"`) — backed by a DB row, also surfaced by `GET /api/v1/notifications`:
 ```json
 {
   "type": "notification",
@@ -1742,7 +1746,17 @@ All fields except `avatar_letter` are nullable and will be `null` if not yet con
 }
 ```
 
-**Notification producers:**
+**2. Ephemeral event** (`type: "event"`) — push-only refresh signal; no DB persistence. Added 2026-05-16 to drive the desktop's `LibraryEventsService` real-time refresh (replaces 15 s polling for library + storage cubits):
+```json
+{
+  "type": "event",
+  "kind": "library_changed"
+}
+```
+
+Optional `data` payload is allowed but currently unused (`kind` alone is sufficient). Consumers that don't recognise a `kind` MUST ignore the frame — new event kinds may be added without bumping the protocol.
+
+**Notification producers** (persistent — write a notification row, then `_broadcast` the frame):
 
 | Producer | Category | Type | Trigger |
 |----------|----------|------|---------|
@@ -1751,7 +1765,19 @@ All fields except `avatar_letter` are nullable and will be `null` if not yet con
 | `routers/stream.py start_stream` (FFmpeg failure block) | `transcode` | `error` | FFmpeg process fails to start or crashes; `related_id` = session UUID |
 | `library_service.get_storage_breakdown` | `storage` | `warning` | Storage usage exceeds 90%; 1-day cooldown de-dupe |
 
-All emitter call-sites are wrapped in `try/except` with logging — a notification-write failure never breaks the underlying flow.
+**Event producers** (ephemeral — `notification_service.broadcast_event(kind)`, no DB write):
+
+| Producer | Kind(s) emitted | Trigger |
+|----------|------------------|---------|
+| `routers/library.py create_library` | `library_changed` | `POST /library` — new library row created |
+| `routers/library.py update_library` | `library_changed` | `PATCH /library/{id}` — library renamed or root_paths edited |
+| `routers/library.py delete_library` | `library_changed` + `storage_changed` | `DELETE /library/{id}` — library row + file index rows torched (sidecar files may also be wiped) |
+| `routers/library.py scan_library` | `library_changed` + `storage_changed` | `POST /library/{id}/scan` — file index added/updated; storage breakdown changed |
+| `routers/library.py enrich_library_tmdb` | `library_changed` | `POST /library/{id}/enrich-tmdb` — files gained TMDB metadata (title, poster_url) |
+
+All emitter call-sites are wrapped in `try/except` with logging — a notification-write or event-broadcast failure never breaks the underlying flow.
+
+**Auto-reconnect convention:** desktop clients (`LibraryEventsService`) apply exponential backoff 1 s → 2 s → 4 s → 30 s cap on socket close / error. Server does not advertise a heartbeat or reconnect cadence; the WS layer's TCP keepalive is the only liveness signal.
 
 ---
 

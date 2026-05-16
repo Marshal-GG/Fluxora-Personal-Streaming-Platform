@@ -188,7 +188,7 @@ All WebSocket paths are mounted at the same base as REST. Loopback connections (
 |------|------|-----------|---------|
 | `/api/v1/ws/status` | First-message bearer token | `ping` / `pong` / `progress` | Per-client keepalive + playback progress |
 | `/api/v1/ws/stats` | Loopback skip or first-message token | `{ "type": "stats", "data": {...} }` | Live system stats pushed every 1.1 s |
-| `/api/v1/ws/notifications` | Loopback skip or first-message token | `{ "type": "notification", "data": {...} }` | Live notification fan-out |
+| `/api/v1/ws/notifications` | Loopback skip or first-message token | `{ "type": "notification", "data": {...} }` (persistent — DB-backed) **or** `{ "type": "event", "kind": "library_changed" \| "storage_changed" }` (ephemeral — no DB; drives desktop `LibraryEventsService` real-time refresh, added 2026-05-16) | Dual-purpose push channel — notification fan-out + ephemeral refresh signals; consumers MUST ignore unknown `type` / `kind` values |
 | `/api/v1/ws/logs` | Loopback skip or first-message token | `{ "type": "log", "data": {...} }` | Live log tail (BroadcastHandler) |
 | `/api/v1/ws/signal` | First-message bearer token | `offer` / `answer` / `ice-candidate` | WebRTC SDP/ICE relay for WAN streaming |
 

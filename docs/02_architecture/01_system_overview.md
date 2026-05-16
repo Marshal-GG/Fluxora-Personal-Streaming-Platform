@@ -84,6 +84,7 @@ Client attempts connection:
 | Integration | Direction | Protocol |
 |------------|-----------|---------|
 | Flutter Client ↔ FastAPI | Bidirectional | HTTP REST + HLS |
+| Flutter Client ← FastAPI (push) | Server → Client | WebSocket — `/api/v1/ws/notifications` (dual-purpose: persistent notification frames + ephemeral event frames `library_changed` / `storage_changed` for real-time cubit refresh, added 2026-05-16), `/ws/stats`, `/ws/logs`, `/ws/signal`, `/ws/status` |
 | Server ↔ FFmpeg | Internal | Subprocess / pipe |
 | Server ↔ SQLite | Internal | SQLite3 driver |
 | Server ↔ TMDB | Outbound | HTTPS REST |
@@ -99,6 +100,7 @@ Client attempts connection:
 |----------|--------|-----------|
 | Backend language | Python + FastAPI | Rapid development, FFmpeg ecosystem, async support |
 | Streaming protocol | HLS via FFmpeg, stream-copy when source codec is HLS-compatible | Wide client support; remuxing already-h264/hevc sources avoids the 95 % CPU cost of always-transcoding, while everything else falls through to the configured (HW or SW) encoder. `ActivityCubit` (desktop) polls `/stream/sessions` every 2 s so the Transcoding screen's active-sessions list and per-session progress refresh live. |
+| Real-time UI refresh (desktop control panel) | Server pushes ephemeral event frames (`library_changed` / `storage_changed`) over `/api/v1/ws/notifications`; `LibraryEventsService` demuxes into broadcast streams the cubits consume | Replaces 15 s polling timers for Library + Storage cubits (2026-05-16). One idle TCP socket vs ~16 HTTP requests/min for 4 open tabs; mutations reflected within ~50 ms of server commit. Falls back gracefully when WS is unavailable — cubits accept `events: null` and degrade to Refresh-button-only. Persistent notifications (pairing, license expiry, etc.) share the same socket but use distinct frame shape — see `docs/04_api/01_api_contracts.md` §`WebSocket /api/v1/ws/notifications`. |
 | Local discovery | Zeroconf/mDNS | Zero-config, no cloud dependency |
 | Internet transport | WebRTC | NAT traversal without port forwarding |
 | Client framework | Flutter | Single codebase for mobile + desktop |
