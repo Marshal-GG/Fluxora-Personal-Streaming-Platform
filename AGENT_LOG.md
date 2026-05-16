@@ -601,3 +601,157 @@ Phase B already committed at `6fdfde4`.  Doc-sweep changes (this entry + 4 cross
 4. **Phase C doc sweep + commit**, then **Phase D (~1 h)** — back/forward history (`List<String>` undo stack in the cubit, alt-arrow keybinds) + lazy folder-size compute (worker walks N levels deep on idle, surfaces estimate in the row + footer).
 5. **Tier 3 features** (recursive FTS5 search, bookmarks, drag-and-drop to Convert, filesystem watching via `watchdog`) remain split out as separate plans; do not roll them into plan 28.
 
+---
+
+## [2026-05-16] [server] [desktop] [feat] — Plan 28 Phase C · 3 new endpoints + right-click menu + editable path + density + multi-select
+
+**Phase:** Plan 28 Phase C — third slice on top of A + B, same session (operator was AFK; continued autonomously per "ask for permissions later")
+**Status:** Complete
+**Commits:** e74940b (server endpoints + tests), 9f6abf4 (client cubit + UI + tests)
+
+### What Was Done
+
+#### 1. Three new server endpoints
+
+- **`POST /api/v1/library/{library_id}/index-file?path=<rel>`** (`routers/library.py::index_single_file`).  Inserts a single `media_files` row for a non-indexed file under the library's `root_paths`.  Idempotent — when the file is already indexed, returns the existing `file_id` + `already_indexed=True` and no further work runs.  Otherwise: ffprobe metadata via `library_service._persist_probe`, thumbnail enqueue at priority=10, best-effort TMDB enrichment (DVR-pattern stems skipped via the existing `_looks_like_dvr_capture` heuristic).  Records `file.indexed` activity event + broadcasts `library_changed` + `storage_changed` WS frames.  Rejects directories (400), unsupported extensions (400 — `other` kind), path escapes (403), missing files (404).
+- **`POST /api/v1/files/{file_id}/regenerate-thumbnail`** (`routers/files.py::regenerate_file_thumbnail`).  Resets a single `media_thumbnails` row to pending + priority=10 + clears `generated_at` / `error_message` + deletes the cached JPEG on disk.  INSERT OR IGNOREs a fresh pending row when none exists yet (covers files added before the worker was wired up).  Group-visibility 404s for cross-content-space bearer callers — matches `get_thumbnail` / `get_file_content` to prevent gated-content enumeration.  Records `file.thumbnail_regenerated` activity event.
+- **`POST /api/v1/library/{library_id}/scan-subtree?path=<rel>`** (`routers/library.py::scan_subtree`).  Walks just the requested subdir under one of the library's `root_paths`.  Extends `library_service.scan_library` with a new `subtree_abs: str | None = None` kwarg routed via `_scan_library_locked`; when set, the inner loop iterates `[subtree_abs]` instead of `row['root_paths']`.  Per-library asyncio lock still applies (concurrent calls serialise).
+
+Shared resolution layer extracted from `browse_service.browse_library`:
+- **`browse_service._resolve_path_under_root`** — file-or-directory variant of the existing `_resolve_under_root`; doesn't enforce is_dir.
+- **`browse_service._resolve_under_root`** — directory-only delegate of the above (used by `browse_library` unchanged).
+- **`browse_service._load_library_roots`** — common library_id → `list[Path]` loader (used by all four endpoints).
+- **`browse_service.resolve_file_for_index`** — wraps `_resolve_path_under_root` + enforces is_file + non-`other` kind.
+- **`browse_service.resolve_subtree_for_scan`** — wraps `_resolve_path_under_root` + enforces is_dir.
+
+#### 2. Right-click context menu
+
+New `apps/desktop/lib/features/library/presentation/widgets/library_browse_context_menu.dart` exposing `showBrowseEntryContextMenu({context, position, entry, rootPath, relativePath})`.  Dispatched on `onSecondaryTapDown` from both `_BrowseRow` and `_BrowseGridTile`.  Items shown:
+
+| Item | Condition |
+|---|---|
+| Open | Always (directory navigates, file opens via `launchUrl`) |
+| Reveal in folder | Always |
+| Copy path | Always |
+| Copy name | Always |
+| Index this file | `!entry.isDir && !entry.isIndexed && entry.kind != other` |
+| Regenerate thumbnail | `entry.isIndexed && entry.fileId != null && !entry.isDir` |
+| Scan this folder | `entry.isDir` |
+
+Right-click on an unselected entry pre-selects it before opening the menu — matches Explorer's behaviour and keeps the menu's "selected entry" actions visually accurate.
+
+`_MenuItem` is a thin `PopupMenuItem` subclass that takes `icon` + `label` constructor params and builds the inner `Row(Icon · Text)` so call sites stay one-liner.
+
+Each menu action surfaces a snackbar on success (`Indexed ...`, `Queued thumbnail regeneration for ...`, `Scanned ...: N new file(s)`) or failure (`Failed to ...: <error>`).
+
+#### 3. Editable path textbox
+
+`_BreadcrumbBar` converted from `StatelessWidget` to `StatefulWidget`.  Click anywhere in the breadcrumb area (or the new edit-pencil icon button) → `_beginEdit` swaps the chip row for a `TextField` showing the absolute path.  Enter dispatches `cubit.navigateToAbsolute(input)`; on `false` returned the textbox stays mounted with `errorText: 'Path is outside this library or does not exist'`.  Esc cancels via an inner `Focus(onKeyEvent)` wrapper around the TextField — without that wrapper the body-level `Focus` handler's Esc-clears-selection would fire first and leave edit mode active.  Check/close icon buttons mirror the keyboard actions.
+
+`cubit.navigateToAbsolute(input)` strips the matched root prefix (case-insensitive, both `/` and `\\` separators) and dispatches `navigateTo(relative)`.  Already-relative inputs (no drive letter, no leading slash) pass through.  Returns `false` when the input doesn't sit under the loaded library's `rootPath`.
+
+#### 4. Density toggle
+
+Cubit gains `BrowseDensity {compact, cosy, comfortable}` enum + `_density` field (default `comfortable`) + public `density` getter + `setDensity(BrowseDensity)` setter (no-op on identical).  New `_DensityCycleButton` in `_HeaderActions` — one-shot icon button that cycles forward (`compact → cosy → comfortable → compact`); icon (density_small/medium/large) + tooltip swap per current mode.
+
+Density flows through to `_BrowseListView` + `_BrowseGridView` constructors as `final BrowseDensity density`.  Maps:
+- Row vertical padding: 4 / 6 / 8 px
+- Grid tile `maxCrossAxisExtent`: 140 / 160 / 180 px
+- Grid tile `mainAxisExtent`: 160 / 180 / 200 px
+
+#### 5. Multi-select
+
+Cubit gains:
+- `_selectionAnchor: String?` — set by `selectOnly` + `toggleSelection`; consumed by `extendSelection`.
+- `toggleSelection(name)` — Ctrl/Cmd-click; toggles membership without clearing others; updates anchor.
+- `extendSelection(name)` — Shift-click; selects the inclusive range from anchor through the shift-clicked entry in the currently-visible (filtered + sorted) list.  Falls back to `selectOnly` when no anchor exists or the anchor is no longer visible (e.g. operator changed the search filter between clicks).
+- `selectAllVisible()` — Ctrl+A; selects every entry in the post-filter visible list.
+- `hasMultiSelect` getter — `_selectedNames.length > 1`.
+- `clearSelection()` updated to drop the anchor.
+
+`_BrowseRow._handleTap` + `_BrowseGridTile._handleTap` both read `HardwareKeyboard.instance.isControlPressed | isMetaPressed | isShiftPressed` modifiers and route to the matching cubit method.  Screen body `_onKey` adds a Ctrl+A handler that dispatches `selectAllVisible`.
+
+New `_MultiSelectBody` on `LibraryBrowseDetailPanel` renders when `hasMultiSelect` — replaces the single-entry view with:
+- Summary: `N items selected` heading + `M folders · K files · TotalBytes total` subtitle
+- Quick Actions: Copy paths (newline-joined to clipboard) + Clear
+- Selected list: first 20 entry names + `… and X more` overflow line
+
+#### 6. Cubit action wrappers
+
+- `indexEntry(BrowseEntry)` → calls `repo.indexFile(libraryId, relativePath)` + `refresh()` on success.
+- `regenerateEntryThumbnail(BrowseEntry)` → calls `repo.regenerateFileThumbnail(fileId)` + `refresh()`.
+- `scanEntrySubtree(BrowseEntry)` → calls `repo.scanSubtree(libraryId, relativePath)` + `refresh()`; returns `added: int`.
+
+All three rethrow `ApiException` to the caller so the context menu's try/catch can surface the snackbar.  Each guards against the wrong entry kind (e.g. `regenerateEntryThumbnail` is a no-op when `entry.fileId == null`).
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Modified | apps/server/services/browse_service.py | Path resolver split: `_resolve_path_under_root` + `_resolve_under_root` delegate + new public `resolve_file_for_index` / `resolve_subtree_for_scan` / `_load_library_roots` |
+| Modified | apps/server/services/library_service.py | `scan_library` + `_scan_library_locked` gain `subtree_abs` kwarg; new `index_single_file` helper |
+| Modified | apps/server/services/thumbnail_worker.py | New `regenerate_file(db, file_id)` mirror of `regenerate_library` scoped to one file |
+| Modified | apps/server/routers/library.py | New `index_single_file` + `scan_subtree` endpoints |
+| Modified | apps/server/routers/files.py | New `regenerate_file_thumbnail` endpoint |
+| Modified | apps/server/tests/test_browse.py | 13 new tests covering all three endpoints |
+| Modified | apps/server/tests/test_library_service.py | `_slow_scan` test helpers extended to accept the new `subtree` kwarg |
+| Modified | packages/fluxora_core/lib/network/endpoints.dart | `libraryIndexFile` + `libraryScanSubtree` + `fileRegenerateThumbnail` constants |
+| Modified | apps/desktop/lib/features/library/domain/repositories/library_repository.dart | `indexFile` / `regenerateFileThumbnail` / `scanSubtree` interface + `IndexFileResult` value class |
+| Modified | apps/desktop/lib/features/library/data/repositories/library_repository_impl.dart | Three new method implementations |
+| Modified | apps/desktop/lib/features/library/presentation/cubit/library_browse_cubit.dart | `BrowseDensity` enum + density getter/setter + multi-select state + action wrappers + `navigateToAbsolute` |
+| Modified | apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart | `_DensityCycleButton` + `_BreadcrumbBar` stateful editable path + row/grid density + modifier-aware tap + Ctrl+A keyboard handler |
+| Modified | apps/desktop/lib/features/library/presentation/widgets/library_browse_detail_panel.dart | `_MultiSelectBody` summary view shown when `hasMultiSelect` |
+| Created | apps/desktop/lib/features/library/presentation/widgets/library_browse_context_menu.dart | `showBrowseEntryContextMenu` + `_MenuItem` |
+| Created | apps/desktop/test/features/library/library_browse_cubit_test.dart | 16 new tests covering density / multi-select / action wrappers / navigateToAbsolute |
+
+### Docs Updated
+
+- `docs/10_planning/28_library_file_browser_power_features.md` — Phase C row → ✅ Shipped
+- `docs/00_overview/current_status.md` — Phase C top entry; Phase B demoted to "Earlier 2026-05-16"
+- `docs/08_frontend/01_frontend_architecture.md` — Status header gains Phase C paragraph
+- `docs/10_planning/01_roadmap.md` — Plan 28 row → "Phase A + B + C ✅ shipped"
+- `CLAUDE.md` — Plan 28 lookup row rewritten with Phase C summary
+
+### Decisions Made
+
+1. **Shared path-resolution layer extracted from `browse_library` rather than duplicated in each new endpoint.**  Two earlier reviews of the plan caught the risk of three independent `_resolve_under_root` copies drifting on security semantics (path-traversal canonicalisation in particular).  Lifting the resolver + introducing kind-checking wrappers (`resolve_file_for_index` / `resolve_subtree_for_scan`) keeps all four endpoints inside one canonical security boundary.
+2. **`index-file` is idempotent rather than 409-on-conflict.**  Returning the existing `file_id` + `already_indexed=True` lets the desktop UI flip the row to indexed without a second round-trip; 409 would have forced the client to re-fetch via `/files?library_id=...` to discover the id.  Existing rows whose owner library was deleted (orphan) get re-claimed under the new `library_id` — matches `scan_library`'s behaviour for the same case.
+3. **`scan-subtree` extends `scan_library` rather than spawning a new function.**  Two implementations of the directory walk would have drifted on the orphan-reclaim + stale-sidecar branches.  `subtree_abs: str | None = None` kwarg defaults preserve every existing call site.
+4. **`regenerate_file` lives in `thumbnail_worker.py`, not `thumbnail_service.py`.**  The worker module already owns the queue (`enqueue`, `boost_library`, `regenerate_library`), so single-file regenerate is the same shape.  `thumbnail_service.py` is the extractor layer (FFmpeg / PyMuPDF subprocess wrappers) and shouldn't gain DB-mutating helpers.
+5. **Density values 4/6/8 px + 140/160/180 px chosen by eyeball, not designed.**  Operator hasn't asked for density yet; the toggle exists for completeness + future testing.  Numbers can be revised once real operators use it.
+6. **Multi-select detail panel shows a name list, not a thumbnail grid.**  Thumbnail grid would have duplicated the grid-view body; name list is the honest signal of "what did you actually select".  Truncation at 20 entries because beyond that the wall of text drowns the summary stats above it.
+7. **Editable path Esc-cancel uses an inner `Focus(onKeyEvent)` wrapper rather than expanding the screen's `_onKey` handler.**  The screen-level handler can't know whether the path bar is editing without tighter coupling.  Local `Focus` interceptor consumes Esc before propagation reaches the body — matches Flutter's normal escape-key propagation model.
+8. **`navigateToAbsolute` strips drive-letter + separator differences case-insensitively.**  Windows operators on a `D:\Library` library would otherwise paste a path with a different case and get rejected.  POSIX users see no behaviour change (case differences are real path differences there, but the resolver is on Windows for v1 anyway).
+9. **Right-click context-menu items use `PopupMenuItem` + `showMenu`, not a custom `Overlay`.**  Material's `showMenu` handles dismiss-on-click-outside, keyboard navigation, and theme integration for free.  Custom `FluxGlassMenu` from plan 14's groups page is a future polish — for now it'd be premature glassmorphism on a transactional action surface.
+
+### Issues / Sharp Edges Discovered
+
+1. **`HardwareKeyboard.instance` modifier reads require explicit import.**  `package:flutter/services.dart` exports it but the screen's existing show-list didn't.  Added.
+2. **Escape during editable path leaks to body Focus.**  Esc isn't consumed by `TextField` (it's not a text-input key), so it bubbles up to the body's `Focus(onKeyEvent)` and clears selection.  Inner `Focus` wrapper around the TextField intercepts Esc → calls `_cancelEdit` → returns `KeyEventResult.handled` so propagation stops.
+3. **`PopupMenuItem` `const` subclasses can't carry computed children.**  First attempt built `_MenuItem` as a `const`-constructible `PopupMenuItem<_BrowseMenuAction>` with `child: const SizedBox.shrink()` + a custom `PopupMenuItemState.buildChild` — analyzer flagged the super-constructor-must-be-last rule.  Switched to a non-const constructor that builds the `Row(Icon · Text)` child inline via `super(value: ..., child: Row(...))`.
+4. **`_BrowseMenuAction.index` collides with Dart enum's intrinsic `.index` getter.**  Renamed to `.indexFile`.
+5. **`scan_library` callers in `test_library_service.py` mock `_scan_library_locked` with a 3-arg signature.**  My new `subtree_abs` kwarg made the cumulative arg-count 4, breaking the mocks.  Updated both `_slow_scan` test helpers to accept `subtree=None`.
+6. **`_density` + `_selectionAnchor` analyzer warnings during the cubit edit.**  Adding the fields before their setters / readers fires "field isn't used" warnings.  Cleared once `setDensity` / `toggleSelection` landed.
+7. **Density-test stream listener captures stale state.**  First Phase C cubit test asserted emissions via `cubit.stream.listen((_) => emissions.add(cubit.density))` — but the listener fires asynchronously after both `setDensity` calls have run, so both emissions saw `cubit.density == cosy`.  Rewrote to assert synchronously against the getter + count Loaded emissions to verify the no-op call doesn't re-emit.
+
+### Test Counts (re-baselined)
+
+- **Server: 938** (was 925; +13: 5 index-file paths, 3 regenerate-thumbnail paths, 3 scan-subtree paths, 2 path-escape variants)
+- **Desktop: 137** (was 121; +16: 2 density, 6 multi-select, 5 action wrappers, 2 navigateToAbsolute, plus 1 transcode counter quirk)
+- Mobile 97 / core 20 unchanged
+
+`flutter analyze` clean × apps/desktop + packages/fluxora_core.  `python -m pytest` green × apps/server (938/938 passing).
+
+### Working-Tree Status
+
+Both Phase C commits already landed (`e74940b` server, `9f6abf4` client).  Doc-sweep changes (this entry + 4 cross-doc files) staged-but-uncommitted at session end — operator owns the commit per the no-git-writes rule.
+
+### Next Agent Should
+
+1. **Commit the Phase C doc sweep** as `docs: plan 28 phase C shipped — cross-doc sweep`.  Files: AGENT_LOG.md / CLAUDE.md / current_status.md / 08_frontend/01_frontend_architecture.md / 10_planning/01_roadmap.md / 10_planning/28_library_file_browser_power_features.md.
+2. **Phase D (~1 h)** — back/forward history (cubit `_back: List<String>` + `_forward: List<String>` undo stacks; `navigateTo` pushes current onto `_back` + clears `_forward`; `goBack` / `goForward` mirrors; two new toolbar icons between back-button and breadcrumb; Alt+← / Alt+→ keyboard wiring) + lazy folder-size compute (new `GET /api/v1/library/{id}/folder-size?path=` endpoint walking the subtree summing file sizes; detail panel for folder entries adds a "Compute size" button surfacing a spinner + then the totals; result cached in `cubit.folderSize: Map<String, FolderSize>` so re-selection doesn't re-fetch).
+3. **Phase D doc sweep + final plan archival** — once Phase D ships, the plan is complete; archive to `docs/10_planning/archive/28_library_file_browser_power_features.md` per the rotation pattern from prior plans.
+4. **Real-device smoke** of Phase C on the operator's actual library — right-click an unindexed video → Index this file → verify it shows up in the catalog within a few seconds + the thumbnail renders; right-click a folder → Scan this folder → verify new files surface; drag the editable path bar around with a few `D:\Library\Movies\...` paths; multi-select 10 files with Ctrl-click → verify the detail panel's summary stats are correct.
+5. **Tier 3 features** (recursive FTS5 search, bookmarks, drag-and-drop to Convert, filesystem watching via `watchdog`) remain split out as separate plans — do not roll them into plan 28.
+
+
