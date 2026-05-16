@@ -115,6 +115,16 @@ class _LibraryBrowseViewState extends State<_LibraryBrowseView> {
       cubit.stepSelection(-1);
       return KeyEventResult.handled;
     }
+    if (key == LogicalKeyboardKey.arrowLeft &&
+        HardwareKeyboard.instance.isAltPressed) {
+      cubit.goBack();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight &&
+        HardwareKeyboard.instance.isAltPressed) {
+      cubit.goForward();
+      return KeyEventResult.handled;
+    }
     if (key == LogicalKeyboardKey.pageDown) {
       cubit.stepSelection(10);
       return KeyEventResult.handled;
@@ -459,6 +469,29 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
         final response = state.response;
         final cubit = context.read<LibraryBrowseCubit>();
 
+        // Back / Forward history icons live left of the up button.
+        // Plan 28 Phase D — Alt+← / Alt+→ also dispatch these.
+        final historyButtons = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _ToolbarIconButton(
+              icon: Icons.arrow_back_ios_new_rounded,
+              tooltip: cubit.canGoBack ? 'Back (Alt+←)' : 'No history',
+              onTap: cubit.canGoBack ? () => cubit.goBack() : null,
+            ),
+            const SizedBox(width: 2),
+            _ToolbarIconButton(
+              icon: Icons.arrow_forward_ios_rounded,
+              tooltip: cubit.canGoForward
+                  ? 'Forward (Alt+→)'
+                  : 'No forward history',
+              onTap: cubit.canGoForward
+                  ? () => cubit.goForward()
+                  : null,
+            ),
+          ],
+        );
+
         // Common left affordance + trailing search + copy.
         final upButton = _ToolbarIconButton(
           icon: Icons.arrow_upward_rounded,
@@ -473,6 +506,8 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
         if (_editing) {
           return Row(
             children: [
+              historyButtons,
+              const SizedBox(width: AppSpacing.s4),
               upButton,
               const SizedBox(width: AppSpacing.s8),
               Expanded(
@@ -573,10 +608,12 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
             ));
         }
 
-        // Trailing icon row: "go up" (parent) + edit affordance +
-        // search field + raw-path copy.
+        // Trailing icon row: history + "go up" (parent) + edit
+        // affordance + search field + raw-path copy.
         return Row(
           children: [
+            historyButtons,
+            const SizedBox(width: AppSpacing.s4),
             upButton,
             const SizedBox(width: AppSpacing.s8),
             Expanded(

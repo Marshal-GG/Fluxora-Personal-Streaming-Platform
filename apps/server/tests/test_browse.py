@@ -798,3 +798,59 @@ async def test_scan_subtree_rejects_path_escape(client, test_db, tree):
         f"/api/v1/library/{lib_id}/scan-subtree?path=../outside"
     )
     assert r.status_code in (403, 404)
+
+
+# ── Phase D: folder-size ───────────────────────────────────────────────────
+
+
+async def test_folder_size_sums_subtree_bytes(client, test_db, tree):
+    """Phase D: GET /library/{id}/folder-size walks recursively and
+    returns total bytes + file count for the requested subdir."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+
+    # `sub/` contains `song.mp3` (2048 B) + `nested/doc.pdf` (8 B
+    # = `%PDF-1.4` literal).  Whole-tree total includes the top-level
+    # files too.
+    r = await client.get(f"/api/v1/library/{lib_id}/folder-size?path=sub")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["library_id"] == lib_id
+    assert body["relative_path"] == 'sub'
+    assert body["size_bytes"] == 2048 + len(b'%PDF-1.4')
+    assert body["file_count"] == 2
+
+
+async def test_folder_size_at_root_includes_every_file(client, test_db, tree):
+    """Empty `path=` measures the library root."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    r = await client.get(f"/api/v1/library/{lib_id}/folder-size")
+    assert r.status_code == 200
+    body = r.json()
+    # movie.mp4 (1024) + photo.jpg (512) + readme.txt (5) +
+    # .hidden_file (6) + sub/song.mp3 (2048) + sub/nested/doc.pdf (8)
+    assert body["file_count"] == 6
+    assert body["size_bytes"] == 1024 + 512 + 5 + 6 + 2048 + len(b'%PDF-1.4')
+
+
+async def test_folder_size_rejects_file_path(client, test_db, tree):
+    """File path returns 400."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    r = await client.get(
+        f"/api/v1/library/{lib_id}/folder-size?path=movie.mp4"
+    )
+    assert r.status_code == 400
+
+
+async def test_folder_size_rejects_path_escape(client, test_db, tree):
+    """`..` returns 403/404."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    r = await client.get(
+        f"/api/v1/library/{lib_id}/folder-size?path=../escape"
+    )
+    assert r.status_code in (403, 404)
+
+
+async def test_folder_size_404_when_library_missing(client, test_db):
+    """Unknown library id returns 404."""
+    r = await client.get("/api/v1/library/nonexistent/folder-size?path=sub")
+    assert r.status_code == 404

@@ -399,6 +399,50 @@ async def resolve_subtree_for_scan(
     return resolved
 
 
+async def folder_size(
+    db: aiosqlite.Connection,
+    *,
+    library_id: str,
+    relative_path: str,
+) -> dict:
+    """Recursively walk a subdirectory under one of the library's roots
+    and sum file sizes + count files.
+
+    Returns ``{size_bytes, file_count}``.  Raises `BrowseError` on the
+    same conditions `browse_library` raises (404 library / 403 escape /
+    400 not-a-directory).  Phase D of plan 28.
+
+    Bounded by the actual subtree size — can be slow on huge folders
+    (the client-side detail panel only kicks this off when the operator
+    explicitly clicks "Compute size", so the cost is opt-in).  Hidden
+    + system files are included in the total (matches the operator's
+    expectation: "how much disk does this folder use" doesn't depend on
+    visibility filters).  Symlinks are followed once like everywhere
+    else in `browse_service`.
+    """
+    roots = await _load_library_roots(db, library_id)
+    _matched_root, resolved = _resolve_path_under_root(roots, relative_path)
+    if not resolved.is_dir():
+        raise BrowseError(400, "target is not a directory")
+
+    total = 0
+    count = 0
+    # Use os.walk to avoid the per-file `Path.iterdir` overhead on
+    # huge trees + the followlinks=False guard to match scan_library.
+    import os as _os
+
+    for root_dir, _dirs, files in _os.walk(str(resolved), followlinks=False):
+        for f in files:
+            try:
+                st = _os.stat(_os.path.join(root_dir, f))
+            except OSError:
+                # Permission denied / broken symlink — skip silently.
+                continue
+            total += int(st.st_size)
+            count += 1
+    return {"size_bytes": total, "file_count": count}
+
+
 # ── Listing ────────────────────────────────────────────────────────────────
 
 

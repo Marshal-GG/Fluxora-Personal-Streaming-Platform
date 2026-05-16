@@ -376,6 +376,42 @@ async def browse_library(
     return response.to_json()
 
 
+@router.get(
+    "/{library_id}/folder-size",
+    status_code=status.HTTP_200_OK,
+)
+async def get_folder_size(
+    library_id: str,
+    path: str = Query(
+        default="",
+        description="relative path under the library root identifying "
+        "the directory to measure (empty = library root)",
+    ),
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> dict:
+    """Recursively measure a subdirectory's total size + file count.
+
+    Backs the folder-browser right detail panel's "Compute size" button
+    (opt-in to avoid surprise CPU/disk IO on huge libraries).  Returns
+    ``{library_id, relative_path, size_bytes, file_count}``.
+
+    Path security mirrors `/browse`: 403 on escape, 404 on missing,
+    400 when the path resolves to a file.
+    """
+    try:
+        result = await browse_service.folder_size(
+            db, library_id=library_id, relative_path=path
+        )
+    except BrowseError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+    return {
+        "library_id": library_id,
+        "relative_path": path,
+        **result,
+    }
+
+
 @router.post(
     "/{library_id}/index-file",
     status_code=status.HTTP_200_OK,

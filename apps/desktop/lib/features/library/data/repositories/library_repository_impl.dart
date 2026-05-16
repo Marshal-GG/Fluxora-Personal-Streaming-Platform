@@ -236,6 +236,31 @@ class LibraryRepositoryImpl implements LibraryRepository {
       );
 
   @override
+  Future<FolderSize> folderSize({
+    required String libraryId,
+    required String relativePath,
+  }) =>
+      _apiClient.get<FolderSize>(
+        Endpoints.libraryFolderSize(libraryId),
+        queryParameters: {
+          if (relativePath.isNotEmpty) 'path': relativePath,
+        },
+        fromJson: (data) {
+          final json = data as Map<String, dynamic>;
+          final bytes = json['size_bytes'];
+          final count = json['file_count'];
+          return FolderSize(
+            sizeBytes: bytes is int
+                ? bytes
+                : (bytes is num ? bytes.toInt() : 0),
+            fileCount: count is int
+                ? count
+                : (count is num ? count.toInt() : 0),
+          );
+        },
+      );
+
+  @override
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath}) async {
     final formData = FormData.fromMap({
       'library_id': libraryId,

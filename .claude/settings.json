@@ -47,7 +47,9 @@
       "Bash(rm -f /tmp/fluxora*)",
       "PowerShell(Copy-Item \"C:\\Users\\marsh\\AppData\\Roaming\\Fluxora\\fluxora.db\" *)",
       "PowerShell(Remove-Item $env:TEMP\\fluxora*)",
-      "PowerShell(Remove-Item -Force $env:TEMP\\fluxora*)"
+      "PowerShell(Remove-Item -Force $env:TEMP\\fluxora*)",
+      "Bash(python -m pip install pymupdf==1.27.2.3)",
+      "Bash(python -c \"from services.thumbnail_service import extract_thumbnail, kind_for_extension; print\\(kind_for_extension\\('.mkv'\\), kind_for_extension\\('.pdf'\\), kind_for_extension\\('.txt'\\)\\)\")"
     ]
   }
 }

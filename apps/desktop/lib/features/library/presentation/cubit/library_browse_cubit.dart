@@ -88,6 +88,19 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   /// from this anchor through the shift-clicked entry.
   String? _selectionAnchor;
 
+  /// Back history — paths the operator has navigated away from.  Top
+  /// of the stack is the most-recent prior path.  Phase D of plan 28.
+  /// `goBack()` pops + navigates; every fresh `navigateTo` pushes the
+  /// current path on + clears `_forward`.
+  final List<String> _back = [];
+  final List<String> _forward = [];
+
+  /// Lazy folder-size cache — keyed by relative path under the current
+  /// library.  Populated by `computeFolderSize` (right detail panel's
+  /// "Compute size" button); persisted across re-selections of the
+  /// same folder.  Phase D.
+  final Map<String, FolderSize> _folderSizes = {};
+
   /// Currently-selected entries — keyed by their `name` field (unique
   /// inside a single directory).  Single-element on click, grows on
   /// Ctrl+click (phase C).
@@ -132,12 +145,74 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
 
   /// Navigate into the given relative path (e.g. `sub/nested`).  Used
   /// for both folder clicks and breadcrumb segment clicks.  Clears
-  /// selection + search on navigation.
+  /// selection + search on navigation.  Pushes the previous path onto
+  /// the back stack + clears the forward stack — fresh navigation is
+  /// always a new branch.
   Future<void> navigateTo(String relativePath) async {
+    final previous = _currentPath();
+    if (previous != relativePath) {
+      _back.add(previous);
+      _forward.clear();
+    }
     _selectedNames.clear();
     _search = '';
     emit(LibraryBrowseLoading(path: relativePath));
     await _fetch(relativePath);
+  }
+
+  /// Pop the back stack onto the current path, push the current onto
+  /// the forward stack, then fetch.  No-op when there's no history to
+  /// rewind.
+  Future<void> goBack() async {
+    if (_back.isEmpty) return;
+    final target = _back.removeLast();
+    _forward.add(_currentPath());
+    _selectedNames.clear();
+    _search = '';
+    emit(LibraryBrowseLoading(path: target));
+    await _fetch(target);
+  }
+
+  /// Inverse of [goBack] — pops the forward stack.
+  Future<void> goForward() async {
+    if (_forward.isEmpty) return;
+    final target = _forward.removeLast();
+    _back.add(_currentPath());
+    _selectedNames.clear();
+    _search = '';
+    emit(LibraryBrowseLoading(path: target));
+    await _fetch(target);
+  }
+
+  /// Public read-only getters for the toolbar / keyboard handler.
+  bool get canGoBack => _back.isNotEmpty;
+  bool get canGoForward => _forward.isNotEmpty;
+
+  /// Cached folder-size for a given relative path, or `null` when not
+  /// computed yet.  Phase D.
+  FolderSize? folderSizeFor(String relativePath) =>
+      _folderSizes[relativePath];
+
+  /// Kick off a recursive folder-size fetch.  Caches the result under
+  /// the requested relative path so re-selecting the same folder reads
+  /// from the cache.  Returns the result for callers that want to
+  /// snackbar / log on completion.  Rethrows `ApiException` so the
+  /// detail panel can render an error state.  Phase D of plan 28.
+  Future<FolderSize> computeFolderSize(String relativePath) async {
+    final existing = _folderSizes[relativePath];
+    if (existing != null) return existing;
+    try {
+      final result = await _repository.folderSize(
+        libraryId: libraryId,
+        relativePath: relativePath,
+      );
+      _folderSizes[relativePath] = result;
+      _reemit();
+      return result;
+    } on ApiException catch (e, st) {
+      _log.e('computeFolderSize failed', error: e, stackTrace: st);
+      rethrow;
+    }
   }
 
   /// Walk one level up.  No-op at the root.

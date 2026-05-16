@@ -67,6 +67,12 @@ class Endpoints {
   static String fileRegenerateThumbnail(String fileId) =>
       '$_base/files/$fileId/regenerate-thumbnail';
 
+  /// `GET /api/v1/library/{libraryId}/folder-size?path=<relative>` —
+  /// recursive size + file-count for a subdir.  Backs the folder-
+  /// browser detail panel's "Compute size" button (opt-in).
+  static String libraryFolderSize(String libraryId) =>
+      '$_base/library/$libraryId/folder-size';
+
   // Stream
   static String streamStart(String fileId) => '$_base/stream/start/$fileId';
   static String streamSession(String sessionId) => '$_base/stream/$sessionId';

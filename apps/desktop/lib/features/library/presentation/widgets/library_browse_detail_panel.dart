@@ -27,6 +27,7 @@ import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 
 import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
+import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart' show FolderSize;
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_browse_cubit.dart';
 
 final _log = Logger();
@@ -179,8 +180,146 @@ class _DetailBody extends StatelessWidget {
           const SizedBox(height: AppSpacing.s10),
           _MediaMetadata(entry: entry),
         ],
+        if (entry.isDir) ...[
+          const SizedBox(height: AppSpacing.s18),
+          _FolderSizeBlock(entry: entry, response: response),
+        ],
         const SizedBox(height: AppSpacing.s20),
         _ActionsRow(entry: entry, absolutePath: absolutePath),
+      ],
+    );
+  }
+}
+
+// ─── Folder-size compute block (Phase D) ───────────────────────────────────
+
+/// Opt-in folder-size compute affordance for directory entries.  Clicks
+/// the "Compute size" button → calls `cubit.computeFolderSize(relPath)`.
+/// While the fetch is in flight, shows a spinner; once resolved, renders
+/// the totals + caches in the cubit so re-selecting the same folder
+/// reads from the cache instead of refetching.
+class _FolderSizeBlock extends StatefulWidget {
+  const _FolderSizeBlock({required this.entry, required this.response});
+
+  final BrowseEntry entry;
+  final BrowseResponse response;
+
+  @override
+  State<_FolderSizeBlock> createState() => _FolderSizeBlockState();
+}
+
+class _FolderSizeBlockState extends State<_FolderSizeBlock> {
+  bool _inFlight = false;
+  String? _error;
+
+  String _relativePath() {
+    final base = widget.response.relativePath;
+    return base.isEmpty
+        ? widget.entry.name
+        : '$base/${widget.entry.name}';
+  }
+
+  Future<void> _compute() async {
+    final cubit = context.read<LibraryBrowseCubit>();
+    final rel = _relativePath();
+    setState(() {
+      _inFlight = true;
+      _error = null;
+    });
+    try {
+      await cubit.computeFolderSize(rel);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = '$e');
+    } finally {
+      if (mounted) {
+        setState(() => _inFlight = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cubit = context.read<LibraryBrowseCubit>();
+    final rel = _relativePath();
+    final cached = cubit.folderSizeFor(rel);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Folder Size',
+          style: AppTypography.h2.copyWith(color: AppColors.textBright),
+        ),
+        const SizedBox(height: AppSpacing.s10),
+        if (cached != null)
+          _SizeReadout(folderSize: cached)
+        else if (_inFlight)
+          const Row(
+            children: [
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.5,
+                  color: AppColors.violet,
+                ),
+              ),
+              SizedBox(width: AppSpacing.s8),
+              Text(
+                'Walking subtree…',
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 12,
+                  color: AppColors.textMutedV2,
+                ),
+              ),
+            ],
+          )
+        else
+          FluxButton(
+            icon: Icons.calculate_outlined,
+            size: FluxButtonSize.sm,
+            variant: FluxButtonVariant.secondary,
+            onPressed: _compute,
+            child: const Text('Compute size'),
+          ),
+        if (_error != null) ...[
+          const SizedBox(height: AppSpacing.s6),
+          Text(
+            'Failed: $_error',
+            style: AppTypography.captionV2.copyWith(color: AppColors.amber),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _SizeReadout extends StatelessWidget {
+  const _SizeReadout({required this.folderSize});
+
+  final FolderSize folderSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          Icons.folder_outlined,
+          size: 16,
+          color: AppColors.violet.withValues(alpha: 0.8),
+        ),
+        const SizedBox(width: AppSpacing.s8),
+        Text(
+          '${_humanBytes(folderSize.sizeBytes)} · '
+          '${folderSize.fileCount} file${folderSize.fileCount == 1 ? '' : 's'}',
+          style: const TextStyle(
+            fontFamily: 'JetBrains Mono',
+            fontSize: 12.5,
+            color: AppColors.textBright,
+          ),
+        ),
       ],
     );
   }

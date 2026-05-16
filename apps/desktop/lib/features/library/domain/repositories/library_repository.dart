@@ -107,7 +107,21 @@ abstract interface class LibraryRepository {
     required String relativePath,
   });
 
+  /// Recursively measure a folder's total size + file count.  Backs
+  /// the detail panel's opt-in "Compute size" button (Phase D).
+  Future<FolderSize> folderSize({
+    required String libraryId,
+    required String relativePath,
+  });
+
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath});
+}
+
+/// Result of an [LibraryRepository.folderSize] call.
+class FolderSize {
+  const FolderSize({required this.sizeBytes, required this.fileCount});
+  final int sizeBytes;
+  final int fileCount;
 }
 
 /// Result of an [LibraryRepository.indexFile] call.

@@ -308,6 +308,125 @@ void main() {
     );
   });
 
+  // ── Back/forward history (Phase D) ───────────────────────────────────────
+
+  group('history', () {
+    setUp(() {
+      when(() => repo.browseLibrary(
+            libraryId: libraryId,
+            path: any(named: 'path'),
+            showHidden: false,
+          )).thenAnswer((invocation) async {
+        final path = invocation.namedArguments[#path] as String;
+        return _response(
+          libraryId: libraryId,
+          relativePath: path,
+          entries: const [],
+        );
+      });
+    });
+
+    test('navigateTo pushes onto back + clears forward', () async {
+      final cubit = LibraryBrowseCubit(libraryId: libraryId, repository: repo);
+      await cubit.load();
+      expect(cubit.canGoBack, isFalse);
+      expect(cubit.canGoForward, isFalse);
+
+      await cubit.navigateTo('sub');
+      expect(cubit.canGoBack, isTrue);
+      expect(cubit.canGoForward, isFalse);
+
+      await cubit.navigateTo('sub/nested');
+      expect(cubit.canGoBack, isTrue);
+    });
+
+    test('goBack pops + pushes onto forward stack', () async {
+      final cubit = LibraryBrowseCubit(libraryId: libraryId, repository: repo);
+      await cubit.load();
+      await cubit.navigateTo('sub');
+      await cubit.navigateTo('sub/nested');
+
+      await cubit.goBack();
+      expect(cubit.canGoForward, isTrue);
+      var state = cubit.state;
+      expect(state, isA<LibraryBrowseLoaded>());
+      expect((state as LibraryBrowseLoaded).response.relativePath, 'sub');
+
+      await cubit.goBack();
+      state = cubit.state;
+      expect((state as LibraryBrowseLoaded).response.relativePath, '');
+      expect(cubit.canGoBack, isFalse);
+    });
+
+    test('goForward rewinds an undone goBack', () async {
+      final cubit = LibraryBrowseCubit(libraryId: libraryId, repository: repo);
+      await cubit.load();
+      await cubit.navigateTo('sub');
+      await cubit.goBack();
+      await cubit.goForward();
+      final state = cubit.state;
+      expect((state as LibraryBrowseLoaded).response.relativePath, 'sub');
+    });
+
+    test('navigateTo after goBack clears the forward stack', () async {
+      final cubit = LibraryBrowseCubit(libraryId: libraryId, repository: repo);
+      await cubit.load();
+      await cubit.navigateTo('sub');
+      await cubit.goBack();
+      // Forward should be populated; a fresh navigate clears it.
+      expect(cubit.canGoForward, isTrue);
+      await cubit.navigateTo('other');
+      expect(cubit.canGoForward, isFalse);
+    });
+
+    test('goBack is a no-op when the back stack is empty', () async {
+      final cubit = LibraryBrowseCubit(libraryId: libraryId, repository: repo);
+      await cubit.load();
+      // Initial state has nothing on the back stack — calling goBack
+      // shouldn't change anything.
+      await cubit.goBack();
+      expect(cubit.canGoBack, isFalse);
+    });
+  });
+
+  // ── Lazy folder-size compute (Phase D) ───────────────────────────────────
+
+  group('folder-size', () {
+    test('computeFolderSize caches the result + skips re-fetch', () async {
+      when(() => repo.browseLibrary(
+            libraryId: libraryId,
+            path: '',
+            showHidden: false,
+          )).thenAnswer((_) async => _response(
+            libraryId: libraryId,
+            relativePath: '',
+            entries: [_entry('movies', isDir: true)],
+          ));
+      when(() => repo.folderSize(
+            libraryId: libraryId,
+            relativePath: 'movies',
+          )).thenAnswer((_) async => const FolderSize(
+            sizeBytes: 1024 * 1024 * 50,
+            fileCount: 12,
+          ));
+      final cubit = LibraryBrowseCubit(libraryId: libraryId, repository: repo);
+      await cubit.load();
+
+      expect(cubit.folderSizeFor('movies'), isNull);
+      final result = await cubit.computeFolderSize('movies');
+      expect(result.sizeBytes, 50 * 1024 * 1024);
+      expect(result.fileCount, 12);
+      expect(cubit.folderSizeFor('movies'), isNotNull);
+
+      // Second call returns the cached value without hitting the repo.
+      await cubit.computeFolderSize('movies');
+      verify(() => repo.folderSize(
+            libraryId: libraryId,
+            relativePath: 'movies',
+          )).called(1);
+    });
+  });
+
   // ── navigateToAbsolute (editable path textbox) ───────────────────────────
 
   group('navigateToAbsolute', () {
