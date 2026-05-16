@@ -39,6 +39,7 @@ import json
 import logging
 import stat
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -110,6 +111,53 @@ def _is_hidden(entry: Path, lstat_result: object) -> bool:
 
 
 @dataclass(frozen=True)
+class IndexedMedia:
+    """Metadata pulled from `media_files` + `media_thumbnails` +
+    `stream_sessions` for indexed entries.  Phase A of plan 28 —
+    surfaces enough info for the right detail panel to render without
+    a second HTTP round-trip.
+
+    `thumbnail_status` widens the M2 server-side enum with one extra
+    client-only value:
+
+      * `pending` / `generating` / `ready` / `failed` / `skipped` —
+        verbatim from the `media_thumbnails.status` column.
+      * `stale` — synthesised by `_attach_index_status` when
+        `media_files.updated_at > media_thumbnails.generated_at`,
+        i.e. the source file was modified after the current thumbnail
+        was rendered.  Worker is auto-re-queued; client treats this
+        the same as `pending` for UI purposes (shows the failed-thumb
+        warning icon faded, hides the regenerate button since one is
+        already in flight).
+    """
+
+    width: int | None
+    height: int | None
+    duration_sec: float | None
+    codec_name: str | None
+    hdr_format: str | None        # HDR10 / HLG / DolbyVision / null
+    audio_codec: str | None       # primary track's codec from audio_tracks
+    thumbnail_status: str | None  # see docstring
+    thumbnail_generated_at_unix: int | None  # for ?v= cache-buster
+    indexed_at_iso: str | None    # media_files.created_at
+    is_streaming: bool            # active stream_session row exists
+
+    def to_json(self) -> dict:
+        return {
+            "width": self.width,
+            "height": self.height,
+            "duration_sec": self.duration_sec,
+            "codec_name": self.codec_name,
+            "hdr_format": self.hdr_format,
+            "audio_codec": self.audio_codec,
+            "thumbnail_status": self.thumbnail_status,
+            "thumbnail_generated_at_unix": self.thumbnail_generated_at_unix,
+            "indexed_at_iso": self.indexed_at_iso,
+            "is_streaming": self.is_streaming,
+        }
+
+
+@dataclass(frozen=True)
 class BrowseEntry:
     name: str
     kind: FileKind
@@ -117,6 +165,7 @@ class BrowseEntry:
     is_hidden: bool
     size_bytes: int
     modified_iso: str  # ISO-8601 UTC
+    mtime_unix: int    # raw mtime for client-side stale-thumb checks
 
     # Indexed-status fields are filled in by `_attach_index_status` from
     # a single SQL lookup over `media_files`.  `file_id` is the row id;
@@ -124,6 +173,13 @@ class BrowseEntry:
     # content` / `/files/{file_id}/thumbnail` for indexed entries.
     is_indexed: bool = False
     file_id: str | None = None
+
+    # Phase A: when `is_indexed`, this carries width / height / codec /
+    # duration / HDR / audio codec / thumbnail status + generated_at /
+    # indexed_at + currently-streaming flag.  Lets the desktop detail
+    # panel render without a second HTTP request.  `None` for non-
+    # indexed entries and directories.
+    media: IndexedMedia | None = None
 
     def to_json(self) -> dict:
         return {
@@ -133,8 +189,10 @@ class BrowseEntry:
             "is_hidden": self.is_hidden,
             "size_bytes": self.size_bytes,
             "modified_iso": self.modified_iso,
+            "mtime_unix": self.mtime_unix,
             "is_indexed": self.is_indexed,
             "file_id": self.file_id,
+            "media": self.media.to_json() if self.media else None,
         }
 
 
@@ -288,7 +346,6 @@ def _list_entries(target: Path, *, show_hidden: bool) -> list[BrowseEntry]:
                 is_dir = False
         kind = _kind_for_path(child, is_dir=is_dir)
         size = 0 if is_dir else int(st.st_size)
-        from datetime import UTC, datetime
 
         modified = datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat()
         raw.append(
@@ -299,6 +356,7 @@ def _list_entries(target: Path, *, show_hidden: bool) -> list[BrowseEntry]:
                 is_hidden=hidden,
                 size_bytes=size,
                 modified_iso=modified,
+                mtime_unix=int(st.st_mtime),
             )
         )
 
@@ -311,11 +369,21 @@ async def _attach_index_status(
     target: Path,
     entries: list[BrowseEntry],
 ) -> list[BrowseEntry]:
-    """Fill `is_indexed` + `file_id` by joining names against
-    `media_files.path` for rows whose parent equals `target`.
+    """Fill `is_indexed` + `file_id` + (Phase A) the `media` payload by
+    joining names against `media_files.path` and (where indexed) onto
+    `media_thumbnails` + `stream_sessions`.
 
-    Single SELECT IN over the file names — bounded by the directory
-    listing length.  Directories don't get an index lookup.
+    Single SELECT IN over the file names with LEFT JOINs for thumbnail
+    + currently-streaming — bounded by the directory listing length.
+    Directories don't get an index lookup.
+
+    Also synthesises `thumbnail_status='stale'` when
+    `media_files.updated_at > media_thumbnails.generated_at` (the
+    source file was modified after the thumbnail was rendered) + auto-
+    re-queues the worker via `thumbnail_worker.enqueue` with the
+    default priority.  Operator sees a stale-thumb regeneration kick
+    off without manual intervention; client gets the status flag so it
+    can render a "regenerating" indicator instead of a stale image.
     """
     file_names = [e.name for e in entries if not e.is_dir]
     if not file_names:
@@ -332,12 +400,113 @@ async def _attach_index_status(
     placeholders = ",".join("?" for _ in candidates)
     params: list[str] = list(candidates.values())
 
-    async with db.execute(
-        f"SELECT id, path FROM media_files WHERE path IN ({placeholders})",
-        params,
-    ) as cur:
+    # Single LEFT-JOINed query — pulls media_files row + thumbnail
+    # status + generated_at + active-stream presence in one round-trip.
+    # SQLite returns NULL for unmatched LEFT JOIN columns.
+    query = f"""
+        SELECT mf.id           AS file_id,
+               mf.path          AS path,
+               mf.width         AS width,
+               mf.height        AS height,
+               mf.duration_sec  AS duration_sec,
+               mf.codec_name    AS codec_name,
+               mf.hdr_format    AS hdr_format,
+               mf.audio_tracks  AS audio_tracks,
+               mf.created_at    AS indexed_at,
+               mf.updated_at    AS source_updated_at,
+               t.status         AS thumb_status,
+               t.generated_at   AS thumb_generated_at,
+               CAST(strftime('%s', t.generated_at) AS INTEGER)
+                                AS thumb_generated_at_unix,
+               EXISTS(
+                   SELECT 1 FROM stream_sessions ss
+                    WHERE ss.file_id = mf.id AND ss.ended_at IS NULL
+               )                AS is_streaming
+          FROM media_files mf
+     LEFT JOIN media_thumbnails t ON t.file_id = mf.id
+         WHERE mf.path IN ({placeholders})
+    """
+    async with db.execute(query, params) as cur:
         rows = await cur.fetchall()
-    by_path = {row["path"]: row["id"] for row in rows}
+    by_path = {row["path"]: row for row in rows}
+
+    # Best-effort stale-thumb auto-re-queue.  Late import so the
+    # service module stays decoupled from the worker (avoids a
+    # circular-import risk during test collection).
+    stale_file_ids: list[str] = []
+    for row in rows:
+        if (
+            row["thumb_status"] == "ready"
+            and row["source_updated_at"] is not None
+            and row["thumb_generated_at"] is not None
+            and row["source_updated_at"] > row["thumb_generated_at"]
+        ):
+            stale_file_ids.append(row["file_id"])
+    if stale_file_ids:
+        try:
+            from services import thumbnail_worker
+
+            now = datetime.now(UTC).isoformat()
+            for file_id in stale_file_ids:
+                # Mark the existing row pending + bump priority so the
+                # worker picks it up before unrelated pending rows.
+                await db.execute(
+                    """
+                    UPDATE media_thumbnails
+                       SET status='pending', priority=5, updated_at=?
+                     WHERE file_id=? AND status='ready'
+                    """,
+                    (now, file_id),
+                )
+            await db.commit()
+        except Exception:  # pragma: no cover - defensive
+            logger.warning(
+                "stale-thumb auto-re-queue failed for %d file(s)",
+                len(stale_file_ids),
+                exc_info=True,
+            )
+
+    def _media_for(row) -> IndexedMedia:
+        # Primary audio track codec — first entry's `codec` field from
+        # the JSON-encoded audio_tracks column.  Best-effort; absent or
+        # malformed payloads return None.
+        audio_codec: str | None = None
+        raw_audio = row["audio_tracks"]
+        if raw_audio:
+            try:
+                decoded = json.loads(raw_audio)
+                if isinstance(decoded, list) and decoded:
+                    first = decoded[0]
+                    if isinstance(first, dict):
+                        codec_val = first.get("codec")
+                        if isinstance(codec_val, str):
+                            audio_codec = codec_val
+            except (TypeError, ValueError):
+                audio_codec = None
+
+        thumb_status = row["thumb_status"]
+        # Synthesise 'stale' for UI purposes (the underlying row was
+        # just flipped back to 'pending' by the auto-re-queue above;
+        # the client wants to know "this WAS ready but is now being
+        # regenerated").
+        if (
+            row["file_id"] in stale_file_ids
+            and thumb_status in ("ready", "pending")
+        ):
+            thumb_status = "stale"
+
+        return IndexedMedia(
+            width=row["width"],
+            height=row["height"],
+            duration_sec=row["duration_sec"],
+            codec_name=row["codec_name"],
+            hdr_format=row["hdr_format"],
+            audio_codec=audio_codec,
+            thumbnail_status=thumb_status,
+            thumbnail_generated_at_unix=row["thumb_generated_at_unix"],
+            indexed_at_iso=row["indexed_at"],
+            is_streaming=bool(row["is_streaming"]),
+        )
 
     return [
         BrowseEntry(
@@ -347,8 +516,24 @@ async def _attach_index_status(
             is_hidden=e.is_hidden,
             size_bytes=e.size_bytes,
             modified_iso=e.modified_iso,
-            is_indexed=e.is_dir or candidates.get(e.name) in by_path,
-            file_id=None if e.is_dir else by_path.get(candidates.get(e.name, "")),
+            mtime_unix=e.mtime_unix,
+            is_indexed=(
+                e.is_dir or candidates.get(e.name) in by_path
+            ),
+            file_id=(
+                None
+                if e.is_dir
+                else (
+                    by_path[candidates[e.name]]["file_id"]
+                    if candidates.get(e.name) in by_path
+                    else None
+                )
+            ),
+            media=(
+                None
+                if e.is_dir or candidates.get(e.name) not in by_path
+                else _media_for(by_path[candidates[e.name]])
+            ),
         )
         for e in entries
     ]

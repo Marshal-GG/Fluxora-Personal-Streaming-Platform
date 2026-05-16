@@ -191,6 +191,285 @@ async def test_browse_marks_indexed_files(client, test_db, tree):
     assert by_name["sub"]["file_id"] is None
 
 
+# ── Phase A M1: indexed-entry media payload ────────────────────────────────
+
+
+async def _insert_indexed_video(
+    test_db,
+    *,
+    library_id: str,
+    absolute_path: Path,
+    width: int = 1920,
+    height: int = 1080,
+    duration_sec: float = 6420.5,
+    codec_name: str = "h264",
+    hdr_format: str | None = None,
+    audio_tracks_json: str | None = None,
+) -> str:
+    """Insert a probed media_files row with width/height/codec metadata."""
+    import json as _json
+    file_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    await test_db.execute(
+        """
+        INSERT INTO media_files
+            (id, path, name, extension, size_bytes, library_id,
+             width, height, duration_sec, codec_name, hdr_format,
+             audio_tracks, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_id,
+            str(absolute_path),
+            absolute_path.name,
+            absolute_path.suffix.lower(),
+            absolute_path.stat().st_size,
+            library_id,
+            width,
+            height,
+            duration_sec,
+            codec_name,
+            hdr_format,
+            audio_tracks_json
+            or _json.dumps([{"index": 0, "codec": "aac"}]),
+            now,
+            now,
+        ),
+    )
+    await test_db.commit()
+    return file_id
+
+
+async def _insert_thumbnail_row(
+    test_db,
+    *,
+    file_id: str,
+    status: str,
+    generated_at: str | None = None,
+) -> None:
+    now = datetime.now(UTC).isoformat()
+    await test_db.execute(
+        """
+        INSERT OR REPLACE INTO media_thumbnails
+            (file_id, status, priority, generated_at, attempts,
+             created_at, updated_at)
+        VALUES (?, ?, 0, ?, 0, ?, ?)
+        """,
+        (file_id, status, generated_at, now, now),
+    )
+    await test_db.commit()
+
+
+async def test_browse_indexed_video_returns_media_metadata(
+    client, test_db, tree
+):
+    """Phase A: indexed video entries carry width/height/duration/codec
+    + audio_codec parsed from audio_tracks JSON + indexed_at_iso."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    movie_path = tree / "movie.mp4"
+    import json as _json
+    file_id = await _insert_indexed_video(
+        test_db,
+        library_id=lib_id,
+        absolute_path=movie_path,
+        width=3840,
+        height=2160,
+        duration_sec=7200.0,
+        codec_name="hevc",
+        hdr_format="HDR10",
+        audio_tracks_json=_json.dumps(
+            [{"index": 0, "codec": "eac3", "channels": 6}]
+        ),
+    )
+
+    r = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    media = by_name["movie.mp4"]["media"]
+    assert media is not None
+    assert media["width"] == 3840
+    assert media["height"] == 2160
+    assert media["duration_sec"] == 7200.0
+    assert media["codec_name"] == "hevc"
+    assert media["hdr_format"] == "HDR10"
+    assert media["audio_codec"] == "eac3"
+    assert media["indexed_at_iso"] is not None
+    assert media["is_streaming"] is False
+
+    # Suppress unused warning
+    assert file_id is not None
+
+
+async def test_browse_unindexed_entry_has_null_media(client, test_db, tree):
+    """Files not in media_files return media=null (vs an empty dict)."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    r = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    assert by_name["photo.jpg"]["media"] is None
+    assert by_name["readme.txt"]["media"] is None
+
+
+async def test_browse_directory_has_null_media(client, test_db, tree):
+    """Directories never carry a media payload."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    r = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    assert by_name["sub"]["media"] is None
+
+
+async def test_browse_includes_thumbnail_status_when_ready(
+    client, test_db, tree
+):
+    """When media_thumbnails.status='ready', entry's media.thumbnail_status
+    is 'ready' + thumbnail_generated_at_unix is populated."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    file_id = await _insert_indexed_video(
+        test_db, library_id=lib_id, absolute_path=tree / "movie.mp4"
+    )
+    gen_at = datetime.now(UTC).isoformat()
+    await _insert_thumbnail_row(
+        test_db, file_id=file_id, status="ready", generated_at=gen_at
+    )
+
+    r = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    media = by_name["movie.mp4"]["media"]
+    assert media["thumbnail_status"] == "ready"
+    assert media["thumbnail_generated_at_unix"] is not None
+    assert media["thumbnail_generated_at_unix"] > 0
+
+
+async def test_browse_includes_thumbnail_pending_status(
+    client, test_db, tree
+):
+    """Pending thumbnails report status='pending', no generated_at_unix."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    file_id = await _insert_indexed_video(
+        test_db, library_id=lib_id, absolute_path=tree / "movie.mp4"
+    )
+    await _insert_thumbnail_row(test_db, file_id=file_id, status="pending")
+
+    r = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    media = by_name["movie.mp4"]["media"]
+    assert media["thumbnail_status"] == "pending"
+    assert media["thumbnail_generated_at_unix"] is None
+
+
+async def test_browse_detects_stale_thumbnail_and_marks_status_stale(
+    client, test_db, tree
+):
+    """When media_files.updated_at > media_thumbnails.generated_at, the
+    response's thumbnail_status is 'stale' (synthesised client-only
+    value) + the underlying media_thumbnails row gets flipped back to
+    'pending' for the worker to pick up.  Source-file-replaced-in-place
+    scenario."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    file_id = await _insert_indexed_video(
+        test_db, library_id=lib_id, absolute_path=tree / "movie.mp4"
+    )
+    # Thumbnail was generated a while back (yesterday).
+    old_iso = "2026-05-15T10:00:00+00:00"
+    await _insert_thumbnail_row(
+        test_db, file_id=file_id, status="ready", generated_at=old_iso
+    )
+    # Source file was updated AFTER the thumbnail.  We just inserted
+    # the row with `updated_at` = now() above, so the timestamp ordering
+    # naturally puts source after thumbnail.
+    r = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    media = by_name["movie.mp4"]["media"]
+    assert media["thumbnail_status"] == "stale"
+
+    # The auto-re-queue must have flipped the worker's row back to pending.
+    async with test_db.execute(
+        "SELECT status, priority FROM media_thumbnails WHERE file_id=?",
+        (file_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    assert row["status"] == "pending"
+    # Priority bumped to 5 so the operator sees the re-render promptly.
+    assert row["priority"] == 5
+
+
+async def test_browse_currently_streaming_badge(client, test_db, tree):
+    """is_streaming=true on entries with an active stream_sessions row."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    file_id = await _insert_indexed_video(
+        test_db, library_id=lib_id, absolute_path=tree / "movie.mp4"
+    )
+    # Insert an active stream session for the file.
+    session_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    await test_db.execute(
+        """
+        INSERT INTO stream_sessions
+            (id, file_id, connection_type, started_at, ended_at)
+        VALUES (?, ?, 'lan', ?, NULL)
+        """,
+        (session_id, file_id, now),
+    )
+    await test_db.commit()
+
+    r = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    assert by_name["movie.mp4"]["media"]["is_streaming"] is True
+
+    # Now end the session — is_streaming should flip to false.
+    await test_db.execute(
+        "UPDATE stream_sessions SET ended_at=? WHERE id=?",
+        (datetime.now(UTC).isoformat(), session_id),
+    )
+    await test_db.commit()
+    r2 = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name2 = {e["name"]: e for e in r2.json()["entries"]}
+    assert by_name2["movie.mp4"]["media"]["is_streaming"] is False
+
+
+async def test_browse_entry_carries_mtime_unix(client, test_db, tree):
+    """Plan 28 Phase A: every entry carries an `mtime_unix` field for
+    client-side stale-thumb math (independent of the server's stale
+    detection — operator might mass-touch files outside our flow)."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    r = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    assert by_name["movie.mp4"]["mtime_unix"] > 0
+    assert isinstance(by_name["movie.mp4"]["mtime_unix"], int)
+    # Directories also carry mtime
+    assert by_name["sub"]["mtime_unix"] > 0
+
+
+async def test_browse_audio_codec_handles_malformed_json(
+    client, test_db, tree
+):
+    """audio_tracks parsing tolerates garbage — returns null instead of
+    raising."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    file_id = str(uuid.uuid4())
+    now = datetime.now(UTC).isoformat()
+    movie = tree / "movie.mp4"
+    await test_db.execute(
+        """
+        INSERT INTO media_files
+            (id, path, name, extension, size_bytes, library_id,
+             width, height, codec_name, audio_tracks, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            file_id, str(movie), movie.name, movie.suffix.lower(),
+            movie.stat().st_size, lib_id, 1920, 1080, "h264",
+            "this is not json",  # malformed
+            now, now,
+        ),
+    )
+    await test_db.commit()
+
+    r = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    media = by_name["movie.mp4"]["media"]
+    assert media["audio_codec"] is None
+    assert media["width"] == 1920  # other fields still populate
+
+
 # ── Security: path traversal block ─────────────────────────────────────────
 
 
