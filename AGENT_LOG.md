@@ -754,4 +754,112 @@ Both Phase C commits already landed (`e74940b` server, `9f6abf4` client).  Doc-s
 4. **Real-device smoke** of Phase C on the operator's actual library — right-click an unindexed video → Index this file → verify it shows up in the catalog within a few seconds + the thumbnail renders; right-click a folder → Scan this folder → verify new files surface; drag the editable path bar around with a few `D:\Library\Movies\...` paths; multi-select 10 files with Ctrl-click → verify the detail panel's summary stats are correct.
 5. **Tier 3 features** (recursive FTS5 search, bookmarks, drag-and-drop to Convert, filesystem watching via `watchdog`) remain split out as separate plans — do not roll them into plan 28.
 
+---
+
+## [2026-05-16] [server] [desktop] [feat] — Plan 28 Phase D · back/forward history + lazy folder-size · plan archived
+
+**Phase:** Plan 28 Phase D — final phase, closes the plan in the same working day as A + B + C
+**Status:** Complete — plan archived
+**Commits:** 161461e (server endpoint + tests + desktop cubit/UI + tests in a single commit)
+
+### What Was Done
+
+#### 1. Server folder-size endpoint
+
+- **`GET /api/v1/library/{library_id}/folder-size?path=<rel>`** (`routers/library.py::get_folder_size`).  Recursively measures a subdirectory's total size + file count.  Returns `{library_id, relative_path, size_bytes, file_count}`.  Reuses Phase C's `browse_service._resolve_path_under_root` + `_load_library_roots` resolvers, then enforces is_dir + walks via `os.walk(str(resolved), followlinks=False)` so symlink loops don't infinite-spin.
+- Hidden + system files are summed into the total — "how much disk does this folder use" doesn't depend on the operator's visibility filter (matches Explorer's behaviour).  Symlinks are followed once like everywhere else in `browse_service`.
+- Path security mirrors `/browse`: 403 on escape, 404 on missing, 400 when the path resolves to a file.
+
+#### 2. Cubit history stacks
+
+Cubit gains two `List<String>` stacks:
+- `_back` — paths the operator has navigated away from.  Top is the most-recent prior path.  Pushed by every `navigateTo` whose target differs from the current path; popped by `goBack`.
+- `_forward` — paths the operator has rewound past.  Cleared on every fresh `navigateTo` (matches every browser's UX — once you branch into a new path, the undone history is gone).  Pushed by `goBack`; popped by `goForward`.
+
+Public getters `canGoBack` / `canGoForward` drive the toolbar enable state.  Both methods short-circuit when the matching stack is empty (no-op + no emit).
+
+#### 3. Cubit folder-size cache
+
+- `_folderSizes: Map<String, FolderSize>` keyed by relative path under the current library.
+- `computeFolderSize(relativePath) → Future<FolderSize>` — returns cached value if present; otherwise calls `repo.folderSize`, caches the result, re-emits the Loaded state (so the detail panel's BlocBuilder rebuilds), returns the result.  Rethrows `ApiException` so the detail panel's local try/catch can render an error state.
+- `folderSizeFor(relativePath) → FolderSize?` — sync getter for the detail panel to check cache hit before showing the button.
+
+#### 4. UI surfaces
+
+- **`_BreadcrumbBar` history buttons.**  Left of the up-arrow now lives a Row containing `arrow_back_ios_new_rounded` + `arrow_forward_ios_rounded` icon buttons.  Tooltips reflect `canGoBack` / `canGoForward` (active: "Back (Alt+←)" / "Forward (Alt+→)"; inactive: "No history" / "No forward history").  Both edit-mode and breadcrumb-mode branches mount the same `historyButtons` Row.
+- **Alt+← / Alt+→ keyboard shortcuts** dispatched from the body `Focus` handler (alongside the existing `↓↑` / `Enter` / etc).
+- **`_FolderSizeBlock`** new widget on `LibraryBrowseDetailPanel` rendered for directory entries.  Three rendering states:
+  1. **Cached** — `_SizeReadout` showing "X MB · N files" in JetBrains Mono 12.5 px next to a violet folder icon.
+  2. **In flight** — 14×14 violet `CircularProgressIndicator` + "Walking subtree…" caption.
+  3. **Idle** — `FluxButton('Compute size')` with `Icons.calculate_outlined`, secondary variant.
+- Error path renders "Failed: <error>" in `AppColors.amber` beneath the button.
+
+Cache hit on re-selecting the same folder skips the round-trip entirely — operator's third visit to "Movies" sees the answer instantly.
+
+#### 5. Core + repository wiring
+
+- New `Endpoints.libraryFolderSize(libraryId)` constant in `packages/fluxora_core/lib/network/endpoints.dart`.
+- New `LibraryRepository.folderSize({libraryId, relativePath}) → Future<FolderSize>` interface method.
+- New `FolderSize {sizeBytes: int, fileCount: int}` value class.
+- `LibraryRepositoryImpl.folderSize` defensively coerces `size_bytes` + `file_count` (server might return `int` or `num`; both surfaced as int).
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Modified | apps/server/services/browse_service.py | New `folder_size` async helper — `os.walk(followlinks=False)` over the resolved path |
+| Modified | apps/server/routers/library.py | New `get_folder_size` endpoint |
+| Modified | apps/server/tests/test_browse.py | 5 new tests (subtree / root / file-rejection / escape / missing-library) |
+| Modified | packages/fluxora_core/lib/network/endpoints.dart | `libraryFolderSize` constant |
+| Modified | apps/desktop/lib/features/library/domain/repositories/library_repository.dart | `folderSize` interface method + `FolderSize` value class |
+| Modified | apps/desktop/lib/features/library/data/repositories/library_repository_impl.dart | `folderSize` implementation |
+| Modified | apps/desktop/lib/features/library/presentation/cubit/library_browse_cubit.dart | `_back` / `_forward` stacks + `goBack` / `goForward` / `canGoBack` / `canGoForward` + `_folderSizes` cache + `computeFolderSize` / `folderSizeFor` |
+| Modified | apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart | `historyButtons` in `_BreadcrumbBar` + Alt+← / Alt+→ handlers in body Focus |
+| Modified | apps/desktop/lib/features/library/presentation/widgets/library_browse_detail_panel.dart | `_FolderSizeBlock` + `_SizeReadout` for directory entries; `FolderSize` import |
+| Modified | apps/desktop/test/features/library/library_browse_cubit_test.dart | 6 new tests covering history + folder-size cache |
+| Renamed | docs/10_planning/28_library_file_browser_power_features.md → docs/10_planning/archive/28_library_file_browser_power_features.md | Plan archival |
+
+### Docs Updated
+
+- `docs/10_planning/archive/28_library_file_browser_power_features.md` — header rewritten to ✅ Archived; Phase D row → ✅ Shipped
+- `docs/00_overview/current_status.md` — Phase D top entry; Phase C demoted to "Earlier 2026-05-16"
+- `docs/08_frontend/01_frontend_architecture.md` — Status header Phase D paragraph + archive-path reference
+- `docs/10_planning/01_roadmap.md` — Plan 28 row → ✅ Done; archive-path link
+- `CLAUDE.md` — Plan 28 lookup row rewritten as closed; archive-path target
+
+### Decisions Made
+
+1. **History stacks live in the cubit, not in `go_router`.**  Browser-style back/forward navigates inside one route (the `/library/{id}/files` screen), not across routes; routing this through `go_router` would have conflicted with the operator's intuition that the up-arrow + breadcrumb should also count as "history".  In-cubit stacks are stupid simple.
+2. **Fresh `navigateTo` clears `_forward`.**  Matches every browser since Netscape — once the operator branches into a new path, the undone-history is gone.  Without this, "back, navigate elsewhere, forward" would dump the operator into a stale path.
+3. **`computeFolderSize` rethrows `ApiException` instead of returning a sentinel.**  Lets the `_FolderSizeBlock` render an error caption with the real server message; sentinel `FolderSize(-1, -1)` would have lost the failure reason.
+4. **Hidden files included in the folder-size total.**  "How much disk does this folder use" is an operator question, not a visibility-filter question.  An operator who toggled hidden-files off doesn't expect their dotfiles to silently drop out of the disk-usage total.
+5. **Lazy compute is operator-opt-in (a button), not eager-on-folder-select.**  Walking a huge library subtree could spike CPU + disk IO; gating behind an explicit click keeps the cost predictable.  Cache survives re-selections so the operator pays once.
+6. **`os.walk` over `Path.iterdir` recursion.**  `os.walk` is C-level on CPython and amortises the per-iteration overhead better on huge trees.  `followlinks=False` matches `scan_library`'s behaviour.
+
+### Issues / Sharp Edges Discovered
+
+1. **`FolderSize` lives in the repository module, not in `browse_entry.dart`.**  Initially considered putting it next to `BrowseEntry` since both are returned by browse-style operations — but the value class is an API contract for the repository, not a browse-domain entity.  Imported into the detail panel via `show FolderSize` to keep the import surface minimal.
+2. **Editable path bar repaints on every `_reemit` because of the `BlocBuilder` wrapping it.**  `computeFolderSize` re-emits to refresh the detail panel; the breadcrumb's `BlocBuilder` repaints too.  Acceptable for v1 since the breadcrumb is cheap to rebuild and the operator only triggers folder-size compute once per folder; future polish could split the panel and breadcrumb into separate `BlocSelector` subscriptions.
+3. **`navigateTo` push guard `if (previous != relativePath)` matters more than it looks.**  Without it, `_fetch` would push the same path onto `_back` every time the operator hit Refresh / `setShowHidden`.  With the guard, refresh is a no-op for history.
+
+### Test Counts (re-baselined)
+
+- **Server: 943** (was 938; +5)
+- **Desktop: 143** (was 137; +6: 5 history flows + 1 folder-size cache + transcode counter quirks)
+- Mobile 97 / core 20 unchanged
+
+`flutter analyze` clean × apps/desktop + packages/fluxora_core.  `python -m pytest` green × apps/server (943/943 passing).
+
+### Working-Tree Status
+
+Phase D code committed at `161461e`.  Doc-sweep + plan archival (this entry + 5 cross-doc files + the plan rename) staged-but-uncommitted at session end — operator owns the commit per the no-git-writes rule.
+
+### Next Agent Should
+
+1. **Commit the Phase D doc sweep + plan archival** as `docs: plan 28 phase D shipped + plan archived — cross-doc sweep`.  Files: AGENT_LOG.md / CLAUDE.md / current_status.md / 08_frontend/01_frontend_architecture.md / 10_planning/01_roadmap.md / 10_planning/archive/28_library_file_browser_power_features.md (renamed-and-edited) / 10_planning/28_library_file_browser_power_features.md (deleted on rename).
+2. **Real-device smoke** of the full Phase A+B+C+D folder browser on the operator's actual library — particularly the back/forward history flow with the breadcrumb edit textbox + multi-select Ctrl-click + the Compute-size button on a 100+ GB folder.
+3. **Tier 3 features** remain separate plans — recursive FTS5 search across the catalog, bookmarks/favorites for frequent folders, drag-and-drop from the browser into the Convert tab, and live filesystem watching via `watchdog`.  No agent should fold these into a "plan 28.1" — open fresh plans when the operator asks.
+4. **Watch for operator-reported sharp edges** on Phase D: the "Compute size" button should never spike CPU above ~30% on a 5K-file folder; if it does, the lazy compute might need to move to a background thread (`asyncio.to_thread`) or chunked yield-to-event-loop pattern.  Currently it's a single tight `os.walk` loop running inline on the FastAPI worker thread.
+
+
 
