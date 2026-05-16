@@ -107,6 +107,9 @@ class UserSettingsResponse(BaseModel):
     default_library_view: str = "grid"
     scan_libraries_on_startup: bool = True
     generate_thumbnails: bool = True
+    # Plan 27 — operator-configurable thumbnail width (pixels).
+    # Worker reads per claim cycle.  160-640 enforced by router.
+    thumbnail_width: int = 320
     # Network
     preferred_mode: str = "auto"
     enable_mdns: bool = True
@@ -155,6 +158,9 @@ class UpdateSettingsBody(BaseModel):
     default_library_view: Literal["grid", "list"] | None = None
     scan_libraries_on_startup: bool | None = None
     generate_thumbnails: bool | None = None
+    # Plan 27 — 160 ≤ thumbnail_width ≤ 640 (Field-validated below the
+    # body's main field block; see _validate_thumbnail_width).
+    thumbnail_width: int | None = Field(default=None, ge=160, le=640)
     # Network
     preferred_mode: Literal["auto", "lan", "webrtc"] | None = None
     enable_mdns: bool | None = None
