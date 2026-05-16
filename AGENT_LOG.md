@@ -196,3 +196,46 @@ Uncommitted.  Suggested commit chunking — eight logical groups so each PR (or 
 4. **WS auth handshake for non-localhost deployments.**  `LibraryEventsService` currently skips auth (localhost-only).  Cloudflared-tunnelled deployments will need first-message `{"type":"auth","token":"…"}` per the pattern in `ws.py::_authenticate`.  Half-hour job.
 5. **Plan 26 archival.**  Once operator sign-off lands on item 1, move `docs/10_planning/26_desktop_cp_ia_redesign.md` to `docs/10_planning/archive/`.  Update `CLAUDE.md` row to mark complete.
 6. **Operator sign-off on plan 24 M5 + M6** (multi-audio device smoke + HDR tonemap on real Android device).  Then delete `_kForceMediaKitOnAndroid` and archive plan 24.
+
+---
+
+## [2026-05-16] [planning] [docs] — Plan 27 drafted (per-file thumbnail generation) · revised w/ expanded scope
+
+**Phase:** Plan 27 kickoff — gradient-mosaic fallback (landed earlier same day) is a stopgap; operator wants real per-file thumbs.  Draft plan written, owner-reviewed, scope expanded to absorb every previously-deferred v1.1 item except on-demand endpoint generation.
+**Status:** Plan-doc draft only.  Implementation starts next agent turn (M1).
+**Commits:** uncommitted
+
+### What Was Done
+
+1. **Drafted [`docs/10_planning/27_thumbnail_generation_plan.md`](docs/10_planning/27_thumbnail_generation_plan.md)** — six milestones, ~8–10 h end-to-end.  Background asyncio worker decouples generation from scan path (scan latency unchanged).  Four extractor paths: FFmpeg for video (with HDR→SDR Hable tonemap branch when `media_files.hdr_format IS NOT NULL`), FFmpeg for image (JPEG/PNG/WEBP/HEIC/BMP/TIFF), FFmpeg for audio embedded APIC, PyMuPDF for PDF first page.  Per-library priority boost (operator opens `/files?library_id=X` → that library's pending thumbs jump to `priority=10`).  Failure-aggregation notifications (one per library when ≥ 5 files fail, dedup'd on `dismissed_at IS NULL`).  `?v=<gen_unix>` URL cache-buster on cover URLs so regeneration invalidates client caches without a separate revalidation request.  Operator-triggered regeneration via desktop `_ActionTile` → `POST /library/{id}/regenerate-thumbnails`.  `thumbnail_width` settings field (range 160–640, default 320) plumbed through worker → extractor → Settings → Advanced slider.
+2. **Cross-doc updates announcing plan 27 active** — `CLAUDE.md` lookup row, `docs/00_overview/current_status.md` top entry, `docs/10_planning/01_roadmap.md` row.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| ➕ Create | `docs/10_planning/27_thumbnail_generation_plan.md` | Six-milestone plan: schema + extractors → worker + priority + notifications → endpoint + cover_urls + regen endpoint → settings field → desktop UI → sweeper + docs |
+| ✏️ Update | `CLAUDE.md` | New row in "Where the detail lives" table linking to plan 27 doc |
+| ✏️ Update | `docs/00_overview/current_status.md` | New top entry announcing plan 27 active |
+| ✏️ Update | `docs/10_planning/01_roadmap.md` | New row in the "What's outstanding" table marked 📝 Active 2026-05-16 |
+
+### Decisions Made
+
+1. **PyMuPDF over `pdf2image`+`poppler`** — PyMuPDF is a pure-Python wheel with no system binary dep; `pdf2image` would have required bundling poppler in the Windows installer and runtime detection on Mac/Linux.  AGPL license is compatible with Fluxora's open-source self-hosted distribution model (operators self-host; AGPL source-disclosure satisfied by Fluxora being open-source).
+2. **Background-only generation; no on-demand in endpoint** — owner direction was unambiguous: "scans must be really fast we can generate thumb lazy, in bg."  Endpoint returns 404 if not ready; client falls back to the gradient mosaic.  Avoids the cold-view stall risk of inline-generation.
+3. **Scope absorbed all but one v1.1 deferred item** — owner re-scoped 2026-05-16 to pull nine of the original §10 Out of Scope items into v1.  HDR tonemap, per-library priority queue, failure notification, regenerate UI, configurable width, CDN URL versioning, PDF thumbs, mobile-no-code-needed.  Only on-demand endpoint generation remains deferred (above).
+4. **Separate `media_thumbnails` table, not columns on `media_files`** — three reasons: keeps the hot `media_files` row schema clean; lets the worker UPDATE without touching `media_files.updated_at` (which would mess with TMDB enrichment ordering); `ON DELETE CASCADE` from `media_files` handles cleanup automatically.
+5. **`UPDATE ... RETURNING` for atomic claim** — SQLite 3.35+ supports it; Python 3.11+ ships 3.40+; verified at project floor.  Single-statement claim prevents two workers grabbing the same row.
+
+### Issues / Sharp Edges Discovered
+
+1. **PyMuPDF wheel-availability fallback** — at least Python 3.10–3.13 + Win/Mac/Linux are covered by the official wheels, but if a fringe platform fails the import we don't want to crash startup.  Worker imports inside a try/except; `kind=pdf` falls through to `skipped` with `error_message='pymupdf not available'` on import failure.  Plan §11 risk row + §8 edge 27.
+2. **HDR tonemap correctness** — same chain as plan 17 streams (operator-verified there), but worth a unit test asserting non-clipped output histogram so a future FFmpeg upgrade doesn't silently regress.  Plan M1 acceptance.
+3. **Priority boost on already-boosted rows** — `UPDATE WHERE priority=0` is idempotent so rapid library-switching doesn't re-write rows that are already at 10.  Worst case: all pending rows climb to 10 → degenerates to FIFO inside that band.  Acceptable.
+4. **Regenerate during in-flight generation** — `regenerate_library` resets rows that may be `status='generating'`.  The in-flight slot finishes its `UPDATE WHERE status='generating'` successfully (it claimed the row earlier), writes `ready`, but the row goes back to `pending` on the next regenerate sweep.  Net: one wasted extraction; clean rebuild afterward.  Plan §8 edge 24.
+
+### Next Agent Should
+
+1. **Start M1 — schema + extractors.**  Migration `037_media_thumbnails.sql`, `services/thumbnail_service.py` with the four helpers + `ThumbnailResult` dataclass, `pymupdf` added to `pyproject.toml`.  Unit tests against `lavfi testsrc` (SDR + synthetic-PQ for HDR branch), `lavfi anullsrc` (skip), image fixture, encrypted PDF fixture (skip), corrupt PDF (failed), width param respected.  Plan §6.1 + §9 M1.
+2. **Then M2 — worker.**  `services/thumbnail_worker.py` with atomic claim, `enqueue` / `boost_library` / `regenerate_library` / `_maybe_emit_failure_notification` methods; `main.py` lifespan wiring; scan-path enqueue hook in `library_service.scan_library` + `_persist_probe`'s sibling INSERT.  10 unit tests covering atomicity + priority + setting toggle + restart-recovery + skip + dispatch + notification + dedup + boost idempotency + regen.
+3. **Run server tests after each milestone** (`cd apps/server && pytest`).  Aim for green at every step before progressing.
