@@ -16,11 +16,11 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse
 
-from config import settings
+from config import get_data_dir, settings
 from database.db import get_db
 from models.media_file import MediaFileResponse
 from routers.deps import validate_token_or_local
-from services import activity_service, group_service, library_service
+from services import activity_service, group_service, library_service, thumbnail_worker
 
 logger = logging.getLogger(__name__)
 
@@ -99,13 +99,33 @@ async def list_files(
         # Files with NULL library_id (orphan uploads, pre-library-system
         # rows) are unconditionally visible — they can't be group-gated
         # by definition.  Same v1 behaviour.
-        return [
+        result = [
             MediaFileResponse(**row)
             for row in rows
             if row["library_id"] is None or row["library_id"] in visible.library_ids
         ]
-    rows = await library_service.list_files(db, library_id=library_id)
-    return [MediaFileResponse(**row) for row in rows]
+    else:
+        rows = await library_service.list_files(db, library_id=library_id)
+        result = [MediaFileResponse(**row) for row in rows]
+    # Per-library priority boost (plan 27): operator opening a library
+    # bumps that library's pending thumbnails to the front of the worker
+    # queue.  Best-effort — never fails the request.
+    if library_id is not None:
+        try:
+            boosted = await thumbnail_worker.boost_library(db, library_id)
+            if boosted:
+                logger.debug(
+                    "Boosted %d pending thumbnails for library=%s",
+                    boosted,
+                    library_id,
+                )
+        except Exception:
+            logger.warning(
+                "Thumbnail priority boost failed for library=%s",
+                library_id,
+                exc_info=True,
+            )
+    return result
 
 
 @router.get("/recent", response_model=list[MediaFileResponse])
@@ -198,6 +218,71 @@ async def get_file_content(
         path=path,
         media_type=media_type or "application/octet-stream",
         filename=row["name"],
+    )
+
+
+@router.get("/{file_id}/thumbnail")
+async def get_thumbnail(
+    file_id: str,
+    v: str | None = Query(default=None),  # cache-buster; intentionally unused
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> FileResponse:
+    """Serve the cached JPEG thumbnail.  404 when not yet generated.
+
+    The `v` query parameter is accepted but ignored — it exists only
+    to make the URL unique per generation so client image caches
+    invalidate when a thumbnail is regenerated.  See
+    ``library_service._library_aggregates`` for where the suffix gets
+    stamped onto cover_urls.
+
+    Group visibility applies: bearer-token callers receive 404 (not
+    403) when the file's library is outside their content space —
+    matches ``get_file`` / ``get_file_content`` behaviour to prevent
+    enumeration of gated content.  Localhost skips the filter.
+
+    Plan 27.
+    """
+    # Visibility check before disclosing whether the thumbnail row exists.
+    row = await library_service.get_file(db, file_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
+        )
+    if _client is not None and row["library_id"] is not None:
+        visible = await group_service.get_visible_libraries(db, _client["id"])
+        if row["library_id"] not in visible.library_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
+            )
+
+    async with db.execute(
+        "SELECT status FROM media_thumbnails WHERE file_id = ?",
+        (file_id,),
+    ) as cur:
+        thumb_row = await cur.fetchone()
+    if thumb_row is None or thumb_row["status"] != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="thumbnail not ready",
+        )
+
+    jpeg_path = get_data_dir() / "thumbnails" / f"{file_id}.jpg"
+    if not jpeg_path.exists():
+        # Row says ready but the file is gone — log + 404.  Worker can
+        # re-queue on the operator's next regenerate sweep.
+        logger.warning(
+            "Thumbnail row=ready but file missing: %s", jpeg_path
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="thumbnail file missing",
+        )
+
+    return FileResponse(
+        path=str(jpeg_path),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 

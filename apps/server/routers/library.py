@@ -18,6 +18,7 @@ from services import (
     group_service,
     library_service,
     notification_service,
+    thumbnail_worker,
 )
 
 logger = logging.getLogger(__name__)
@@ -331,3 +332,65 @@ async def enrich_library_tmdb(
     # Posters / titles changed, but file counts didn't — only library_changed.
     notification_service.broadcast_event("library_changed")
     return {"library_id": library_id, **result}
+
+
+@router.post(
+    "/{library_id}/regenerate-thumbnails",
+    status_code=status.HTTP_200_OK,
+)
+async def regenerate_library_thumbnails(
+    library_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> dict:
+    """Reset every thumbnail row for files in ``library_id`` to pending.
+
+    Deletes the cached JPEGs on disk so the background worker
+    re-renders them at current settings (width, HDR tonemap, etc).
+    Useful after the operator changes ``thumbnail_width`` in Settings
+    → Advanced or after fixing a transient extraction failure.
+
+    Returns ``{library_id, queued}`` — the count of files queued for
+    regeneration.  Records a ``library.thumbnails_regenerated``
+    activity event.
+
+    Plan 27 M3.
+    """
+    row = await library_service.get_library(db, library_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Library not found"
+        )
+
+    try:
+        queued = await thumbnail_worker.regenerate_library(db, library_id)
+    except Exception:
+        logger.error(
+            "Thumbnail regeneration failed for library %s",
+            library_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Thumbnail regeneration failed",
+        )
+
+    if queued > 0:
+        try:
+            await activity_service.record(
+                db,
+                type="library.thumbnails_regenerated",
+                summary=f"Regenerated thumbnails for {queued} file(s)",
+                actor_kind="operator" if _client is None else "client",
+                actor_id=_client["id"] if _client else None,
+                target_kind="library",
+                target_id=library_id,
+                payload={"queued": queued},
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record library.thumbnails_regenerated event",
+                exc_info=True,
+            )
+
+    return {"library_id": library_id, "queued": queued}

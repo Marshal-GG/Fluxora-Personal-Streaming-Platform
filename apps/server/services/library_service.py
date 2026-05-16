@@ -302,8 +302,18 @@ async def _library_aggregates(
 ) -> tuple[int, int, list[str]]:
     """Return (file_count, total_size_bytes, cover_urls) for a library.
 
-    `cover_urls` is up to 4 of the most recently-updated `poster_url` values
-    among the library's enriched media files. Empty list if none enriched.
+    `cover_urls` is up to 4 covers for the library card.  TMDB poster
+    URLs come first (real art > extracted frame); if fewer than 4 TMDB
+    posters exist for the library, the remaining slots are filled by
+    server-relative thumbnail URLs of the form
+    ``/api/v1/files/<file_id>/thumbnail?v=<gen_unix>`` so a half-
+    enriched library still renders a populated mosaic.
+
+    The ``?v=`` suffix is a cache-buster — the endpoint ignores it, but
+    when a thumbnail is regenerated ``generated_at`` shifts so the URL
+    changes and the client image cache invalidates.
+
+    Plan 27: TMDB-first union with media_thumbnails 'ready' rows.
     """
     async with db.execute(
         """
@@ -329,7 +339,32 @@ async def _library_aggregates(
         (library_id,),
     ) as cur:
         cover_rows = await cur.fetchall()
-    cover_urls = [r["poster_url"] for r in cover_rows]
+    cover_urls: list[str] = [r["poster_url"] for r in cover_rows]
+
+    # Plan 27: fill any remaining slots from generated thumbnails.
+    # Exclude files that already have a TMDB poster_url so we don't
+    # show duplicate art (TMDB + extracted frame from the same file).
+    needed = 4 - len(cover_urls)
+    if needed > 0:
+        async with db.execute(
+            """
+            SELECT mf.id AS file_id,
+                   CAST(strftime('%s', t.generated_at) AS INTEGER) AS gen_unix
+              FROM media_files mf
+              JOIN media_thumbnails t ON t.file_id = mf.id
+             WHERE mf.library_id = ?
+               AND t.status = 'ready'
+               AND (mf.poster_url IS NULL OR mf.poster_url = '')
+             ORDER BY t.generated_at DESC
+             LIMIT ?
+            """,
+            (library_id, needed),
+        ) as cur:
+            thumb_rows = await cur.fetchall()
+        cover_urls.extend(
+            f"/api/v1/files/{r['file_id']}/thumbnail?v={r['gen_unix'] or 0}"
+            for r in thumb_rows
+        )
 
     return file_count, total_size, cover_urls
 
