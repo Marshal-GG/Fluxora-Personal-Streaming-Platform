@@ -22,6 +22,7 @@ class PageHeader extends StatelessWidget {
     this.subtitle,
     this.actions,
     this.onBack,
+    this.verticalPadding = AppSpacing.s24,
   });
 
   /// Big title string. Rendered with [AppTypography.h1].
@@ -41,10 +42,18 @@ class PageHeader extends StatelessWidget {
   /// this null.
   final VoidCallback? onBack;
 
+  /// Vertical padding above and below the title row.  Defaults to
+  /// `AppSpacing.s24` (matches the prototype).  Tabbed shells like
+  /// `LibraryShell` / `ActivityShell` override this to a smaller value
+  /// because the page chrome is followed immediately by a pill-tab row
+  /// and a content card, so the s24-on-each-side breathing room ends
+  /// up wasted.
+  final double verticalPadding;
+
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.s24),
+      padding: EdgeInsets.symmetric(vertical: verticalPadding),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [

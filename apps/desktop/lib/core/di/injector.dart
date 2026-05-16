@@ -20,7 +20,9 @@ import 'package:fluxora_desktop/features/transcoding/domain/repositories/transco
 import 'package:fluxora_desktop/features/dashboard/data/repositories/dashboard_repository_impl.dart';
 import 'package:fluxora_desktop/features/dashboard/domain/repositories/dashboard_repository.dart';
 import 'package:fluxora_desktop/features/library/data/repositories/library_repository_impl.dart';
+import 'package:fluxora_desktop/features/library/data/services/library_events_service.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
+import 'package:fluxora_desktop/features/library/presentation/cubit/library_cubit.dart';
 import 'package:fluxora_desktop/features/logs/data/repositories/logs_repository_impl.dart';
 import 'package:fluxora_desktop/features/logs/domain/repositories/logs_repository.dart';
 import 'package:fluxora_desktop/features/orders/data/repositories/orders_repository_impl.dart';
@@ -34,6 +36,7 @@ import 'package:fluxora_desktop/features/system_stats/domain/repositories/system
 import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_stats_cubit.dart';
 import 'package:fluxora_desktop/features/storage/data/repositories/storage_repository_impl.dart';
 import 'package:fluxora_desktop/features/storage/domain/repositories/storage_repository.dart';
+import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_cubit.dart';
 import 'package:fluxora_desktop/features/recent_activity/data/repositories/recent_activity_repository_impl.dart';
 import 'package:fluxora_desktop/features/recent_activity/domain/repositories/recent_activity_repository.dart';
 
@@ -72,6 +75,17 @@ Future<void> setupInjector() async {
     ),
   );
 
+  // ── WS events ───────────────────────────────────────────────────────────────
+  // Real-time `library_changed` / `storage_changed` push channel.  The
+  // server's `/api/v1/ws/notifications` endpoint broadcasts ephemeral
+  // event frames in addition to persistent notifications; this service
+  // filters for the sync-event kinds and feeds the cubits.  Started
+  // eagerly so the WS is live before the operator hits the Library
+  // page (one TCP connection, ~zero idle overhead).
+  getIt.registerSingleton<LibraryEventsService>(
+    LibraryEventsService(wsUrl: libraryEventsWsUrl(savedUrl))..start(),
+  );
+
   // ── Repositories ─────────────────────────────────────────────────────────────
   getIt.registerLazySingleton<DashboardRepository>(
     () => DashboardRepositoryImpl(apiClient: getIt<ApiClient>()),
@@ -83,6 +97,19 @@ Future<void> setupInjector() async {
 
   getIt.registerLazySingleton<LibraryRepository>(
     () => LibraryRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+  // Library + storage cubits are singletons so navigating away from
+  // the Library page and back doesn't refetch /library + /storage —
+  // the cached state stays in the cubit.  First access (on first
+  // Library page visit) triggers `load()`; the operator's Refresh
+  // button re-fires `load()` on demand.  Subscribe to
+  // [LibraryEventsService] for real-time refresh on server-side
+  // mutations (replaces the older 15 s polling timer).
+  getIt.registerLazySingleton<LibraryCubit>(
+    () => LibraryCubit(
+      repository: getIt<LibraryRepository>(),
+      events: getIt<LibraryEventsService>(),
+    )..load(),
   );
   
   getIt.registerLazySingleton<LogsRepository>(
@@ -123,6 +150,16 @@ Future<void> setupInjector() async {
   // ── Storage ───────────────────────────────────────────────────────────────────
   getIt.registerLazySingleton<StorageRepository>(
     () => StorageRepositoryImpl(apiClient: getIt<ApiClient>()),
+  );
+  // Same pattern as LibraryCubit — single instance shared across the
+  // Library page's lifetime + navigations.  Refresh button re-loads
+  // explicitly.  Subscribes to `storage_changed` events for real-time
+  // refresh on scan / delete.
+  getIt.registerLazySingleton<StorageCubit>(
+    () => StorageCubit(
+      repository: getIt<StorageRepository>(),
+      events: getIt<LibraryEventsService>(),
+    )..load(),
   );
 
   // ── Recent activity ───────────────────────────────────────────────────────────

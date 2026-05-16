@@ -15,7 +15,6 @@ import 'package:fluxora_desktop/features/library/domain/entities/library.dart' a
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_cubit.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_state.dart';
-import 'package:fluxora_desktop/features/storage/domain/repositories/storage_repository.dart';
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_storage.dart';
 import 'package:fluxora_desktop/features/transcode/domain/repositories/transcode_repository.dart';
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_cubit.dart';
@@ -25,27 +24,21 @@ import 'package:fluxora_desktop/shared/widgets/flux_glass_dialog.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_glass_menu.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_tab_bar.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
-import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
 
 class LibraryScreen extends StatelessWidget {
-  const LibraryScreen({super.key});
+  const LibraryScreen({super.key, this.embedded = false});
+
+  /// When `true`, the screen is hosted inside a parent shell that already
+  /// renders its own page header + action buttons — skip the inner ones.
+  /// The shell also owns the `LibraryCubit` + `StorageCubit` providers;
+  /// this widget is therefore only valid inside a tree that already
+  /// provides them (the `LibraryShell`).  Direct mounting is no longer
+  /// supported.
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
-    return MultiBlocProvider(
-      providers: [
-        BlocProvider<LibraryCubit>(
-          create: (_) => LibraryCubit(
-            repository: GetIt.I<LibraryRepository>(),
-          )..load(),
-        ),
-        BlocProvider<StorageCubit>(
-          create: (_) =>
-              StorageCubit(repository: GetIt.I<StorageRepository>())..load(),
-        ),
-      ],
-      child: const _LibraryView(),
-    );
+    return _LibraryView(embedded: embedded);
   }
 }
 
@@ -66,6 +59,118 @@ LibraryType? _typeForTab(String tabId) => switch (tabId) {
       'docs' => LibraryType.files,
       _ => null,
     };
+
+// ── Type filter chips ─────────────────────────────────────────────────────────
+
+/// Lighter-weight than the outer `FluxPillTabs` — fully rounded pill
+/// shape, smaller padding, slightly muted typography.  Reads as a
+/// filter row rather than a second level of page navigation.
+class _TypeFilterChips extends StatelessWidget {
+  const _TypeFilterChips({
+    required this.tabs,
+    required this.activeId,
+    required this.onChange,
+  });
+
+  final List<FluxTab> tabs;
+  final String activeId;
+  final ValueChanged<String> onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.s6),
+      child: Wrap(
+        spacing: AppSpacing.s6,
+        runSpacing: AppSpacing.s6,
+        children: [
+          for (final tab in tabs)
+            _TypeFilterChip(
+              tab: tab,
+              isActive: tab.id == activeId,
+              onTap: () => onChange(tab.id),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TypeFilterChip extends StatefulWidget {
+  const _TypeFilterChip({
+    required this.tab,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final FluxTab tab;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  @override
+  State<_TypeFilterChip> createState() => _TypeFilterChipState();
+}
+
+class _TypeFilterChipState extends State<_TypeFilterChip> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color bg = widget.isActive
+        ? const Color(0x24A855F7)
+        : (_hover ? const Color(0x08FFFFFF) : Colors.transparent);
+    final Color border = widget.isActive
+        ? const Color(0x4DA855F7)
+        : AppColors.borderSubtle;
+    final Color fg = widget.isActive
+        ? AppColors.violetSoft
+        : (_hover ? AppColors.textBody : AppColors.textMutedV2);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s10,
+            vertical: AppSpacing.s6,
+          ),
+          decoration: BoxDecoration(
+            color: bg,
+            border: Border.all(color: border),
+            // Fully rounded for the "chip" feel — distinct from the
+            // small-radius FluxPillTabs above.
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.tab.icon != null) ...[
+                Icon(widget.tab.icon, size: 12, color: fg),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                widget.tab.label,
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 12,
+                  fontWeight:
+                      widget.isActive ? FontWeight.w600 : FontWeight.w500,
+                  color: fg,
+                  height: 1.0,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 // ── Sort / Filter / View-mode types ────────────────────────────────────────────
 
@@ -114,7 +219,9 @@ class _LibraryFilters {
 // ── Main view ──────────────────────────────────────────────────────────────────
 
 class _LibraryView extends StatefulWidget {
-  const _LibraryView();
+  const _LibraryView({required this.embedded});
+
+  final bool embedded;
 
   @override
   State<_LibraryView> createState() => _LibraryViewState();
@@ -128,71 +235,140 @@ class _LibraryViewState extends State<_LibraryView> {
   _LibraryFilters _filters = const _LibraryFilters();
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    // Stale-while-revalidate — kick off a silent background refresh on
+    // every page mount so cached data caught up to whatever the server
+    // currently has.  `.refresh()` re-fetches without flipping the
+    // state back to Loading, so the cached UI stays visible while the
+    // request is in flight; if the response differs, the new
+    // `LibraryLoaded` emission updates the UI seamlessly.
+    final libraryCubit = context.read<LibraryCubit>();
+    final storageCubit = context.read<StorageCubit>();
+    if (libraryCubit.state is LibraryLoaded) {
+      // Don't refresh during the initial load (Loading state) — the
+      // initial `load()` is already in flight.
+      libraryCubit.refresh();
+    }
+    if (storageCubit.state is StorageLoaded) {
+      storageCubit.refresh();
+    }
+
+    // Singleton cubits (registered in GetIt) may already hold a
+    // `LibraryLoaded` state from a previous mount of this screen.  The
+    // `BlocConsumer.listener` below only fires for FRESH state
+    // emissions, so on re-mount against cached data it never auto-
+    // selects.  Run the same picker here against whatever state the
+    // cubit currently holds.
+    if (_selectedLibraryId != null) return;
+    final state = libraryCubit.state;
+    if (state is! LibraryLoaded || state.libraries.isEmpty) return;
+    final sorted = List<Library>.from(state.libraries)
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    final firstId = sorted.first.id;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() => _selectedLibraryId = firstId);
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Container(
       color: AppColors.bgRoot,
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        // Stretch so the right detail panel's background fills the full
+        // available height instead of stopping at its intrinsic content
+        // height — closes the visible gap below "Remove Library" when the
+        // left-side library list runs taller than the panel.
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // ── Main content ───────────────────────────────────────────────
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.only(
-                left: AppSpacing.s28,
-                right: AppSpacing.s28,
-                bottom: AppSpacing.s28,
+              // Tightened top padding (was s20) so the filter chips sit
+              // closer to the card's top edge — frees ~8 px of vertical
+              // space.  Sides stay at s28 to match the original layout.
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.s28,
+                AppSpacing.s12,
+                AppSpacing.s28,
+                AppSpacing.s28,
               ),
               child: BlocConsumer<LibraryCubit, LibraryState>(
                 listener: (context, state) {
+                  // Pick the alphabetically-first library so the auto-
+                  // selection matches the first card in the displayed
+                  // (sorted) grid.  Using `state.libraries.first` would
+                  // pick whatever order the server returned (creation
+                  // order in practice) which doesn't line up with the
+                  // visible grid sort.
+                  Library? firstByDisplayedSort() {
+                    if (state is! LibraryLoaded || state.libraries.isEmpty) {
+                      return null;
+                    }
+                    final sorted = List<Library>.from(state.libraries)
+                      ..sort((a, b) =>
+                          a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+                    return sorted.first;
+                  }
+
                   // Auto-select first library when loaded.
                   if (state is LibraryLoaded &&
                       _selectedLibraryId == null &&
                       state.libraries.isNotEmpty) {
-                    setState(() =>
-                        _selectedLibraryId = state.libraries.first.id);
+                    final first = firstByDisplayedSort();
+                    if (first != null) {
+                      setState(() => _selectedLibraryId = first.id);
+                    }
                   }
                   // Drop selection if the selected library disappeared (e.g. delete).
                   if (state is LibraryLoaded &&
                       _selectedLibraryId != null &&
                       !state.libraries.any((l) => l.id == _selectedLibraryId)) {
-                    setState(() => _selectedLibraryId = state.libraries.isEmpty
-                        ? null
-                        : state.libraries.first.id);
+                    final first = firstByDisplayedSort();
+                    setState(() => _selectedLibraryId = first?.id);
                   }
                 },
                 builder: (context, state) {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // ── Page header ────────────────────────────────────
-                      PageHeader(
-                        title: 'Library',
-                        subtitle: 'Manage your media libraries and files',
-                        actions: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            FluxButton(
-                              variant: FluxButtonVariant.secondary,
-                              icon: Icons.refresh_rounded,
-                              onPressed: state is LibraryLoaded
-                                  ? () => context.read<LibraryCubit>().load()
-                                  : null,
-                              child: const Text('Refresh'),
-                            ),
-                            const SizedBox(width: AppSpacing.s8),
-                            FluxButton(
-                              variant: FluxButtonVariant.primary,
-                              icon: Icons.add_rounded,
-                              onPressed: () =>
-                                  _showAddLibraryDialog(context),
-                              child: const Text('Add Library'),
-                            ),
-                          ],
+                      if (!widget.embedded)
+                        PageHeader(
+                          title: 'Library',
+                          subtitle: 'Manage your media libraries and files',
+                          actions: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              FluxButton(
+                                variant: FluxButtonVariant.secondary,
+                                icon: Icons.refresh_rounded,
+                                onPressed: state is LibraryLoaded
+                                    ? () =>
+                                        context.read<LibraryCubit>().load()
+                                    : null,
+                                child: const Text('Refresh'),
+                              ),
+                              const SizedBox(width: AppSpacing.s8),
+                              FluxButton(
+                                variant: FluxButtonVariant.primary,
+                                icon: Icons.add_rounded,
+                                onPressed: () =>
+                                    _showAddLibraryDialog(context),
+                                child: const Text('Add Library'),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
 
-                      // ── Tab bar ────────────────────────────────────────
-                      FluxTabBar(
+                      // ── Type filter chips (was a FluxTabBar) ───────────
+                      // Smaller fully-rounded chips so they read as
+                      // filters, not as a second level of navigation
+                      // (the outer FluxPillTabs already owns the nav
+                      // role).  2026-05-16 owner review.
+                      _TypeFilterChips(
                         tabs: _kTabs,
                         activeId: _activeTab,
                         onChange: (id) => setState(() => _activeTab = id),
@@ -200,11 +376,24 @@ class _LibraryViewState extends State<_LibraryView> {
                       const SizedBox(height: AppSpacing.s18),
 
                       // ── Body ───────────────────────────────────────────
+                      // Skeleton on first paint + during reload — keeps
+                      // the page structure visible so operators see
+                      // chrome + stat strip placeholders + ghost cards
+                      // instead of a blank spinner while the cubit
+                      // fetches `/library` + `/storage`.
                       switch (state) {
-                        LibraryInitial() || LibraryLoading() =>
-                          const _LoadingBody(),
-                        LibraryLoaded() =>
-                          _LoadedBody(
+                        LibraryInitial() || LibraryLoading() => _SkeletonBody(
+                            activeTab: _activeTab,
+                            sortBy: _sortBy,
+                            viewMode: _viewMode,
+                            filters: _filters,
+                            onSortChanged: (s) => setState(() => _sortBy = s),
+                            onViewModeChanged: (m) =>
+                                setState(() => _viewMode = m),
+                            onFiltersChanged: (f) =>
+                                setState(() => _filters = f),
+                          ),
+                        LibraryLoaded() => _LoadedBody(
                             state: state,
                             activeTab: _activeTab,
                             selectedLibraryId: _selectedLibraryId,
@@ -309,29 +498,8 @@ class _LibraryViewState extends State<_LibraryView> {
     }
   }
 
-  Future<void> _showAddLibraryDialog(BuildContext context) async {
-    final cubit = context.read<LibraryCubit>();
-    final messenger = ScaffoldMessenger.of(context);
-    await _showLibraryFormDialog(
-      context: context,
-      title: 'Add Library',
-      submitLabel: 'Create Library',
-      typeEditable: true,
-      onSubmit: (name, type, paths,
-          {required av1Override, required vp9Override}) async {
-        try {
-          await cubit.createLibrary(name, type, paths);
-          messenger.showSnackBar(SnackBar(
-            content: Text('Library "$name" created'),
-          ));
-        } catch (e) {
-          messenger.showSnackBar(SnackBar(
-            content: Text('Could not create library: $e'),
-          ));
-        }
-      },
-    );
-  }
+  Future<void> _showAddLibraryDialog(BuildContext context) =>
+      showAddLibraryDialog(context);
 
   Future<void> _showEditLibraryDialog(
       BuildContext context, Library lib) async {
@@ -563,6 +731,36 @@ typedef LibraryFormSubmit = void Function(
   required bool? vp9Override,
 });
 
+/// Top-level helper that opens the "Add Library" form.
+///
+/// Lifted out of `_LibraryViewState` so the surrounding shell can reuse it
+/// (the Refresh / Add Library buttons now live on the `LibraryShell` page
+/// header, outside the screen's State scope).  Only uses `context` for the
+/// cubit + messenger lookups; no widget-state access.
+Future<void> showAddLibraryDialog(BuildContext context) async {
+  final cubit = context.read<LibraryCubit>();
+  final messenger = ScaffoldMessenger.of(context);
+  await _showLibraryFormDialog(
+    context: context,
+    title: 'Add Library',
+    submitLabel: 'Create Library',
+    typeEditable: true,
+    onSubmit: (name, type, paths,
+        {required av1Override, required vp9Override}) async {
+      try {
+        await cubit.createLibrary(name, type, paths);
+        messenger.showSnackBar(SnackBar(
+          content: Text('Library "$name" created'),
+        ));
+      } catch (e) {
+        messenger.showSnackBar(SnackBar(
+          content: Text('Could not create library: $e'),
+        ));
+      }
+    },
+  );
+}
+
 Future<void> _showLibraryFormDialog({
   required BuildContext context,
   required String title,
@@ -636,7 +834,22 @@ Future<void> _showLibraryFormDialog({
                     onPressed: () async {
                       final picked = await FilePicker.getDirectoryPath();
                       if (picked != null && !paths.contains(picked)) {
-                        setLocal(() => paths.add(picked));
+                        setLocal(() {
+                          paths.add(picked);
+                          // Auto-populate the Library Name from the
+                          // picked folder's basename when the field is
+                          // still empty — operators can override it for
+                          // a custom name.  2026-05-16 owner ask.
+                          if (nameController.text.trim().isEmpty) {
+                            final basename = picked
+                                .split(RegExp(r'[\\/]'))
+                                .where((p) => p.isNotEmpty)
+                                .lastOrNull;
+                            if (basename != null && basename.isNotEmpty) {
+                              nameController.text = basename;
+                            }
+                          }
+                        });
                       }
                     },
                   ),
@@ -761,22 +974,144 @@ Future<void> _showLibraryFormDialog({
 
 // ── Loading ────────────────────────────────────────────────────────────────────
 
-class _LoadingBody extends StatelessWidget {
-  const _LoadingBody();
+/// Renders the same outer scaffold as `_LoadedBody` (optional stat
+/// strip + toolbar + grid area) but with placeholder content in the
+/// data-dependent slots — `_SmallStatTile` values become "—", grid
+/// shows ghost cards.  Lets the operator see the page shell + chrome
+/// immediately while the cubit fetches `/library` + `/storage`.
+class _SkeletonBody extends StatelessWidget {
+  const _SkeletonBody({
+    required this.activeTab,
+    required this.sortBy,
+    required this.viewMode,
+    required this.filters,
+    required this.onSortChanged,
+    required this.onViewModeChanged,
+    required this.onFiltersChanged,
+  });
+
+  final String activeTab;
+  final _SortBy sortBy;
+  final _ViewMode viewMode;
+  final _LibraryFilters filters;
+  final ValueChanged<_SortBy> onSortChanged;
+  final ValueChanged<_ViewMode> onViewModeChanged;
+  final ValueChanged<_LibraryFilters> onFiltersChanged;
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.symmetric(vertical: 60),
-        child: SizedBox(
-          width: 24,
-          height: 24,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
+    final isAll = activeTab == 'all';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (isAll) ...[
+          const _SkeletonStatTilesRow(),
+          const SizedBox(height: AppSpacing.s18),
+        ],
+        _ToolbarRow(
+          sortBy: sortBy,
+          viewMode: viewMode,
+          filters: filters,
+          // No real result count yet — toolbar's count label hides
+          // when 0 / handles gracefully.
+          resultCount: 0,
+          onSortChanged: onSortChanged,
+          onViewModeChanged: onViewModeChanged,
+          onFiltersChanged: onFiltersChanged,
+        ),
+        const SizedBox(height: AppSpacing.s14),
+        const _SkeletonGrid(),
+      ],
+    );
+  }
+}
+
+class _SkeletonStatTilesRow extends StatelessWidget {
+  const _SkeletonStatTilesRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Row(
+      children: [
+        Expanded(
+          child: _SmallStatTile(
+            icon: Icons.folder_outlined,
+            label: 'Total Libraries',
+            value: '—',
             color: AppColors.violet,
           ),
         ),
+        SizedBox(width: AppSpacing.s14),
+        Expanded(
+          child: _SmallStatTile(
+            icon: Icons.insert_drive_file_outlined,
+            label: 'Total Files',
+            value: '—',
+            color: AppColors.blue,
+          ),
+        ),
+        SizedBox(width: AppSpacing.s14),
+        Expanded(
+          child: _SmallStatTile(
+            icon: Icons.storage_outlined,
+            label: 'Total Size',
+            value: '—',
+            color: AppColors.emerald,
+          ),
+        ),
+        SizedBox(width: AppSpacing.s14),
+        Expanded(
+          child: _SmallStatTile(
+            icon: Icons.refresh_rounded,
+            label: 'Last Scan',
+            value: '—',
+            color: AppColors.amber,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SkeletonGrid extends StatelessWidget {
+  const _SkeletonGrid();
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const itemWidth = 280.0;
+        final cols = (constraints.maxWidth / itemWidth).floor().clamp(1, 3);
+        const spacing = AppSpacing.s14;
+        final tileWidth =
+            (constraints.maxWidth - spacing * (cols - 1)) / cols;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (var i = 0; i < 4; i++)
+              SizedBox(
+                width: tileWidth,
+                child: const _SkeletonLibraryCard(),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _SkeletonLibraryCard extends StatelessWidget {
+  const _SkeletonLibraryCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 168,
+      decoration: BoxDecoration(
+        color: AppColors.bgRaised,
+        border: Border.all(color: AppColors.borderSubtle),
+        borderRadius: BorderRadius.circular(AppRadii.lg),
       ),
     );
   }
@@ -1010,10 +1345,13 @@ class _StatTilesRow extends StatelessWidget {
     if (latest == null) return 'Never';
     final now = DateTime.now().toUtc();
     final diff = now.difference(latest.toUtc());
-    if (diff.inSeconds < 60) return 'Just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return '${diff.inDays}d ago';
+    // Compact "10h" instead of "10h ago" — the stat tile is narrow and
+    // the trailing "ago" was truncating to "10h a…".  The "Last Scan"
+    // label already implies the "ago" reading.
+    if (diff.inSeconds < 60) return 'Now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+    if (diff.inHours < 24) return '${diff.inHours}h';
+    return '${diff.inDays}d';
   }
 
   @override
@@ -1029,12 +1367,15 @@ class _StatTilesRow extends StatelessWidget {
         : humanBytes(state.libraries
             .fold<int>(0, (acc, l) => acc + l.totalSizeBytes));
 
+    // Original 4-card layout restored at ~60 % size — uses a local
+    // `_SmallStatTile` instead of the shared `StatTile` so the
+    // Dashboard's full-size version isn't affected.
     return Row(
       children: [
         Expanded(
           child: Semantics(
             label: 'Total Libraries $totalLibraries',
-            child: StatTile(
+            child: _SmallStatTile(
               icon: Icons.folder_outlined,
               label: 'Total Libraries',
               value: '$totalLibraries',
@@ -1046,7 +1387,7 @@ class _StatTilesRow extends StatelessWidget {
         Expanded(
           child: Semantics(
             label: 'Total Files $totalFiles',
-            child: StatTile(
+            child: _SmallStatTile(
               icon: Icons.insert_drive_file_outlined,
               label: 'Total Files',
               value: totalFiles.toString(),
@@ -1058,12 +1399,11 @@ class _StatTilesRow extends StatelessWidget {
         Expanded(
           child: Semantics(
             label: 'Total Size $totalSizeStr',
-            child: StatTile(
+            child: _SmallStatTile(
               icon: Icons.storage_outlined,
               label: 'Total Size',
               value: totalSizeStr,
               color: AppColors.emerald,
-              accent: AppColors.textMutedV2,
             ),
           ),
         ),
@@ -1071,12 +1411,11 @@ class _StatTilesRow extends StatelessWidget {
         Expanded(
           child: Semantics(
             label: 'Last Scan $lastScan',
-            child: StatTile(
+            child: _SmallStatTile(
               icon: Icons.refresh_rounded,
               label: 'Last Scan',
               value: lastScan,
               color: AppColors.amber,
-              accent: AppColors.textMutedV2,
             ),
           ),
         ),
@@ -1084,6 +1423,87 @@ class _StatTilesRow extends StatelessWidget {
     );
   }
 }
+
+/// Smaller variant of the shared `StatTile` — same visual treatment
+/// (FluxCard + icon badge + label + value) at ~60 % of the original
+/// height.  Local to the Library screen so the Dashboard's full-size
+/// metric tiles aren't affected.
+class _SmallStatTile extends StatelessWidget {
+  const _SmallStatTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.s14,
+        vertical: AppSpacing.s10,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.bgRaised,
+        border: Border.all(color: AppColors.borderSubtle),
+        borderRadius: BorderRadius.circular(AppRadii.lg),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Icon badge — 32×32 (was 44×44 in the full-size StatTile).
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(AppRadii.sm),
+            ),
+            child: Center(
+              child: Icon(icon, size: 16, color: color),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.s10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  label,
+                  style: AppTypography.captionV2.copyWith(
+                    color: AppColors.textMutedV2,
+                    fontWeight: FontWeight.w500,
+                    height: 1.1,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: AppTypography.h2.copyWith(
+                    color: AppColors.textBright,
+                    height: 1.1,
+                    letterSpacing: -0.2,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 
 String humanBytes(int bytes) {
   if (bytes <= 0) return '0 B';
@@ -1137,6 +1557,9 @@ class _LibraryGrid extends StatelessWidget {
         final tileWidth =
             (constraints.maxWidth - spacing * (cols - 1)) / cols;
 
+        // Inline "+ Add library" placeholder retired 2026-05-16 — the
+        // header's `+ Add Library` button is the single entry point;
+        // having two duplicated affordances was confusing.
         return Wrap(
           spacing: spacing,
           runSpacing: spacing,
@@ -1155,10 +1578,6 @@ class _LibraryGrid extends StatelessWidget {
                       context.go(Routes.libraryFiles(lib.id)),
                 ),
               ),
-            SizedBox(
-              width: tileWidth,
-              child: _AddLibraryPlaceholder(onTap: onAddLibrary),
-            ),
           ],
         );
       },
@@ -1193,6 +1612,25 @@ class _LibraryCard extends StatefulWidget {
 
 class _LibraryCardState extends State<_LibraryCard> {
   bool _hovered = false;
+
+  // Timestamp-based double-tap detection.  Used instead of
+  // `GestureDetector.onDoubleTap` because having DoubleTap in the arena
+  // forces Tap to wait ~300 ms for double-tap disambiguation, which
+  // makes selection feel sluggish.  With only `onTap` registered, the
+  // arena has no competition and fires instantly on release.
+  DateTime? _lastTapAt;
+
+  void _handleTap() {
+    final now = DateTime.now();
+    if (_lastTapAt != null &&
+        now.difference(_lastTapAt!).inMilliseconds < 300) {
+      _lastTapAt = null;
+      widget.onOpenFiles();
+      return;
+    }
+    _lastTapAt = now;
+    widget.onTap();
+  }
 
   static Gradient _gradientFor(LibraryType type) => switch (type) {
         LibraryType.movies => const LinearGradient(
@@ -1245,10 +1683,17 @@ class _LibraryCardState extends State<_LibraryCard> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
-        onTap: widget.onTap,
-        onDoubleTap: widget.onOpenFiles,
+        // Plain `onTap` (no `onDoubleTap`) so Tap is alone in the
+        // gesture arena and fires instantly on release — no 300 ms
+        // disambiguation wait.  Double-tap detection is timestamp-
+        // based inside `_handleTap`.
+        onTap: _handleTap,
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+          // 80 ms (was 150 ms) so the border / shadow change snaps in
+          // quickly enough to feel "instant" after a click.  Long
+          // enough not to be jarring; short enough that operators
+          // don't perceive it as latency.
+          duration: const Duration(milliseconds: 80),
           curve: Curves.easeOut,
           constraints: const BoxConstraints(minHeight: 168),
           decoration: BoxDecoration(
@@ -1262,15 +1707,14 @@ class _LibraryCardState extends State<_LibraryCard> {
             ),
             boxShadow: widget.isSelected
                 ? [
+                    // Toned-down selection glow (2026-05-16 owner review).
+                    // Drops the 1 px spread shadow that was creating a
+                    // violet "ring" around the card; keeps a softer drop
+                    // shadow so the selected card still reads as lifted.
                     BoxShadow(
-                      color: AppColors.violet.withValues(alpha: 0.3),
-                      blurRadius: 24,
-                      offset: const Offset(0, 8),
-                    ),
-                    BoxShadow(
-                      color: AppColors.violet.withValues(alpha: 0.3),
-                      blurRadius: 0,
-                      spreadRadius: 1,
+                      color: AppColors.violet.withValues(alpha: 0.18),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
                     ),
                   ]
                 : const [],
@@ -1293,16 +1737,39 @@ class _LibraryCardState extends State<_LibraryCard> {
               fit: StackFit.expand,
               children: [
                 if (lib.coverUrls.isNotEmpty)
-                  Positioned.fill(child: _PosterMosaic(urls: lib.coverUrls)),
-                // Dark gradient overlay for text legibility
+                  Positioned.fill(child: _PosterMosaic(urls: lib.coverUrls))
+                else
+                  // Larger faded type icon centered behind the chrome —
+                  // gives the gradient-only card a visual anchor when no
+                  // TMDB posters exist (Music / Documents libraries, or
+                  // movies without enrichment).  Sits behind the dark
+                  // gradient overlay so text stays readable.
+                  Positioned.fill(
+                    child: Center(
+                      child: Icon(
+                        _iconFor(lib.type),
+                        size: 72,
+                        color: Colors.white.withValues(alpha: 0.10),
+                      ),
+                    ),
+                  ),
+                // Dark gradient overlay — darker at both top (behind the
+                // icon badge + file-count pill + menu) and bottom (behind
+                // the name + path), lighter in the middle so the poster
+                // mosaic stays visible.  Sandwich pattern requested by
+                // owner on 2026-05-16.
                 const Positioned.fill(
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Color(0x33000000), Color(0xCC000000)],
-                        stops: [0.3, 1.0],
+                        colors: [
+                          Color(0xAA000000), // top scrim: ~67% black
+                          Color(0x22000000), // mid:        ~13% black
+                          Color(0xDD000000), // bottom:    ~87% black
+                        ],
+                        stops: [0.0, 0.45, 1.0],
                       ),
                     ),
                   ),
@@ -1314,26 +1781,23 @@ class _LibraryCardState extends State<_LibraryCard> {
                     children: [
                       Row(
                         children: [
-                          // Type icon badge
+                          // Compact type-icon badge.  Shrunk from 32×32
+                          // (2026-05-16) since the new 72 px faded
+                          // centre-icon already conveys the library
+                          // type — this small chip is now just a colour
+                          // accent matching the type.
                           Container(
-                            width: 32,
-                            height: 32,
+                            width: 22,
+                            height: 22,
                             decoration: BoxDecoration(
-                              color: accent.withValues(alpha: 0.25),
+                              color: accent.withValues(alpha: 0.3),
                               borderRadius:
-                                  BorderRadius.circular(AppRadii.sm),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: accent.withValues(alpha: 0.3),
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
+                                  BorderRadius.circular(AppRadii.xs),
                             ),
                             child: Center(
                               child: Icon(
                                 _iconFor(lib.type),
-                                size: 16,
+                                size: 12,
                                 color: Colors.white,
                               ),
                             ),
@@ -1384,9 +1848,11 @@ class _LibraryCardState extends State<_LibraryCard> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        lib.rootPaths.isNotEmpty
-                            ? lib.rootPaths.first
-                            : 'No path',
+                        lib.rootPaths.isEmpty
+                            ? 'No path'
+                            : lib.rootPaths.length == 1
+                                ? lib.rootPaths.first
+                                : '${lib.rootPaths.first}  +${lib.rootPaths.length - 1} more',
                         style: const TextStyle(
                           fontFamily: 'Inter',
                           fontSize: 11,

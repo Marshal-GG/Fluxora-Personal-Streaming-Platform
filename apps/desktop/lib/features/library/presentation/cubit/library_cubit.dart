@@ -1,17 +1,35 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
 import 'package:fluxora_core/entities/library.dart';
 import 'package:fluxora_core/network/api_exception.dart';
+import 'package:fluxora_desktop/features/library/data/services/library_events_service.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_state.dart';
 
 class LibraryCubit extends Cubit<LibraryState> {
-  LibraryCubit({required LibraryRepository repository})
-      : _repository = repository,
-        super(const LibraryInitial());
+  LibraryCubit({
+    required LibraryRepository repository,
+    LibraryEventsService? events,
+  })  : _repository = repository,
+        super(const LibraryInitial()) {
+    // Subscribe to server-side `library_changed` events for real-time
+    // refresh.  When the WS isn't wired (e.g. test harness) `events` is
+    // null and the cubit falls back to manual Refresh-button-only.
+    _eventsSub = events?.libraryChanged.listen((_) => refresh());
+  }
 
   final LibraryRepository _repository;
   static final _log = Logger();
+
+  StreamSubscription<void>? _eventsSub;
+
+  @override
+  Future<void> close() {
+    _eventsSub?.cancel();
+    return super.close();
+  }
 
   Future<void> load() async {
     emit(const LibraryLoading());
@@ -34,7 +52,7 @@ class LibraryCubit extends Cubit<LibraryState> {
 
   /// Refresh quietly: re-fetches without flipping back to [LibraryLoading],
   /// so the UI doesn't flash a spinner after every mutation.
-  Future<void> _refresh() async {
+  Future<void> refresh() async {
     try {
       final payload = await _repository.getLibrariesWithOverrides();
       final files = await _repository.getFiles();
@@ -77,7 +95,7 @@ class LibraryCubit extends Cubit<LibraryState> {
         type: type,
         rootPaths: rootPaths,
       );
-      await _refresh();
+      await refresh();
       return lib;
     } on ApiException catch (e, st) {
       _log.e('Create library failed', error: e, stackTrace: st);
@@ -103,7 +121,7 @@ class LibraryCubit extends Cubit<LibraryState> {
         av1Override: av1Override,
         vp9Override: vp9Override,
       );
-      await _refresh();
+      await refresh();
       return lib;
     } on ApiException catch (e, st) {
       _log.e('Update library failed', error: e, stackTrace: st);
@@ -157,7 +175,7 @@ class LibraryCubit extends Cubit<LibraryState> {
   Future<int> scanLibrary(String libraryId) async {
     try {
       final added = await _repository.scanLibrary(libraryId);
-      await _refresh();
+      await refresh();
       return added;
     } on ApiException catch (e, st) {
       _log.e('Scan library failed', error: e, stackTrace: st);
@@ -183,7 +201,7 @@ class LibraryCubit extends Cubit<LibraryState> {
       );
       // Reload library + file list so any newly-set poster_url / title
       // shows up immediately in the list view.
-      await _refresh();
+      await refresh();
       return result;
     } on ApiException catch (e, st) {
       _log.e('TMDB rescan failed', error: e, stackTrace: st);
@@ -198,7 +216,7 @@ class LibraryCubit extends Cubit<LibraryState> {
     try {
       await _repository.uploadFileToLibrary(
           libraryId: libraryId, filePath: filePath);
-      await _refresh();
+      await refresh();
     } on ApiException catch (e, st) {
       _log.e('Upload file failed', error: e, stackTrace: st);
       rethrow;

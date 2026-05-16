@@ -37,7 +37,11 @@ const _levelBg = {
 // ── Entry point ────────────────────────────────────────────────────────────────
 
 class LogsScreen extends StatelessWidget {
-  const LogsScreen({super.key});
+  const LogsScreen({super.key, this.embedded = false});
+
+  /// When `true`, hosted inside a parent shell that already renders a
+  /// page header — skip ours.
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +49,7 @@ class LogsScreen extends StatelessWidget {
       create: (_) => LogsCubit(
         repository: GetIt.I<LogsRepository>(),
       )..load(),
-      child: const _LogsView(),
+      child: _LogsView(embedded: embedded),
     );
   }
 }
@@ -53,7 +57,9 @@ class LogsScreen extends StatelessWidget {
 // ── Main stateful view ─────────────────────────────────────────────────────────
 
 class _LogsView extends StatefulWidget {
-  const _LogsView();
+  const _LogsView({required this.embedded});
+
+  final bool embedded;
 
   @override
   State<_LogsView> createState() => _LogsViewState();
@@ -179,35 +185,48 @@ class _LogsViewState extends State<_LogsView> {
                   right: AppSpacing.s24,
                   bottom: AppSpacing.s24,
                 ),
-                child: Column(
+                child: Builder(builder: (context) {
+                  final actionsRow = Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FluxButton(
+                        variant: FluxButtonVariant.secondary,
+                        size: FluxButtonSize.sm,
+                        icon: _paused ? Icons.play_arrow : Icons.pause,
+                        onPressed: _togglePause,
+                        child: Text(_paused ? 'Resume' : 'Pause'),
+                      ),
+                      const SizedBox(width: AppSpacing.s8),
+                      FluxButton(
+                        variant: FluxButtonVariant.danger,
+                        size: FluxButtonSize.sm,
+                        icon: Icons.delete_outline,
+                        onPressed: () => context.read<LogsCubit>().load(),
+                        child: const Text('Clear Logs'),
+                      ),
+                    ],
+                  );
+                  return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Header
-                    PageHeader(
-                      title: 'Logs',
-                      subtitle: 'View and monitor server logs in real time',
-                      actions: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          FluxButton(
-                            variant: FluxButtonVariant.secondary,
-                            size: FluxButtonSize.sm,
-                            icon: _paused ? Icons.play_arrow : Icons.pause,
-                            onPressed: _togglePause,
-                            child: Text(_paused ? 'Resume' : 'Pause'),
-                          ),
-                          const SizedBox(width: AppSpacing.s8),
-                          FluxButton(
-                            variant: FluxButtonVariant.danger,
-                            size: FluxButtonSize.sm,
-                            icon: Icons.delete_outline,
-                            onPressed: () =>
-                                context.read<LogsCubit>().load(),
-                            child: const Text('Clear Logs'),
-                          ),
-                        ],
+                    if (!widget.embedded)
+                      PageHeader(
+                        title: 'Logs',
+                        subtitle: 'View and monitor server logs in real time',
+                        actions: actionsRow,
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.only(
+                          top: AppSpacing.s8,
+                          bottom: AppSpacing.s16,
+                        ),
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: actionsRow,
+                        ),
                       ),
-                    ),
 
                     // Tab bar
                     FluxTabBar(
@@ -269,7 +288,8 @@ class _LogsViewState extends State<_LogsView> {
                       ),
                     ],
                   ],
-                ),
+                  );
+                }),
               ),
             ),
 

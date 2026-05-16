@@ -493,7 +493,7 @@ class _QuickAccessCard extends StatelessWidget {
                   title: 'View Activity',
                   sub: 'Real-time activity',
                   color: AppColors.amber,
-                  onTap: () => context.go(Routes.activity),
+                  onTap: () => context.go(Routes.activitySessions),
                 ),
               ),
             ],
@@ -643,7 +643,7 @@ class _RecentActivityCard extends StatelessWidget {
               children: [
                 const Text('Recent Activity', style: AppTypography.h2),
                 GestureDetector(
-                  onTap: () => context.go(Routes.activity),
+                  onTap: () => context.go(Routes.activitySessions),
                   child: MouseRegion(
                     cursor: SystemMouseCursors.click,
                     child: Text(
@@ -739,64 +739,73 @@ class _ActivityRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final (color, iconData) = _iconFor(event.type);
 
-    return Container(
-      decoration: const BoxDecoration(
-        border: Border(
-          top: BorderSide(color: Color(0x08FFFFFF)),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () => context.go(
+          '${Routes.activitySessions}?event=${Uri.encodeQueryComponent(event.id)}',
         ),
-      ),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.s20,
-        vertical: AppSpacing.s10,
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(AppSpacing.s8),
-            ),
-            child: Center(
-              child: Icon(iconData, size: 13, color: color),
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          decoration: const BoxDecoration(
+            border: Border(
+              top: BorderSide(color: Color(0x08FFFFFF)),
             ),
           ),
-          const SizedBox(width: AppSpacing.s12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  event.summary,
-                  style: const TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w500,
-                    color: AppColors.textBody,
-                    height: 1.4,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s20,
+            vertical: AppSpacing.s10,
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(AppSpacing.s8),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  event.type,
-                  style: AppTypography.captionV2.copyWith(
-                    color: AppColors.textDim,
-                  ),
+                child: Center(
+                  child: Icon(iconData, size: 13, color: color),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: AppSpacing.s12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      event.summary,
+                      style: const TextStyle(
+                        fontFamily: 'Inter',
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                        color: AppColors.textBody,
+                        height: 1.4,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      event.type,
+                      style: AppTypography.captionV2.copyWith(
+                        color: AppColors.textDim,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppSpacing.s8),
+              Text(
+                _relativeTime(event.createdAt),
+                style: AppTypography.monoCaption.copyWith(
+                  color: AppColors.textDim,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: AppSpacing.s8),
-          Text(
-            _relativeTime(event.createdAt),
-            style: AppTypography.monoCaption.copyWith(
-              color: AppColors.textDim,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 import 'package:logger/logger.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -10,6 +11,7 @@ import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
 
+import 'package:fluxora_desktop/core/router/app_router.dart';
 import 'package:fluxora_desktop/features/transcode/domain/entities/transcode_storage.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_cubit.dart';
 import 'package:fluxora_desktop/features/transcode/presentation/cubit/transcode_state.dart';
@@ -91,29 +93,43 @@ class _StripBody extends StatelessWidget {
         border: Border.all(color: AppColors.borderSubtle),
         borderRadius: BorderRadius.circular(AppRadii.lg),
       ),
-      child: Wrap(
-        spacing: AppSpacing.s24,
-        runSpacing: AppSpacing.s10,
-        crossAxisAlignment: WrapCrossAlignment.center,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          _Fact(
-            label: 'Transcoded',
-            value:
-                '${_formatBytes(storage.transcodedSizeBytes)} · ${storage.transcodedFileCount} file${storage.transcodedFileCount == 1 ? '' : 's'}',
+          Expanded(
+            child: Wrap(
+              spacing: AppSpacing.s24,
+              runSpacing: AppSpacing.s10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _Fact(
+                  label: 'Transcoded',
+                  value:
+                      '${_formatBytes(storage.transcodedSizeBytes)} · ${storage.transcodedFileCount} file${storage.transcodedFileCount == 1 ? '' : 's'}',
+                ),
+                _CacheRootFact(path: storage.cacheRoot),
+                _Fact(
+                  label: 'Free on disk',
+                  value: _formatBytes(storage.freeBytesAtCacheRoot),
+                ),
+                _Fact(
+                  label: 'Sources by codec',
+                  value: storage.byCodec.isEmpty
+                      ? 'none'
+                      : storage.byCodec.values
+                          .map((b) => '${b.codec.toUpperCase()} ${b.count}')
+                          .join(' · '),
+                ),
+              ],
+            ),
           ),
-          _CacheRootFact(path: storage.cacheRoot),
-          _Fact(
-            label: 'Free on disk',
-            value: _formatBytes(storage.freeBytesAtCacheRoot),
-          ),
-          _Fact(
-            label: 'Sources by codec',
-            value: storage.byCodec.isEmpty
-                ? 'none'
-                : storage.byCodec.values
-                    .map((b) =>
-                        '${b.codec.toUpperCase()} ${b.count}')
-                    .join(' · '),
+          const SizedBox(width: AppSpacing.s14),
+          FluxButton(
+            variant: FluxButtonVariant.secondary,
+            size: FluxButtonSize.sm,
+            icon: Icons.settings_outlined,
+            onPressed: () => context.go(Routes.encoderSettings),
+            child: const Text('Transcoding Settings'),
           ),
         ],
       ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
+import 'package:go_router/go_router.dart';
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_radii.dart';
 import 'package:fluxora_core/constants/app_spacing.dart';
@@ -17,7 +18,11 @@ import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
 // ── Entry point ────────────────────────────────────────────────────────────────
 
 class ActivityScreen extends StatelessWidget {
-  const ActivityScreen({super.key});
+  const ActivityScreen({super.key, this.embedded = false});
+
+  /// When `true`, hosted inside a parent shell that already renders a
+  /// page header — skip ours.
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
@@ -25,7 +30,7 @@ class ActivityScreen extends StatelessWidget {
       create: (_) => RecentActivityCubit(
         repository: GetIt.I<RecentActivityRepository>(),
       )..loadAll(),
-      child: const _ActivityView(),
+      child: _ActivityView(embedded: embedded),
     );
   }
 }
@@ -33,7 +38,9 @@ class ActivityScreen extends StatelessWidget {
 // ── Main stateful view ─────────────────────────────────────────────────────────
 
 class _ActivityView extends StatefulWidget {
-  const _ActivityView();
+  const _ActivityView({required this.embedded});
+
+  final bool embedded;
 
   @override
   State<_ActivityView> createState() => _ActivityViewState();
@@ -51,6 +58,27 @@ class _ActivityViewState extends State<_ActivityView> {
     'library',
     'system',
   };
+
+  /// Event id to scroll-to + flash on arrival.  Sourced from the `?event=`
+  /// query param when the operator deep-links from Dashboard's "Recent
+  /// Activity" card; cleared once consumed so re-visits don't re-fire the
+  /// animation.
+  String? _highlightedEventId;
+  String? _lastSeenEventParam;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final eventId = GoRouterState.of(context).uri.queryParameters['event'];
+    if (eventId != _lastSeenEventParam) {
+      _lastSeenEventParam = eventId;
+      // Only update highlight state when a fresh param arrives — guards
+      // against the cubit's poll-driven rebuilds re-firing the scroll.
+      if (eventId != null && eventId.isNotEmpty) {
+        setState(() => _highlightedEventId = eventId);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -73,74 +101,84 @@ class _ActivityViewState extends State<_ActivityView> {
             final events = state is RecentActivityLoaded ? state.events : <ActivityEvent>[];
             final filtered = _applyFilters(events);
 
+            final actionsRow = Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Search input
+                SizedBox(
+                  width: 220,
+                  height: 34,
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: (v) => setState(() => _searchQuery = v),
+                    style: AppTypography.body.copyWith(
+                      color: AppColors.textBody,
+                      fontSize: 12,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: 'Search events…',
+                      hintStyle: AppTypography.body.copyWith(
+                        color: AppColors.textDim,
+                        fontSize: 12,
+                      ),
+                      prefixIcon: const Icon(Icons.search_rounded,
+                          size: 15, color: AppColors.textDim),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                          vertical: 8, horizontal: 10),
+                      filled: true,
+                      fillColor: const Color(0x0AFFFFFF),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppRadii.sm),
+                        borderSide:
+                            const BorderSide(color: Color(0x0FFFFFFF)),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppRadii.sm),
+                        borderSide:
+                            const BorderSide(color: Color(0x0FFFFFFF)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppRadii.sm),
+                        borderSide:
+                            const BorderSide(color: AppColors.violet),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.s8),
+                // Export — disabled (no backend endpoint).
+                const FluxButton(
+                  variant: FluxButtonVariant.secondary,
+                  icon: Icons.download_outlined,
+                  onPressed: null,
+                  child: Text('Export'),
+                ),
+              ],
+            );
+
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // ── Header ─────────────────────────────────────────────
-                PageHeader(
-                  title: 'Activity',
-                  subtitle:
-                      'Real-time event log of streams, clients, and server operations',
-                  actions: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Search input
-                      SizedBox(
-                        width: 220,
-                        height: 34,
-                        child: TextField(
-                          controller: _searchController,
-                          onChanged: (v) =>
-                              setState(() => _searchQuery = v),
-                          style: AppTypography.body.copyWith(
-                            color: AppColors.textBody,
-                            fontSize: 12,
-                          ),
-                          decoration: InputDecoration(
-                            hintText: 'Search events…',
-                            hintStyle: AppTypography.body.copyWith(
-                              color: AppColors.textDim,
-                              fontSize: 12,
-                            ),
-                            prefixIcon: const Icon(Icons.search_rounded,
-                                size: 15, color: AppColors.textDim),
-                            isDense: true,
-                            contentPadding: const EdgeInsets.symmetric(
-                                vertical: 8, horizontal: 10),
-                            filled: true,
-                            fillColor: const Color(0x0AFFFFFF),
-                            border: OutlineInputBorder(
-                              borderRadius:
-                                  BorderRadius.circular(AppRadii.sm),
-                              borderSide: const BorderSide(
-                                  color: Color(0x0FFFFFFF)),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius:
-                                  BorderRadius.circular(AppRadii.sm),
-                              borderSide: const BorderSide(
-                                  color: Color(0x0FFFFFFF)),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius:
-                                  BorderRadius.circular(AppRadii.sm),
-                              borderSide: const BorderSide(
-                                  color: AppColors.violet),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.s8),
-                      // Export — disabled (no backend endpoint).
-                      const FluxButton(
-                        variant: FluxButtonVariant.secondary,
-                        icon: Icons.download_outlined,
-                        onPressed: null,
-                        child: Text('Export'),
-                      ),
-                    ],
+                if (!widget.embedded)
+                  PageHeader(
+                    title: 'Activity',
+                    subtitle:
+                        'Real-time event log of streams, clients, and server operations',
+                    actions: actionsRow,
+                  )
+                else
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      top: AppSpacing.s8,
+                      bottom: AppSpacing.s16,
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: actionsRow,
+                    ),
                   ),
-                ),
 
                 // ── Stat tiles ─────────────────────────────────────────
                 _StatTilesRow(events: events),
@@ -155,6 +193,7 @@ class _ActivityViewState extends State<_ActivityView> {
                       child: _LiveActivityCard(
                         state: state,
                         events: filtered,
+                        highlightedEventId: _highlightedEventId,
                       ),
                     ),
                     const SizedBox(width: AppSpacing.s14),
@@ -308,10 +347,12 @@ class _LiveActivityCard extends StatelessWidget {
   const _LiveActivityCard({
     required this.state,
     required this.events,
+    this.highlightedEventId,
   });
 
   final RecentActivityState state;
   final List<ActivityEvent> events;
+  final String? highlightedEventId;
 
   @override
   Widget build(BuildContext context) {
@@ -437,13 +478,20 @@ class _LiveActivityCard extends StatelessWidget {
                         .toList()
                         .asMap()
                         .entries
-                        .map((entry) => _ActivityEventRow(
+                        .map((entry) => ActivityEventRow(
+                              // Stable key keyed on event.id keeps row State
+                              // attached to the same event across polls; new
+                              // events arriving at the top don't reuse a row's
+                              // AnimationController for a different event.
+                              key: ValueKey(entry.value.id),
                               event: entry.value,
                               isLast: entry.key ==
                                   (events.length > 100
                                           ? 100
                                           : events.length) -
                                       1,
+                              highlighted:
+                                  entry.value.id == highlightedEventId,
                             ))
                         .toList(),
                   ),
@@ -456,13 +504,25 @@ class _LiveActivityCard extends StatelessWidget {
 
 // ── Activity event row ─────────────────────────────────────────────────────────
 
-class _ActivityEventRow extends StatelessWidget {
-  const _ActivityEventRow({required this.event, required this.isLast});
+class ActivityEventRow extends StatefulWidget {
+  @visibleForTesting
+  const ActivityEventRow({
+    super.key,
+    required this.event,
+    required this.isLast,
+    this.highlighted = false,
+  });
 
   final ActivityEvent event;
   final bool isLast;
 
-  static (Color, IconData) _iconFor(String type) {
+  /// When `true`, the row scrolls itself into view and runs a one-shot
+  /// violet-tinted flash animation that fades to transparent over 1.5 s.
+  /// Set by `_ActivityViewState._highlightedEventId` (sourced from the
+  /// `?event=` deep-link query param).
+  final bool highlighted;
+
+  static (Color, IconData) iconFor(String type) {
     final category = type.split('.').first;
     return switch (category) {
       'stream' => (AppColors.blue, Icons.play_circle_outline_rounded),
@@ -476,20 +536,93 @@ class _ActivityEventRow extends StatelessWidget {
     };
   }
 
+  static String relativeTime(String iso) {
+    try {
+      final dt = DateTime.parse(iso).toUtc();
+      final diff = DateTime.now().toUtc().difference(dt);
+      if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
+      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+      if (diff.inHours < 24) return '${diff.inHours}h ago';
+      return '${diff.inDays}d ago';
+    } catch (_) {
+      return '—';
+    }
+  }
+
+  @override
+  State<ActivityEventRow> createState() => _ActivityEventRowState();
+}
+
+class _ActivityEventRowState extends State<ActivityEventRow>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _flashCtrl;
+  late final Animation<Color?> _flashColor;
+
+  @override
+  void initState() {
+    super.initState();
+    _flashCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+      // Sit at "end" (transparent) by default so non-highlighted rows render
+      // with no tint.  `forward(from: 0)` resets to begin (violet) and
+      // animates back to end when a flash fires.
+      value: 1.0,
+    );
+    _flashColor = ColorTween(
+      begin: AppColors.violet.withValues(alpha: 0.22),
+      end: const Color(0x00000000),
+    ).animate(CurvedAnimation(parent: _flashCtrl, curve: Curves.easeOutCubic));
+    if (widget.highlighted) {
+      WidgetsBinding.instance.addPostFrameCallback(_runHighlight);
+    }
+  }
+
+  @override
+  void didUpdateWidget(ActivityEventRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.highlighted && !oldWidget.highlighted) {
+      WidgetsBinding.instance.addPostFrameCallback(_runHighlight);
+    }
+  }
+
+  void _runHighlight(Duration _) {
+    if (!mounted) return;
+    Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+      alignment: 0.3,
+    );
+    _flashCtrl.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _flashCtrl.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final (color, iconData) = _iconFor(event.type);
+    final (color, iconData) = ActivityEventRow.iconFor(widget.event.type);
 
-    return Container(
-      decoration: BoxDecoration(
-        border: isLast
-            ? null
-            : const Border(
-                bottom: BorderSide(color: Color(0x08FFFFFF))),
-      ),
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.s20,
-        vertical: AppSpacing.s14,
+    return AnimatedBuilder(
+      animation: _flashColor,
+      builder: (context, child) => Container(
+        decoration: BoxDecoration(
+          color: _flashColor.value,
+          border: widget.isLast
+              ? null
+              : const Border(
+                  bottom: BorderSide(color: Color(0x08FFFFFF)),
+                ),
+        ),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s20,
+          vertical: AppSpacing.s14,
+        ),
+        child: child,
       ),
       child: Row(
         children: [
@@ -510,7 +643,7 @@ class _ActivityEventRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  event.summary,
+                  widget.event.summary,
                   style: AppTypography.body.copyWith(
                     color: AppColors.textBody,
                     fontWeight: FontWeight.w500,
@@ -520,7 +653,7 @@ class _ActivityEventRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  event.type,
+                  widget.event.type,
                   style: AppTypography.captionV2
                       .copyWith(color: AppColors.textDim),
                 ),
@@ -529,26 +662,13 @@ class _ActivityEventRow extends StatelessWidget {
           ),
           const SizedBox(width: AppSpacing.s8),
           Text(
-            _relativeTime(event.createdAt),
+            ActivityEventRow.relativeTime(widget.event.createdAt),
             style: AppTypography.monoCaption
                 .copyWith(color: AppColors.textDim),
           ),
         ],
       ),
     );
-  }
-
-  static String _relativeTime(String iso) {
-    try {
-      final dt = DateTime.parse(iso).toUtc();
-      final diff = DateTime.now().toUtc().difference(dt);
-      if (diff.inSeconds < 60) return '${diff.inSeconds}s ago';
-      if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-      if (diff.inHours < 24) return '${diff.inHours}h ago';
-      return '${diff.inDays}d ago';
-    } catch (_) {
-      return '—';
-    }
   }
 }
 

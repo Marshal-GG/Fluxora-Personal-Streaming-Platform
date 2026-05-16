@@ -13,7 +13,12 @@ from models.library import (
     UpdateLibraryBody,
 )
 from routers.deps import validate_token_or_local
-from services import activity_service, group_service, library_service
+from services import (
+    activity_service,
+    group_service,
+    library_service,
+    notification_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +113,7 @@ async def create_library(
         )
     except Exception:
         logger.warning("Failed to record library.create activity event", exc_info=True)
+    notification_service.broadcast_event("library_changed")
     return _parse_library(row)
 
 
@@ -195,6 +201,7 @@ async def update_library(
         )
     except Exception:
         logger.warning("Failed to record library.update activity event", exc_info=True)
+    notification_service.broadcast_event("library_changed")
     return _parse_library(row)
 
 
@@ -233,6 +240,10 @@ async def delete_library(
         )
     except Exception:
         logger.warning("Failed to record library.delete activity event", exc_info=True)
+    # Delete also frees disk (and removes sidecars when delete_sidecars=True)
+    # so storage breakdown changes too.
+    notification_service.broadcast_event("library_changed")
+    notification_service.broadcast_event("storage_changed")
 
 
 @router.post("/{library_id}/scan", status_code=status.HTTP_200_OK)
@@ -258,6 +269,9 @@ async def scan_library(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Scan failed",
         )
+    # File counts + storage totals both changed.
+    notification_service.broadcast_event("library_changed")
+    notification_service.broadcast_event("storage_changed")
     return {"library_id": library_id, "files_added": added}
 
 
@@ -314,4 +328,6 @@ async def enrich_library_tmdb(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="TMDB rescan failed",
         )
+    # Posters / titles changed, but file counts didn't — only library_changed.
+    notification_service.broadcast_event("library_changed")
     return {"library_id": library_id, **result}

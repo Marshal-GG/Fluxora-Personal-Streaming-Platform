@@ -53,6 +53,27 @@ def _broadcast(payload: dict[str, Any]) -> None:
             logger.warning("Notification queue full; dropping frame for one subscriber")
 
 
+def broadcast_event(kind: str, data: dict[str, Any] | None = None) -> None:
+    """Fan-out an ephemeral sync event to all WS subscribers.
+
+    Unlike `create()`, this does NOT persist to the `notifications` table.
+    It's for cache-invalidation / refresh signals (e.g. "library_changed",
+    "storage_changed") that drive client-side data refreshes — not for
+    user-facing notifications surfaced in the bell-icon panel.
+
+    Wire format:
+        {"type": "event", "kind": "<kind>", "data": <optional payload>}
+
+    Clients filter on `type == "event"` to distinguish these from the
+    persisted-notification frames (`type == "notification"`).
+    """
+    payload: dict[str, Any] = {"type": "event", "kind": kind}
+    if data is not None:
+        payload["data"] = data
+    _broadcast(payload)
+    logger.debug("Event broadcast: kind=%s", kind)
+
+
 # ── helpers ────────────────────────────────────────────────────────────────
 
 

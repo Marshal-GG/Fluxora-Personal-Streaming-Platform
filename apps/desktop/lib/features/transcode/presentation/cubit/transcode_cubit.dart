@@ -200,6 +200,31 @@ class TranscodeCubit extends Cubit<TranscodeState> {
     }
   }
 
+  /// Queue exactly one file using the current preset, without disturbing
+  /// the multi-select state.  Backs the per-row "Convert" button on the
+  /// flat-table candidates view — operators can fire off conversions one
+  /// at a time without first ticking a checkbox.
+  Future<void> startSingleTranscode(String fileId) async {
+    final s = state;
+    if (s is! TranscodeLoaded || s.busyAction) return;
+    emit(s.copyWith(busyAction: true));
+    try {
+      await _repository.queueJobs(
+        fileIds: [fileId],
+        preset: s.queuePreset,
+      );
+      await _refreshAll();
+    } catch (e, st) {
+      _log.e('TranscodeCubit.startSingleTranscode failed',
+          error: e, stackTrace: st);
+      if (isClosed) return;
+      final cur = state;
+      if (cur is TranscodeLoaded) {
+        emit(cur.copyWith(busyAction: false));
+      }
+    }
+  }
+
   /// DELETE /jobs/{id} then refresh.  Marks the row busy so the Cancel
   /// button on that single row stays disabled mid-request.
   Future<void> cancelJob(int jobId) async {

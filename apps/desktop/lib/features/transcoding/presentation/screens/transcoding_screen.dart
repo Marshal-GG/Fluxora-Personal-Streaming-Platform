@@ -25,7 +25,11 @@ import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
 // ── Entry point ────────────────────────────────────────────────────────────────
 
 class TranscodingScreen extends StatelessWidget {
-  const TranscodingScreen({super.key});
+  const TranscodingScreen({super.key, this.embedded = false});
+
+  /// When `true`, hosted inside a parent shell that already renders a
+  /// page header — skip ours.
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +57,7 @@ class TranscodingScreen extends StatelessWidget {
           )..start(),
         ),
       ],
-      child: const _TranscodingView(),
+      child: _TranscodingView(embedded: embedded),
     );
   }
 }
@@ -61,7 +65,9 @@ class TranscodingScreen extends StatelessWidget {
 // ── Main view ──────────────────────────────────────────────────────────────────
 
 class _TranscodingView extends StatelessWidget {
-  const _TranscodingView();
+  const _TranscodingView({required this.embedded});
+
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
@@ -78,22 +84,34 @@ class _TranscodingView extends StatelessWidget {
             final loaded =
                 txState is TranscodingLoaded ? txState.status : null;
 
+            final actionsButton = FluxButton(
+              variant: FluxButtonVariant.secondary,
+              icon: Icons.settings_outlined,
+              onPressed: () => context.go(Routes.encoderSettings),
+              child: const Text('Encoder Settings'),
+            );
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // ── Header ───────────────────────────────────────────────
-                PageHeader(
-                  title: 'Transcoding',
-                  subtitle:
-                      'Real-time encoder load and per-session details',
-                  actions: FluxButton(
-                    variant: FluxButtonVariant.secondary,
-                    icon: Icons.settings_outlined,
-                    onPressed: () =>
-                        context.go(Routes.encoderSettings),
-                    child: const Text('Encoder Settings'),
+                if (!embedded)
+                  PageHeader(
+                    title: 'Transcoding',
+                    subtitle:
+                        'Real-time encoder load and per-session details',
+                    actions: actionsButton,
+                  )
+                else
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      top: AppSpacing.s8,
+                      bottom: AppSpacing.s16,
+                    ),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: actionsButton,
+                    ),
                   ),
-                ),
 
                 // ── Stat tiles ───────────────────────────────────────────
                 _StatTilesRow(status: loaded),

@@ -51,7 +51,9 @@ class _NavEntry {
   final String path;
 }
 
-/// The nine navigation items — order and paths are locked to the prototype.
+/// The seven navigation items — flat list, no section dividers.  Transcode
+/// is folded into Library (`/library/convert`); Transcoding and Logs are
+/// folded into Activity (`/activity/transcoding`, `/activity/logs`).
 const List<_NavEntry> _navItems = [
   _NavEntry(
     id: 'dashboard',
@@ -64,14 +66,6 @@ const List<_NavEntry> _navItems = [
     label: 'Library',
     icon: Icons.video_library_outlined,
     path: '/library',
-  ),
-  // Sits next to Library — both are content-management surfaces.
-  // M5 of `docs/10_planning/18_library_transcode_plan.md`.
-  _NavEntry(
-    id: 'transcode',
-    label: 'Transcode',
-    icon: Icons.fast_forward_outlined,
-    path: '/transcode',
   ),
   _NavEntry(
     id: 'clients',
@@ -90,18 +84,6 @@ const List<_NavEntry> _navItems = [
     label: 'Activity',
     icon: Icons.bolt_outlined,
     path: '/activity',
-  ),
-  _NavEntry(
-    id: 'transcoding',
-    label: 'Transcoding',
-    icon: Icons.tune_outlined,
-    path: '/transcoding',
-  ),
-  _NavEntry(
-    id: 'logs',
-    label: 'Logs',
-    icon: Icons.terminal,
-    path: '/logs',
   ),
   _NavEntry(
     id: 'settings',
