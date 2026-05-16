@@ -22,7 +22,7 @@ Plan 28 takes it to where operators expect a file browser to be on a modern Linu
 | Phase | Effort | Status | Headline |
 |---|---|---|---|
 | **A — Foundation** | ~4 h | ✅ Shipped 2026-05-16 (`65a3555` + `f0971ae`) | Single/double-click semantics + right detail panel + sortable columns + list ↔ grid view + search box + server-side indexed-metadata extension + thumbnail preview in detail panel + currently-streaming badge + indexed-only toggle (header form; chip form in Phase B) + stale-thumbnail auto-re-queue + empty-state copy variations + stream-test button on detail panel + HDR badge on rows.  Long-hover quick-preview deferred to Phase B (small, low-priority). |
-| **B — Filters & power** | ~3 h | ⏳ Pending | Type-filter chips + item-count footer + keyboard nav + indexed-only chip variant + polish (failed-thumb indicator, indexed-at tooltip, long-hover quick-preview) |
+| **B — Filters & power** | ~3 h | ✅ Shipped 2026-05-16 (`6fdfde4`) | Type-filter chips (`LibraryBrowseFilterChips`) + item-count footer (`LibraryBrowseCountFooter`) + keyboard nav (arrows/Enter/Backspace/Esc/Home/End/PageUp/Down/`/`) + indexed-only chip variant + polish (failed-thumb warning icon, indexed-at tooltip via `_IndexedTag`).  Long-hover quick-preview deliberately skipped — the always-visible right detail panel already shows the same info on click, parallel popover surface is marginal value for real Overlay+z-index cost. |
 | **C — Interactions** | ~4 h | ⏳ Pending | Right-click context menu + editable path textbox + per-file Index/Generate-thumb actions (2 new endpoints) + density toggle + multi-select with Ctrl/Shift |
 | **D — History + lazy compute** | ~1 h | ⏳ Pending | Back/forward history navigation + lazy folder-size compute button in the detail panel |
 

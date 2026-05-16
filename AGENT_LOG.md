@@ -497,3 +497,107 @@ All six milestones of plan 27 shipped same-day per the expanded-scope spec.  Eac
 2. **Widget tests for sort headers + click semantics + grid view.**  Phase A shipped without these — pump the screen with a mock repo, simulate clicks, assert state.  ~30 min.
 3. **Operator real-device smoke test** of Phase A: navigate the folder browser; click a video file → verify the detail panel shows codec/dimensions/thumbnail; toggle Grid view → verify thumbnails render for indexed videos; type in search → live filter; click NAME header twice → toggle direction; verify the ▶ live pill appears when streaming to mobile from the same file.
 4. **Phase C planning revisit** — when Phase B lands, consider whether multi-select (Ctrl/Shift click) should move from Phase C to Phase B alongside keyboard nav.  Conceptually they're tightly coupled.
+
+---
+
+## [2026-05-16] [desktop] [feat] — Plan 28 Phase B · filter chips · count footer · keyboard nav · polish
+
+**Phase:** Plan 28 Phase B — second slice on top of Phase A, same-session
+**Status:** Complete
+**Commits:** 6fdfde4 (client only — server unchanged this round)
+
+### What Was Done
+
+Stacked on Phase A in the same session.  Three new affordances + one polish bundle landed on top of the folder-browser foundation.
+
+#### 1. Type-filter chip row + indexed-only chip
+
+New `LibraryBrowseFilterChips` widget (Opus sub-agent build) mounts above the file listing as a horizontal scroll row of 8 chips: 7 single-select kind chips (`All` / `Folders` / `Videos` / `Images` / `Audio` / `PDFs` / `Other`) + 1 independent "Indexed only" toggle that replaces the Phase A toolbar `IndexedOnlyToggle` checkbox.  Cubit gains `BrowseKindFilter enum { all, folders, videos, images, audio, pdfs, other }` + `setKindFilter(kind)` setter.  Kind dispatch reuses the existing `BrowseEntry.kind` string (`'directory'` / `'video'` / `'image'` / `'audio'` / `'pdf'` / `'other'`) so no server change was needed.
+
+`applyBrowseFilters` extended with a `BrowseKindFilter kindFilter = BrowseKindFilter.all` named param.  Default-arg back-compat means any caller that hasn't been updated still compiles + behaves as Phase A did (no filter = all kinds).
+
+#### 2. Item-count footer
+
+New `LibraryBrowseCountFooter` widget at the bottom of the browse panel (left-aligned text, `kHeight = 28` const exposed for screen-side spacing math).  Reads `cubit.entries` + the active filter set, re-applies `applyBrowseFilters` against them, and renders `N items · M folders, K files` against the post-filter slice (so a Videos-filter selection footer says `12 items · 0 folders, 12 files`).  When the post-filter list is empty, the footer hides folder/file breakdown and shows only `0 items` (avoids the awkward `0 folders, 0 files` paint).
+
+#### 3. Keyboard navigation
+
+`_LibraryBrowseView` converted from `StatelessWidget` to `StatefulWidget` so the screen can own a `_bodyFocus: FocusNode` + `_searchFocus: FocusNode` pair across rebuilds.  The listing body is wrapped in `Focus(autofocus: true, focusNode: _bodyFocus, onKeyEvent: _onKey, child: <listing>)`.  `_onKey(FocusNode, KeyEvent) => KeyEventResult` dispatch:
+
+- `LogicalKeyboardKey.arrowDown` / `arrowUp` → `cubit.stepSelection(delta: ±1)`
+- `LogicalKeyboardKey.pageDown` / `pageUp` → `cubit.stepSelection(delta: ±10)`
+- `LogicalKeyboardKey.home` / `end` → `cubit.selectFirst()` / `cubit.selectLast()`
+- `LogicalKeyboardKey.enter` / `numpadEnter` → `_openSelected()` (resolves via `cubit.resolveSelected()` then dispatches directory navigate vs file open through the same paths the row's `_lastTapAt` double-click pattern uses)
+- `LogicalKeyboardKey.backspace` → `cubit.goUp()` (no-op at root)
+- `LogicalKeyboardKey.escape` → `cubit.clearSelection()`
+- `LogicalKeyboardKey.slash` → `_searchFocus.requestFocus()`
+
+Handler swallows only the keys it consumes via `KeyEventResult.handled`; other keystrokes propagate (so the search bar still receives normal text input when focused).  Both `KeyDownEvent` + `KeyRepeatEvent` route the same way — holding ↓ scrolls smoothly through the listing.
+
+Cubit-side helpers (also Phase B):
+- `selectOnly(BrowseEntry entry)` — set selection to a single entry
+- `clearSelection()` — emit state with `selection: null`
+- `stepSelection({required int delta})` — clamp + filter-aware step against `applyBrowseFilters(entries, ...)`; selects first entry when nothing is selected and `delta > 0`, last when `delta < 0`
+- `selectFirst()` / `selectLast()` — convenience wrappers
+- `resolveSelected() => BrowseEntry?` — read-helper for the keyboard handler
+
+`LibraryBrowseSearchBar` gained an optional `focusNode: FocusNode?` constructor param; when null, falls back to an internal `_ownFocusNode` it manages itself.  Passing the screen's `_searchFocus` lets the `/` keystroke focus the field even when the user is currently focused on the listing.
+
+#### 4. Polish bundle
+
+- `_BrowseRow` + `_BrowseGridTile` render an `Icons.warning_amber_rounded` overlay (corner badge on grid, leading badge on row) in `AppColors.amber` when `media.thumbnail_status == 'failed'`.  Tooltip: "Thumbnail generation failed".
+- New `_IndexedTag` widget replaces the bare-text "Indexed" pill from Phase A.  Renders the same violet-tinted pill but wraps it in `Tooltip(message: 'Indexed <formatted indexed_at_iso>')` so hovering surfaces the timestamp without opening the right detail panel.
+- Long-hover quick-preview popover **deliberately not shipped** — listed in plan §4.7 as a Phase B improvement but skipped: the always-visible right detail panel already shows the same info on single-click; a parallel popover would have been marginal value for the Overlay + z-index cost.  Spec updated.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Modified | apps/desktop/lib/features/library/presentation/cubit/library_browse_cubit.dart | `BrowseKindFilter` enum + `setKindFilter` + selection helpers + extended `applyBrowseFilters` |
+| Modified | apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart | `_LibraryBrowseView` → StatefulWidget + Focus + key handler + chip row + count footer + polish badges + `_IndexedTag` |
+| Created | apps/desktop/lib/features/library/presentation/widgets/library_browse_filter_chips.dart | 8-chip horizontal filter row (sub-agent build) |
+| Created | apps/desktop/lib/features/library/presentation/widgets/library_browse_count_footer.dart | Post-filter `N items · M folders, K files` footer (sub-agent build) |
+| Modified | apps/desktop/lib/features/library/presentation/widgets/library_browse_search_bar.dart | Optional `focusNode` param for `/` shortcut wiring |
+
+### Docs Updated
+
+- `docs/10_planning/28_library_file_browser_power_features.md` — Phase B row → ✅ Shipped 2026-05-16 (`6fdfde4`); long-hover deferral note
+- `docs/00_overview/current_status.md` — Phase B top entry; Phase A demoted to "Earlier 2026-05-16"
+- `docs/08_frontend/01_frontend_architecture.md` — Status header gains Phase B paragraph
+- `docs/10_planning/01_roadmap.md` — Plan 28 row → "Phase A + B ✅ shipped"
+- `CLAUDE.md` — Plan 28 lookup row rewritten with Phase B summary + remaining-phases list
+
+### Decisions Made
+
+1. **Long-hover quick-preview popover dropped, not deferred.**  Plan §4.7 listed it as a Phase B polish item.  The right detail panel covers the same surface — kind / thumbnail / dimensions / codec / indexed-at — on single-click without the popover positioning / z-index / dismiss-on-click-outside complexity an Overlay would require.  Removing it from Phase B closes the polish ticket; not deferring it to Phase C.
+2. **`BrowseKindFilter.all` chosen as the default for `applyBrowseFilters`.**  Named param with default-arg lets every existing test + cubit call site stay byte-identical; only the chip widget actually passes a non-default value.  Optional-with-default beats overloading or splitting into two functions.
+3. **Independent "Indexed only" chip rather than 7-way mutual exclusion.**  An operator filtering to Videos still wants the indexed-only toggle to work independently — the two filters answer different questions ("what kind?" vs "what state?").  Single-select `BrowseKindFilter` + boolean `indexedOnly` is the honest shape.
+4. **Polish badges (failed-thumb warning + `_IndexedTag` tooltip) shipped alongside Phase B core.**  Could have split into a Phase B.1 — but they're 30 lines of widget code each + tied to the same screen rewrite, so keeping them in one commit reduces git churn.
+
+### Issues / Sharp Edges Discovered
+
+1. **`AppColors.warning` doesn't exist** — first pass used the name from muscle memory.  Caught by analyzer; `AppColors` only exports `amber` for the warning state.  Worth noting for future polish work.
+2. **`KeyDownEvent` + `KeyRepeatEvent` need explicit show list** — `package:flutter/services.dart` has both classes but the screen's existing import didn't surface them.  Added to the show list when wiring `_onKey`.
+3. **`_searchFocus` field needs to be plumbed through to the search bar widget** — I initially added the FocusNode + the `_onKey` dispatch but forgot to pass it through `LibraryBrowseSearchBar(focusNode: _searchFocus)`.  `/` keystroke focused… nothing.  Fixed by threading the param.
+4. **`onKeyEvent` callback type is `KeyEventResult Function(FocusNode, KeyEvent)`** (not `bool Function`) — Flutter switched the API at some point.  Worth pinning for any future key handler.
+
+### Test Counts (re-baselined)
+
+- **Desktop: 121** (unchanged this round — widget tests for chips + footer + key handler land with Phase C alongside the right-click + density work)
+- **Server: 925** (unchanged — no server work in Phase B)
+- Core: 20 unchanged; mobile 97 unchanged
+
+`flutter analyze` clean × apps/desktop + packages/fluxora_core.
+
+### Working-Tree Status
+
+Phase B already committed at `6fdfde4`.  Doc-sweep changes (this entry + 4 cross-doc files above) staged-but-uncommitted at session end — operator owns the commit per the no-git-writes rule.
+
+### Next Agent Should
+
+1. **Commit the Phase B doc sweep** as `docs: plan 28 phase B shipped — cross-doc sweep`.  Files: current_status.md / 08_frontend/01_frontend_architecture.md / 10_planning/01_roadmap.md / 10_planning/28_library_file_browser_power_features.md / CLAUDE.md / AGENT_LOG.md.
+2. **Phase C kickoff (~4 h)** — server endpoints first: `POST /api/v1/library/{id}/index-file?path=` (creates a single `media_files` row + enqueues a thumbnail) + `POST /api/v1/files/{file_id}/regenerate-thumbnail` (single-row reset + priority bump) + `POST /api/v1/library/{id}/scan-subtree?path=` (rescans one directory rather than the whole library).  Add 3-6 tests per endpoint covering happy path + permission gates + path-traversal rejection.
+3. **Phase C UI** — right-click context menu on rows + grid tiles (Open / Reveal in folder / Copy path / Index this file / Regenerate thumbnail / Scan subtree / Stream test — last two indexed-video-only); editable path textbox in the breadcrumb (Enter commits, Esc reverts, validation against the library's `root_paths`); density toggle in the header (`Compact` / `Cozy` / `Comfortable` rows — row height + thumbnail size scale together); multi-select via Ctrl-click (toggle) + Shift-click (range) + Ctrl+A.  Selection model needs to flip from single `BrowseEntry?` to `Set<BrowseEntry>` — touches the right detail panel (multi-selection summary card) + every selection helper in the cubit.
+4. **Phase C doc sweep + commit**, then **Phase D (~1 h)** — back/forward history (`List<String>` undo stack in the cubit, alt-arrow keybinds) + lazy folder-size compute (worker walks N levels deep on idle, surfaces estimate in the row + footer).
+5. **Tier 3 features** (recursive FTS5 search, bookmarks, drag-and-drop to Convert, filesystem watching via `watchdog`) remain split out as separate plans; do not roll them into plan 28.
+
