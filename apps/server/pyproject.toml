@@ -22,7 +22,8 @@ dependencies = [
     "cryptography==47.0.0",
     "argon2-cffi==25.1.0",
     "psutil==7.2.2",
-    "sentry-sdk[fastapi]==2.58.0"
+    "sentry-sdk[fastapi]==2.58.0",
+    "pymupdf==1.27.2.3"
 ]
 
 [project.optional-dependencies]
