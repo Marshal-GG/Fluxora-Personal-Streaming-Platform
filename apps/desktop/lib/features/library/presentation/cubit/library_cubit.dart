@@ -212,6 +212,30 @@ class LibraryCubit extends Cubit<LibraryState> {
     }
   }
 
+  /// Queue every file in [libraryId] for thumbnail regeneration.  The
+  /// server deletes the existing cached JPEGs and flips each row back
+  /// to `pending` so the BG worker re-renders at current settings.
+  /// Returns the count queued so the UI can render an exact toast.
+  Future<int> regenerateThumbnails(String libraryId) async {
+    try {
+      final queued = await _repository.regenerateThumbnails(libraryId);
+      // The `cover_urls` shape doesn't change immediately — thumbnails
+      // are pending until the worker re-renders.  Refresh anyway so the
+      // operator sees any side-effects (e.g. row counts changed) and
+      // because the cards' cover_urls will start updating as the worker
+      // produces new JPEGs.  No `Loading` flash via the cubit's silent
+      // `refresh()` path.
+      await refresh();
+      return queued;
+    } on ApiException catch (e, st) {
+      _log.e('Regenerate thumbnails failed', error: e, stackTrace: st);
+      rethrow;
+    } catch (e, st) {
+      _log.e('Regenerate thumbnails failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
   Future<void> uploadFile(String libraryId, String filePath) async {
     try {
       await _repository.uploadFileToLibrary(

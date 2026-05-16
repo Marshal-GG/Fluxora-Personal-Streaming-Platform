@@ -441,6 +441,8 @@ class _LibraryViewState extends State<_LibraryView> {
                 library: lib,
                 onScan: () => _scan(context, lib),
                 onEnrichTmdb: () => _enrichTmdb(context, lib),
+                onRegenerateThumbnails: () =>
+                    _regenerateThumbnails(context, lib),
                 onEdit: () => _showEditLibraryDialog(context, lib),
                 onRemove: () => _confirmRemove(context, lib),
                 onOpenFiles: () =>
@@ -496,6 +498,30 @@ class _LibraryViewState extends State<_LibraryView> {
     } catch (e) {
       messenger.showSnackBar(
         SnackBar(content: Text('TMDB rescan failed: $e')),
+      );
+    }
+  }
+
+  /// Queue every file in [lib] for thumbnail regeneration.  Backed by
+  /// `POST /api/v1/library/{id}/regenerate-thumbnails`.  The server
+  /// deletes the existing cached JPEGs and flips each row back to
+  /// `pending`; the BG worker re-renders them at current settings.
+  /// Toast reports the queued count.  Plan 27 M5.
+  Future<void> _regenerateThumbnails(
+      BuildContext context, Library lib) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final queued = await context
+          .read<LibraryCubit>()
+          .regenerateThumbnails(lib.id);
+      final body = queued == 0
+          ? 'No files to regenerate in "${lib.name}".'
+          : 'Queued $queued file(s) in "${lib.name}" for thumbnail '
+              'regeneration. Cards will refresh as the worker catches up.';
+      messenger.showSnackBar(SnackBar(content: Text(body)));
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('Could not regenerate thumbnails: $e')),
       );
     }
   }
@@ -2227,6 +2253,7 @@ class _LibraryDetailPanel extends StatelessWidget {
     required this.library,
     required this.onScan,
     required this.onEnrichTmdb,
+    required this.onRegenerateThumbnails,
     required this.onEdit,
     required this.onRemove,
     required this.onOpenFiles,
@@ -2235,6 +2262,7 @@ class _LibraryDetailPanel extends StatelessWidget {
   final Library library;
   final VoidCallback onScan;
   final VoidCallback onEnrichTmdb;
+  final VoidCallback onRegenerateThumbnails;
   final VoidCallback onEdit;
   final VoidCallback onRemove;
   final VoidCallback onOpenFiles;
@@ -2362,6 +2390,13 @@ class _LibraryDetailPanel extends StatelessWidget {
               title: 'Rescan TMDB',
               sub: 'Fill in missing posters, titles, and overviews',
               onTap: onEnrichTmdb,
+            ),
+            const SizedBox(height: AppSpacing.s6),
+            _ActionTile(
+              icon: Icons.image_outlined,
+              title: 'Regenerate Thumbnails',
+              sub: 'Re-extract video frames + cover art for this library',
+              onTap: onRegenerateThumbnails,
             ),
             const SizedBox(height: AppSpacing.s6),
             _ActionTile(

@@ -130,6 +130,20 @@ class LibraryRepositoryImpl implements LibraryRepository {
       );
 
   @override
+  Future<int> regenerateThumbnails(String libraryId) =>
+      _apiClient.post<int>(
+        Endpoints.libraryRegenerateThumbnails(libraryId),
+        fromJson: (data) {
+          if (data is Map<String, dynamic>) {
+            final v = data['queued'];
+            if (v is int) return v;
+            if (v is num) return v.toInt();
+          }
+          return 0;
+        },
+      );
+
+  @override
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath}) async {
     final formData = FormData.fromMap({
       'library_id': libraryId,

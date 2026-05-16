@@ -111,6 +111,7 @@ class _SettingsViewState extends State<_SettingsView> {
   bool _minimizeToTray = false;
   bool _scanOnStartup = true;
   bool _generateThumbnails = true;
+  int _thumbnailWidth = 320;
   String _defaultLibraryView = 'grid';
   String _language = 'en';
   String _defaultQuality = 'auto';
@@ -328,6 +329,7 @@ class _SettingsViewState extends State<_SettingsView> {
       _defaultLibraryView = s.defaultLibraryView;
       _scanOnStartup = s.scanLibrariesOnStartup;
       _generateThumbnails = s.generateThumbnails;
+      _thumbnailWidth = s.thumbnailWidth;
       _preferredMode = s.preferredMode;
       _enableMdns = s.enableMdns;
       _enableWebrtc = s.enableWebrtc;
@@ -397,6 +399,9 @@ class _SettingsViewState extends State<_SettingsView> {
           generateThumbnails: _generateThumbnails == s?.generateThumbnails
               ? null
               : _generateThumbnails,
+          thumbnailWidth: _thumbnailWidth == s?.thumbnailWidth
+              ? null
+              : _thumbnailWidth,
           preferredMode:
               _preferredMode == s?.preferredMode ? null : _preferredMode,
           enableMdns: _enableMdns == s?.enableMdns ? null : _enableMdns,
@@ -540,8 +545,10 @@ class _SettingsViewState extends State<_SettingsView> {
                       ),
                     'advanced'  => _AdvancedTab(
                         enableLogExport: _enableLogExport,
+                        thumbnailWidth: _thumbnailWidth,
                         customUrlCtrl: _customUrlCtrl,
                         onLogExportChanged: (v) => setState(() { _enableLogExport = v; }),
+                        onThumbnailWidthChanged: (v) => setState(() { _thumbnailWidth = v; }),
                       ),
                     'about'     => _AboutTab(state: loaded),
                     _           => _GeneralTab(
@@ -1672,13 +1679,17 @@ class _SecurityTab extends StatelessWidget {
 class _AdvancedTab extends StatelessWidget {
   const _AdvancedTab({
     required this.enableLogExport,
+    required this.thumbnailWidth,
     required this.customUrlCtrl,
     required this.onLogExportChanged,
+    required this.onThumbnailWidthChanged,
   });
 
   final bool enableLogExport;
+  final int thumbnailWidth;
   final TextEditingController customUrlCtrl;
   final ValueChanged<bool> onLogExportChanged;
+  final ValueChanged<int> onThumbnailWidthChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -1695,6 +1706,30 @@ class _AdvancedTab extends StatelessWidget {
               control: FluxSwitch(
                   value: enableLogExport,
                   onChanged: onLogExportChanged),
+            ),
+          ],
+        ),
+
+        const SizedBox(height: 14),
+
+        // Thumbnail card — plan 27.
+        _SettingBlock(
+          icon: Icons.image_outlined,
+          title: 'Thumbnails',
+          children: [
+            _SField(
+              label: 'Thumbnail Width  ·  $thumbnailWidth px',
+              sub: 'Width of generated per-file thumbnails (160–640 px). '
+                  'Smaller = faster + less disk; larger = sharper. Existing '
+                  'thumbs are unchanged — use "Regenerate Thumbnails" on a '
+                  'library to re-render at the new size.',
+              control: FluxSlider(
+                value: thumbnailWidth.toDouble(),
+                min: 160,
+                max: 640,
+                divisions: 24, // 20-px steps across the 160-640 range
+                onChanged: (v) => onThumbnailWidthChanged(v.round()),
+              ),
             ),
           ],
         ),

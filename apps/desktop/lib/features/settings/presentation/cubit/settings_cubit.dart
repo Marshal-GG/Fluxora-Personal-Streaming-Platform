@@ -44,6 +44,7 @@ class SettingsCubit extends Cubit<SettingsState> {
       String defaultLibraryView = 'grid';
       bool scanLibrariesOnStartup = true;
       bool generateThumbnails = true;
+      int thumbnailWidth = 320;
       String preferredMode = 'auto';
       bool enableMdns = true;
       bool enableWebrtc = true;
@@ -80,6 +81,8 @@ class SettingsCubit extends Cubit<SettingsState> {
             data['scan_libraries_on_startup'] as bool? ?? scanLibrariesOnStartup;
         generateThumbnails =
             data['generate_thumbnails'] as bool? ?? generateThumbnails;
+        thumbnailWidth =
+            data['thumbnail_width'] as int? ?? thumbnailWidth;
         preferredMode = data['preferred_mode'] as String? ?? preferredMode;
         enableMdns = data['enable_mdns'] as bool? ?? enableMdns;
         enableWebrtc = data['enable_webrtc'] as bool? ?? enableWebrtc;
@@ -127,6 +130,7 @@ class SettingsCubit extends Cubit<SettingsState> {
         defaultLibraryView: defaultLibraryView,
         scanLibrariesOnStartup: scanLibrariesOnStartup,
         generateThumbnails: generateThumbnails,
+        thumbnailWidth: thumbnailWidth,
         preferredMode: preferredMode,
         enableMdns: enableMdns,
         enableWebrtc: enableWebrtc,
@@ -210,6 +214,7 @@ class SettingsCubit extends Cubit<SettingsState> {
     String? defaultLibraryView,
     bool? scanLibrariesOnStartup,
     bool? generateThumbnails,
+    int? thumbnailWidth,
     String? preferredMode,
     bool? enableMdns,
     bool? enableWebrtc,
@@ -280,6 +285,7 @@ class SettingsCubit extends Cubit<SettingsState> {
           'default_library_view': ?defaultLibraryView,
           'scan_libraries_on_startup': ?scanLibrariesOnStartup,
           'generate_thumbnails': ?generateThumbnails,
+          'thumbnail_width': ?thumbnailWidth,
           'preferred_mode': ?preferredMode,
           'enable_mdns': ?enableMdns,
           'enable_webrtc': ?enableWebrtc,

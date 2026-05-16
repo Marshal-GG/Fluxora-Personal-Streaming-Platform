@@ -63,6 +63,14 @@ abstract interface class LibraryRepository {
     bool includeDvr = false,
   });
 
+  /// Queue every file in [libraryId] for thumbnail regeneration.  The
+  /// server deletes the existing cached JPEGs and flips each
+  /// `media_thumbnails` row back to `pending` so the BG worker re-
+  /// renders at current settings (width, HDR tonemap, etc).  Returns
+  /// the count of files queued.  Backed by
+  /// `POST /api/v1/library/{id}/regenerate-thumbnails`.  Plan 27 M5.
+  Future<int> regenerateThumbnails(String libraryId);
+
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath});
 }
 

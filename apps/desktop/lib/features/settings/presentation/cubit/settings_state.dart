@@ -29,6 +29,7 @@ final class SettingsLoaded extends SettingsState {
     this.defaultLibraryView = 'grid',
     this.scanLibrariesOnStartup = true,
     this.generateThumbnails = true,
+    this.thumbnailWidth = 320,
     this.preferredMode = 'auto',
     this.enableMdns = true,
     this.enableWebrtc = true,
@@ -70,6 +71,10 @@ final class SettingsLoaded extends SettingsState {
   final String defaultLibraryView; // 'grid' | 'list'
   final bool scanLibrariesOnStartup;
   final bool generateThumbnails;
+
+  /// Operator-configured thumbnail width in pixels (plan 27).  Worker
+  /// reads this per claim cycle.  Range enforced server-side: 160–640.
+  final int thumbnailWidth;
   // Network
   final String preferredMode; // 'auto' | 'lan' | 'webrtc'
   final bool enableMdns;
@@ -114,6 +119,7 @@ final class SettingsLoaded extends SettingsState {
       defaultLibraryView: defaultLibraryView,
       scanLibrariesOnStartup: scanLibrariesOnStartup,
       generateThumbnails: generateThumbnails,
+      thumbnailWidth: thumbnailWidth,
       preferredMode: preferredMode,
       enableMdns: enableMdns,
       enableWebrtc: enableWebrtc,
