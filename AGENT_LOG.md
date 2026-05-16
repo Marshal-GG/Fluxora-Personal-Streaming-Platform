@@ -414,3 +414,86 @@ All six milestones of plan 27 shipped same-day per the expanded-scope spec.  Eac
 1. **Ship plan 28 Phase A** (sortable cols + single/double click + right detail panel + list/grid view toggle + search box + server endpoint extension to include `width/height/codec/duration_sec/hdr_format` for indexed entries).  ~4 h.
 2. **Operator real-device smoke test** of the post-ship polish: open Library, watch the progress bars fill in real time as thumbs generate; verify the new bilinear+hwaccel speed is noticeable; verify cards actually show extracted frames once generation completes.  Then exercise the folder browser: navigate, toggle hidden, click into directories, click files to open in OS default app, click "Open in Explorer".
 3. **Once Phase A lands**, the plan 27 post-ship narrative is done.  Consider archiving plan 27 to `docs/10_planning/archive/` if no more polish surfaces.
+
+---
+
+## [2026-05-16] [server] [desktop] [feat] — Plan 28 Phase A · folder browser foundation
+
+**Phase:** Plan 28 (library file-browser power features) Phase A end-to-end ship.  Reshapes the MVP folder browser (which landed under plan 27 post-ship same day) into proper desktop semantics — single-click-selects + double-click-opens + right detail panel + sortable columns + list/grid view + search.
+**Status:** Complete.  Phases B / C / D pending.
+**Commits:** `65a3555` (server) + `f0971ae` (client)
+
+### What Was Done
+
+**Server M1 (commit `65a3555`)** — extends `GET /api/v1/library/{id}/browse` so each indexed entry carries the metadata the desktop right detail panel needs without a second HTTP round-trip.
+
+- New `IndexedMedia` dataclass in `services/browse_service.py`: `width / height / duration_sec / codec_name / hdr_format / audio_codec / thumbnail_status / thumbnail_generated_at_unix / indexed_at_iso / is_streaming`.  `thumbnail_status` carries server enum values verbatim + a client-only synthesised `stale` value.
+- `BrowseEntry` gains `media: IndexedMedia | None` (None for non-indexed entries + directories) + `mtime_unix: int` (raw mtime for client-side stale checks).
+- `_list_entries` populates `mtime_unix` from `st_mtime`.
+- `_attach_index_status` rewritten as a single LEFT-JOIN query: `media_files LEFT JOIN media_thumbnails` + `EXISTS(SELECT 1 FROM stream_sessions WHERE file_id=mf.id AND ended_at IS NULL)`.  Pulls every needed field in one round-trip — bounded by directory listing length; no N+1.
+- `audio_codec` parser is defensive: malformed `audio_tracks` JSON returns `None` instead of raising; other media fields still populate.
+- **Stale-thumbnail auto-re-queue**: when `media_files.updated_at > media_thumbnails.generated_at`, the underlying row is flipped back to `status='pending'` with `priority=5`, and the response surfaces `thumbnail_status='stale'`.  Operator who replaces a source file in-place gets the new thumbnail rendered automatically.
+- 9 new tests covering: indexed video carries full media metadata, un-indexed → media=null, directories → media=null, thumbnail status='ready' populates generated_at_unix, status='pending' returns null for generated_at_unix, stale detection (source > thumbnail flips to pending priority=5), is_streaming flips correctly, mtime_unix on every entry, malformed audio_tracks → audio_codec=null without affecting other fields.  Server suite 916 → 925.
+
+**Client (commit `f0971ae`)** — `BrowseEntry` + cubit + screen rewrite + three new widget files built in parallel by Opus sub-agents.
+
+- `BrowseEntry` mirror class extended with `IndexedMedia` shape + `mtimeUnix` field + `media` field.  All defensive via `tryFromJson` (returns null on shape mismatch, logs through `logger`).  Convenience getters on `IndexedMedia`: `hasThumbnailReady`, `isThumbnailStale`, `isThumbnailInFlight`, `hasThumbnailFailed`.
+- Cubit gains two enums (`BrowseSortColumn {name, size, modified}`, `BrowseViewMode {list, grid}`) + UI-pref state (selection `Set<String>`, `sortBy` + `sortAsc`, `viewMode`, `search`, `indexedOnly`).  Pure-pref updates re-emit Loaded with the same response so consumers re-render.  `selectedEntry` getter resolves to the most-recently-selected entry for the detail panel.
+- New methods: `setSort` / `setViewMode` / `setSearch` / `setIndexedOnly` / `selectOnly` / `clearSelection` / `refresh` (in-place re-fetch).  `navigateTo` clears selection + search; `refresh` preserves both.
+- New top-level `applyBrowseFilters(entries, indexedOnly, search, sortBy, sortAsc)` pure function — directories always first, within-group sort follows the operator's choice.
+- **Three new widget files** under `apps/desktop/lib/features/library/presentation/widgets/`:
+  - `library_browse_detail_panel.dart` (`LibraryBrowseDetailPanel`, `kWidth=320`) — kind header + thumbnail preview (16:9 video, 1:1 image) + currently-streaming pill + path card with copy-to-clipboard + 2-col stats grid + media-specific block (video/audio/image) + actions row (Open / Reveal / Copy path / Stream test for indexed videos via `POST /stream/start/{file_id}` + immediate `DELETE /stream/{session_id}` cleanup).  Built by Opus sub-agent A.
+  - `library_browse_search_bar.dart` (`LibraryBrowseSearchBar`) — compact vanilla `TextField` (sub-agent chose not to use `FluxTextField` because its API didn't fit cleanly).  Pumps `cubit.setSearch` on each keystroke; `BlocListener` syncs controller text back when the cubit clears `search` on navigation.  Built by Opus sub-agent B.
+  - `library_browse_view_toggle.dart` (`LibraryBrowseViewToggle`) — two-icon segmented control (list / grid); violet fill on active.  Built by sub-agent B.
+- `library_files_screen.dart` rewritten:
+  - Body becomes `Row(Expanded(list/grid body) + LibraryBrowseDetailPanel)`.
+  - Header gains indexed-only toolbar toggle + view toggle + the FluxButton "Open in Explorer".
+  - Breadcrumb row gains search bar between segments and copy-path icon.
+  - `_BrowseListBody` + `_ColumnHeaderRow` replaced with `_BrowseBody` (dispatches list vs grid by cubit.viewMode after applying `applyBrowseFilters`), `_BrowseListView`, `_BrowseGridView`, `_SortableColumnHeaderRow` (click toggles direction; arrow indicator on active column; violet hover).
+  - `_BrowseRow` gains selection state + selected outline (violet border, ~10% violet tint) + `_lastTapAt` 300 ms double-click pattern (matches `_LibraryCardState`).  HDR pill + ▶-live pill render inline.
+  - New `_BrowseGridTile` + `_GridTileVisual` + `_KindIconBackground` for grid view.  Real thumbnail via `Image.network('<localBaseUrl>/api/v1/files/{file_id}/thumbnail?v=<unix>')` when indexed-and-ready; otherwise 44 px kind icon on a tinted gradient.  Corner badges (Hidden / Indexed top-right, ▶-live top-left).
+  - Empty-state copy varies: "This library is empty." / "This folder is empty." / "No entries match the current filters." with distinct icons.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| ✏️ Update | `apps/server/services/browse_service.py` | New `IndexedMedia` dataclass; `BrowseEntry` gains `media` + `mtime_unix`; `_attach_index_status` rewritten with the multi-table JOIN + stale-thumb auto-re-queue |
+| ✏️ Update | `apps/server/tests/test_browse.py` | 9 new tests covering all aspects of the new media payload |
+| ✏️ Update | `apps/desktop/lib/features/library/domain/entities/browse_entry.dart` | `IndexedMedia` mirror class + `BrowseEntry.media` + `mtimeUnix` |
+| ✏️ Update | `apps/desktop/lib/features/library/presentation/cubit/library_browse_cubit.dart` | UI-pref state (sort/view/search/selection/indexedOnly) + `applyBrowseFilters` pure function + two enums |
+| ➕ Create | `apps/desktop/lib/features/library/presentation/widgets/library_browse_detail_panel.dart` | 320 px right detail panel |
+| ➕ Create | `apps/desktop/lib/features/library/presentation/widgets/library_browse_search_bar.dart` | Compact in-place search input |
+| ➕ Create | `apps/desktop/lib/features/library/presentation/widgets/library_browse_view_toggle.dart` | List/Grid segmented control |
+| ✏️ Update | `apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart` | Body row layout + sortable headers + click semantics + grid tile + empty-state variations + wire to the three new widgets |
+| ✏️ Update | `docs/10_planning/28_library_file_browser_power_features.md` | Phase A status → ✅ Shipped; commit refs |
+| ✏️ Update | `docs/00_overview/current_status.md` | New top entry + server count 916 → 925 |
+| ✏️ Update | `docs/04_api/01_api_contracts.md` | `/browse` response now documents `media` field + `mtime_unix` |
+| ✏️ Update | `docs/08_frontend/01_frontend_architecture.md` | Status header lists Phase A additions |
+| ✏️ Update | `docs/10_planning/01_roadmap.md` | Plan 28 row → 🔵 In Progress; Phase A summary |
+| ✏️ Update | `CLAUDE.md` | Plan 28 lookup-row rewritten to reflect shipped Phase A + pending phases |
+
+### Decisions Made
+
+1. **`thumbnail_status='stale'` is synthesised server-side.**  Could have left the row in `'ready'` and just exposed a separate `is_thumbnail_stale` boolean; chose the synthesis path so the client treats stale identically to "in-flight regeneration" via existing `isThumbnailInFlight` switch.  Reduces client-side branching.
+2. **`audio_codec` parser is defensive.**  Malformed `audio_tracks` JSON returns `None` instead of raising; the other media fields still populate.  Caught during the 9-test pass — a single malformed row would have nuked the entire response otherwise.
+3. **Sub-agent A duplicated `_humanBytes` + `_formatModified` instead of lifting to a shared module.**  Acceptable — the helpers are 5-line functions; a `lib/features/library/util/` module is the right home but landing it as a separate cleanup beats blocking Phase A on a refactor.
+4. **Sub-agent B did NOT use `FluxTextField`.**  Its API (`leadingIcon` / single `trailing` widget slot; fixed at 48 px mobile / 32 px compact with mobile font sizing) didn't fit the search-bar spec.  Built a vanilla compact `TextField` matching the existing token set.  Honest trade — the FluxTextField shape would have forced a worse UI.
+5. **Long-hover quick-preview deferred to Phase B.**  Listed in plan §4.7 as a Phase A additional improvement but pushed: the popover-positioning math interacts with the `Listener` arena (right-click menu in Phase C), and getting both right at once is fragile.  Phase B will land long-hover alongside the failed-thumb indicator + indexed-at tooltip.
+6. **Stream-test button calls `POST /start` + immediate `DELETE`.**  Spec proposed a new `/test-start` endpoint with 5 s auto-cleanup.  Simpler to compose from existing endpoints + the client owns the cleanup lifecycle (cleaner failure paths).
+7. **`mtime_unix` shipped alongside `modified_iso` rather than replacing it.**  ISO string is operator-facing (we format it client-side); the unix int is for stale-thumb math.  Two fields is honest about the two consumers.
+
+### Issues / Sharp Edges Discovered
+
+1. **`stream_sessions.connection_type` NOT NULL** — broke the initial `is_streaming` test; fixed by passing `'lan'` literal in the test fixture.  Worth noting for any future tests inserting into `stream_sessions` — there's a CHECK constraint requiring `IN ('lan','webrtc_p2p','turn_relay')`.
+2. **`Path.resolve(strict=False)` follows symlinks** — already discovered during MVP browser landing; surfaces again here because the `_attach_index_status` join keys off `media_files.path` (which is canonical via the resolver).  Symlinks resolve to the canonical path before the JOIN comparison; no quirks observed.
+3. **`GetIt.I<dynamic>()` is invalid.**  Caught during the screen rewrite when I initially wrote the thumbnail URL builder without importing `ApiClient`.  Fixed by importing the concrete type.  Worth keeping in mind: GetIt always needs a concrete type parameter.
+4. **`audio_tracks` JSON shape varies across migrations.**  Old rows pre-plan-22 have `NULL`; plan-22+ rows have a list of dicts; some pathological rows have malformed JSON.  Phase A's audio_codec parser handles all three.
+5. **Selection state lives in the cubit, not in widget state.**  Phase B's keyboard-nav handler needs to read + set selection from outside the row widget tree; centralising it in the cubit was the right call upfront even though Phase A only needed single-select.
+
+### Next Agent Should
+
+1. **Phase B (~3 h)** — type-filter chips (All / Folders / Videos / Images / Audio / PDFs / Other / Indexed only), item-count footer (`X folders · Y files · Z indexed · N GB visible`), keyboard navigation (arrows / Enter / Backspace / Esc / Home / End / `/` to focus search), polish bundle (failed-thumbnail warning icon, indexed-at tooltip on long-hover of the Indexed tag, long-hover quick-preview popover deferred from Phase A).
+2. **Widget tests for sort headers + click semantics + grid view.**  Phase A shipped without these — pump the screen with a mock repo, simulate clicks, assert state.  ~30 min.
+3. **Operator real-device smoke test** of Phase A: navigate the folder browser; click a video file → verify the detail panel shows codec/dimensions/thumbnail; toggle Grid view → verify thumbnails render for indexed videos; type in search → live filter; click NAME header twice → toggle direction; verify the ▶ live pill appears when streaming to mobile from the same file.
+4. **Phase C planning revisit** — when Phase B lands, consider whether multi-select (Ctrl/Shift click) should move from Phase C to Phase B alongside keyboard nav.  Conceptually they're tightly coupled.

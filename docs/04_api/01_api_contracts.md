@@ -710,14 +710,32 @@ When `FLUXORA_TMDB_KEY` is not configured, returns zeros + a `detail` field inst
       "is_hidden": false,
       "size_bytes": 4827392112,
       "modified_iso": "2026-05-12T14:32:08Z",
+      "mtime_unix": 1747059128,           // raw mtime for client-side stale-thumb math
       "is_indexed": true,                 // has a media_files row pointing at this absolute path
-      "file_id": "uuid-of-media_files-row"  // null when not indexed
+      "file_id": "uuid-of-media_files-row",  // null when not indexed
+      "media": {                          // null for non-indexed entries + directories — plan 28 Phase A
+        "width": 3840,
+        "height": 2160,
+        "duration_sec": 7200.0,
+        "codec_name": "hevc",
+        "hdr_format": "HDR10",            // null on SDR sources
+        "audio_codec": "eac3",            // first track from media_files.audio_tracks JSON; null when malformed/absent
+        "thumbnail_status": "ready",       // 'pending' | 'generating' | 'ready' | 'failed' | 'skipped' | 'stale' (synthesised)
+        "thumbnail_generated_at_unix": 1747059128,  // null when not yet generated; for ?v= cache-buster
+        "indexed_at_iso": "2026-05-10T08:14:22Z",
+        "is_streaming": false              // true when an active stream_sessions row points at this file_id
+      }
     }
   ]
 }
 ```
 
 Entries are sorted **directories-first then files-alphabetical (case-insensitive)** server-side.  Symlinks are followed once for `is_dir` classification; the resolved target must still live under one of the roots.
+
+**Plan 28 Phase A extensions:**
+- `mtime_unix` (int) and `media` (object|null) added 2026-05-16.  Clients that don't recognise the new keys must ignore them.
+- `media.thumbnail_status='stale'` is **synthesised** by the server — it doesn't appear in `media_thumbnails.status`.  When the source file's `media_files.updated_at` is newer than the thumbnail's `generated_at`, the row is auto-flipped back to `status='pending'` with `priority=5` (worker auto-regenerates) + the response reports `thumbnail_status='stale'` so the client renders a "regenerating" affordance.
+- `media.is_streaming` is recomputed per browse request via a `JOIN stream_sessions ... WHERE ended_at IS NULL` subquery; no separate event stream subscribes to it.
 
 **Errors:** `403` path escapes every library root · `403` permission denied reading directory · `404` library not found / path doesn't exist / library has no root_paths · `500` library `root_paths` JSON corrupted
 

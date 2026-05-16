@@ -1,7 +1,7 @@
 # Library File-Browser Power Features — Plan 28
 
 > **Category:** Planning
-> **Status:** 📝 Drafted 2026-05-16 — owner-approved scope; phased delivery
+> **Status:** 🔵 In Progress 2026-05-16 — Phase A ✅ shipped (commits `65a3555` server + `f0971ae` client); Phases B–D pending
 > **Scope:** Reshape the v1 Explorer-style folder browser (shipped same day under plan 27 post-ship) into a power-user surface.  Adds proper desktop semantics (single-click selects / double-click opens), a right-side detail panel, sortable columns, list ↔ grid view toggle with thumbnails, in-place search, type-filter chips, keyboard navigation, right-click context menu, editable path bar, back/forward history, multi-select + density toggle, and per-file actions ("Index this file" / "Generate thumbnail").  Adds six smaller improvements surfaced during the planning pass.  Tier 3 features (recursive search via FTS5, bookmarks, drag-and-drop to Convert, filesystem watching) split into their own plans.
 > **Triggered by:** owner review 2026-05-16 after the MVP browser shipped — referenced the Convert/Candidates table as the target design language; asked "what more can we add and improve?" + "do all 19 features".
 
@@ -19,12 +19,12 @@ The v1 folder browser (commits `43159e5` / `f340537`) ships these capabilities:
 
 Plan 28 takes it to where operators expect a file browser to be on a modern Linux/Windows desktop.  19 ranked features + 6 additional improvements surfaced during planning.  Delivered in **4 phases (A–D)** spanning ~12 hours of focused work, each phase a clean commit chunk:
 
-| Phase | Effort | Headline |
-|---|---|---|
-| **A — Foundation** | ~4 h | Single/double-click semantics + right detail panel + sortable columns + list ↔ grid view + search box + server-side indexed-metadata extension + thumbnail preview in detail panel + 4 additional improvements |
-| **B — Filters & power** | ~3 h | Type-filter chips + item-count footer + keyboard nav + indexed-only toggle + polish (HDR badge, failed-thumb indicator, indexed-at tooltip, empty-state copy variations) |
-| **C — Interactions** | ~4 h | Right-click context menu + editable path textbox + per-file Index/Generate-thumb actions (2 new endpoints) + density toggle + multi-select with Ctrl/Shift |
-| **D — History + lazy compute** | ~1 h | Back/forward history navigation + lazy folder-size compute button in the detail panel |
+| Phase | Effort | Status | Headline |
+|---|---|---|---|
+| **A — Foundation** | ~4 h | ✅ Shipped 2026-05-16 (`65a3555` + `f0971ae`) | Single/double-click semantics + right detail panel + sortable columns + list ↔ grid view + search box + server-side indexed-metadata extension + thumbnail preview in detail panel + currently-streaming badge + indexed-only toggle (header form; chip form in Phase B) + stale-thumbnail auto-re-queue + empty-state copy variations + stream-test button on detail panel + HDR badge on rows.  Long-hover quick-preview deferred to Phase B (small, low-priority). |
+| **B — Filters & power** | ~3 h | ⏳ Pending | Type-filter chips + item-count footer + keyboard nav + indexed-only chip variant + polish (failed-thumb indicator, indexed-at tooltip, long-hover quick-preview) |
+| **C — Interactions** | ~4 h | ⏳ Pending | Right-click context menu + editable path textbox + per-file Index/Generate-thumb actions (2 new endpoints) + density toggle + multi-select with Ctrl/Shift |
+| **D — History + lazy compute** | ~1 h | ⏳ Pending | Back/forward history navigation + lazy folder-size compute button in the detail panel |
 
 **Tier 3 — separate plans (not in 28):**
 - Recursive search via SQLite FTS5 (new search service + endpoint + pagination)
@@ -109,9 +109,13 @@ Plan 28 takes it to where operators expect a file browser to be on a modern Linu
 
 ---
 
-## 4 · Phase A — Foundation (~4 h)
+## 4 · Phase A — Foundation (✅ Shipped 2026-05-16)
 
 The single biggest UX shift.  Splits click into select-vs-open + adds the detail panel that motivates the split + makes the listing genuinely usable.
+
+**Shipped commits:**
+- Server (`65a3555` — `feat(server): plan 28 phase A M1 — browse endpoint indexed-entry media payload`): `BrowseEntry` carries new `mtime_unix` + nullable `IndexedMedia` block (width / height / duration_sec / codec_name / hdr_format / audio_codec / thumbnail_status / thumbnail_generated_at_unix / indexed_at_iso / is_streaming).  `_attach_index_status` rewritten as a single LEFT-JOIN against `media_files` + `media_thumbnails` + `EXISTS` subquery on `stream_sessions`.  Stale-thumbnail auto-re-queue (source mtime > thumbnail generated_at flips the worker row back to pending with priority=5 + reports `thumbnail_status='stale'` to the client).  9 new tests; server suite 916 → 925.
+- Client (`f0971ae` — `feat(desktop): plan 28 phase A — folder browser foundation`): `IndexedMedia` + extended `BrowseEntry` shapes; cubit gains UI-pref state (selection / sort / view-mode / search / indexed-only) + `applyBrowseFilters` pure function; three new widget files (`LibraryBrowseDetailPanel`, `LibraryBrowseSearchBar`, `LibraryBrowseViewToggle`); `library_files_screen.dart` rewritten with Row(list/grid body | 320 px detail panel), sortable column headers, single-click-selects / double-click-opens via `_lastTapAt` 300 ms pattern, `_BrowseGridTile` with real thumbnail loading, distinct empty-state copy per scenario.  Desktop suite 121 (unchanged — Phase A is mostly composition; widget tests for sort/click/grid land with Phase B).
 
 ### 4.1 Click semantics rewrite (#2)
 
