@@ -47,6 +47,8 @@ class Endpoints {
       '$_base/library/$libraryId/enrich-tmdb';
   static String libraryRegenerateThumbnails(String libraryId) =>
       '$_base/library/$libraryId/regenerate-thumbnails';
+  static String libraryBrowse(String libraryId) =>
+      '$_base/library/$libraryId/browse';
 
   // Stream
   static String streamStart(String fileId) => '$_base/stream/start/$fileId';

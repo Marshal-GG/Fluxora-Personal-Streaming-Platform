@@ -3,6 +3,7 @@ import 'package:fluxora_core/entities/library.dart';
 import 'package:fluxora_core/entities/media_file.dart';
 import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_core/network/endpoints.dart';
+import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/library.dart' as desktop;
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 
@@ -11,6 +12,33 @@ class LibraryRepositoryImpl implements LibraryRepository {
       : _apiClient = apiClient;
 
   final ApiClient _apiClient;
+
+  /// Resolve server-relative `cover_urls` entries (e.g.
+  /// `/api/v1/files/<id>/thumbnail?v=...`) to absolute URLs so Flutter's
+  /// `Image.network` can fetch them.  Absolute URLs (TMDB
+  /// `https://image.tmdb.org/...`) pass through unchanged.  Plan 27 ship
+  /// missed this because cover_urls were TMDB-only before — every URL
+  /// was already absolute.
+  Map<String, dynamic> _resolveCoverUrls(Map<String, dynamic> json) {
+    final raw = json['cover_urls'];
+    if (raw is! List) return json;
+    final base = _apiClient.localBaseUrl;
+    if (base == null || base.isEmpty) return json;
+    // Trim a trailing slash so we don't end up with `base//api/v1/...`.
+    final trimmedBase = base.endsWith('/')
+        ? base.substring(0, base.length - 1)
+        : base;
+    final resolved = <String>[];
+    for (final entry in raw) {
+      if (entry is! String) continue;
+      if (entry.startsWith('/')) {
+        resolved.add('$trimmedBase$entry');
+      } else {
+        resolved.add(entry);
+      }
+    }
+    return {...json, 'cover_urls': resolved};
+  }
 
   @override
   Future<LibrariesPayload> getLibrariesWithOverrides() =>
@@ -22,7 +50,7 @@ class LibraryRepositoryImpl implements LibraryRepository {
           final overrides = <String, desktop.LibraryCodecOverrides>{};
           for (final raw in list) {
             final json = raw as Map<String, dynamic>;
-            libraries.add(Library.fromJson(json));
+            libraries.add(Library.fromJson(_resolveCoverUrls(json)));
             overrides[json['id'] as String] =
                 desktop.LibraryCodecOverrides.fromJson(json);
           }
@@ -52,7 +80,8 @@ class LibraryRepositoryImpl implements LibraryRepository {
       _apiClient.post<Library>(
         Endpoints.library,
         data: {'name': name, 'type': type, 'root_paths': rootPaths},
-        fromJson: (data) => Library.fromJson(data as Map<String, dynamic>),
+        fromJson: (data) =>
+            Library.fromJson(_resolveCoverUrls(data as Map<String, dynamic>)),
       );
 
   @override
@@ -77,7 +106,8 @@ class LibraryRepositoryImpl implements LibraryRepository {
     return _apiClient.patch<Library>(
       '${Endpoints.library}/$libraryId',
       body: body,
-      fromJson: (data) => Library.fromJson(data as Map<String, dynamic>),
+      fromJson: (data) =>
+          Library.fromJson(_resolveCoverUrls(data as Map<String, dynamic>)),
     );
   }
 
@@ -141,6 +171,25 @@ class LibraryRepositoryImpl implements LibraryRepository {
           }
           return 0;
         },
+      );
+
+  @override
+  Future<BrowseResponse> browseLibrary({
+    required String libraryId,
+    String path = '',
+    bool showHidden = false,
+  }) =>
+      _apiClient.get<BrowseResponse>(
+        Endpoints.libraryBrowse(libraryId),
+        queryParameters: {
+          if (path.isNotEmpty) 'path': path,
+          // Always send the flag explicitly so we don't accidentally
+          // get the server default when the operator toggled OFF after
+          // browsing with hidden visible.
+          'show_hidden': showHidden ? 'true' : 'false',
+        },
+        fromJson: (data) =>
+            BrowseResponse.fromJson(data as Map<String, dynamic>),
       );
 
   @override

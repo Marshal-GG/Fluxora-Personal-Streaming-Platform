@@ -1,5 +1,6 @@
 import 'package:fluxora_core/entities/media_file.dart';
 import 'package:fluxora_core/entities/library.dart';
+import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/library.dart' as desktop;
 
 /// Pair returned by [LibraryRepository.getLibraries] — the canonical core
@@ -70,6 +71,20 @@ abstract interface class LibraryRepository {
   /// the count of files queued.  Backed by
   /// `POST /api/v1/library/{id}/regenerate-thumbnails`.  Plan 27 M5.
   Future<int> regenerateThumbnails(String libraryId);
+
+  /// Filesystem-browse one directory inside [libraryId]'s root_paths.
+  /// [path] is relative to the matched root (empty = root listing).
+  /// [showHidden] passes through to the server — dotfile names + the
+  /// Windows hidden attribute are filtered out when false.
+  ///
+  /// Backed by `GET /api/v1/library/{id}/browse`.  Replaces the curated
+  /// media-only files view in the desktop control panel — operator now
+  /// sees the actual folder structure including non-media files.
+  Future<BrowseResponse> browseLibrary({
+    required String libraryId,
+    String path = '',
+    bool showHidden = false,
+  });
 
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath});
 }
