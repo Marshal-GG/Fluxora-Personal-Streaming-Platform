@@ -25,11 +25,8 @@ Fluxora/
 ├── installer/      # Windows installer build artefacts
 ├── build/          # Local build outputs (gitignored)
 │
-├── AGENT_LOG.md    # Append-only agent activity log (rotation policy: archive when >1000 lines)
-├── CLAUDE.md
 ├── DESIGN.md
 ├── README.md
-├── LICENSE / NOTICE / PRIVACY.md / TERMS.md / SECURITY.md / CODE_OF_CONDUCT.md / CONTRIBUTING.md
 ├── firebase.json   # Firebase project config (Phase 3+ only)
 └── .github/        # GitHub Actions CI/CD
 ```

@@ -56,7 +56,6 @@ Widget _bodyFor(LibraryShellTabPath tab, Widget real) =>
 - Tab switching is now a pure `setState` + index swap — no shell tear-down, no cubit dispose, no re-poll.
 - `_visited` Set ensures unvisited tabs render `SizedBox.shrink()` instead of mounting eagerly.  A session that never visits Convert never constructs a `TranscodeCubit`.
 - Routes (`/library/folders`, `/library/convert`, `/library/transcoding`) still exist as deep-link targets but they all mount the same `LibraryShell` with an `initialTab` arg.
-- Module-level `_rememberedLibraryTab` / `_rememberedActivityTab` survive go_router rebuilds; reset on hot restart.  Promoting to durable `SharedPreferences` is v1.1 polish (gated on CLAUDE.md prohibition #6 dep policy).
 
 ### 0.3 Singleton cubits + `BlocProvider.value` injection
 
@@ -280,7 +279,6 @@ Five milestones, ~1 day end-to-end.  Order is deliberate: tab hosts before deep-
 **Shipped diverges from plan:**
 - `FluxTabBar` swapped for **`FluxPillTabs`** (new shared widget — pill-button row).  `FluxTabBar` underline style stays inside `TranscodeScreen` inner Candidates/Queue/History tabs.
 - `LibraryScreen` + `TranscodeScreen` kept their existing widget names + paths; passed `embedded: true` instead of being renamed.
-- `_rememberedLibraryTab` is **module-level state**, not `SharedPreferences` (no new dep needed; resets on hot restart — acceptable per CLAUDE.md prohibition #6).
 - **`ScanHistoryTab` dropped at 2026-05-16 refinement** — replaced by `TranscodingScreen(embedded: true)` (Transcoding moved out of Activity).  Library tabs are now `folders / convert / transcoding`.
 - Rewritten as `StatefulWidget` + `IndexedStack` (not per-tab routing) to fix operator-caught "pop in/out" tab-switch tear-down.  See §0.2.
 
@@ -320,7 +318,6 @@ Five milestones, ~1 day end-to-end.  Order is deliberate: tab hosts before deep-
 - `docs/08_frontend/01_frontend_architecture.md` — update the Desktop Control Panel screen-tree section.
 - `docs/04_api/01_api_contracts.md` — no changes (server contracts unchanged), but verify the URL inventory.
 - `docs/05_infrastructure/02_url_inventory.md` — update client-facing routes.
-- AGENT_LOG entry per `docs/12_guidelines/04_agent_log_format.md`.
 - Mark `current_status.md` IA section.
 
 ### M6 (added 2026-05-16) — IndexedStack + singleton cubits + WS push refresh

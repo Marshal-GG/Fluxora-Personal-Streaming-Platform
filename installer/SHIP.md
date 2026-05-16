@@ -690,7 +690,6 @@ Things to do every time you cut a release. This is the
     the `#define MyAppVersion` literal too for local dev compiles
 - [ ] Update `docs/00_overview/current_status.md` "As of" paragraph
   if anything material shipped
-- [ ] AGENT_LOG.md entry for the release
 
 ### Build
 - [ ] Run `installer\BUILD.md` §1 (Nuitka server) — confirm exe runs
@@ -714,7 +713,6 @@ Things to do every time you cut a release. This is the
 - [ ] Push Flutter symbol map to private `release-symbols/vX.Y.Z` branch
 - [ ] Update `fluxora.marshalx.dev` — release-notes section if any
 - [ ] Update `docs/00_overview/current_status.md` "As of" — note the release
-- [ ] AGENT_LOG.md entry confirming the release shipped
 
 ### Post-publish
 - [ ] Verify the GitHub Release download triggers SmartScreen-clean
