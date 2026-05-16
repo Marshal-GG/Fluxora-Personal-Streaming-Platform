@@ -59,6 +59,7 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `GET` | `/api/v1/files/search` | Token or localhost | Substring match on `name` + TMDB `title` (`?q=...&limit=N`; SQL `LIKE` for v1, FTS5 v2 swap-in) |
 | `GET` | `/api/v1/files/{file_id}` | Token or localhost | Get single file by ID |
 | `GET` | `/api/v1/files/{file_id}/content` | Token or localhost | Stream raw bytes (`FileResponse`) — backs M11 beyond-video viewers (PDF / photo / music) and the "Open in…" handoff. 404 (not 403) on cross-group access to prevent enumeration. |
+| `GET` | `/api/v1/files/{file_id}/thumbnail` | Token or localhost | Serve the cached 320–640 px JPEG thumbnail. `image/jpeg` + `Cache-Control: public, max-age=86400`. 404 when not yet generated (background worker — no on-demand). Accepts an ignored `?v=<gen_unix>` query param used as a cache-buster on `cover_urls`. 404 (not 403) on cross-group access. Plan 27. |
 | `POST` | `/api/v1/files/upload` | Token or localhost | Upload a file to a library |
 | `DELETE` | `/api/v1/files/{file_id}` | Token or localhost | Remove file from index (does not delete from disk) |
 | `POST` | `/api/v1/files/{file_id}/reset-progress` | Token or localhost | Zero `last_progress_sec` so next playback starts from 0:00 — backs the "Start over" affordance on title detail (streaming pipeline plan §4.10). 404 (not 403) when bearer caller's groups don't expose the file's library, to prevent enumeration of gated content; localhost skips the visibility filter |
@@ -75,6 +76,7 @@ All paths are under the base `http://{server_ip}:8000` on LAN or `https://fluxor
 | `DELETE` | `/api/v1/library/{library_id}` | Token or localhost | Delete library entry + file index (files on disk are NEVER touched, ADR-017) |
 | `POST` | `/api/v1/library/{library_id}/scan` | Token or localhost | Walk root paths, index files, run TMDB enrichment (per-library lock — concurrent calls serialise) |
 | `POST` | `/api/v1/library/{library_id}/enrich-tmdb` | Token or localhost | Re-run TMDB enrichment on rows where `tmdb_id IS NULL`; `?include_dvr=true` overrides DVR-filename skip |
+| `POST` | `/api/v1/library/{library_id}/regenerate-thumbnails` | Token or localhost | Reset every thumbnail row for files in this library to `pending` + delete the on-disk JPEGs.  Background worker re-renders at current settings (width, HDR tonemap).  Returns `{queued}`.  Plan 27. |
 
 ### `stream` router
 

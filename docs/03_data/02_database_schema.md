@@ -1,7 +1,7 @@
 # Database Schema
 
 > **Category:** Data  
-> **Status:** Active - Updated 2026-05-12 (migration 034 — plan 21: new `client_audio_codec_blocklist` table for per-client audio codec fallback decisions. migrations 032 + 033 — plan 20: `streaming_mode` CHECK widened to include `'auto'`; new `client_codec_blocklist` table for per-client video codec fallback decisions. Earlier 2026-05-09: migrations 001-031; all prior history intact below.)
+> **Status:** Active - Updated 2026-05-16 (migrations 037 + 038 + 039 — plan 27: new `media_thumbnails` queue table consumed by `services/thumbnail_worker.py` (per-file status, priority for operator-opened-library boost, retry-attempt counter, generated_at timestamp for `?v=` cache-buster); notifications `category` CHECK widened to accept `'thumbnail'` for the worker's aggregated failure notifications (rebuilds the table since SQLite can't ALTER a CHECK in place); `user_settings.thumbnail_width` INTEGER NOT NULL DEFAULT 320 (range 160–640 enforced API-side).  Earlier 2026-05-12: migration 034 — plan 21 new `client_audio_codec_blocklist`; migrations 032 + 033 — plan 20 `streaming_mode` CHECK widened + `client_codec_blocklist` table. Earlier 2026-05-09: migrations 001-031; all prior history intact below.)
 
 ---
 

@@ -686,6 +686,40 @@ When `FLUXORA_TMDB_KEY` is not configured, returns zeros + a `detail` field inst
 
 ---
 
+### `POST /api/v1/library/{library_id}/regenerate-thumbnails`
+**Description:** Reset every thumbnail row for files in the library to `status='pending'` and delete the on-disk JPEGs.  The background thumbnail worker re-renders them at current settings (`thumbnail_width`, HDR tonemap, etc).  Operator-driven recovery for failed thumbs OR after changing `thumbnail_width`.  Records a `library.thumbnails_regenerated` activity event.  Plan 27 M3.
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).
+**Status:** ✅ Implemented
+
+**Response:**
+```json
+{
+  "library_id": "uuid",
+  "queued": 42     // files re-queued for thumbnail generation
+}
+```
+
+**Errors:** `404` library not found · `500` regeneration failed (DB / disk error)
+
+---
+
+### `GET /api/v1/files/{file_id}/thumbnail`
+**Description:** Serve the cached JPEG thumbnail for a file at `<data_dir>/thumbnails/<file_id>.jpg`.  Generated asynchronously by the background worker (no on-demand generation in this endpoint — by design).  Plan 27 M3.
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).
+**Status:** ✅ Implemented
+
+**Query params:**
+- `v` (str, optional) — cache-buster appended by `_library_aggregates` to `cover_urls`.  Endpoint accepts and ignores the value.  Exists so the URL becomes unique per generation cycle, invalidating Flutter `cached_network_image` / browser caches when a thumbnail is regenerated.
+
+**Response:**
+- `200` — `image/jpeg` bytes with `Cache-Control: public, max-age=86400`.
+
+**Errors:** `404` thumbnail not ready (BG worker hasn't processed yet, or status is `failed` / `skipped`) · `404` thumbnail file missing (DB row says `ready` but the JPEG was deleted from disk — log + treat as 404; can be retried via `POST /library/{id}/regenerate-thumbnails`) · `404` file not found (or visibility-gated for bearer-token caller — 404 not 403 to prevent enumeration of gated content)
+
+**Visibility:** bearer-token callers receive 404 when the file's library is outside their content-space groups.  Localhost callers (desktop control panel) skip the filter.
+
+---
+
 ### `GET /api/v1/stream/sessions`
 **Description:** List all currently active stream sessions (no `ended_at`). Admin view for the Desktop Control Panel.  
 **Auth:** Localhost only — `require_local_caller`.  
@@ -1764,6 +1798,7 @@ Optional `data` payload is allowed but currently unused (`kind` alone is suffici
 | `license_service.emit_license_expiry_warnings` | `license` | `error` (expired) or `warning` (within 30 days) | Called once at server startup after `init_db`; 1-day cooldown de-dupe |
 | `routers/stream.py start_stream` (FFmpeg failure block) | `transcode` | `error` | FFmpeg process fails to start or crashes; `related_id` = session UUID |
 | `library_service.get_storage_breakdown` | `storage` | `warning` | Storage usage exceeds 90%; 1-day cooldown de-dupe |
+| `thumbnail_worker._maybe_emit_failure_notification` | `thumbnail` | `warning` | ≥ 5 files in one library failed thumbnail generation after exhausting retries; de-dup matches existing open (`dismissed_at IS NULL`) notification for the library so failures don't spam the bell.  Plan 27 M2. |
 
 **Event producers** (ephemeral — `notification_service.broadcast_event(kind)`, no DB write):
 
@@ -1827,6 +1862,7 @@ All emitter call-sites are wrapped in `try/except` with logging — a notificati
 | `library.create` | `client` or `operator` | `library` | New library created via `POST /library` |
 | `library.update` | `client` or `operator` | `library` | Existing library renamed / root_paths edited via `PATCH /library/{id}` |
 | `library.delete` | `client` or `operator` | `library` | Library deleted via `DELETE /library/{id}` (file rows torched; on-disk files untouched per ADR-017) |
+| `library.thumbnails_regenerated` | `client` or `operator` | `library` | Operator triggered `POST /library/{id}/regenerate-thumbnails`; `payload.queued` carries the file count.  Plan 27. |
 | `file.upload` | `client` or `operator` | `file` | Upload via `POST /files/upload` |
 | `file.delete` | `client` or `operator` | `file` | Index-row delete via `DELETE /files/{id}` |
 | `settings.change` | `operator` | `settings` | `PATCH /settings` succeeds; `payload.fields` lists field names changed (values redacted) |

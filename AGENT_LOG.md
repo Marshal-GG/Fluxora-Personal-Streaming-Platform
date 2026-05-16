@@ -239,3 +239,85 @@ Uncommitted.  Suggested commit chunking — eight logical groups so each PR (or 
 1. **Start M1 — schema + extractors.**  Migration `037_media_thumbnails.sql`, `services/thumbnail_service.py` with the four helpers + `ThumbnailResult` dataclass, `pymupdf` added to `pyproject.toml`.  Unit tests against `lavfi testsrc` (SDR + synthetic-PQ for HDR branch), `lavfi anullsrc` (skip), image fixture, encrypted PDF fixture (skip), corrupt PDF (failed), width param respected.  Plan §6.1 + §9 M1.
 2. **Then M2 — worker.**  `services/thumbnail_worker.py` with atomic claim, `enqueue` / `boost_library` / `regenerate_library` / `_maybe_emit_failure_notification` methods; `main.py` lifespan wiring; scan-path enqueue hook in `library_service.scan_library` + `_persist_probe`'s sibling INSERT.  10 unit tests covering atomicity + priority + setting toggle + restart-recovery + skip + dispatch + notification + dedup + boost idempotency + regen.
 3. **Run server tests after each milestone** (`cd apps/server && pytest`).  Aim for green at every step before progressing.
+
+---
+
+## [2026-05-16] [server] [desktop] [feat] — Plan 27 ship · all six milestones in one day
+
+**Phase:** Plan 27 ship — background asyncio thumbnail-generation pipeline end-to-end.
+**Status:** Complete
+**Commits:** `217ff8b` M1 · `137362c` M2 · `3dbaf16` M3 · `b0428b0` M4 · `3e8066e` M5 · this commit M6
+
+### What Was Done
+
+All six milestones of plan 27 shipped same-day per the expanded-scope spec.  Each milestone landed as a self-contained commit with green tests before the next started.
+
+**M1 — Schema + extractors (`217ff8b`).** Migration `037_media_thumbnails.sql` (queue table w/ status state machine pending → generating → ready / failed / skipped, priority column for operator-opened-library boost, partial index on `(priority DESC, created_at ASC) WHERE status='pending'`, backfill INSERT seeds every existing media_files row).  New dep `pymupdf==1.27.2.3` (pure-Python wheel, AGPL-compatible).  `services/thumbnail_service.py` with `ThumbnailResult` dataclass + four extractors (FFmpeg video w/ Hable HDR→SDR branch when `hdr_format` is set, FFmpeg image, FFmpeg audio APIC w/ stderr-signature detection for "no embedded art" → skipped, PyMuPDF PDF first page lazy-imported in `asyncio.to_thread`).  Subprocess timeouts: 30 s video / 15 s image+audio+pdf.  Width clamp [32, 2048].  21 unit tests against `lavfi testsrc` (SDR happy + short clip + corrupt file → failed), minimal PNG fixture, `lavfi anullsrc` → skipped, synthetic 1-page PDF + encrypted PDF (skipped) + corrupt PDF (failed), filter-chain shape unit tests for SDR + HDR branches, concurrent extraction smoke.
+
+**M2 — Worker + scan-path enqueue + failure notifications (`137362c`).** `services/thumbnail_worker.py` with N parallel coroutines (default CONCURRENCY=2), atomic claim via `UPDATE ... RETURNING` (split into UPDATE-by-id then SELECT-joined-row since SQLite can't combine RETURNING with JOIN), `enqueue(db, file_id, priority=0)` (INSERT OR IGNORE — keeps scan path O(1) per file), `boost_library(db, library_id)` (UPDATE WHERE priority=0 → 10, idempotent), `regenerate_library(db, library_id)` (resets every row + deletes JPEGs).  `_maybe_emit_failure_notification` aggregates: counts permanent failures (attempts ≥ max_attempts) for the library, fires one summary notification at FAILURE_NOTIFICATION_THRESHOLD=5, dedup against open `(category='thumbnail', dismissed_at IS NULL)`.  Migration `038_notifications_thumbnail_category.sql` widens the CHECK constraint by table-rebuild pattern (SQLite can't ALTER a CHECK in place).  `_recover_orphan_generating_rows` resets prior-crash `generating` rows back to `pending` at startup.  `_sweep_orphan_jpegs` deletes JPEGs whose file_id isn't in `media_thumbnails` (cascade-from-media-files-delete cleanup), bounded to 100 per pass, runs every 6 h.  `main.py` lifespan: `start_worker()` after `init_db`, `stop_worker()` before `close_db` (best-effort).  `library_service.scan_library` calls `enqueue` after each INSERT (best-effort, swallows errors).  20 unit tests cover atomicity + priority + skip / dispatch / failure / threshold-fire / dedup-on-open / regen + crash-recovery.
+
+**M3 — Endpoint + cover_urls aggregation + regenerate endpoint (`3dbaf16`).** `GET /api/v1/files/{file_id}/thumbnail?v=<unix>` serves cached JPEG with `Cache-Control: public, max-age=86400`; 404 when not ready or JPEG missing on disk; accepts and ignores `v` query param; visibility-gated (404 not 403 for cross-group bearer callers).  `POST /api/v1/library/{library_id}/regenerate-thumbnails` returns `{library_id, queued}` + records `library.thumbnails_regenerated` activity event.  `library_service._library_aggregates` rewritten: TMDB poster URLs first (preferred); if < 4, top up with `/api/v1/files/{file_id}/thumbnail?v=<gen_unix>` URLs from media_thumbnails 'ready' rows; JOIN filter excludes files that already have TMDB art (no duplicate covers for the same file).  `GET /files?library_id=X` calls `thumbnail_worker.boost_library` so the operator-opened library jumps the queue.  14 endpoint tests + cover_urls aggregation tests (all-TMDB / all-thumbs / mixed / duplicate-exclusion).
+
+**M4 — `thumbnail_width` settings field (`b0428b0`).** Migration `039_user_settings_thumbnail_width.sql` adds the column with default 320.  `models/settings.py` `UserSettingsResponse.thumbnail_width: int = 320` + `UpdateSettingsBody.thumbnail_width: int | None = Field(default=None, ge=160, le=640)` — Pydantic returns 422 on out-of-range without router-level branching.  `services/settings_service.py` plumbed (kwarg, column map, defaults).  Worker reads the value per claim cycle.  16 tests: defaults round-trip + accept/reject parametrized ranges + worker reader fallback to 320 pre-migration.
+
+**M5 — Desktop regenerate UI + Settings → Advanced slider (`3e8066e`).**  New `Endpoints.libraryRegenerateThumbnails` + `LibraryRepository.regenerateThumbnails` + `LibraryCubit.regenerateThumbnails` (rethrows on API failure without firing refresh).  New `_ActionTile` on `_LibraryDetailPanel` between Rescan TMDB and View Library Files with `Icons.image_outlined`.  `_regenerateThumbnails(BuildContext, Library)` helper on `_LibraryViewState` surfaces a queued-count toast.  Settings → Advanced gained a `_SettingBlock` "Thumbnails" with a `FluxSlider` for `thumbnail_width` (160–640 in 20-px divisions; live "$N px" label).  `SettingsLoaded.thumbnailWidth` + `SettingsCubit.saveSettings(thumbnailWidth: ...)` diff-only PATCH plumbing.  3 cubit tests covering the regenerate happy path + API failure rethrow + zero-queued path.
+
+**M6 — Doc sweep + AGENT_LOG (this commit).**  `docs/04_api/01_api_contracts.md` documents both new endpoints (request/response/errors/visibility) + adds the `library.thumbnails_regenerated` activity event + adds the `thumbnail` notification producer row.  `docs/05_infrastructure/02_url_inventory.md` adds two new endpoint rows.  `docs/03_data/02_database_schema.md` status line bumped to cover migrations 037 + 038 + 039.  `docs/00_overview/current_status.md` flips plan 27 from 📝 Active to ✅ Shipped + bumps test counts (server 814 → 898; desktop 118 → 121).  `docs/10_planning/01_roadmap.md` row flipped to ✅ Done.  `CLAUDE.md` lookup row rewritten to match shipped state.  `docs/08_frontend/01_frontend_architecture.md` status header gains plan 27 note.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| ➕ Create | `apps/server/database/migrations/037_media_thumbnails.sql` | Queue table + partial pending-index + existing-rows backfill INSERT |
+| ➕ Create | `apps/server/database/migrations/038_notifications_thumbnail_category.sql` | Widens category CHECK to accept 'thumbnail' (SQLite table-rebuild pattern) |
+| ➕ Create | `apps/server/database/migrations/039_user_settings_thumbnail_width.sql` | New INTEGER column default 320 |
+| ➕ Create | `apps/server/services/thumbnail_service.py` | Pure-function extractors (video/image/audio/pdf) + `ThumbnailResult` dataclass + kind dispatch |
+| ➕ Create | `apps/server/services/thumbnail_worker.py` | Asyncio worker pool + claim + state-machine transitions + failure aggregation + orphan-JPEG sweeper |
+| ➕ Create | `apps/server/tests/test_thumbnail_service.py` | 21 extractor tests |
+| ➕ Create | `apps/server/tests/test_thumbnail_worker.py` | 20 worker tests |
+| ➕ Create | `apps/server/tests/test_thumbnail_endpoint.py` | 14 endpoint + cover_urls aggregation tests |
+| ➕ Create | `apps/server/tests/test_thumbnail_settings.py` | 16 settings-field tests |
+| ➕ Create | `apps/desktop/test/features/library/library_cubit_test.dart` | 3 regenerate cubit tests + 1 sanity |
+| ✏️ Update | `apps/server/pyproject.toml` | Add `pymupdf==1.27.2.3` |
+| ✏️ Update | `apps/server/main.py` | Lifespan: `thumbnail_worker.start_worker()` after transcode worker; `stop_worker()` on shutdown |
+| ✏️ Update | `apps/server/services/library_service.py` | Scan-path enqueue hook + `_library_aggregates` cover_urls union (TMDB + thumbs w/ `?v=` cache-buster) |
+| ✏️ Update | `apps/server/routers/files.py` | New `GET /{file_id}/thumbnail` endpoint + `boost_library` call from `GET /files?library_id=X` |
+| ✏️ Update | `apps/server/routers/library.py` | New `POST /{library_id}/regenerate-thumbnails` endpoint |
+| ✏️ Update | `apps/server/models/settings.py` | `UserSettingsResponse.thumbnail_width` + `UpdateSettingsBody.thumbnail_width` with `Field(ge=160, le=640)` |
+| ✏️ Update | `apps/server/services/settings_service.py` | `thumbnail_width` kwarg + column map + default seeded |
+| ✏️ Update | `apps/desktop/lib/features/library/domain/repositories/library_repository.dart` | New `regenerateThumbnails(libraryId) -> int` abstract method |
+| ✏️ Update | `apps/desktop/lib/features/library/data/repositories/library_repository_impl.dart` | POST to `libraryRegenerateThumbnails` endpoint, parse `{queued}` |
+| ✏️ Update | `apps/desktop/lib/features/library/presentation/cubit/library_cubit.dart` | `regenerateThumbnails` method + silent refresh after success |
+| ✏️ Update | `apps/desktop/lib/features/library/presentation/screens/library_screen.dart` | `_LibraryDetailPanel.onRegenerateThumbnails` constructor arg + `_ActionTile` + `_regenerateThumbnails` helper on `_LibraryViewState` |
+| ✏️ Update | `apps/desktop/lib/features/settings/presentation/cubit/settings_state.dart` | `thumbnailWidth: int = 320` field + `copyWith` |
+| ✏️ Update | `apps/desktop/lib/features/settings/presentation/cubit/settings_cubit.dart` | Load + saveSettings plumbing |
+| ✏️ Update | `apps/desktop/lib/features/settings/presentation/screens/settings_screen.dart` | `_thumbnailWidth` field + `_AdvancedTab.thumbnailWidth` + `Icons.image_outlined` Thumbnails `_SettingBlock` with `FluxSlider` |
+| ✏️ Update | `packages/fluxora_core/lib/network/endpoints.dart` | New `libraryRegenerateThumbnails(libraryId)` helper |
+| ✏️ Update | `docs/04_api/01_api_contracts.md` | Document both new endpoints + activity event + notification producer |
+| ✏️ Update | `docs/05_infrastructure/02_url_inventory.md` | Two new endpoint rows |
+| ✏️ Update | `docs/03_data/02_database_schema.md` | Status line covers migrations 037 + 038 + 039 |
+| ✏️ Update | `docs/00_overview/current_status.md` | Plan 27 → ✅ Shipped; bump test counts |
+| ✏️ Update | `docs/10_planning/01_roadmap.md` | Row → ✅ Done |
+| ✏️ Update | `CLAUDE.md` | Lookup row rewritten to shipped state |
+| ✏️ Update | `docs/08_frontend/01_frontend_architecture.md` | Status header plan 27 note |
+
+### Decisions Made
+
+1. **Three migrations instead of two.**  Plan originally specced two (037 table + 038 settings).  M2 surfaced that the `notifications.category` CHECK constraint blocks `'thumbnail'`, so a separate widening migration was needed — added as 038 with the settings column shifted to 039.  Cleaner than coupling unrelated schema changes.
+2. **End-to-end HDR pipeline test omitted.**  Synthetic-PQ via FFmpeg's `color` filter trips `zscale`'s "no path between colorspaces" guard (libx264's lavfi shape doesn't carry stream-level colorspace VUI flags).  Kept pure-function unit tests of `_build_video_filter_chain` (proves the right chain is wired up when `hdr_format` is set) since the filter string is byte-identical to `services/ffmpeg_service._HDR_TO_SDR_VF` which is operator-verified on real HDR streams.  Documented in the test file's note + plan §8 edge 7.
+3. **Lazy PyMuPDF import inside the extractor.**  Wrapped in `try/except ImportError` so a missing wheel on a fringe platform surfaces as a per-file skip (`error_message='pymupdf not available'`) rather than a startup crash.  Plan §11 risk row.
+4. **`cur.rowcount` is unreliable on aiosqlite UPDATE.**  Surfaced during M2 worker tests — `boost_library` returned 0 even when the UPDATE clearly hit rows.  Fixed by following the UPDATE with `SELECT changes()` (SQLite's session-scoped change counter).  Same pattern in `_recover_orphan_generating_rows`.
+5. **No on-demand generation in the endpoint.**  Endpoint returns 404 if not yet ready; client falls back to the gradient mosaic.  Per owner direction earlier in this session.  Avoids the cold-view stall risk of inline generation.
+
+### Issues / Sharp Edges Discovered
+
+1. **AIOSqlite `cursor.rowcount` is 0 for UPDATEs** — fix is `SELECT changes()` after the UPDATE.  Worth flagging in `docs/12_guidelines/03_gotchas.md` as a future polish for anyone writing new aiosqlite UPDATE-returning-count code.
+2. **`UPDATE ... RETURNING` can't combine with JOIN in SQLite.**  M2 wanted to claim + JOIN media_files in one statement; ended up splitting into UPDATE-by-id-then-SELECT-joined wrapped in a single transaction.  Documented inline in `_claim_one`.
+3. **Migration 038's category-CHECK widening is table-rebuild pattern** — preserves indexes + data but bumps `notifications` table OID.  Future migrations that pre-create indexes on `notifications` need to know the table identity will have shifted at this point.
+4. **`_get_current_settings` tolerates missing `thumbnail_width` column** — M2 ships before M4, so the worker has to handle the pre-M4 schema.  When M4's migration lands the fallback path stops triggering; the defensive branch can be removed in a follow-up but adds zero overhead today.
+
+### Next Agent Should
+
+1. **Operator smoke test** on a real library with no TMDB enrichment.  Open Library → click a Music or Documents library card → wait a few seconds → cards should populate with extracted thumbs (not gradient placeholders).  Restart the server → confirm workers resume on existing pending rows.  Toggle the Settings slider, hit Regenerate Thumbnails on a library, watch the cards refresh in place.
+2. **Plan 26 archival.**  Plan 26 + this plan 27 close out the same-day desktop-CP iteration.  Move plan 26 to `docs/10_planning/archive/` once operator sign-off lands on item 1.  Plan 27 can follow the same path — both are shipped end-to-end.
+3. **Drop the `_get_current_settings` pre-M4 fallback branch** in `services/thumbnail_worker.py` once we're confident no operator is running the M2-without-M4 intermediate state (i.e. always after a fresh install since migrations apply in order).  ~5-minute follow-up.
