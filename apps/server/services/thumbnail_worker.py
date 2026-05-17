@@ -221,20 +221,42 @@ async def regenerate_library(
     Deletes the cached JPEGs on disk so the worker re-renders them at
     current settings (width, HDR tonemap, etc).  Called from
     ``POST /library/{id}/regenerate-thumbnails``.  Returns the count of
-    files queued.
+    files queued for re-render.
+
+    Two efficiency gates compared to a naive "reset everything":
+      * Files whose extension has no extractor (subtitles / archives /
+        source files / etc.) are not reset — they'd just be re-marked
+        `skipped` by the worker, wasting one claim+commit cycle per
+        file.  Skipped status sticks.
+      * Files that already sit at `status='skipped'` are left alone
+        for the same reason.
+      * The missing-row backfill is one `executemany` instead of N
+        individual `INSERT OR IGNORE` round-trips, so a 10k-file
+        library re-queues in one transaction trip rather than 10k.
     """
     async with db.execute(
-        "SELECT id FROM media_files WHERE library_id = ?", (library_id,)
+        "SELECT id, extension FROM media_files WHERE library_id = ?",
+        (library_id,),
     ) as c:
         file_rows = await c.fetchall()
-    file_ids = [r["id"] for r in file_rows]
-    if not file_ids:
+    if not file_rows:
+        return 0
+
+    # Filter to only files that have an extractor; subtitle / archive /
+    # text / source files stay un-touched (their `skipped` rows are
+    # correct + permanent).
+    extractable_ids = [
+        r["id"]
+        for r in file_rows
+        if thumbnail_service.kind_for_extension(r["extension"] or "") is not None
+    ]
+    if not extractable_ids:
         return 0
 
     # Delete cached JPEGs.  Best-effort — missing files are fine, we're
     # about to re-render anyway.
     tdir = _thumbnails_dir()
-    for fid in file_ids:
+    for fid in extractable_ids:
         jpeg = tdir / f"{fid}.jpg"
         try:
             jpeg.unlink(missing_ok=True)
@@ -244,7 +266,14 @@ async def regenerate_library(
             )
 
     now = datetime.now(UTC).isoformat()
-    placeholders = ",".join("?" for _ in file_ids)
+    placeholders = ",".join("?" for _ in extractable_ids)
+    # `status != 'skipped'` so a file the operator previously could not
+    # thumbnail (corrupt source, e.g.) but whose extractor exists stays
+    # untouched until something explicitly re-tries it.  Today the
+    # worker only emits `skipped` for the no-extractor case (those are
+    # already excluded above), so this is defence in depth for the
+    # extractor-returned-skipped paths (audio without APIC, encrypted
+    # PDF).
     await db.execute(
         f"""
         UPDATE media_thumbnails
@@ -254,22 +283,22 @@ async def regenerate_library(
                generated_at = NULL,
                updated_at = ?
          WHERE file_id IN ({placeholders})
+           AND status != 'skipped'
         """,
-        (now, *file_ids),
+        (now, *extractable_ids),
     )
-    # Insert any missing thumbnail rows (e.g. file was added before the
-    # 037 migration backfill landed for some reason).
-    for fid in file_ids:
-        await db.execute(
-            """
-            INSERT OR IGNORE INTO media_thumbnails
-                (file_id, status, priority, created_at, updated_at)
-            VALUES (?, 'pending', 10, ?, ?)
-            """,
-            (fid, now, now),
-        )
+    # Insert any missing thumbnail rows in a single `executemany` —
+    # cheaper than the per-id round-trip the previous version did.
+    await db.executemany(
+        """
+        INSERT OR IGNORE INTO media_thumbnails
+            (file_id, status, priority, created_at, updated_at)
+        VALUES (?, 'pending', 10, ?, ?)
+        """,
+        [(fid, now, now) for fid in extractable_ids],
+    )
     await db.commit()
-    return len(file_ids)
+    return len(extractable_ids)
 
 
 # ── Worker loop ────────────────────────────────────────────────────────────

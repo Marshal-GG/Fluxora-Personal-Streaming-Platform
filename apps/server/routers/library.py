@@ -48,6 +48,11 @@ def _override_to_bool(raw: object | None) -> bool | None:
 
 
 def _parse_library(row: dict) -> LibraryResponse:
+    raw_tmdb = row.get("tmdb_enabled")
+    # Pre-migration rows have no tmdb_enabled column; default to True
+    # so the operator sees current behaviour until they explicitly
+    # opt out via the edit form.
+    tmdb_enabled = True if raw_tmdb is None else bool(raw_tmdb)
     return LibraryResponse(
         id=row["id"],
         name=row["name"],
@@ -60,6 +65,7 @@ def _parse_library(row: dict) -> LibraryResponse:
         cover_urls=row.get("cover_urls", []),
         av1_stream_copy_override=_override_to_bool(row.get("av1_stream_copy_override")),
         vp9_stream_copy_override=_override_to_bool(row.get("vp9_stream_copy_override")),
+        tmdb_enabled=tmdb_enabled,
     )
 
 
@@ -101,7 +107,11 @@ async def create_library(
     _client: aiosqlite.Row | None = Depends(validate_token_or_local),
 ) -> LibraryResponse:
     row = await library_service.create_library(
-        db, name=body.name, lib_type=body.type, root_paths=body.root_paths
+        db,
+        name=body.name,
+        lib_type=body.type,
+        root_paths=body.root_paths,
+        tmdb_enabled=body.tmdb_enabled,
     )
     try:
         await activity_service.record(
@@ -148,18 +158,20 @@ async def update_library(
     fields_set = body.model_fields_set
     has_av1_override = "av1_stream_copy_override" in fields_set
     has_vp9_override = "vp9_stream_copy_override" in fields_set
+    has_tmdb_enabled = "tmdb_enabled" in fields_set
 
     if (
         body.name is None
         and body.root_paths is None
         and not has_av1_override
         and not has_vp9_override
+        and not has_tmdb_enabled
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "At least one field (name, root_paths, or a codec override) "
-                "must be provided"
+                "At least one field (name, root_paths, codec override, "
+                "or tmdb_enabled) must be provided"
             ),
         )
     if body.name is not None and not body.name.strip():
@@ -183,6 +195,7 @@ async def update_library(
         vp9_stream_copy_override=(
             body.vp9_stream_copy_override if has_vp9_override else _UNSET
         ),
+        tmdb_enabled=(body.tmdb_enabled if has_tmdb_enabled else _UNSET),
     )
     if row is None:
         raise HTTPException(
@@ -549,6 +562,63 @@ async def scan_subtree(
     notification_service.broadcast_event("library_changed")
     notification_service.broadcast_event("storage_changed")
     return {"library_id": library_id, "files_added": added}
+
+
+@router.post(
+    "/{library_id}/unindex-subtree",
+    status_code=status.HTTP_200_OK,
+)
+async def unindex_subtree(
+    library_id: str,
+    path: str = Query(
+        ...,
+        description="relative path under the library root identifying "
+        "the directory whose indexed files should be removed from the "
+        "catalog; files on disk are NOT deleted",
+    ),
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> dict:
+    """Remove every `media_files` row under the given subtree.
+
+    Cascades to `media_thumbnails` / `transcode_jobs` / etc. via the
+    schema's `ON DELETE CASCADE` foreign keys.  Files on disk stay
+    where they are — this is the inverse of "Scan this folder," not
+    a destructive disk operation.
+
+    Returns ``{library_id, files_removed}``.  Path security mirrors
+    `/browse`: 403 on escape, 404 on missing, 400 when the path
+    resolves to a file.
+    """
+    try:
+        absolute_dir = await browse_service.resolve_subtree_for_scan(
+            db, library_id=library_id, relative_path=path
+        )
+    except BrowseError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+
+    try:
+        removed = await library_service.unindex_subtree(
+            db,
+            library_id=library_id,
+            subtree_abs=absolute_dir,
+        )
+    except Exception:
+        logger.error(
+            "Subtree unindex failed for library %s path %r",
+            library_id,
+            path,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unindex failed",
+        )
+
+    if removed:
+        notification_service.broadcast_event("library_changed")
+        notification_service.broadcast_event("storage_changed")
+    return {"library_id": library_id, "files_removed": removed}
 
 
 @router.post(

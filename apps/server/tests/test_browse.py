@@ -308,6 +308,46 @@ async def test_browse_unindexed_entry_has_null_media(client, test_db, tree):
     assert by_name["readme.txt"]["media"] is None
 
 
+async def test_browse_propagates_poster_url(client, test_db, tree):
+    """When TMDB enrichment has set `media_files.poster_url`, the browse
+    payload surfaces it under `media.poster_url` so the desktop folder
+    browser can render TMDB art in preference to the extracted frame.
+    Files without enrichment return `poster_url: null` (not the empty
+    string the DB sometimes coerces blanks to)."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    movie_path = tree / "movie.mp4"
+    file_id = await _insert_indexed_video(
+        test_db,
+        library_id=lib_id,
+        absolute_path=movie_path,
+    )
+    await test_db.execute(
+        "UPDATE media_files SET poster_url = ? WHERE id = ?",
+        ("https://image.tmdb.org/t/p/w500/poster.jpg", file_id),
+    )
+    photo_path = tree / "photo.jpg"
+    photo_id = await _insert_indexed_video(
+        test_db,
+        library_id=lib_id,
+        absolute_path=photo_path,
+    )
+    # Blank poster_url normalises to null on the wire so the client
+    # only has to check `posterUrl != null`.
+    await test_db.execute(
+        "UPDATE media_files SET poster_url = '' WHERE id = ?",
+        (photo_id,),
+    )
+    await test_db.commit()
+
+    r = await client.get(f"/api/v1/library/{lib_id}/browse")
+    by_name = {e["name"]: e for e in r.json()["entries"]}
+    assert (
+        by_name["movie.mp4"]["media"]["poster_url"]
+        == "https://image.tmdb.org/t/p/w500/poster.jpg"
+    )
+    assert by_name["photo.jpg"]["media"]["poster_url"] is None
+
+
 async def test_browse_directory_has_null_media(client, test_db, tree):
     """Directories never carry a media payload."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
@@ -639,17 +679,21 @@ async def test_index_file_rejects_directory(client, test_db, tree):
     assert "directory" in r.json()["detail"].lower()
 
 
-async def test_index_file_rejects_unsupported_extension(
+async def test_index_file_accepts_any_extension(
     client, test_db, tree
 ):
-    """`readme.txt` (kind='other') is rejected with 400."""
+    """`readme.txt` (kind='other') is indexable — the operator's mobile
+    catalog needs to be able to surface arbitrary documents / archives /
+    text files reached via `/files/{id}/content`."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
 
     r = await client.post(
         f"/api/v1/library/{lib_id}/index-file?path=readme.txt"
     )
-    assert r.status_code == 400
-    assert "unsupported" in r.json()["detail"].lower()
+    assert r.status_code == 200
+    body = r.json()
+    assert body["already_indexed"] is False
+    assert body["file_id"]
 
 
 async def test_index_file_rejects_path_escape(client, test_db, tree):
@@ -764,8 +808,8 @@ async def test_scan_subtree_walks_only_one_directory(client, test_db, tree):
     assert r.status_code == 200
     body = r.json()
     assert body["library_id"] == lib_id
-    # `sub/` contains `song.mp3` + `sub/nested/doc.pdf` — both are
-    # _MEDIA_EXTENSIONS members.  Top-level `movie.mp4` / `photo.jpg`
+    # `sub/` contains exactly two files (`song.mp3` + `nested/doc.pdf`);
+    # top-level `movie.mp4` / `photo.jpg` / `readme.txt` / `.hidden_file`
     # are NOT in the subtree and must not be ingested.
     assert body["files_added"] == 2
 
@@ -796,6 +840,99 @@ async def test_scan_subtree_rejects_path_escape(client, test_db, tree):
 
     r = await client.post(
         f"/api/v1/library/{lib_id}/scan-subtree?path=../outside"
+    )
+    assert r.status_code in (403, 404)
+
+
+# ── Unindex-subtree ────────────────────────────────────────────────────────
+
+
+async def test_unindex_subtree_removes_only_subtree_rows(
+    client, test_db, tree
+):
+    """`/library/{id}/unindex-subtree?path=sub` removes only the rows
+    whose path sits under `<root>/sub/`; top-level files stay indexed."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    # Full scan first so the catalog is populated.
+    r = await client.post(f"/api/v1/library/{lib_id}/scan")
+    assert r.status_code in (200, 202)
+
+    # Snapshot what's indexed before unindexing.
+    async with test_db.execute(
+        "SELECT path FROM media_files WHERE library_id = ?", (lib_id,)
+    ) as cur:
+        before = {r["path"] for r in await cur.fetchall()}
+    assert str(tree / "sub" / "song.mp3") in before
+    assert str(tree / "sub" / "nested" / "doc.pdf") in before
+    assert str(tree / "movie.mp4") in before
+
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/unindex-subtree?path=sub"
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["library_id"] == lib_id
+    # `sub/song.mp3` + `sub/nested/doc.pdf` — both removed.
+    assert body["files_removed"] == 2
+
+    async with test_db.execute(
+        "SELECT path FROM media_files WHERE library_id = ?", (lib_id,)
+    ) as cur:
+        after = {r["path"] for r in await cur.fetchall()}
+    assert str(tree / "sub" / "song.mp3") not in after
+    assert str(tree / "sub" / "nested" / "doc.pdf") not in after
+    assert str(tree / "movie.mp4") in after
+    assert str(tree / "photo.jpg") in after
+
+
+async def test_unindex_subtree_files_remain_on_disk(client, test_db, tree):
+    """Unindexing is a catalog-only operation; the bytes on disk are
+    untouched even after the row is gone."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    await client.post(f"/api/v1/library/{lib_id}/scan")
+
+    song = tree / "sub" / "song.mp3"
+    assert song.exists()
+
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/unindex-subtree?path=sub"
+    )
+    assert r.status_code == 200
+
+    # File on disk untouched.
+    assert song.exists()
+
+
+async def test_unindex_subtree_returns_zero_on_empty_subtree(
+    client, test_db, tree
+):
+    """Subtree that contains no indexed files returns 0, not an error."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    # Scan only the top-level (so `sub/` files are not in media_files).
+    # The scanner has no top-level-only mode, so simulate by walking the
+    # subtree first then unindexing without any prior scan.
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/unindex-subtree?path=sub"
+    )
+    assert r.status_code == 200
+    assert r.json()["files_removed"] == 0
+
+
+async def test_unindex_subtree_rejects_file_path(client, test_db, tree):
+    """Pointing unindex-subtree at a file returns 400 — same shape as
+    scan-subtree."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/unindex-subtree?path=movie.mp4"
+    )
+    assert r.status_code == 400
+
+
+async def test_unindex_subtree_rejects_path_escape(client, test_db, tree):
+    """`..`-style escapes return 403/404."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    r = await client.post(
+        f"/api/v1/library/{lib_id}/unindex-subtree?path=../outside"
     )
     assert r.status_code in (403, 404)
 

@@ -20,12 +20,23 @@ class LibraryResponse(BaseModel):
     # `ffmpeg_service.start_stream` via `_resolve_codec_passthrough`.
     av1_stream_copy_override: bool | None = None
     vp9_stream_copy_override: bool | None = None
+    # Per-library TMDB-enrichment toggle (migration 040).  Default
+    # True so existing libraries continue to enrich; flipping to
+    # False both stops future enrichment passes AND masks already-
+    # persisted TMDB columns (poster_url / title / overview /
+    # tmdb_id) from API responses without dropping the rows from
+    # disk — re-enabling brings everything back.
+    tmdb_enabled: bool = True
 
 
 class CreateLibraryBody(BaseModel):
     name: str
     type: Literal["movies", "tv", "music", "files"]
     root_paths: list[str]
+    # Operator can opt the library out of TMDB at creation time —
+    # useful for non-media libraries (screenshots, captures, document
+    # archives) where TMDB matching would just produce noise.
+    tmdb_enabled: bool = True
 
 
 class UpdateLibraryBody(BaseModel):
@@ -39,6 +50,9 @@ class UpdateLibraryBody(BaseModel):
     # global toggle.
     av1_stream_copy_override: bool | None = None
     vp9_stream_copy_override: bool | None = None
+    # Per-library TMDB toggle (migration 040) — see LibraryResponse
+    # field comment for hide-but-keep semantics.
+    tmdb_enabled: bool | None = None
 
 
 class StorageByType(BaseModel):

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 import uuid
@@ -356,33 +357,49 @@ async def _library_aggregates(
     file_count = int(row["cnt"]) if row else 0
     total_size = int(row["total"]) if row else 0
 
-    async with db.execute(
-        """
-        SELECT poster_url
-          FROM media_files
-         WHERE library_id = ? AND poster_url IS NOT NULL AND poster_url != ''
-         ORDER BY updated_at DESC
-         LIMIT 4
-        """,
-        (library_id,),
-    ) as cur:
-        cover_rows = await cur.fetchall()
-    cover_urls: list[str] = [r["poster_url"] for r in cover_rows]
+    # Per-library TMDB toggle: when disabled, skip the poster_url pass
+    # entirely + don't exclude TMDB-having files from the thumbnail
+    # pass.  Hides any persisted TMDB art without dropping the rows
+    # from the DB, so flipping the toggle back on restores the mosaic
+    # without re-fetching anything from TMDB.
+    tmdb_enabled = await _is_tmdb_enabled(db, library_id)
 
-    # Plan 27: fill any remaining slots from generated thumbnails.
-    # Exclude files that already have a TMDB poster_url so we don't
-    # show duplicate art (TMDB + extracted frame from the same file).
-    needed = 4 - len(cover_urls)
-    if needed > 0:
+    cover_urls: list[str] = []
+    if tmdb_enabled:
         async with db.execute(
             """
+            SELECT poster_url
+              FROM media_files
+             WHERE library_id = ? AND poster_url IS NOT NULL AND poster_url != ''
+             ORDER BY updated_at DESC
+             LIMIT 4
+            """,
+            (library_id,),
+        ) as cur:
+            cover_rows = await cur.fetchall()
+        cover_urls = [r["poster_url"] for r in cover_rows]
+
+    # Plan 27: fill any remaining slots from generated thumbnails.
+    # When TMDB is enabled, exclude files that already have a TMDB
+    # poster_url so we don't show duplicate art (TMDB + extracted frame
+    # from the same file).  When TMDB is disabled, take every file with
+    # a ready thumbnail regardless of its poster_url column.
+    needed = 4 - len(cover_urls)
+    if needed > 0:
+        poster_filter = (
+            " AND (mf.poster_url IS NULL OR mf.poster_url = '')"
+            if tmdb_enabled
+            else ""
+        )
+        async with db.execute(
+            f"""
             SELECT mf.id AS file_id,
                    CAST(strftime('%s', t.generated_at) AS INTEGER) AS gen_unix
               FROM media_files mf
               JOIN media_thumbnails t ON t.file_id = mf.id
              WHERE mf.library_id = ?
                AND t.status = 'ready'
-               AND (mf.poster_url IS NULL OR mf.poster_url = '')
+               {poster_filter}
              ORDER BY t.generated_at DESC
              LIMIT ?
             """,
@@ -450,6 +467,7 @@ async def update_library(
     root_paths: list[str] | None = None,
     av1_stream_copy_override: object = _UNSET,
     vp9_stream_copy_override: object = _UNSET,
+    tmdb_enabled: object = _UNSET,
 ) -> dict | None:
     """Partial update of a library. Returns the refreshed row or None if not found.
 
@@ -457,14 +475,19 @@ async def update_library(
     tri-state: ``_UNSET`` (default) means "don't touch", ``None``
     explicitly clears the override (inherit global), and ``True`` /
     ``False`` pin the behaviour for this library.
+
+    Migration 040 — ``tmdb_enabled`` is two-state (bool) but uses the
+    same ``_UNSET`` sentinel so omitting it means "don't touch."
     """
     has_av1_override = av1_stream_copy_override is not _UNSET
     has_vp9_override = vp9_stream_copy_override is not _UNSET
+    has_tmdb_toggle = tmdb_enabled is not _UNSET
     if (
         name is None
         and root_paths is None
         and not has_av1_override
         and not has_vp9_override
+        and not has_tmdb_toggle
     ):
         return await get_library(db, library_id)
 
@@ -496,6 +519,9 @@ async def update_library(
             if vp9_stream_copy_override is None
             else int(bool(vp9_stream_copy_override))
         )
+    if has_tmdb_toggle:
+        sets.append("tmdb_enabled = ?")
+        params.append(int(bool(tmdb_enabled)))
 
     params.append(library_id)
     await db.execute(
@@ -512,6 +538,8 @@ async def create_library(
     name: str,
     lib_type: str,
     root_paths: list[str],
+    *,
+    tmdb_enabled: bool = True,
 ) -> dict:
     library_id = str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
@@ -519,10 +547,11 @@ async def create_library(
 
     await db.execute(
         """
-        INSERT INTO libraries (id, name, type, root_paths, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO libraries
+            (id, name, type, root_paths, created_at, tmdb_enabled)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (library_id, name, lib_type, paths_json, now),
+        (library_id, name, lib_type, paths_json, now, int(tmdb_enabled)),
     )
     await db.commit()
     logger.info("Library created: %s (%s)", name, library_id)
@@ -537,6 +566,7 @@ async def create_library(
         "file_count": 0,
         "total_size_bytes": 0,
         "cover_urls": [],
+        "tmdb_enabled": int(tmdb_enabled),
     }
 
 
@@ -613,7 +643,7 @@ async def list_files(
     else:
         async with db.execute("SELECT * FROM media_files ORDER BY name") as cur:
             rows = await cur.fetchall()
-    return [dict(row) for row in rows]
+    return await _apply_tmdb_mask(db, [dict(row) for row in rows])
 
 
 async def list_recent_files(db: aiosqlite.Connection, limit: int = 20) -> list[dict]:
@@ -627,7 +657,7 @@ async def list_recent_files(db: aiosqlite.Connection, limit: int = 20) -> list[d
         (limit,),
     ) as cur:
         rows = await cur.fetchall()
-    return [dict(row) for row in rows]
+    return await _apply_tmdb_mask(db, [dict(row) for row in rows])
 
 
 async def search_files(
@@ -655,7 +685,7 @@ async def search_files(
         (pattern, pattern, limit),
     ) as cur:
         rows = await cur.fetchall()
-    return [dict(row) for row in rows]
+    return await _apply_tmdb_mask(db, [dict(row) for row in rows])
 
 
 async def list_continue_watching(
@@ -681,7 +711,7 @@ async def list_continue_watching(
         (limit,),
     ) as cur:
         rows = await cur.fetchall()
-    return [dict(row) for row in rows]
+    return await _apply_tmdb_mask(db, [dict(row) for row in rows])
 
 
 async def get_client_stats(db: aiosqlite.Connection, client_id: str) -> dict:
@@ -744,7 +774,10 @@ async def get_client_stats(db: aiosqlite.Connection, client_id: str) -> dict:
 async def get_file(db: aiosqlite.Connection, file_id: str) -> dict | None:
     async with db.execute("SELECT * FROM media_files WHERE id = ?", (file_id,)) as cur:
         row = await cur.fetchone()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    masked = await _apply_tmdb_mask(db, [dict(row)])
+    return masked[0]
 
 
 async def delete_file(db: aiosqlite.Connection, file_id: str) -> bool:
@@ -757,6 +790,58 @@ async def delete_file(db: aiosqlite.Connection, file_id: str) -> bool:
     await db.commit()
     logger.info("File reference deleted from library: %s", file_id)
     return True
+
+
+def _sql_like_escape(value: str) -> str:
+    """Escape `%`, `_`, and `|` so the result is safe inside a SQLite
+    `LIKE ... ESCAPE '|'` pattern.  Used by [unindex_subtree] to build
+    a prefix-match pattern that doesn't accidentally collide with
+    real path characters."""
+    return value.replace("|", "||").replace("%", "|%").replace("_", "|_")
+
+
+async def unindex_subtree(
+    db: aiosqlite.Connection,
+    *,
+    library_id: str,
+    subtree_abs: Path,
+) -> int:
+    """Remove every `media_files` row whose path sits under [subtree_abs].
+
+    Returns the count of removed rows.  Cascades to `media_thumbnails`
+    (`ON DELETE CASCADE`); thumbnail JPEGs on disk are picked up by the
+    orphan sweeper that already runs every 6 h, so callers don't need
+    to walk the disk.  Files on disk are NOT deleted — this is purely a
+    catalog operation, mirroring "Index this file" in reverse.
+
+    Caller is responsible for resolving the path against the library's
+    roots + containment.  Backs the right-click "Unindex this folder"
+    action.
+    """
+    subtree_str = str(subtree_abs)
+    sep = os.sep
+    # Match: the subtree itself + any file whose path begins with
+    # `<subtree><sep>`.  Escape `%` / `_` / `|` so paths containing
+    # those characters don't shift the LIKE match.
+    pattern = _sql_like_escape(subtree_str + sep) + "%"
+
+    cur = await db.execute(
+        "DELETE FROM media_files"
+        " WHERE library_id = ?"
+        "   AND (path = ? OR path LIKE ? ESCAPE '|')",
+        (library_id, subtree_str, pattern),
+    )
+    removed = cur.rowcount or 0
+    await cur.close()
+    await db.commit()
+    if removed:
+        logger.info(
+            "Unindexed %d file(s) under %s (library %s)",
+            removed,
+            subtree_str,
+            library_id,
+        )
+    return removed
 
 
 async def scan_library(
@@ -813,9 +898,15 @@ async def _scan_library_locked(
     for root in root_paths:
         root_path = Path(root)
         if root_path.is_file():
-            candidates = (
-                [root_path] if root_path.suffix.lower() in _MEDIA_EXTENSIONS else []
-            )
+            # Single-file library root — index it unconditionally.
+            # Extension-based filtering used to live here; removed
+            # so every file in the operator's library is reachable
+            # from the mobile catalog views (which are keyed on
+            # `file_id`, set only at scan time).  Thumbnails for
+            # non-media kinds are still skipped cleanly by the
+            # worker; ffprobe is gated by `_PROBEABLE_EXTENSIONS`
+            # inside `_persist_probe`.
+            candidates = [root_path]
         elif root_path.is_dir():
             # Walk the directory tree safely to avoid Windows symlink/permission crashes
             def safe_walk(start_path):
@@ -826,7 +917,7 @@ async def _scan_library_locked(
                     for f in files:
                         try:
                             p = Path(root_dir) / f
-                            if p.is_file() and p.suffix.lower() in _MEDIA_EXTENSIONS:
+                            if p.is_file():
                                 paths.append(p)
                         except Exception:
                             pass
@@ -944,13 +1035,25 @@ async def _scan_library_locked(
             added += 1
             new_file_ids.append((file_id, file_path.stem))
             await _persist_probe(db, file_id, file_path)
-            # Best-effort enqueue for thumbnail generation.  Plan 27:
-            # the worker pool consumes the queue asynchronously; this is
-            # a single INSERT OR IGNORE — no FFmpeg in the scan path.
+            # Best-effort enqueue for thumbnail generation.  The worker
+            # pool consumes the queue asynchronously; this is a single
+            # INSERT OR IGNORE — no FFmpeg in the scan path.
+            #
+            # Gate on `kind_for_extension(suffix)`: files with no
+            # extractor (subtitles, archives, text, source files, etc.)
+            # would otherwise sit in the queue, get claimed, and be
+            # marked `skipped` — pure wasted I/O on libraries with lots
+            # of non-media files.  Skip the enqueue entirely; the UI
+            # treats "no thumbnail row" identically to "skipped row"
+            # for display purposes (both render as kind icon + no
+            # thumb).
             try:
-                from services import thumbnail_worker
+                from services import thumbnail_service, thumbnail_worker
 
-                await thumbnail_worker.enqueue(db, file_id)
+                if thumbnail_service.kind_for_extension(
+                    file_path.suffix or ""
+                ) is not None:
+                    await thumbnail_worker.enqueue(db, file_id)
             except Exception:
                 logger.warning(
                     "thumbnail enqueue failed for %s", file_id, exc_info=True
@@ -983,7 +1086,11 @@ async def _scan_library_locked(
             )
 
     # ── TMDB enrichment (best-effort) ──────────────────────────────────────
-    if tmdb_api_key and new_file_ids:
+    if (
+        tmdb_api_key
+        and new_file_ids
+        and await _is_tmdb_enabled(db, library_id)
+    ):
         await _enrich_with_tmdb(db, new_file_ids, tmdb_api_key)
 
     return added
@@ -1136,18 +1243,28 @@ async def index_single_file(
     await _persist_probe(db, file_id, absolute_path)
 
     # Thumbnail enqueue — priority=10 so the operator sees the result
-    # before unrelated pending rows from a recent scan.
+    # before unrelated pending rows from a recent scan.  Gated on
+    # `kind_for_extension`: text / subtitle / archive / source files
+    # have no extractor and would just be marked `skipped` by the
+    # worker — saving the round-trip when the operator indexes them.
     try:
-        from services import thumbnail_worker
+        from services import thumbnail_service, thumbnail_worker
 
-        await thumbnail_worker.enqueue(db, file_id, priority=10)
+        if thumbnail_service.kind_for_extension(
+            absolute_path.suffix or ""
+        ) is not None:
+            await thumbnail_worker.enqueue(db, file_id, priority=10)
     except Exception:
         logger.warning(
             "thumbnail enqueue failed for %s", file_id, exc_info=True
         )
 
     enriched = False
-    if tmdb_api_key and not _looks_like_dvr_capture(absolute_path.stem):
+    if (
+        tmdb_api_key
+        and not _looks_like_dvr_capture(absolute_path.stem)
+        and await _is_tmdb_enabled(db, library_id)
+    ):
         try:
             n = await _enrich_with_tmdb(
                 db, [(file_id, absolute_path.stem)], tmdb_api_key
@@ -1243,6 +1360,86 @@ async def backfill_missing_durations(
         await db.commit()
 
     return total_updated
+
+
+# Columns that come from TMDB enrichment.  Masked out of `media_files`
+# rows whose library has `tmdb_enabled=0` so the operator's "turn off
+# TMDB" toggle hides this metadata across every API surface without
+# the read path having to know about each route individually.
+_TMDB_MASKED_FIELDS: tuple[str, ...] = (
+    "tmdb_id",
+    "title",
+    "overview",
+    "poster_url",
+    "tmdb_show_id",
+    "season_number",
+    "episode_number",
+)
+
+
+async def _apply_tmdb_mask(
+    db: aiosqlite.Connection, rows: list[dict]
+) -> list[dict]:
+    """In-place null-out of TMDB-derived columns on rows whose library
+    has `tmdb_enabled=0`.  Non-destructive — the DB still has the
+    values; this masking is purely a response-shape concern so the
+    operator's per-library toggle can hide existing TMDB data without
+    a destructive wipe.  Re-enabling the library brings everything
+    back instantly on the next list/get call.
+
+    One batched SQL query covers all distinct `library_id`s in the
+    input rows.  Safe to call with rows that lack `library_id` (e.g.
+    orphan files) — those are returned untouched.
+    """
+    if not rows:
+        return rows
+    library_ids = {r["library_id"] for r in rows if r.get("library_id")}
+    if not library_ids:
+        return rows
+    placeholders = ",".join("?" for _ in library_ids)
+    async with db.execute(
+        f"SELECT id, tmdb_enabled FROM libraries WHERE id IN ({placeholders})",
+        tuple(library_ids),
+    ) as cur:
+        lib_rows = await cur.fetchall()
+    disabled = {
+        r["id"]
+        for r in lib_rows
+        if not (r["tmdb_enabled"] is None or r["tmdb_enabled"])
+    }
+    if not disabled:
+        return rows
+    for r in rows:
+        if r.get("library_id") in disabled:
+            for f in _TMDB_MASKED_FIELDS:
+                if f in r:
+                    r[f] = None
+    return rows
+
+
+async def _is_tmdb_enabled(
+    db: aiosqlite.Connection, library_id: str
+) -> bool:
+    """Return the per-library TMDB toggle (migration 040).
+
+    Defaults to True for any library row whose `tmdb_enabled` column
+    is missing (pre-migration row) or 1.  Returns False only when the
+    operator has explicitly disabled TMDB for this library.  Used by
+    every enrichment site to gate `_enrich_with_tmdb` and by the read
+    path (`_library_aggregates` / `_attach_index_status`) to mask
+    already-persisted TMDB columns.
+    """
+    async with db.execute(
+        "SELECT tmdb_enabled FROM libraries WHERE id = ?", (library_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        # Unknown library — be conservative + allow.  Caller's own
+        # library_id validation handles the "should this even run"
+        # question; we only own the toggle gate.
+        return True
+    val = row["tmdb_enabled"]
+    return val is None or bool(val)
 
 
 async def _enrich_with_tmdb(
@@ -1361,6 +1558,11 @@ async def enrich_library_tmdb(
     filenames and they want to force-search them.
     """
     if not api_key:
+        return {"matched": 0, "enriched": 0, "skipped_dvr": 0}
+    # Per-library TMDB toggle — return zeros so the operator's "Rescan
+    # TMDB" button no-ops cleanly instead of silently disabling the
+    # toggle from under them.
+    if not await _is_tmdb_enabled(db, library_id):
         return {"matched": 0, "enriched": 0, "skipped_dvr": 0}
     async with db.execute(
         "SELECT id, name FROM media_files" " WHERE library_id = ? AND tmdb_id IS NULL",
@@ -1512,8 +1714,8 @@ async def upload_file_to_library(
         await _persist_probe(db, file_id, file_path)
         await db.commit()
 
-        # Best-effort TMDB enrichment
-        if tmdb_api_key:
+        # Best-effort TMDB enrichment (gated on per-library toggle)
+        if tmdb_api_key and await _is_tmdb_enabled(db, library_id):
             await _enrich_with_tmdb(db, [(file_id, file_path.stem)], tmdb_api_key)
 
     result = await get_file(db, file_id)

@@ -142,6 +142,11 @@ class IndexedMedia:
     thumbnail_generated_at_unix: int | None  # for ?v= cache-buster
     indexed_at_iso: str | None    # media_files.created_at
     is_streaming: bool            # active stream_session row exists
+    # TMDB poster art for this file, or null when un-enriched.  Client
+    # prefers this over the extracted-frame thumbnail when present so
+    # the folder browser matches the library card mosaic (where TMDB
+    # art also takes precedence in `_library_aggregates`).
+    poster_url: str | None
 
     def to_json(self) -> dict:
         return {
@@ -155,6 +160,7 @@ class IndexedMedia:
             "thumbnail_generated_at_unix": self.thumbnail_generated_at_unix,
             "indexed_at_iso": self.indexed_at_iso,
             "is_streaming": self.is_streaming,
+            "poster_url": self.poster_url,
         }
 
 
@@ -370,13 +376,12 @@ async def resolve_file_for_index(
         raise BrowseError(400, "target is a directory, not a file")
     if not resolved.is_file():
         raise BrowseError(400, "target is not a regular file")
+    # No kind filter — every file kind (including `other`) is indexable
+    # so the mobile catalog can reach arbitrary documents / archives /
+    # source files via `/files/{id}/content`.  Thumbnail extraction
+    # for unsupported kinds becomes a no-op (status='skipped') at the
+    # worker; ffprobe is gated separately by `_PROBEABLE_EXTENSIONS`.
     kind = _kind_for_path(resolved, is_dir=False)
-    if kind == "other":
-        raise BrowseError(
-            400,
-            "unsupported file kind — only video / image / audio / pdf "
-            "files can be indexed",
-        )
     return resolved, kind
 
 
@@ -502,6 +507,8 @@ async def _attach_index_status(
     db: aiosqlite.Connection,
     target: Path,
     entries: list[BrowseEntry],
+    *,
+    tmdb_enabled: bool = True,
 ) -> list[BrowseEntry]:
     """Fill `is_indexed` + `file_id` + (Phase A) the `media` payload by
     joining names against `media_files.path` and (where indexed) onto
@@ -546,6 +553,7 @@ async def _attach_index_status(
                mf.codec_name    AS codec_name,
                mf.hdr_format    AS hdr_format,
                mf.audio_tracks  AS audio_tracks,
+               mf.poster_url    AS poster_url,
                mf.created_at    AS indexed_at,
                mf.updated_at    AS source_updated_at,
                t.status         AS thumb_status,
@@ -629,6 +637,19 @@ async def _attach_index_status(
         ):
             thumb_status = "stale"
 
+        # Per-library TMDB toggle: mask the persisted poster_url when
+        # the library has opted out so the folder browser falls back to
+        # the extracted-frame thumbnail.  Non-destructive — the column
+        # is still on disk, just hidden in this response.
+        if not tmdb_enabled:
+            poster = None
+        else:
+            poster = row["poster_url"] if "poster_url" in row.keys() else None
+            # Empty strings get normalised to null so the client only has to
+            # check for `posterUrl != null`, never `posterUrl.isNotEmpty`.
+            if isinstance(poster, str) and not poster.strip():
+                poster = None
+
         return IndexedMedia(
             width=row["width"],
             height=row["height"],
@@ -640,6 +661,7 @@ async def _attach_index_status(
             thumbnail_generated_at_unix=row["thumb_generated_at_unix"],
             indexed_at_iso=row["indexed_at"],
             is_streaming=bool(row["is_streaming"]),
+            poster_url=poster,
         )
 
     return [
@@ -692,7 +714,21 @@ async def browse_library(
     roots = await _load_library_roots(db, library_id)
     matched_root, target = _resolve_under_root(roots, relative_path)
     entries = _list_entries(target, show_hidden=show_hidden)
-    entries = await _attach_index_status(db, target, entries)
+    # Per-library TMDB toggle — read once per browse call + thread
+    # through to the index-status attach so poster_url is masked when
+    # the operator has opted this library out of TMDB.
+    async with db.execute(
+        "SELECT tmdb_enabled FROM libraries WHERE id = ?", (library_id,)
+    ) as cur:
+        lib_row = await cur.fetchone()
+    tmdb_enabled = (
+        True
+        if lib_row is None
+        else (lib_row["tmdb_enabled"] is None or bool(lib_row["tmdb_enabled"]))
+    )
+    entries = await _attach_index_status(
+        db, target, entries, tmdb_enabled=tmdb_enabled
+    )
 
     rel_norm = _normalise_relative(relative_path)
     # Parent path: drop the last segment; None when we're at the root.
