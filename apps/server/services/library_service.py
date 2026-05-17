@@ -175,6 +175,7 @@ def _is_valid_absolute_media_path(path_str: str) -> bool:
 
 
 _MEDIA_EXTENSIONS = {
+    # Video — FFmpeg frame extraction for thumbnails.
     ".mp4",
     ".mkv",
     ".avi",
@@ -183,12 +184,39 @@ _MEDIA_EXTENSIONS = {
     ".flv",
     ".webm",
     ".m4v",
+    ".mpg",
+    ".mpeg",
+    ".ts",
+    ".3gp",
+    # Audio — FFmpeg APIC extraction for embedded album art thumbnails.
     ".mp3",
     ".flac",
     ".aac",
     ".wav",
     ".ogg",
+    ".opus",
     ".m4a",
+    # Images — FFmpeg image input for direct thumbnail rendering.
+    # Matches the kinds Windows Explorer auto-thumbnails on first scan
+    # so a library walk picks them up without manual indexing.
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".webp",
+    ".heic",
+    ".heif",
+    ".ico",
+    # JPEG XR / HD Photo (.jxr) — NVIDIA GeForce Experience HDR
+    # screenshots.  Thumbnails extracted via Windows WIC since
+    # FFmpeg can't decode JXR.
+    ".jxr",
+    # Documents — PyMuPDF first-page extraction for PDFs; cover-page
+    # for the e-book / comic formats falls back to the kind icon if
+    # the extractor can't reach inside the container.
     ".pdf",
     ".epub",
     ".cbz",

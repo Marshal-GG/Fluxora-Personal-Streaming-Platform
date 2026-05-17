@@ -60,28 +60,60 @@ enum BrowseKindFilter {
 ///   round-trips to the server since it changes which entries are
 ///   in the response.
 ///
-/// One cubit per screen mount; the UI prefs reset on remount.
+/// Process-wide persisted UI preferences for the folder browser.
+///
+/// `LibraryBrowseCubit` is constructed fresh on every screen mount
+/// (one cubit per `/library/{id}/files` open), so plain instance
+/// fields would reset every time the operator navigates away and
+/// back.  These module-level statics hold the last-known values and
+/// the cubit's constructor seeds itself from them, then mutating
+/// setters write back into the statics so the next mount picks up the
+/// operator's previous choices.
+///
+/// Within-session persistence only — true cross-restart persistence
+/// would require `SharedPreferences` (not currently in the desktop
+/// pubspec).  Acceptable scope for v1: the operator hardly ever
+/// restarts the control panel mid-day, and on first-launch they get
+/// sane defaults that match what's currently the per-cubit defaults.
+bool _persistedShowHidden = false;
+bool _persistedIndexedOnly = false;
+BrowseSortColumn _persistedSortBy = BrowseSortColumn.name;
+bool _persistedSortAsc = true;
+BrowseViewMode _persistedViewMode = BrowseViewMode.list;
+BrowseKindFilter _persistedKindFilter = BrowseKindFilter.all;
+BrowseDensity _persistedDensity = BrowseDensity.comfortable;
+
+/// One cubit per screen mount; the UI prefs seed from the module-level
+/// statics above and write back to them on every mutation so they
+/// survive across screen re-mounts within the same app session.
 class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   LibraryBrowseCubit({
     required this.libraryId,
     required LibraryRepository repository,
   })  : _repository = repository,
+        _showHidden = _persistedShowHidden,
+        _indexedOnly = _persistedIndexedOnly,
+        _sortBy = _persistedSortBy,
+        _sortAsc = _persistedSortAsc,
+        _viewMode = _persistedViewMode,
+        _kindFilter = _persistedKindFilter,
+        _density = _persistedDensity,
         super(const LibraryBrowseInitial());
 
   final String libraryId;
   final LibraryRepository _repository;
   static final _log = Logger();
 
-  // ── UI preferences (in-memory, per cubit-instance) ──────────────────────
+  // ── UI preferences (seeded from process-wide statics) ──────────────────
 
-  bool _showHidden = false;
-  bool _indexedOnly = false;
-  BrowseSortColumn _sortBy = BrowseSortColumn.name;
-  bool _sortAsc = true;
-  BrowseViewMode _viewMode = BrowseViewMode.list;
+  bool _showHidden;
+  bool _indexedOnly;
+  BrowseSortColumn _sortBy;
+  bool _sortAsc;
+  BrowseViewMode _viewMode;
   String _search = '';
-  BrowseKindFilter _kindFilter = BrowseKindFilter.all;
-  BrowseDensity _density = BrowseDensity.comfortable;
+  BrowseKindFilter _kindFilter;
+  BrowseDensity _density;
 
   /// Anchor for shift-click range selection.  Set on every plain click
   /// + ctrl-click; the next shift-click selects the inclusive range
@@ -100,6 +132,14 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   /// "Compute size" button); persisted across re-selections of the
   /// same folder.  Phase D.
   final Map<String, FolderSize> _folderSizes = {};
+
+  /// Per-parent directory listing cache, populated by [pathSuggestions]
+  /// while the operator types into the editable path bar.  Keyed by
+  /// the normalised relative parent path (forward slashes, no trailing
+  /// `/`).  Bounded only by how many distinct parents the operator
+  /// types through in one edit session — small enough not to need an
+  /// LRU eviction.  Cleared whenever the screen unmounts.
+  final Map<String, List<BrowseEntry>> _childListCache = {};
 
   /// Currently-selected entries — keyed by their `name` field (unique
   /// inside a single directory).  Single-element on click, grows on
@@ -156,8 +196,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     }
     _selectedNames.clear();
     _search = '';
-    emit(LibraryBrowseLoading(path: relativePath));
-    await _fetch(relativePath);
+    await _softFetch(relativePath);
   }
 
   /// Pop the back stack onto the current path, push the current onto
@@ -169,8 +208,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     _forward.add(_currentPath());
     _selectedNames.clear();
     _search = '';
-    emit(LibraryBrowseLoading(path: target));
-    await _fetch(target);
+    await _softFetch(target);
   }
 
   /// Inverse of [goBack] — pops the forward stack.
@@ -180,8 +218,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     _back.add(_currentPath());
     _selectedNames.clear();
     _search = '';
-    emit(LibraryBrowseLoading(path: target));
-    await _fetch(target);
+    await _softFetch(target);
   }
 
   /// Public read-only getters for the toolbar / keyboard handler.
@@ -227,21 +264,27 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
 
   /// Refresh the current directory in place (no path change).  Selection
   /// + search are preserved.
+  /// Soft refresh — re-fetches the current directory IN PLACE without
+  /// emitting [LibraryBrowseLoading].  The chrome (breadcrumb, filter
+  /// chips, toolbar, detail panel) stays mounted with the existing
+  /// response visible; only `state.refreshing` flips true while the
+  /// fetch is in flight and the response object swaps when it lands.
+  ///
+  /// Falls back to a hard load + Loading emission when there's no
+  /// existing Loaded state to soft-refresh from (cold boot path).
   Future<void> refresh() async {
-    final path = _currentPath();
-    emit(LibraryBrowseLoading(path: path));
-    await _fetch(path);
+    await _softFetch(_currentPath());
   }
 
   /// Flip the hidden-files toggle + re-fetch the current directory
   /// (show_hidden lives server-side — it changes which entries the
-  /// response contains).
+  /// response contains).  Goes through the soft-fetch path so the
+  /// toolbar + chrome stay mounted while the listing updates.
   Future<void> setShowHidden(bool value) async {
     if (_showHidden == value) return;
     _showHidden = value;
-    final path = _currentPath();
-    emit(LibraryBrowseLoading(path: path));
-    await _fetch(path);
+    _persistedShowHidden = value;
+    await _softFetch(_currentPath());
   }
 
   /// Index a single un-indexed entry (Phase C right-click action).
@@ -327,9 +370,104 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
       relative = normalised;
     }
     if (relative == null) return false;
+    // Same-path commit (Enter on an unchanged URL): route through a
+    // SOFT refresh that keeps the breadcrumb / filter chips / toolbar
+    // / detail panel mounted — only the listing's response object
+    // gets swapped.  Different-path navigation still goes through
+    // `navigateTo`, which clears selection + search + emits Loading
+    // so the chrome resets correctly for the new path.
+    final currentRel = current.response.relativePath
+        .replaceAll(r'\', '/')
+        .replaceAll(RegExp(r'/+$'), '');
+    final targetRel = relative
+        .replaceAll(r'\', '/')
+        .replaceAll(RegExp(r'/+$'), '');
+    if (currentRel == targetRel) {
+      await refresh();
+      return true;
+    }
     await navigateTo(relative);
     final next = state;
     return next is LibraryBrowseLoaded;
+  }
+
+  /// Folder-name autocomplete for the editable path bar.
+  ///
+  /// Parses [input] as `<root>/<some/path>/<typed_prefix>`, fetches
+  /// the entries of `<root>/<some/path>` from the server (cached for
+  /// the lifetime of this cubit), and returns up to [limit] direct
+  /// child directories whose names start with `<typed_prefix>`
+  /// (case-insensitive).  Returns an empty list when the input
+  /// doesn't sit under the loaded library's root or when the parent
+  /// directory can't be listed (permission denied / not on disk).
+  ///
+  /// The trailing-slash convention matters: `D:\Library\Movies` →
+  /// suggests siblings of `Movies` under `D:\Library`; the same
+  /// string with a trailing slash (`D:\Library\Movies\`) → suggests
+  /// every direct child of `Movies` (empty prefix).
+  Future<List<BrowseEntry>> pathSuggestions(
+    String input, {
+    int limit = 10,
+  }) async {
+    final current = state;
+    if (current is! LibraryBrowseLoaded) return const [];
+    final root = current.response.rootPath;
+    final normalised = input.replaceAll(r'\', '/');
+    final normalisedRoot = root.replaceAll(r'\', '/');
+    final rootLower = normalisedRoot.toLowerCase();
+    final inputLower = normalised.toLowerCase();
+
+    // Resolve the input to a subpath under the matched root.  When
+    // the input doesn't extend the root, we have nothing to suggest.
+    String subpath;
+    if (inputLower == rootLower || inputLower == '$rootLower/') {
+      subpath = '';
+    } else if (inputLower.startsWith('$rootLower/')) {
+      subpath = normalised.substring(normalisedRoot.length + 1);
+    } else {
+      return const [];
+    }
+
+    final slashIdx = subpath.lastIndexOf('/');
+    final parentRelative =
+        slashIdx == -1 ? '' : subpath.substring(0, slashIdx);
+    final prefix = slashIdx == -1 ? subpath : subpath.substring(slashIdx + 1);
+    final prefixLower = prefix.toLowerCase();
+
+    final children = await _fetchChildrenCached(parentRelative);
+    if (children.isEmpty) return const [];
+
+    final matches = <BrowseEntry>[];
+    for (final e in children) {
+      if (!e.isDir) continue;
+      if (prefixLower.isEmpty ||
+          e.name.toLowerCase().startsWith(prefixLower)) {
+        matches.add(e);
+        if (matches.length >= limit) break;
+      }
+    }
+    return matches;
+  }
+
+  Future<List<BrowseEntry>> _fetchChildrenCached(
+    String parentRelative,
+  ) async {
+    final key = parentRelative.replaceAll(RegExp(r'/+$'), '');
+    final cached = _childListCache[key];
+    if (cached != null) return cached;
+    try {
+      final response = await _repository.browseLibrary(
+        libraryId: libraryId,
+        path: key,
+        showHidden: false,
+      );
+      _childListCache[key] = response.entries;
+      return response.entries;
+    } on ApiException {
+      return const [];
+    } catch (_) {
+      return const [];
+    }
   }
 
   /// Compose `<currentRelativePath>/<entry.name>` for an entry in the
@@ -348,6 +486,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   void setIndexedOnly(bool value) {
     if (_indexedOnly == value) return;
     _indexedOnly = value;
+    _persistedIndexedOnly = value;
     _reemit();
   }
 
@@ -356,6 +495,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   void setKindFilter(BrowseKindFilter filter) {
     if (_kindFilter == filter) return;
     _kindFilter = filter;
+    _persistedKindFilter = filter;
     _reemit();
   }
 
@@ -368,6 +508,8 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
       _sortBy = column;
       _sortAsc = true;
     }
+    _persistedSortBy = _sortBy;
+    _persistedSortAsc = _sortAsc;
     _reemit();
   }
 
@@ -375,6 +517,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   void setViewMode(BrowseViewMode mode) {
     if (_viewMode == mode) return;
     _viewMode = mode;
+    _persistedViewMode = mode;
     _reemit();
   }
 
@@ -465,6 +608,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   void setDensity(BrowseDensity density) {
     if (_density == density) return;
     _density = density;
+    _persistedDensity = density;
     _reemit();
   }
 
@@ -594,6 +738,34 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     }
   }
 
+  /// Shared "fetch without unmounting the chrome" helper used by every
+  /// path-changing action (`navigateTo` / `goBack` / `goForward` /
+  /// `refresh` / `setShowHidden`).
+  ///
+  /// When there's an existing [LibraryBrowseLoaded] state, this emits
+  /// the same response with `refreshing: true` instead of emitting
+  /// [LibraryBrowseLoading].  The chrome (breadcrumb / filter chips /
+  /// toolbar / detail panel) all read the type-checked state via
+  /// `buildWhen` guards that skip Loaded→Loaded transitions where
+  /// nothing they care about changed, so nothing rebuilds until the
+  /// fetch lands a new response object.
+  ///
+  /// Falls back to a hard [LibraryBrowseLoading] emission on cold
+  /// boot (no prior Loaded state) so the listing skeleton still
+  /// appears on first paint.
+  Future<void> _softFetch(String path) async {
+    final current = state;
+    if (current is LibraryBrowseLoaded) {
+      emit(LibraryBrowseLoaded(
+        response: current.response,
+        refreshing: true,
+      ));
+    } else {
+      emit(LibraryBrowseLoading(path: path));
+    }
+    await _fetch(path);
+  }
+
   @override
   void emit(LibraryBrowseState state) {
     if (isClosed) return;
@@ -670,9 +842,19 @@ class LibraryBrowseLoading extends LibraryBrowseState {
 }
 
 class LibraryBrowseLoaded extends LibraryBrowseState {
-  const LibraryBrowseLoaded({required this.response});
+  const LibraryBrowseLoaded({
+    required this.response,
+    this.refreshing = false,
+  });
 
   final BrowseResponse response;
+
+  /// True while a background re-fetch is in flight after the operator
+  /// hit Refresh / re-pressed Enter on the same path / triggered any
+  /// soft-refresh path.  Surfaces as a thin progress indicator on the
+  /// listing area without unmounting the chrome (breadcrumb / filter
+  /// chips / toolbar / detail panel all stay live).
+  final bool refreshing;
 }
 
 class LibraryBrowseFailure extends LibraryBrowseState {

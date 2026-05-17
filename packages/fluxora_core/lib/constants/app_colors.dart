@@ -26,6 +26,19 @@ class AppColors {
   static const Color sidebarGlass = Color(0xB30D0B1C); // rgba(13,11,28,0.7)
   static const Color titlebarGlass = Color(0xE606040F); // rgba(6,4,16,0.9)
 
+  /// Subtle white overlay (`+2.5% white`) used for ELEVATED bands
+  /// inside a [bgRaised] surface — the "lighter stripe" treatment for
+  /// the top row of a multi-band card header.
+  static const Color surfaceBandHigh = Color(0x06FFFFFF);
+
+  /// Subtle dark overlay (`+7% black`) used for DEPRESSED bands
+  /// inside a [bgRaised] surface — the "darker stripe" treatment for
+  /// a toolbar / control row that sits between the header and the
+  /// scrollable body.  Pairs with [surfaceBandHigh] to render two
+  /// visually-distinct stripes inside one [FluxCard] without
+  /// resorting to separate cards or floating panels.
+  static const Color surfaceBandLow = Color(0x12000000);
+
   // ── Text ───────────────────────────────────────────────────────────────
   static const Color textBright = Color(0xFFF1F5F9);
   static const Color textBody = Color(0xFFE2E8F0);

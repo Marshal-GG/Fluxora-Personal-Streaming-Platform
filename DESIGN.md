@@ -374,6 +374,15 @@ Two surface families:
 |-------|-------|-------|
 | `bg-raised` | `#0F0C24` | Popup menus, dialog/sheet backgrounds, AppBar, SnackBar, Material `Card`, `InputDecoration.fillColor` — anywhere a translucent fill would let the page bleed through and read as "broken" rather than "glass" |
 
+**Surface bands** — subtle overlays applied *inside* an existing `bg-raised` surface (typically a `FluxCard`) to render two visually-distinct stripes without spawning a second card or floating panel.  Pair `surface-band-high` (elevated stripe) with `surface-band-low` (depressed stripe) for a header / toolbar pattern: the URL row reads as raised chrome, the toolbar row reads as a tucked-under control surface, and the body of the card continues uninterrupted below.
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `surface-band-high` | `rgba(255,255,255,0.024)` (`+2.4 % white`) | The lighter top stripe in a banded card header — e.g. the URL bar above the listing toolbar in the folder browser |
+| `surface-band-low`  | `rgba(0,0,0,0.071)` (`+7 % black`) | The darker stripe immediately below — e.g. the listing toolbar / sort indicators row that sits between the URL bar and the scrollable body |
+
+Originally introduced for the folder browser's URL + toolbar stack ([`apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart`](apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart)).  Both bands are deliberately *low contrast* — the goal is "I can see two distinct rows" not "two competing surfaces."  Use them only inside a `bg-raised` parent; on translucent glass surfaces the same RGBA reads as muddy because the underlying gradient bleeds through unblurred.
+
 **Borders** (apply across both families):
 
 | Token | Value | Usage |

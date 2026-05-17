@@ -55,13 +55,14 @@ logger = logging.getLogger(__name__)
 # pdf, then a small set of "common doc" types we badge for the UI but
 # can't render directly (clicks fall through to "Open in file manager").
 
-_VIDEO_EXTENSIONS = frozenset(
-    {".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".flv", ".m4v", ".ts"}
-)
-_IMAGE_EXTENSIONS = frozenset(
-    {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp",
-     ".tiff", ".tif"}
-)
+_VIDEO_EXTENSIONS = frozenset({
+    ".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".flv", ".m4v",
+    ".ts", ".mpg", ".mpeg", ".3gp",
+})
+_IMAGE_EXTENSIONS = frozenset({
+    ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp",
+    ".tiff", ".tif", ".ico", ".jxr",
+})
 _AUDIO_EXTENSIONS = frozenset(
     {".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav", ".aac"}
 )

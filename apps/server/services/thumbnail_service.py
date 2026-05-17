@@ -52,12 +52,25 @@ _MAX_WIDTH = 2048
 # in the table is treated as ``skipped`` by the worker (the dispatcher
 # is in the worker, not here, because the worker also wants this
 # mapping for stats / observability).
-_VIDEO_EXTENSIONS = frozenset(
-    {".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".flv", ".m4v", ".ts"}
-)
-_IMAGE_EXTENSIONS = frozenset(
-    {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp", ".tiff", ".tif"}
-)
+_VIDEO_EXTENSIONS = frozenset({
+    ".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".flv", ".m4v",
+    ".ts", ".mpg", ".mpeg", ".3gp",
+})
+_IMAGE_EXTENSIONS = frozenset({
+    ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp",
+    ".tiff", ".tif", ".ico",
+    # JXR (JPEG XR / HD Photo) — Windows-only, extracted via WIC.
+    # NVIDIA GeForce Experience saves HDR screenshots in this format;
+    # FFmpeg has no decoder, so the extractor dispatches to GDI+ via
+    # PowerShell on Windows and reports `skipped` elsewhere.
+    ".jxr",
+})
+
+# Extensions FFmpeg can't decode but Windows Imaging Component (WIC)
+# handles natively.  Routed through the PowerShell + GDI+ fallback
+# extractor `_extract_image_wic`.  No-op on non-Windows platforms —
+# the file is reported `skipped` there.
+_WIC_ONLY_EXTENSIONS = frozenset({".jxr"})
 _AUDIO_EXTENSIONS = frozenset(
     {".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav", ".aac"}
 )
@@ -314,7 +327,17 @@ async def _extract_image(
 
     Works for any FFmpeg-decodable format (JPEG, PNG, WEBP, HEIC, BMP,
     TIFF, GIF first frame).  Output is always JPEG for consistency.
+
+    JXR (JPEG XR / HD Photo) is dispatched to the Windows-native WIC
+    path instead — FFmpeg has no decoder, but Windows Imaging
+    Component does (via GDI+ / .NET `System.Drawing`).  On non-
+    Windows platforms the call falls through to FFmpeg which fails
+    cleanly, marking the row as `failed`.
     """
+    ext = file_path.suffix.lower()
+    if ext in _WIC_ONLY_EXTENSIONS:
+        return await _extract_image_wic(file_path, output_path, width=width)
+
     ffmpeg = _ffmpeg_bin()
     argv = [
         ffmpeg,
@@ -341,6 +364,149 @@ async def _extract_image(
     return ThumbnailResult(
         success=False,
         error=f"ffmpeg exit={returncode} {tail}".strip(),
+    )
+
+
+async def _extract_image_wic(
+    file_path: Path,
+    output_path: Path,
+    *,
+    width: int,
+) -> ThumbnailResult:
+    """Render a width-bounded JPEG via Windows Imaging Component.
+
+    Shells out to PowerShell with `System.Windows.Media.Imaging`
+    (PresentationCore / WindowsBase) which talks directly to WIC and
+    has built-in decoders for JPEG XR and other Windows-native
+    formats that FFmpeg ships without.  Slower than the FFmpeg path
+    (~300-500ms per file vs. ~50ms) but the only viable option for
+    JXR without adding a new pip dep.
+    Note: `System.Drawing` / GDI+ does NOT use WIC and can't decode
+    JXR (throws "Out of memory" on `FromFile`) — must go through the
+    WPF imaging stack instead.
+    Returns `skipped` on non-Windows platforms.
+    """
+    import sys
+    if sys.platform != "win32":
+        return ThumbnailResult(
+            skipped=True,
+            error="WIC path is Windows-only",
+        )
+
+    # Single-quoted PowerShell strings so paths with special chars
+    # don't get interpolated.  TransformedBitmap with a ScaleTransform
+    # is the WIC-native resize path — quality matches `BitmapScaling-
+    # Mode.HighQuality` (Lanczos-like).
+    src = str(file_path).replace("'", "''")
+    dst = str(output_path).replace("'", "''")
+    # The pipeline: decode → tonemap (HDR-aware) → scale → encode.
+    #
+    # NVIDIA HDR JXR captures store pixel data in scRGB / HDR10 with
+    # luminance values well above 1.0.  WIC's `FormatConvertedBitmap`
+    # to `Bgra32` applies sRGB gamma but CLIPS values > 1.0 to white,
+    # which is the overexposure we were seeing.  Doing a manual
+    # Reinhard tonemap (`out = in / (1 + in)`) on the float pixel
+    # data first compresses the highlights into the [0,1] range
+    # cleanly before the gamma + 8-bit conversion.  Slower than a
+    # plain decode but produces a balanced thumbnail that matches
+    # what Windows Photos / Explorer show.
+    script = (
+        "Add-Type -AssemblyName PresentationCore;"
+        "Add-Type -AssemblyName WindowsBase;"
+        "Add-Type -AssemblyName System.Xaml;"
+        f"$srcPath = '{src}';"
+        f"$dstPath = '{dst}';"
+        f"$w = {width};"
+        "$stream = New-Object System.IO.FileStream("
+        "  $srcPath,"
+        "  [System.IO.FileMode]::Open,"
+        "  [System.IO.FileAccess]::Read,"
+        "  [System.IO.FileShare]::Read);"
+        "try {"
+        "  $decoder = [System.Windows.Media.Imaging.BitmapDecoder]::Create("
+        "    $stream,"
+        "    [System.Windows.Media.Imaging.BitmapCreateOptions]::PreservePixelFormat,"
+        "    [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad);"
+        "  $frame = $decoder.Frames[0];"
+        # Convert to 128-bit float RGBA so HDR pixel values aren't
+        # clipped by WIC's default 8-bit conversion.
+        "  $rgbaFloat = [System.Windows.Media.PixelFormats]::Rgba128Float;"
+        "  $f32 = New-Object "
+        "    System.Windows.Media.Imaging.FormatConvertedBitmap("
+        "    $frame, $rgbaFloat, $null, 0.0);"
+        # Scale BEFORE tonemap so the PowerShell pixel loop runs over
+        # the small thumbnail buffer (~57k pixels at 320px) instead
+        # of the full ~3.7M-pixel source — keeps total runtime well
+        # under the 15s subprocess timeout.
+        "  $scale = $w / $f32.PixelWidth;"
+        "  $xform = New-Object "
+        "    System.Windows.Media.ScaleTransform $scale, $scale;"
+        "  $scaledFloat = New-Object "
+        "    System.Windows.Media.Imaging.TransformedBitmap $f32, $xform;"
+        "  $pw = $scaledFloat.PixelWidth;"
+        "  $ph = $scaledFloat.PixelHeight;"
+        "  $stride = $pw * 16;"  # 4 channels × 4 bytes
+        "  $buf = New-Object byte[] ($stride * $ph);"
+        "  $scaledFloat.CopyPixels($buf, $stride, 0);"
+        "  $floats = New-Object single[] ($buf.Length / 4);"
+        "  [System.Buffer]::BlockCopy($buf, 0, $floats, 0, $buf.Length);"
+        # Reinhard tonemap on RGB channels, leave alpha alone.
+        "  for ($i = 0; $i -lt $floats.Length; $i += 4) {"
+        "    $r = $floats[$i];     if ($r -lt 0) { $r = 0 };"
+        "    $g = $floats[$i + 1]; if ($g -lt 0) { $g = 0 };"
+        "    $b = $floats[$i + 2]; if ($b -lt 0) { $b = 0 };"
+        "    $floats[$i]     = $r / (1.0 + $r);"
+        "    $floats[$i + 1] = $g / (1.0 + $g);"
+        "    $floats[$i + 2] = $b / (1.0 + $b);"
+        "  }"
+        "  [System.Buffer]::BlockCopy($floats, 0, $buf, 0, $buf.Length);"
+        "  $tonemapped = "
+        "    [System.Windows.Media.Imaging.BitmapSource]::Create("
+        "      $pw, $ph, 96, 96, $rgbaFloat, $null, $buf, $stride);"
+        # Float → 8-bit sRGB; gamma is applied correctly now that
+        # all values sit inside [0,1].
+        "  $bgra = [System.Windows.Media.PixelFormats]::Bgra32;"
+        "  $sdr = New-Object "
+        "    System.Windows.Media.Imaging.FormatConvertedBitmap("
+        "    $tonemapped, $bgra, $null, 0.0);"
+        "  $encoder = New-Object "
+        "    System.Windows.Media.Imaging.JpegBitmapEncoder;"
+        "  $encoder.QualityLevel = 85;"
+        "  $encoder.Frames.Add("
+        "    [System.Windows.Media.Imaging.BitmapFrame]::Create($sdr));"
+        "  $outStream = New-Object System.IO.FileStream("
+        "    $dstPath,"
+        "    [System.IO.FileMode]::Create,"
+        "    [System.IO.FileAccess]::Write);"
+        "  try { $encoder.Save($outStream); }"
+        "  finally { $outStream.Dispose(); }"
+        "} finally { $stream.Dispose(); }"
+    )
+    argv = [
+        "powershell",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+    ]
+
+    try:
+        returncode, stderr = await _run_subprocess(
+            argv, timeout=_IMAGE_TIMEOUT_SEC
+        )
+    except (OSError, FileNotFoundError) as e:
+        return ThumbnailResult(
+            success=False, error=f"powershell spawn failed: {e}"
+        )
+
+    if returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
+        return ThumbnailResult(success=True)
+    tail = _stderr_tail(stderr)
+    return ThumbnailResult(
+        success=False,
+        error=f"WIC powershell exit={returncode} {tail}".strip(),
     )
 
 

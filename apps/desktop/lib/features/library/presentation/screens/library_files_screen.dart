@@ -40,7 +40,6 @@ import 'package:fluxora_core/constants/app_radii.dart';
 import 'package:fluxora_core/constants/app_spacing.dart';
 import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_core/network/api_client.dart';
-import 'package:fluxora_core/widgets/flux_button.dart';
 
 import 'package:fluxora_desktop/core/router/app_router.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
@@ -52,6 +51,7 @@ import 'package:fluxora_desktop/features/library/presentation/widgets/library_br
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_filter_chips.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_search_bar.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_view_toggle.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 
 final _log = Logger();
@@ -213,24 +213,17 @@ class _LibraryBrowseViewState extends State<_LibraryBrowseView> {
                   context.go(Routes.libraryFolders);
                 }
               },
-              actions: const _HeaderActions(),
               verticalPadding: AppSpacing.s16,
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.s28, 0, AppSpacing.s28, AppSpacing.s8,
-            ),
-            child: _BreadcrumbBar(searchFocusNode: _searchFocus),
-          ),
-          // Type-filter chip row — only shown when the body is loaded
-          // (no point cluttering the loading skeleton).  Plan 28 §5.1.
+          // Type-filter chip row outside the card — only mounted
+          // when the response is loaded.  Matches the library page's
+          // chip-row-above-content layout.
           BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
-            buildWhen: (a, b) =>
-                a.runtimeType != b.runtimeType,
+            buildWhen: (a, b) => a.runtimeType != b.runtimeType,
             builder: (context, state) {
               if (state is! LibraryBrowseLoaded) {
-                return const SizedBox.shrink();
+                return const SizedBox(height: AppSpacing.s6);
               }
               return const Padding(
                 padding: EdgeInsets.fromLTRB(
@@ -240,51 +233,159 @@ class _LibraryBrowseViewState extends State<_LibraryBrowseView> {
               );
             },
           ),
-          // Body is a Row: scrolling listing on the left + fixed-width
-          // detail panel on the right.  Phase A of plan 28 — panel
-          // shows metadata for the currently-selected entry.
+          // Body card.  Encloses the URL/breadcrumb header + the
+          // toggle-icon toolbar directly below it + a horizontal
+          // divider that visually separates the header band from the
+          // scrollable listing + the listing itself + the count
+          // footer + the right detail panel — all inside one
+          // continuous FluxCard surface so the header reads as part
+          // of the same surface but the listing area sits in a
+          // visually-distinct band below.
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                            left: AppSpacing.s28,
-                            right: AppSpacing.s14,
-                          ),
-                          child: BlocBuilder<LibraryBrowseCubit,
-                              LibraryBrowseState>(
-                            builder: (context, state) => switch (state) {
-                              LibraryBrowseInitial() ||
-                              LibraryBrowseLoading() =>
-                                const _BrowseLoadingBody(),
-                              LibraryBrowseLoaded(:final response) =>
-                                _BrowseBody(response: response),
-                              LibraryBrowseFailure(:final message) =>
-                                _BrowseFailureBody(message: message),
-                            },
-                          ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.s28, 0, AppSpacing.s28, AppSpacing.s14,
+              ),
+              child: FluxCard(
+                padding: 0,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // URL / breadcrumb row — elevated band token gives
+                    // a slightly lighter tint than the card surface.
+                    Container(
+                      decoration: const BoxDecoration(
+                        color: AppColors.surfaceBandHigh,
+                        border: Border(
+                          bottom: BorderSide(color: AppColors.borderSubtle),
                         ),
                       ),
-                      // Count footer pinned below the body.  Plan 28 §5.2.
-                      const Padding(
-                        padding: EdgeInsets.only(
-                          left: AppSpacing.s28,
-                          right: AppSpacing.s14,
-                          bottom: AppSpacing.s6,
-                        ),
-                        child: LibraryBrowseCountFooter(),
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.s14,
+                        AppSpacing.s10,
+                        AppSpacing.s14,
+                        AppSpacing.s10,
                       ),
-                    ],
-                  ),
+                      child: _BreadcrumbBar(searchFocusNode: _searchFocus),
+                    ),
+                    // Toolbar icon row — depressed band token gives a
+                    // distinct darker stripe right below the URL row.
+                    Container(
+                      decoration: const BoxDecoration(
+                        color: AppColors.surfaceBandLow,
+                        border: Border(
+                          bottom: BorderSide(color: AppColors.borderSubtle),
+                        ),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.s14,
+                        vertical: AppSpacing.s8,
+                      ),
+                      child: const _ListingToolbar(),
+                    ),
+                    // Main split: listing on the left, detail panel
+                    // on the right.  Vertical divider in between
+                    // keeps the two halves readable without giving
+                    // either its own background.
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  child: Stack(
+                                    children: [
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: AppSpacing.s12,
+                                        ),
+                                        child: BlocBuilder<LibraryBrowseCubit,
+                                            LibraryBrowseState>(
+                                          // Listing body only rebuilds
+                                          // on a real change: state-type
+                                          // flip OR a new response
+                                          // object (identity changes
+                                          // when a fetch lands).  Soft-
+                                          // refresh's "refreshing flag
+                                          // flip" with the same
+                                          // response identity is
+                                          // skipped — the strip above
+                                          // already animates.
+                                          buildWhen: (a, b) {
+                                            if (a.runtimeType !=
+                                                b.runtimeType) {
+                                              return true;
+                                            }
+                                            if (a is LibraryBrowseLoaded &&
+                                                b is LibraryBrowseLoaded) {
+                                              return !identical(
+                                                a.response,
+                                                b.response,
+                                              );
+                                            }
+                                            return true;
+                                          },
+                                          builder: (context, state) =>
+                                              switch (state) {
+                                            LibraryBrowseInitial() ||
+                                            LibraryBrowseLoading() =>
+                                              const _BrowseLoadingBody(),
+                                            LibraryBrowseLoaded(
+                                              :final response
+                                            ) =>
+                                              _BrowseBody(response: response),
+                                            LibraryBrowseFailure(
+                                              :final message
+                                            ) =>
+                                              _BrowseFailureBody(
+                                                  message: message),
+                                          },
+                                        ),
+                                      ),
+                                      // Soft-refresh indicator — thin
+                                      // violet bar at the very top of
+                                      // the listing area while a
+                                      // background re-fetch is in
+                                      // flight.  Chrome stays mounted;
+                                      // only this 2 px strip animates.
+                                      const Positioned(
+                                        top: 0,
+                                        left: 0,
+                                        right: 0,
+                                        child: _RefreshIndicatorStrip(),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const _CardFooterDivider(),
+                                // Footer band — same depressed tint
+                                // as the toolbar row above the
+                                // listing so the scrollable body is
+                                // bracketed by two matching darker
+                                // stripes.
+                                Container(
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.surfaceBandLow,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: AppSpacing.s14,
+                                  ),
+                                  child: const LibraryBrowseCountFooter(),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const _CardVerticalDivider(),
+                          const LibraryBrowseDetailPanel(),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                const LibraryBrowseDetailPanel(),
-              ],
+              ),
             ),
           ),
         ],
@@ -294,24 +395,46 @@ class _LibraryBrowseViewState extends State<_LibraryBrowseView> {
   }
 }
 
-// ── Header actions: back-to-library + show-hidden toggle ──────────────────
+// (Page-header actions slot is empty for this screen — the only
+// path-scoped action, "Open in Explorer", moved into the URL field
+// as a trailing icon next to "Copy path"; the toggle icons (hide /
+// refresh / density / view) live in `_ListingToolbar` inside the
+// body card.)
 
-class _HeaderActions extends StatelessWidget {
-  const _HeaderActions();
+// ── In-card listing toolbar — sits directly below the URL header ──────────
+
+/// Toggle/refresh/density/view icons rendered inside the body card,
+/// directly under the URL / breadcrumb header.  Placing them here keeps
+/// the actions visually attached to the listing they operate on instead
+/// of floating in the page header where the operator has to track them
+/// against the breadcrumb separately.
+class _ListingToolbar extends StatelessWidget {
+  const _ListingToolbar();
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
-      builder: (context, state) {
+      buildWhen: (a, b) {
+        if (a.runtimeType != b.runtimeType) return true;
+        if (a is LibraryBrowseLoaded && b is LibraryBrowseLoaded) {
+          if (identical(a.response, b.response) &&
+              a.refreshing != b.refreshing) {
+            return false;
+          }
+        }
+        return true;
+      },
+      builder: (context, _) {
         final cubit = context.read<LibraryBrowseCubit>();
-        final loaded = state is LibraryBrowseLoaded ? state : null;
         return Row(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            // Show-hidden toggle — operator's local pref, persisted by
-            // the cubit instance for this screen's lifetime.  Compact
-            // icon button so the toggle state (active = violet tint)
-            // is the primary affordance.
+            // Left side: clickable "Sort: Name ↑" indicator that
+            // mirrors the column-header arrow + lets the operator
+            // cycle through sort columns without clicking the table
+            // header.  Balances the row so the right-side icons
+            // don't float in empty space.
+            _SortIndicatorChip(cubit: cubit),
+            const Spacer(),
             _ToolbarIconButton(
               icon: cubit.showHidden
                   ? Icons.visibility_outlined
@@ -323,36 +446,97 @@ class _HeaderActions extends StatelessWidget {
               onTap: () => cubit.setShowHidden(!cubit.showHidden),
             ),
             const SizedBox(width: AppSpacing.s8),
-            // Refresh re-fetches the current directory listing — useful
-            // when files were added / removed externally and the
-            // operator wants a fresh view without manual navigation.
             _ToolbarIconButton(
               icon: Icons.refresh_rounded,
               tooltip: 'Refresh',
               onTap: () => cubit.refresh(),
             ),
             const SizedBox(width: AppSpacing.s8),
-            // Density cycle button — Compact / Cosy / Comfortable.
-            // One-shot icon button that cycles forward; icon + tooltip
-            // reflect the current mode.
             _DensityCycleButton(density: cubit.density),
             const SizedBox(width: AppSpacing.s10),
-            // List ↔ Grid view toggle (Phase A — segmented control).
             const LibraryBrowseViewToggle(),
-            const SizedBox(width: AppSpacing.s12),
-            // Primary action — opens the current directory in the OS
-            // file manager.  Matches the "Save" pattern from Encoder
-            // Settings: one violet FluxButton with icon + label.
-            FluxButton(
-              icon: Icons.folder_open_outlined,
-              onPressed: loaded == null
-                  ? null
-                  : () => _openCurrentInFileManager(context, loaded),
-              child: const Text('Open in Explorer'),
-            ),
           ],
         );
       },
+    );
+  }
+}
+
+/// Compact "Sort: Name ↑" chip rendered on the left of the toolbar.
+/// Click cycles through the sort columns; the arrow icon reflects the
+/// current ascending/descending state.  Matches the chip styling of
+/// `FluxFilterChip` so it reads as part of the same control family.
+class _SortIndicatorChip extends StatefulWidget {
+  const _SortIndicatorChip({required this.cubit});
+
+  final LibraryBrowseCubit cubit;
+
+  @override
+  State<_SortIndicatorChip> createState() => _SortIndicatorChipState();
+}
+
+class _SortIndicatorChipState extends State<_SortIndicatorChip> {
+  bool _hover = false;
+
+  String _labelFor(BrowseSortColumn col) => switch (col) {
+        BrowseSortColumn.name => 'Name',
+        BrowseSortColumn.size => 'Size',
+        BrowseSortColumn.modified => 'Modified',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final cubit = widget.cubit;
+    final color = _hover ? AppColors.violet : AppColors.textMutedV2;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          final next = switch (cubit.sortBy) {
+            BrowseSortColumn.name => BrowseSortColumn.size,
+            BrowseSortColumn.size => BrowseSortColumn.modified,
+            BrowseSortColumn.modified => BrowseSortColumn.name,
+          };
+          cubit.setSort(next);
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s10,
+            vertical: AppSpacing.s4,
+          ),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.borderSubtle),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.sort_rounded, size: 12, color: color),
+              const SizedBox(width: 6),
+              Text(
+                'Sort: ${_labelFor(cubit.sortBy)}',
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                  color: color,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                cubit.sortAsc
+                    ? Icons.arrow_upward_rounded
+                    : Icons.arrow_downward_rounded,
+                size: 11,
+                color: color,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -405,8 +589,30 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
   final FocusNode _pathFocus = FocusNode(debugLabel: 'browse-path-edit');
   String? _validationError;
 
+  // ── Autocomplete plumbing ─────────────────────────────────────────────────
+  // Suggestions popup anchored below the path field while editing.
+  // `_fieldLink` anchors the OverlayPortal to the field's RenderBox;
+  // `_suggestionsController` toggles the portal's visibility.
+
+  final LayerLink _fieldLink = LayerLink();
+  final OverlayPortalController _suggestionsController =
+      OverlayPortalController();
+  List<BrowseEntry> _suggestions = const [];
+  int _highlightedSuggestion = -1;
+  int _suggestionRequestSeq = 0;
+  Timer? _suggestionDebounce;
+  double _fieldWidth = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pathController.addListener(_onPathTextChanged);
+  }
+
   @override
   void dispose() {
+    _suggestionDebounce?.cancel();
+    _pathController.removeListener(_onPathTextChanged);
     _pathController.dispose();
     _pathFocus.dispose();
     super.dispose();
@@ -429,22 +635,33 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
     setState(() {
       _editing = true;
       _validationError = null;
+      _suggestions = const [];
+      _highlightedSuggestion = -1;
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _pathFocus.requestFocus();
+      _suggestionsController.show();
+      _scheduleSuggestionFetch();
     });
   }
 
   void _cancelEdit() {
+    _suggestionDebounce?.cancel();
+    if (_suggestionsController.isShowing) {
+      _suggestionsController.hide();
+    }
     setState(() {
       _editing = false;
       _validationError = null;
+      _suggestions = const [];
+      _highlightedSuggestion = -1;
     });
   }
 
-  Future<void> _commitEdit() async {
-    final input = _pathController.text.trim();
+  Future<void> _commitEdit({String? overrideInput}) async {
+    final input = (overrideInput ?? _pathController.text).trim();
     final cubit = context.read<LibraryBrowseCubit>();
+    _suggestionDebounce?.cancel();
     final ok = await cubit.navigateToAbsolute(input);
     if (!mounted) return;
     if (!ok) {
@@ -453,15 +670,97 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
       });
       return;
     }
+    if (_suggestionsController.isShowing) {
+      _suggestionsController.hide();
+    }
     setState(() {
       _editing = false;
       _validationError = null;
+      _suggestions = const [];
+      _highlightedSuggestion = -1;
     });
+  }
+
+  void _onPathTextChanged() {
+    if (!_editing) return;
+    // Reset highlight on every keystroke so Tab/Enter completes to
+    // the first match rather than a stale highlight pointing past
+    // the new visible list.
+    if (_highlightedSuggestion != -1) {
+      setState(() => _highlightedSuggestion = -1);
+    }
+    _scheduleSuggestionFetch();
+  }
+
+  void _scheduleSuggestionFetch() {
+    _suggestionDebounce?.cancel();
+    _suggestionDebounce = Timer(
+      const Duration(milliseconds: 120),
+      _fetchSuggestions,
+    );
+  }
+
+  Future<void> _fetchSuggestions() async {
+    if (!_editing || !mounted) return;
+    final seq = ++_suggestionRequestSeq;
+    final input = _pathController.text;
+    final cubit = context.read<LibraryBrowseCubit>();
+    final result = await cubit.pathSuggestions(input);
+    // Drop the response if a newer request has started while we were
+    // awaiting, or the field has since exited edit mode.
+    if (!mounted || seq != _suggestionRequestSeq || !_editing) return;
+    setState(() {
+      _suggestions = result;
+      // Clamp the highlight: if it points past the new list, reset.
+      if (_highlightedSuggestion >= result.length) {
+        _highlightedSuggestion = -1;
+      }
+    });
+  }
+
+  /// Completes the field text to `<parentOfCurrentInput>/<entry.name>/`
+  /// without navigating.  Used by suggestion clicks + Tab.  Trailing
+  /// separator is added so the operator can keep typing into the
+  /// next child without a manual `\`.
+  void _completeSuggestion(BrowseEntry entry) {
+    final input = _pathController.text;
+    final separator = input.contains(r'\') ? r'\' : '/';
+    final slashIdx = _lastSeparatorIndex(input, separator);
+    final parent = slashIdx == -1 ? input : input.substring(0, slashIdx + 1);
+    final completed = '$parent${entry.name}$separator';
+    _pathController.value = TextEditingValue(
+      text: completed,
+      selection: TextSelection.collapsed(offset: completed.length),
+    );
+    // Listener will re-fetch suggestions for the new path.
+    _pathFocus.requestFocus();
+  }
+
+  int _lastSeparatorIndex(String s, String sep) {
+    // Match either separator regardless of which one the input used.
+    final ix1 = s.lastIndexOf('/');
+    final ix2 = s.lastIndexOf(r'\');
+    if (ix1 == -1) return ix2;
+    if (ix2 == -1) return ix1;
+    return ix1 > ix2 ? ix1 : ix2;
   }
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
+      // Breadcrumb only depends on the path itself + history.  Skip
+      // rebuilds when only the refreshing flag flipped or a pure
+      // pref re-emit fired with the same path.  History changes
+      // (goBack / goForward / navigateTo) all change relativePath
+      // too, so the path-change check covers them.
+      buildWhen: (a, b) {
+        if (a.runtimeType != b.runtimeType) return true;
+        if (a is LibraryBrowseLoaded && b is LibraryBrowseLoaded) {
+          return a.response.relativePath != b.response.relativePath ||
+              a.response.rootPath != b.response.rootPath;
+        }
+        return true;
+      },
       builder: (context, state) {
         if (state is! LibraryBrowseLoaded) {
           return const SizedBox(height: 28);
@@ -503,82 +802,6 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
               : () => cubit.goUp(),
         );
 
-        if (_editing) {
-          return Row(
-            children: [
-              historyButtons,
-              const SizedBox(width: AppSpacing.s4),
-              upButton,
-              const SizedBox(width: AppSpacing.s8),
-              Expanded(
-                child: Focus(
-                  onKeyEvent: (_, event) {
-                    if (event is KeyDownEvent &&
-                        event.logicalKey == LogicalKeyboardKey.escape) {
-                      _cancelEdit();
-                      return KeyEventResult.handled;
-                    }
-                    return KeyEventResult.ignored;
-                  },
-                  child: TextField(
-                    controller: _pathController,
-                    focusNode: _pathFocus,
-                    onSubmitted: (_) => _commitEdit(),
-                    style: const TextStyle(
-                      fontFamily: 'JetBrains Mono',
-                      fontSize: 12,
-                      color: AppColors.textBright,
-                    ),
-                    cursorColor: AppColors.violet,
-                    decoration: InputDecoration(
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 7,
-                      ),
-                      filled: true,
-                      fillColor: const Color(0x0AFFFFFF),
-                      hintText: r'D:\Library\Subdir',
-                      hintStyle: const TextStyle(
-                        fontFamily: 'JetBrains Mono',
-                        fontSize: 12,
-                        color: AppColors.textFaint,
-                      ),
-                      errorText: _validationError,
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius:
-                            BorderRadius.circular(AppRadii.sm - 1),
-                        borderSide:
-                            const BorderSide(color: Color(0x14FFFFFF)),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius:
-                            BorderRadius.circular(AppRadii.sm - 1),
-                        borderSide: const BorderSide(
-                          color: AppColors.violet,
-                          width: 1.5,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.s8),
-              _ToolbarIconButton(
-                icon: Icons.check_rounded,
-                tooltip: 'Navigate (Enter)',
-                onTap: _commitEdit,
-              ),
-              const SizedBox(width: AppSpacing.s4),
-              _ToolbarIconButton(
-                icon: Icons.close_rounded,
-                tooltip: 'Cancel (Esc)',
-                onTap: _cancelEdit,
-              ),
-            ],
-          );
-        }
-
         final segments = response.relativePath.isEmpty
             ? const <String>[]
             : response.relativePath.split('/');
@@ -608,44 +831,222 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
             ));
         }
 
-        // Trailing icon row: history + "go up" (parent) + edit
-        // affordance + search field + raw-path copy.
+        // Path field — same field-style chrome in both display and
+        // edit modes so the bar always reads as an editable field and
+        // size doesn't shift on toggle.  Display mode mounts the
+        // breadcrumb chip row inside the field; edit mode swaps in a
+        // bare TextField with no own decoration (the wrapper owns the
+        // border / fill / radius).  Trailing icons (copy path +
+        // open-in-explorer) live inside the field at its right edge
+        // so they read as path actions instead of toolbar chrome.
+        final pathField = _PathField(
+          editing: _editing,
+          validationError: _validationError,
+          onTapDisplay: () => _beginEdit(state),
+          trailing: [
+            _ToolbarIconButton(
+              icon: Icons.copy_rounded,
+              tooltip: 'Copy absolute path',
+              compact: true,
+              onTap: () => _copyAbsolutePath(context, response),
+            ),
+            const SizedBox(width: 2),
+            _ToolbarIconButton(
+              icon: Icons.folder_open_outlined,
+              tooltip: 'Open current folder in Explorer',
+              compact: true,
+              onTap: () => _openCurrentInFileManager(context, state),
+            ),
+          ],
+          editChild: Focus(
+            onKeyEvent: (_, event) {
+              if (event is KeyDownEvent || event is KeyRepeatEvent) {
+                if (event.logicalKey == LogicalKeyboardKey.escape) {
+                  _cancelEdit();
+                  return KeyEventResult.handled;
+                }
+                // Autocomplete keyboard nav.  Down/Up moves the
+                // highlight through the visible suggestion list; Tab
+                // completes to the highlighted entry (or the first
+                // entry when nothing is highlighted yet).
+                if (event.logicalKey == LogicalKeyboardKey.arrowDown &&
+                    _suggestions.isNotEmpty) {
+                  setState(() {
+                    _highlightedSuggestion =
+                        (_highlightedSuggestion + 1)
+                            .clamp(0, _suggestions.length - 1);
+                  });
+                  return KeyEventResult.handled;
+                }
+                if (event.logicalKey == LogicalKeyboardKey.arrowUp &&
+                    _suggestions.isNotEmpty) {
+                  setState(() {
+                    _highlightedSuggestion = _highlightedSuggestion <= 0
+                        ? _suggestions.length - 1
+                        : _highlightedSuggestion - 1;
+                  });
+                  return KeyEventResult.handled;
+                }
+                if (event.logicalKey == LogicalKeyboardKey.tab &&
+                    _suggestions.isNotEmpty) {
+                  final pick = _highlightedSuggestion >= 0
+                      ? _suggestions[_highlightedSuggestion]
+                      : _suggestions.first;
+                  _completeSuggestion(pick);
+                  return KeyEventResult.handled;
+                }
+                // Explicit Enter handler — `TextField.onSubmitted`
+                // fires from the IME submit action but doesn't always
+                // consume the key event, so the body-level Focus
+                // handler ends up grabbing Enter for "open selected"
+                // before the commit completes.  Swallowing Enter here
+                // routes it through `_commitEdit` exclusively.  When
+                // a suggestion is highlighted, navigate to that
+                // suggestion's full path instead of the typed text.
+                if (event.logicalKey == LogicalKeyboardKey.enter ||
+                    event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+                  if (_highlightedSuggestion >= 0 &&
+                      _highlightedSuggestion < _suggestions.length) {
+                    final pick = _suggestions[_highlightedSuggestion];
+                    final input = _pathController.text;
+                    final separator =
+                        input.contains(r'\') ? r'\' : '/';
+                    final slashIdx =
+                        _lastSeparatorIndex(input, separator);
+                    final parent = slashIdx == -1
+                        ? input
+                        : input.substring(0, slashIdx + 1);
+                    _commitEdit(overrideInput: '$parent${pick.name}');
+                  } else {
+                    _commitEdit();
+                  }
+                  return KeyEventResult.handled;
+                }
+              }
+              return KeyEventResult.ignored;
+            },
+            child: TextField(
+              controller: _pathController,
+              focusNode: _pathFocus,
+              // `onSubmitted` deliberately omitted — Enter is handled
+              // by the wrapper Focus above so we don't double-fire
+              // `_commitEdit` on platforms where EditableText calls
+              // both the IME submit action AND lets the key bubble.
+              style: const TextStyle(
+                fontFamily: 'JetBrains Mono',
+                fontSize: 12,
+                color: AppColors.textBright,
+                height: 1.2,
+              ),
+              cursorColor: AppColors.violet,
+              decoration: const InputDecoration(
+                isDense: true,
+                isCollapsed: true,
+                border: InputBorder.none,
+                hintText: r'D:\Library\Subdir',
+                hintStyle: TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 12,
+                  color: AppColors.textFaint,
+                ),
+              ),
+            ),
+          ),
+          displayChild: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: chips),
+          ),
+        );
+
+        // Wrap the path field in a CompositedTransformTarget + a
+        // size-tracking LayoutBuilder so the suggestions OverlayPortal
+        // can anchor itself directly below the field, matching its
+        // width.  The OverlayPortal mounts a popup at root-overlay
+        // level (escapes the FluxCard's clip) only while editing.
+        final pathFieldWithSuggestions = LayoutBuilder(
+          builder: (context, constraints) {
+            // Cache width so the post-frame portal builder has it on
+            // first paint.  Reading `constraints.maxWidth` here keeps
+            // the popup in sync with field-width changes (sidebar
+            // collapse, etc.) without extra plumbing.
+            if (_fieldWidth != constraints.maxWidth) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) setState(() => _fieldWidth = constraints.maxWidth);
+              });
+            }
+            return CompositedTransformTarget(
+              link: _fieldLink,
+              child: OverlayPortal(
+                controller: _suggestionsController,
+                overlayChildBuilder: (_) => _SuggestionsOverlay(
+                  link: _fieldLink,
+                  width: _fieldWidth > 0
+                      ? _fieldWidth
+                      : constraints.maxWidth,
+                  // Offset Y by the field height (30) + a small gap.
+                  verticalOffset: _PathFieldState._kHeight + 4,
+                  suggestions: _suggestions,
+                  highlighted: _highlightedSuggestion,
+                  onPick: (entry) {
+                    _completeSuggestion(entry);
+                  },
+                  onHover: (i) => setState(() {
+                    _highlightedSuggestion = i;
+                  }),
+                ),
+                child: pathField,
+              ),
+            );
+          },
+        );
+
+        // Cluster the path field + its trailing action buttons
+        // (check / close in edit mode, edit-pencil otherwise) under
+        // one `TapRegion` so a tap anywhere OUTSIDE this group while
+        // editing cancels the edit.  Without grouping the buttons in
+        // with the field, tapping the check button would fire the
+        // outside-tap handler before the button's onTap and we'd
+        // cancel instead of commit.
+        final fieldCluster = TapRegion(
+          onTapOutside: _editing ? (_) => _cancelEdit() : null,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Expanded(child: pathFieldWithSuggestions),
+              const SizedBox(width: AppSpacing.s6),
+              if (_editing) ...[
+                _ToolbarIconButton(
+                  icon: Icons.check_rounded,
+                  tooltip: 'Navigate (Enter)',
+                  onTap: _commitEdit,
+                ),
+                const SizedBox(width: AppSpacing.s4),
+                _ToolbarIconButton(
+                  icon: Icons.close_rounded,
+                  tooltip: 'Cancel (Esc)',
+                  onTap: _cancelEdit,
+                ),
+              ] else
+                _ToolbarIconButton(
+                  icon: Icons.edit_rounded,
+                  tooltip: 'Edit path',
+                  onTap: () => _beginEdit(state),
+                ),
+            ],
+          ),
+        );
+
         return Row(
           children: [
             historyButtons,
             const SizedBox(width: AppSpacing.s4),
             upButton,
             const SizedBox(width: AppSpacing.s8),
-            Expanded(
-              child: Tooltip(
-                message: 'Click to edit path',
-                waitDuration: const Duration(milliseconds: 600),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => _beginEdit(state),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(children: chips),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: AppSpacing.s6),
-            _ToolbarIconButton(
-              icon: Icons.edit_rounded,
-              tooltip: 'Edit path',
-              onTap: () => _beginEdit(state),
-            ),
+            Expanded(child: fieldCluster),
             const SizedBox(width: AppSpacing.s10),
             LibraryBrowseSearchBar(
               width: 240,
               focusNode: widget.searchFocusNode,
-            ),
-            const SizedBox(width: AppSpacing.s8),
-            _ToolbarIconButton(
-              icon: Icons.copy_rounded,
-              tooltip: 'Copy absolute path',
-              onTap: () => _copyAbsolutePath(context, response),
             ),
           ],
         );
@@ -678,6 +1079,304 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
     await Clipboard.setData(ClipboardData(text: full));
     messenger?.showSnackBar(
       const SnackBar(content: Text('Path copied to clipboard')),
+    );
+  }
+}
+
+/// Field-style wrapper that hosts either the breadcrumb chip row
+/// (display mode) or a bare [TextField] (edit mode).  Same border /
+/// fill / radius / height in both modes so the bar reads as an
+/// editable field at rest AND doesn't change size on toggle.
+///
+/// Click anywhere on the field in display mode → enters edit mode
+/// via [onTapDisplay].  Hover bumps the border to a subtle violet
+/// tint; edit mode pins it to the full violet to match focus state.
+///
+/// [trailing] mounts trailing affordances (copy / open-in-explorer)
+/// inside the field's right edge, separated from the breadcrumb /
+/// TextField content by a thin vertical hairline.  Trailing widgets
+/// receive their own clicks; the field's outer GestureDetector skips
+/// pointer events on the trailing zone via per-button hit testing.
+class _PathField extends StatefulWidget {
+  const _PathField({
+    required this.editing,
+    required this.editChild,
+    required this.displayChild,
+    required this.onTapDisplay,
+    this.trailing,
+    this.validationError,
+  });
+
+  final bool editing;
+  final Widget editChild;
+  final Widget displayChild;
+  final VoidCallback onTapDisplay;
+  final List<Widget>? trailing;
+  final String? validationError;
+
+  @override
+  State<_PathField> createState() => _PathFieldState();
+}
+
+class _PathFieldState extends State<_PathField> {
+  bool _hovered = false;
+
+  static const double _kHeight = 30;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool focusLook = widget.editing;
+    final bool errored = widget.validationError != null;
+    final Color borderColor = errored
+        ? AppColors.red
+        : (focusLook
+            ? AppColors.violet
+            : (_hovered
+                ? AppColors.borderHover
+                : AppColors.borderSubtle));
+    final double borderWidth = focusLook ? 1.5 : 1;
+
+    // The Container is the full hit area for the field — padding +
+    // border + fill all live here so the whole rectangle (not just
+    // the inner content) registers clicks.  Trailing affordances
+    // (when provided) sit at the right edge with a thin hairline
+    // separator; their own GestureDetectors take precedence over the
+    // outer click-to-edit handler so tapping them runs the trailing
+    // action instead of entering edit mode.
+    final inner = widget.editing
+        ? Align(
+            alignment: Alignment.centerLeft,
+            child: widget.editChild,
+          )
+        : widget.displayChild;
+
+    final hasTrailing = widget.trailing != null && widget.trailing!.isNotEmpty;
+    final Widget contentRow = Row(
+      mainAxisSize: MainAxisSize.max,
+      children: [
+        Expanded(child: ClipRect(child: inner)),
+        if (hasTrailing) ...[
+          const SizedBox(width: AppSpacing.s6),
+          const _PathFieldTrailingDivider(),
+          const SizedBox(width: AppSpacing.s6),
+          for (final t in widget.trailing!) t,
+        ],
+      ],
+    );
+
+    final Widget innerField = Container(
+      height: _kHeight,
+      decoration: BoxDecoration(
+        color: AppColors.surfaceBandLow,
+        border: Border.all(color: borderColor, width: borderWidth),
+        borderRadius: BorderRadius.circular(AppRadii.sm - 1),
+      ),
+      padding: const EdgeInsets.only(
+        left: AppSpacing.s10,
+        right: AppSpacing.s4,
+      ),
+      alignment: Alignment.centerLeft,
+      child: contentRow,
+    );
+
+    final Widget interactive = MouseRegion(
+      cursor: widget.editing
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.text,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: widget.editing
+          ? innerField
+          : Tooltip(
+              message: 'Click to edit path',
+              waitDuration: const Duration(milliseconds: 600),
+              // GestureDetector wraps the whole Container so a click
+              // anywhere inside the field's rectangle (including its
+              // padding and the empty area to the right of the
+              // breadcrumb chips) enters edit mode.
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.onTapDisplay,
+                child: innerField,
+              ),
+            ),
+    );
+
+    if (widget.validationError == null) return interactive;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        interactive,
+        const SizedBox(height: 4),
+        Text(
+          widget.validationError!,
+          style: const TextStyle(
+            fontFamily: 'Inter',
+            fontSize: 11,
+            color: AppColors.red,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 1-px hairline rendered between the breadcrumb / TextField inner
+/// content and the trailing affordance cluster inside [_PathField].
+class _PathFieldTrailingDivider extends StatelessWidget {
+  const _PathFieldTrailingDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: 1,
+      height: 16,
+      child: ColoredBox(color: AppColors.borderSubtle),
+    );
+  }
+}
+
+/// Suggestions popup anchored under the editable path field.
+/// Mounted via `OverlayPortal` at root-overlay level so the FluxCard's
+/// clip rect doesn't truncate it.  Uses `CompositedTransformFollower`
+/// to track the field's position when the page scrolls or the layout
+/// shifts mid-edit.
+class _SuggestionsOverlay extends StatelessWidget {
+  const _SuggestionsOverlay({
+    required this.link,
+    required this.width,
+    required this.verticalOffset,
+    required this.suggestions,
+    required this.highlighted,
+    required this.onPick,
+    required this.onHover,
+  });
+
+  final LayerLink link;
+  final double width;
+  final double verticalOffset;
+  final List<BrowseEntry> suggestions;
+  final int highlighted;
+  final ValueChanged<BrowseEntry> onPick;
+  final ValueChanged<int> onHover;
+
+  static const double _kMaxHeight = 220;
+  static const double _kRowHeight = 30;
+
+  @override
+  Widget build(BuildContext context) {
+    if (suggestions.isEmpty) return const SizedBox.shrink();
+    final maxRows = (_kMaxHeight / _kRowHeight).floor();
+    final visibleHeight = (suggestions.length * _kRowHeight)
+        .clamp(0.0, maxRows * _kRowHeight)
+        .toDouble();
+    return Positioned(
+      // Anchored via CompositedTransformFollower below — Positioned
+      // just hands the overlay a finite frame so it doesn't expand.
+      left: 0,
+      top: 0,
+      width: width,
+      height: visibleHeight,
+      child: CompositedTransformFollower(
+        link: link,
+        offset: Offset(0, verticalOffset),
+        showWhenUnlinked: false,
+        child: Material(
+          color: Colors.transparent,
+          elevation: 0,
+          child: Container(
+            decoration: BoxDecoration(
+              color: AppColors.bgRaised,
+              border: Border.all(color: AppColors.borderSubtle),
+              borderRadius: BorderRadius.circular(AppRadii.sm),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x66000000),
+                  blurRadius: 16,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadii.sm - 1),
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                itemCount: suggestions.length,
+                itemExtent: _kRowHeight,
+                itemBuilder: (_, i) {
+                  final e = suggestions[i];
+                  return _SuggestionRow(
+                    entry: e,
+                    isHighlighted: i == highlighted,
+                    onTap: () => onPick(e),
+                    onHover: () => onHover(i),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SuggestionRow extends StatelessWidget {
+  const _SuggestionRow({
+    required this.entry,
+    required this.isHighlighted,
+    required this.onTap,
+    required this.onHover,
+  });
+
+  final BrowseEntry entry;
+  final bool isHighlighted;
+  final VoidCallback onTap;
+  final VoidCallback onHover;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isHighlighted
+        ? const Color(0x24A855F7)
+        : Colors.transparent;
+    final fg = isHighlighted
+        ? AppColors.violetSoft
+        : AppColors.textBody;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => onHover(),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          color: bg,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s10),
+          alignment: Alignment.centerLeft,
+          child: Row(
+            children: [
+              Icon(
+                Icons.folder_outlined,
+                size: 14,
+                color: fg,
+              ),
+              const SizedBox(width: AppSpacing.s8),
+              Expanded(
+                child: Text(
+                  entry.name,
+                  style: TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 12,
+                    color: fg,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -735,6 +1434,69 @@ class _BreadcrumbSeparator extends StatelessWidget {
         size: 14,
         color: AppColors.textFaint,
       );
+}
+
+/// 2-px violet progress strip pinned to the top of the listing area.
+/// Visible only while a soft refresh is in flight — `state.refreshing`
+/// flips true on commit, false when the new response lands.  The
+/// widget is mounted continuously (no layout churn); only the
+/// indeterminate `LinearProgressIndicator` paints inside.
+class _RefreshIndicatorStrip extends StatelessWidget {
+  const _RefreshIndicatorStrip();
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
+      buildWhen: (a, b) {
+        final ar = a is LibraryBrowseLoaded && a.refreshing;
+        final br = b is LibraryBrowseLoaded && b.refreshing;
+        return ar != br;
+      },
+      builder: (context, state) {
+        final refreshing = state is LibraryBrowseLoaded && state.refreshing;
+        return SizedBox(
+          height: 2,
+          child: refreshing
+              ? const LinearProgressIndicator(
+                  minHeight: 2,
+                  backgroundColor: Colors.transparent,
+                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.violet),
+                )
+              : const SizedBox.shrink(),
+        );
+      },
+    );
+  }
+}
+
+/// 1-px hairline rendered between the listing and the count footer
+/// inside the body `FluxCard`.  Matches the subtle dividers the
+/// Convert page uses inside its candidates card.
+class _CardFooterDivider extends StatelessWidget {
+  const _CardFooterDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 1,
+      child: ColoredBox(color: AppColors.borderSubtle),
+    );
+  }
+}
+
+/// 1-px vertical separator between the listing column and the right
+/// detail panel inside the body `FluxCard`.  Lets both halves share
+/// the same card surface without giving the panel its own background.
+class _CardVerticalDivider extends StatelessWidget {
+  const _CardVerticalDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: 1,
+      child: ColoredBox(color: AppColors.borderSubtle),
+    );
+  }
 }
 
 // ── Body: loading / failure / list ─────────────────────────────────────────
@@ -895,7 +1657,7 @@ class _EmptyBody extends StatelessWidget {
   }
 }
 
-class _BrowseListView extends StatelessWidget {
+class _BrowseListView extends StatefulWidget {
   const _BrowseListView({
     required this.response,
     required this.entries,
@@ -915,40 +1677,334 @@ class _BrowseListView extends StatelessWidget {
   final BrowseDensity density;
 
   @override
+  State<_BrowseListView> createState() => _BrowseListViewState();
+}
+
+class _BrowseListViewState extends State<_BrowseListView> {
+  /// Owned by this state so we can hand the same controller to both
+  /// the [SingleChildScrollView] and the wrapping [Scrollbar].
+  /// Scrollbar throws "ScrollController has no ScrollPosition
+  /// attached" without an explicit controller shared with its
+  /// associated Scrollable.
+  late final ScrollController _hScroll = ScrollController();
+
+  @override
+  void dispose() {
+    _hScroll.dispose();
+    super.dispose();
+  }
+
+  /// Sum of all visible column widths + dividers + the leading kind-
+  /// icon spacer + the body row's horizontal Padding + the body row's
+  /// `AnimatedContainer` border + a small safety buffer.
+  ///
+  /// Body overhead: 12 px Padding each side (24) + 1 px Border each
+  /// side (2) = 26 px.  Header overhead is only 24 px (no border).
+  /// The extra 8 px on top absorbs (a) sub-pixel rounding when the
+  /// device pixel ratio doesn't land on whole pixels, and (b) any
+  /// hidden chrome we can't precisely measure from outside.
+  double _totalTableWidth() {
+    const double overhead = 26 + 8; // body row chrome + safety buffer
+    double total = overhead + 32; // overhead + leading kind-icon spacer
+    for (final col in _persistedColumnOrder) {
+      total += _effectiveColumnWidth(col);
+    }
+    if (_persistedColumnOrder.length > 1) {
+      total += (_persistedColumnOrder.length - 1) * _kColumnDividerWidth;
+    }
+    return total;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _SortableColumnHeaderRow(
-          sortBy: sortBy,
-          sortAsc: sortAsc,
-          onSort: onSort,
-        ),
-        const SizedBox(height: 4),
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.only(bottom: AppSpacing.s14),
-            itemCount: entries.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 4),
-            itemBuilder: (_, i) {
-              final entry = entries[i];
-              return _BrowseRow(
-                entry: entry,
-                rootPath: response.rootPath,
-                relativePath: response.relativePath,
-                isSelected: selectedNames.contains(entry.name),
-                density: density,
-              );
-            },
-          ),
-        ),
-      ],
+    return ValueListenableBuilder<int>(
+      // Recompute the table's total width whenever a column is
+      // resized / reordered / toggled.
+      valueListenable: _columnsVersion,
+      builder: (context, _, _) {
+        return LayoutBuilder(
+          builder: (ctx, constraints) {
+            final totalWidth = _totalTableWidth();
+            // When content fits the container, fill the container so
+            // the table reads as flush.  When content exceeds the
+            // container, grow to totalWidth and let
+            // SingleChildScrollView scroll horizontally — header +
+            // rows share the same scroll viewport so they stay in
+            // lockstep without needing a shared ScrollController
+            // across multiple Scrollables.
+            final overflows = totalWidth > constraints.maxWidth;
+            final tableWidth =
+                overflows ? totalWidth : constraints.maxWidth;
+            return Scrollbar(
+              controller: _hScroll,
+              thumbVisibility: overflows,
+              child: SingleChildScrollView(
+                controller: _hScroll,
+                scrollDirection: Axis.horizontal,
+                // No horizontal scroll physics when content fits —
+                // avoids the scrollbar painting an idle thumb.
+                physics: overflows
+                    ? const ClampingScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
+                child: SizedBox(
+                  width: tableWidth,
+                  height: constraints.maxHeight,
+                  child: Column(
+                    children: [
+                      _SortableColumnHeaderRow(
+                        sortBy: widget.sortBy,
+                        sortAsc: widget.sortAsc,
+                        onSort: widget.onSort,
+                      ),
+                      const SizedBox(height: 4),
+                      Expanded(
+                        child: ListView.separated(
+                          padding:
+                              const EdgeInsets.only(bottom: AppSpacing.s14),
+                          itemCount: widget.entries.length,
+                          separatorBuilder: (_, _) =>
+                              const SizedBox(height: 4),
+                          itemBuilder: (_, i) {
+                            final entry = widget.entries[i];
+                            return _BrowseRow(
+                              entry: entry,
+                              rootPath: widget.response.rootPath,
+                              relativePath: widget.response.relativePath,
+                              isSelected:
+                                  widget.selectedNames.contains(entry.name),
+                              density: widget.density,
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
 
-/// Sortable column headers.  Click toggles direction (desc / asc / desc /
-/// ...); active column shows the arrow indicator.  Plan 28 Phase A.
-class _SortableColumnHeaderRow extends StatelessWidget {
+/// Optional listing columns the operator can show/hide via the
+/// right-click "column picker" menu on the column header row (matches
+/// Windows Explorer / macOS Finder pattern).  `name` is always-on
+/// (the entry's primary identifier — can't be turned off); every
+/// other column toggles independently.
+enum BrowseColumn {
+  name,
+  size,
+  modified,
+  kind,
+  indexed,
+  codec,
+  dimensions,
+  duration,
+}
+
+/// Visible operator-facing label for the column picker menu + the
+/// column header itself.  Centralised so the menu and the header
+/// share strings.
+String _browseColumnLabel(BrowseColumn col) => switch (col) {
+      BrowseColumn.name => 'Name',
+      BrowseColumn.size => 'Size',
+      BrowseColumn.modified => 'Modified',
+      BrowseColumn.kind => 'Kind',
+      BrowseColumn.indexed => 'Indexed',
+      BrowseColumn.codec => 'Codec',
+      BrowseColumn.dimensions => 'Dimensions',
+      BrowseColumn.duration => 'Duration',
+    };
+
+/// Default pixel width for each column.  Name starts as a flexible
+/// column (filling remaining space); once the operator drags Name's
+/// right-edge divider, it locks to that width in
+/// [_persistedColumnWidths] and stays fixed thereafter.  Other
+/// columns are fixed-width by default.
+double _browseColumnWidth(BrowseColumn col) => switch (col) {
+      BrowseColumn.name => 280, // initial fixed width after resize
+      BrowseColumn.size => 100,
+      BrowseColumn.modified => 160,
+      BrowseColumn.kind => 90,
+      BrowseColumn.indexed => 110,
+      BrowseColumn.codec => 80,
+      BrowseColumn.dimensions => 110,
+      BrowseColumn.duration => 90,
+    };
+
+/// Only a subset of columns are sortable client-side (we have the
+/// data + a deterministic ordering for them).  Others render but
+/// don't toggle sort on click.
+BrowseSortColumn? _browseColumnSortKey(BrowseColumn col) => switch (col) {
+      BrowseColumn.name => BrowseSortColumn.name,
+      BrowseColumn.size => BrowseSortColumn.size,
+      BrowseColumn.modified => BrowseSortColumn.modified,
+      _ => null,
+    };
+
+/// Process-wide persisted ORDER of enabled listing columns.  Matches
+/// the toolbar/prefs persistence pattern — survives screen re-mounts
+/// within the session.  Defaults mirror the original hardcoded
+/// 3-column layout so first launch looks identical to before.
+///
+/// A column is "enabled" iff it appears in this list; the iteration
+/// order IS the on-screen display order, mutable by drag-and-drop on
+/// the column header.  Name is always first and never moves (locked).
+List<BrowseColumn> _persistedColumnOrder = [
+  BrowseColumn.name,
+  BrowseColumn.size,
+  BrowseColumn.modified,
+];
+
+/// Bumps every time [_persistedColumnOrder] mutates (toggle OR
+/// reorder).  Widgets that depend on the column set (the header row
+/// + every visible row body) wrap themselves in a
+/// [ValueListenableBuilder] against this notifier so they re-render
+/// immediately on change — without it the body would only repaint
+/// when each row re-builds for its own reason (hover, selection
+/// change, etc.).
+final ValueNotifier<int> _columnsVersion = ValueNotifier(0);
+
+bool _isBrowseColumnEnabled(BrowseColumn col) =>
+    _persistedColumnOrder.contains(col);
+
+void _toggleBrowseColumn(BrowseColumn col) {
+  if (col == BrowseColumn.name) return; // locked
+  if (_persistedColumnOrder.contains(col)) {
+    _persistedColumnOrder = [..._persistedColumnOrder]..remove(col);
+  } else {
+    _persistedColumnOrder = [..._persistedColumnOrder, col];
+  }
+  _columnsVersion.value = _columnsVersion.value + 1;
+}
+
+/// Move [moved] to the slot adjacent to [target] inside
+/// [_persistedColumnOrder].  [placeAfter] selects whether the moved
+/// column lands to the LEFT (false) or RIGHT (true) of target —
+/// driven by which half of target's cell the operator dropped on,
+/// matching the Windows Explorer pattern.  Name is pinned to slot 0
+/// — drops onto Name or attempts to move Name are ignored.
+void _reorderBrowseColumn(
+  BrowseColumn moved,
+  BrowseColumn target, {
+  bool placeAfter = false,
+}) {
+  if (moved == target) return;
+  if (moved == BrowseColumn.name) return;
+  if (target == BrowseColumn.name) return;
+  final list = [..._persistedColumnOrder];
+  final fromIdx = list.indexOf(moved);
+  if (fromIdx < 0) return;
+  list.removeAt(fromIdx);
+  // After the removal the target's index may have shifted left by
+  // one — read it fresh from the post-removal list so the insert
+  // slot is always correct regardless of drag direction.
+  final targetIdx = list.indexOf(target);
+  if (targetIdx < 0) return;
+  list.insert(placeAfter ? targetIdx + 1 : targetIdx, moved);
+  _persistedColumnOrder = list;
+  _columnsVersion.value = _columnsVersion.value + 1;
+}
+
+/// Operator-overridden widths for fixed-size columns.  Empty by
+/// default → the column uses its built-in default from
+/// [_browseColumnWidth].  Mutated by dragging a column header's
+/// right-edge resize handle.  Name stays flexible (Expanded) — its
+/// width is the remaining space and never appears in this map.
+Map<BrowseColumn, double> _persistedColumnWidths = {};
+
+const double _kMinColumnWidth = 60;
+const double _kMaxColumnWidth = 360;
+
+double _effectiveColumnWidth(BrowseColumn col) =>
+    _persistedColumnWidths[col] ?? _browseColumnWidth(col);
+
+void _resizeBrowseColumn(BrowseColumn col, double newWidth) {
+  // All columns (including Name) are fixed-width — Name used to be
+  // Expanded but that caused every fixed-column resize to shift
+  // Name's right edge (the divider after it) as a side effect of
+  // Name absorbing the freed space, which looked broken.  Now the
+  // Row is horizontally scrollable so widths can exceed the
+  // container without a RenderFlex overflow.
+  final clamped = newWidth.clamp(_kMinColumnWidth, _kMaxColumnWidth);
+  if ((_persistedColumnWidths[col] ?? _browseColumnWidth(col)) == clamped) {
+    return;
+  }
+  _persistedColumnWidths = {..._persistedColumnWidths, col: clamped};
+  _columnsVersion.value = _columnsVersion.value + 1;
+}
+
+/// Render the value of [col] for [entry] as a row cell.  Mirrors the
+/// monospace-mono styling of the original Size + Modified cells so
+/// every column reads as part of the same table family.  Returns an
+/// em-dash for missing data (directories, unindexed files, missing
+/// codec / dimensions / duration).
+Widget _browseColumnCell(BrowseColumn col, BrowseEntry entry) {
+  const style = TextStyle(
+    fontFamily: 'JetBrains Mono',
+    fontSize: 11.5,
+    color: AppColors.textMutedV2,
+  );
+  String value;
+  switch (col) {
+    case BrowseColumn.name:
+      // Name is rendered as the Expanded label cell, not here — this
+      // branch exists for completeness.  Empty so the row doesn't
+      // accidentally render a duplicate label.
+      return const SizedBox.shrink();
+    case BrowseColumn.size:
+      value = entry.isDir ? '—' : _humanBytes(entry.sizeBytes);
+    case BrowseColumn.modified:
+      value = _formatModified(entry.modifiedIso);
+    case BrowseColumn.kind:
+      value = switch (entry.kind) {
+        BrowseKind.directory => 'Folder',
+        BrowseKind.video => 'Video',
+        BrowseKind.image => 'Image',
+        BrowseKind.audio => 'Audio',
+        BrowseKind.pdf => 'PDF',
+        BrowseKind.other => 'Other',
+      };
+    case BrowseColumn.indexed:
+      value = entry.isIndexed
+          ? (entry.media?.indexedAtIso != null
+              ? _formatModified(entry.media!.indexedAtIso!)
+              : 'Yes')
+          : '—';
+    case BrowseColumn.codec:
+      value = entry.media?.codecName ?? '—';
+    case BrowseColumn.dimensions:
+      final w = entry.media?.width;
+      final h = entry.media?.height;
+      value = (w != null && h != null) ? '$w × $h' : '—';
+    case BrowseColumn.duration:
+      final secs = entry.media?.durationSec;
+      value = (secs != null && secs > 0) ? _formatDurationShort(secs) : '—';
+  }
+  return Text(value, style: style, maxLines: 1, overflow: TextOverflow.ellipsis);
+}
+
+/// Format a duration in seconds as `Hh Mm` / `Mm Ss` / `Ss`.  Short
+/// enough to fit a 90 px column without truncation.
+String _formatDurationShort(double seconds) {
+  final total = seconds.round();
+  final h = total ~/ 3600;
+  final m = (total % 3600) ~/ 60;
+  final s = total % 60;
+  if (h > 0) return '${h}h ${m}m';
+  if (m > 0) return '${m}m ${s}s';
+  return '${s}s';
+}
+
+/// Sortable column headers.  Click a sortable column toggles its
+/// direction (desc / asc / desc / ...); active column shows the
+/// arrow indicator.  Right-click anywhere on the row opens the
+/// column picker menu (Windows Explorer pattern — checkable list of
+/// available columns).
+class _SortableColumnHeaderRow extends StatefulWidget {
   const _SortableColumnHeaderRow({
     required this.sortBy,
     required this.sortAsc,
@@ -960,44 +2016,529 @@ class _SortableColumnHeaderRow extends StatelessWidget {
   final ValueChanged<BrowseSortColumn> onSort;
 
   @override
+  State<_SortableColumnHeaderRow> createState() =>
+      _SortableColumnHeaderRowState();
+}
+
+class _SortableColumnHeaderRowState extends State<_SortableColumnHeaderRow> {
+  /// Drives the column-picker popup's mount state.  Sticky — stays
+  /// shown across multiple checkbox clicks; only dismissed by a tap
+  /// outside the popup or another right-click on the header.
+  final OverlayPortalController _pickerController = OverlayPortalController();
+
+  /// Anchor position of the popup — captured from the right-click
+  /// pointer position so the picker opens wherever the operator
+  /// clicked (Explorer pattern).
+  Offset _pickerPos = Offset.zero;
+
+  void _openPicker(Offset globalPos) {
+    setState(() => _pickerPos = globalPos);
+    if (!_pickerController.isShowing) {
+      _pickerController.show();
+    }
+  }
+
+  void _closePicker() {
+    if (_pickerController.isShowing) {
+      _pickerController.hide();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        children: [
-          // 24px icon column + 8px gap
-          const SizedBox(width: 32),
-          Expanded(
-            child: _SortHeaderLabel(
-              label: 'NAME',
-              column: BrowseSortColumn.name,
-              activeColumn: sortBy,
-              ascending: sortAsc,
-              onTap: () => onSort(BrowseSortColumn.name),
+    return ValueListenableBuilder<int>(
+      // Rebuild whenever the column set or order changes so the
+      // header reflects the new state on the same frame as the
+      // picker checkbox is ticked or a column is dropped.
+      valueListenable: _columnsVersion,
+      builder: (context, _, _) {
+        // `_persistedColumnOrder` IS the display order — Name is
+        // always slot 0 (locked).
+        final visible = _persistedColumnOrder;
+        return OverlayPortal(
+          controller: _pickerController,
+          overlayChildBuilder: (_) => _ColumnPickerPopup(
+            position: _pickerPos,
+            onDismiss: _closePicker,
+          ),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onSecondaryTapDown: (details) =>
+                _openPicker(details.globalPosition),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 6,
+              ),
+              child: Row(
+                children: [
+                  // 24px kind-icon column + 8px gap (same as the row).
+                  const SizedBox(width: 32),
+                  for (var i = 0; i < visible.length; i++) ...[
+                    if (i > 0)
+                      _ResizableColumnDivider(leftColumn: visible[i - 1]),
+                    SizedBox(
+                      width: _effectiveColumnWidth(visible[i]),
+                      child: _DraggableColumnHeader(
+                        column: visible[i],
+                        child: _headerCell(visible[i]),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ),
-          SizedBox(
-            width: 100,
-            child: _SortHeaderLabel(
-              label: 'SIZE',
-              column: BrowseSortColumn.size,
-              activeColumn: sortBy,
-              ascending: sortAsc,
-              onTap: () => onSort(BrowseSortColumn.size),
+        );
+      },
+    );
+  }
+
+  Widget _headerCell(BrowseColumn col) {
+    final sortKey = _browseColumnSortKey(col);
+    return _SortHeaderLabel(
+      label: _browseColumnLabel(col),
+      column: sortKey,
+      activeColumn: widget.sortBy,
+      ascending: widget.sortAsc,
+      onTap: sortKey == null ? null : () => widget.onSort(sortKey),
+    );
+  }
+}
+
+/// Outer width of every column divider — used by both [_ColumnDivider]
+/// (body) and [_ResizableColumnDivider] (header) so header + body
+/// dividers line up pixel-for-pixel column boundaries.
+const double _kColumnDividerWidth = 9;
+
+/// Decorative vertical hairline rendered between adjacent row-body
+/// cells.  9 px outer width with a 1 px visible line centred; matches
+/// the resizable divider in the header so columns align.
+class _ColumnDivider extends StatelessWidget {
+  const _ColumnDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _kColumnDividerWidth,
+      height: 16,
+      child: Center(
+        child: Container(
+          width: 1,
+          height: 16,
+          color: AppColors.borderSubtle,
+        ),
+      ),
+    );
+  }
+}
+
+/// Header-row variant of [_ColumnDivider] — visually identical (same
+/// 1 px line + 16 px height + 8 px margin) but wraps a 9-px wide
+/// drag hit area centred on the line.  Drag the divider horizontally
+/// to resize the column on its LEFT (the column whose right edge
+/// this divider draws).  Matches the Windows Explorer pattern.
+///
+/// When the left column is Name and Name is still flexible
+/// (Expanded), the first drag delta is used to lock Name's width
+/// into [_persistedColumnWidths] — Name becomes fixed-width
+/// thereafter and the header switches from Expanded to SizedBox.
+class _ResizableColumnDivider extends StatefulWidget {
+  const _ResizableColumnDivider({required this.leftColumn});
+
+  /// The column whose right edge this divider draws — drag resizes
+  /// this column.
+  final BrowseColumn leftColumn;
+
+  @override
+  State<_ResizableColumnDivider> createState() =>
+      _ResizableColumnDividerState();
+}
+
+class _ResizableColumnDividerState extends State<_ResizableColumnDivider> {
+  double? _dragStartWidth;
+  bool _hover = false;
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final highlight = _hover || _dragging;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeLeftRight,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (_) {
+          _dragStartWidth = _effectiveColumnWidth(widget.leftColumn);
+          setState(() => _dragging = true);
+        },
+        onHorizontalDragUpdate: (details) {
+          final start = _dragStartWidth;
+          if (start == null) return;
+          _resizeBrowseColumn(
+            widget.leftColumn,
+            start + details.localPosition.dx,
+          );
+        },
+        onHorizontalDragEnd: (_) {
+          _dragStartWidth = null;
+          setState(() => _dragging = false);
+        },
+        child: SizedBox(
+          // Matches the body-row divider's outer width so header +
+          // body column boundaries line up pixel-for-pixel.
+          width: _kColumnDividerWidth,
+          height: 16,
+          child: Center(
+            child: Container(
+              width: highlight ? 2 : 1,
+              height: 16,
+              color: highlight
+                  ? AppColors.violet
+                  : AppColors.borderSubtle,
             ),
           ),
-          SizedBox(
-            width: 160,
-            child: _SortHeaderLabel(
-              label: 'MODIFIED',
-              column: BrowseSortColumn.modified,
-              activeColumn: sortBy,
-              ascending: sortAsc,
-              onTap: () => onSort(BrowseSortColumn.modified),
+        ),
+      ),
+    );
+  }
+}
+
+/// Wraps a header cell with [Draggable] (carries the column id while
+/// the operator is dragging) + [DragTarget] (accepts a drop and fires
+/// [_reorderBrowseColumn]).  Name is rendered without this wrapper —
+/// it's pinned to slot 0 and never moves.
+class _DraggableColumnHeader extends StatefulWidget {
+  const _DraggableColumnHeader({
+    required this.column,
+    required this.child,
+  });
+
+  final BrowseColumn column;
+  final Widget child;
+
+  @override
+  State<_DraggableColumnHeader> createState() => _DraggableColumnHeaderState();
+}
+
+class _DraggableColumnHeaderState extends State<_DraggableColumnHeader> {
+  bool _hoveringDrop = false;
+  bool _dropAfter = false; // false = left edge, true = right edge
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return DragTarget<BrowseColumn>(
+      onWillAcceptWithDetails: (details) {
+        if (details.data == widget.column) return false;
+        if (details.data == BrowseColumn.name) return false;
+        if (widget.column == BrowseColumn.name) return false;
+        setState(() => _hoveringDrop = true);
+        return true;
+      },
+      onMove: (details) {
+        // Convert the candidate's global drop position into a local
+        // x within this header cell.  Drops on the LEFT half →
+        // insert moved column BEFORE target; RIGHT half → AFTER.
+        // Matches Windows Explorer's column-reorder UX.
+        final box = context.findRenderObject();
+        if (box is! RenderBox) return;
+        final local = box.globalToLocal(details.offset);
+        final after = local.dx > box.size.width / 2;
+        if (after != _dropAfter) {
+          setState(() => _dropAfter = after);
+        }
+      },
+      onLeave: (_) => setState(() => _hoveringDrop = false),
+      onAcceptWithDetails: (details) {
+        final after = _dropAfter;
+        setState(() => _hoveringDrop = false);
+        _reorderBrowseColumn(
+          details.data,
+          widget.column,
+          placeAfter: after,
+        );
+      },
+      builder: (context, candidate, rejected) {
+        return MouseRegion(
+          cursor: _dragging
+              ? SystemMouseCursors.grabbing
+              : SystemMouseCursors.grab,
+          child: Draggable<BrowseColumn>(
+            data: widget.column,
+            // Lock to the horizontal axis so the floating feedback
+            // chip slides along the header row and never drifts up
+            // or down into the listing — matches Explorer / Finder.
+            axis: Axis.horizontal,
+            // `deferToChild` (the default) only accepts hits where the
+            // child actually paints — meaning empty space inside the
+            // column cell (to the right of the label) wouldn't start
+            // a drag.  `opaque` makes the Draggable's whole bounds
+            // hit-testable, so the operator can grab anywhere in the
+            // cell.  Inner sort-label tap + drag-pan still coexist
+            // via the gesture arena (tap wins on click, pan wins on
+            // slop crossover).
+            hitTestBehavior: HitTestBehavior.opaque,
+            onDragStarted: () => setState(() => _dragging = true),
+            onDragEnd: (_) => setState(() => _dragging = false),
+            feedback: Material(
+              color: Colors.transparent,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s10,
+                  vertical: AppSpacing.s4,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.bgRaised,
+                  border: Border.all(color: AppColors.violet),
+                  borderRadius: BorderRadius.circular(AppRadii.sm),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x66000000),
+                      blurRadius: 12,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  _browseColumnLabel(widget.column),
+                  style: const TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.violetSoft,
+                  ),
+                ),
+              ),
+            ),
+            childWhenDragging: Opacity(
+              opacity: 0.35,
+              child: SizedBox(
+                width: double.infinity,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: widget.child,
+                ),
+              ),
+            ),
+            // SizedBox + Align fill the column cell so the draggable
+            // hit area covers the entire cell — empty space to the
+            // right of the label is also a drag handle, matching
+            // Explorer where you can grab anywhere on the column
+            // header.  Without this the Draggable's bounds collapse
+            // to the label's intrinsic Row(mainAxisSize: min) size
+            // and the empty area wouldn't initiate a drag.
+            child: SizedBox(
+              width: double.infinity,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: widget.child,
+                  ),
+                  if (_hoveringDrop)
+                    Positioned(
+                      // Switch the indicator between the cell's
+                      // left and right edge based on the drop side.
+                      left: _dropAfter ? null : -1,
+                      right: _dropAfter ? -1 : null,
+                      top: -4,
+                      bottom: -4,
+                      width: 2,
+                      child: const ColoredBox(color: AppColors.violet),
+                    ),
+                ],
+              ),
             ),
           ),
-          const SizedBox(width: 80),
-        ],
+        );
+      },
+    );
+  }
+}
+
+/// Sticky column-picker popup mounted via [OverlayPortal] at root-
+/// overlay level (escapes the FluxCard's clip).  Stays open while the
+/// operator toggles multiple columns; dismisses only on tap-outside
+/// (via [TapRegion]) or programmatic close.
+///
+/// Internal `ValueListenableBuilder` against [_columnsVersion] makes
+/// the checkbox state inside the popup reflect each toggle on the
+/// same frame — without it the popup would show stale check marks
+/// because its own setState never fires (the toggle mutates a global
+/// + a notifier, not a State field).
+class _ColumnPickerPopup extends StatelessWidget {
+  const _ColumnPickerPopup({
+    required this.position,
+    required this.onDismiss,
+  });
+
+  final Offset position;
+  final VoidCallback onDismiss;
+
+  static const double _kWidth = 240;
+
+  @override
+  Widget build(BuildContext context) {
+    // Mounted inside the root Overlay's Stack via `OverlayPortal` —
+    // returning a `Positioned` directly anchors the popup at the
+    // click point.  An extra wrapper Stack was causing the popup to
+    // drift horizontally because its loose layout placed the
+    // Positioned child relative to its own (collapsed) bounds
+    // instead of the root overlay's.
+    final mq = MediaQuery.maybeOf(context);
+    final screenW = mq?.size.width ?? double.infinity;
+    final screenH = mq?.size.height ?? double.infinity;
+    // Keep the popup on-screen — if the click is too close to the
+    // right edge, anchor by right; same for bottom.
+    final left = (position.dx + _kWidth > screenW)
+        ? (screenW - _kWidth - 4)
+        : position.dx;
+    final approxHeight =
+        56 + BrowseColumn.values.length * 32; // header + rows
+    final top = (position.dy + approxHeight > screenH)
+        ? (screenH - approxHeight - 4)
+        : position.dy;
+    return Positioned(
+      left: left.clamp(0, screenW).toDouble(),
+      top: top.clamp(0, screenH).toDouble(),
+      child: TapRegion(
+        onTapOutside: (_) => onDismiss(),
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            width: _kWidth,
+            decoration: BoxDecoration(
+              color: AppColors.bgRaised,
+              border: Border.all(color: AppColors.borderSubtle),
+              borderRadius: BorderRadius.circular(AppRadii.sm),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x66000000),
+                  blurRadius: 16,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadii.sm - 1),
+              child: ValueListenableBuilder<int>(
+                valueListenable: _columnsVersion,
+                builder: (_, _, _) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(12, 10, 12, 6),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Show columns',
+                          style: TextStyle(
+                            fontFamily: 'Inter',
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.6,
+                            color: AppColors.textMutedV2,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: AppColors.borderSubtle,
+                    ),
+                    for (final col in BrowseColumn.values)
+                      _ColumnCheckRow(
+                        column: col,
+                        isEnabled: _isBrowseColumnEnabled(col),
+                        isLocked: col == BrowseColumn.name,
+                        onToggle: () => _toggleBrowseColumn(col),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Single hoverable checkbox row inside the column picker popup.
+/// Click toggles the column via [_toggleBrowseColumn] without
+/// dismissing the popup — operators can rapid-fire toggle multiple
+/// columns and see the listing update in place.
+class _ColumnCheckRow extends StatefulWidget {
+  const _ColumnCheckRow({
+    required this.column,
+    required this.isEnabled,
+    required this.isLocked,
+    required this.onToggle,
+  });
+
+  final BrowseColumn column;
+  final bool isEnabled;
+  final bool isLocked;
+  final VoidCallback onToggle;
+
+  @override
+  State<_ColumnCheckRow> createState() => _ColumnCheckRowState();
+}
+
+class _ColumnCheckRowState extends State<_ColumnCheckRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color labelColor =
+        widget.isLocked ? AppColors.textFaint : AppColors.textBody;
+    final Color iconColor = widget.isLocked
+        ? AppColors.textFaint
+        : (widget.isEnabled ? AppColors.violet : AppColors.textMutedV2);
+    return MouseRegion(
+      cursor: widget.isLocked
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
+      onEnter: widget.isLocked
+          ? null
+          : (_) => setState(() => _hovered = true),
+      onExit: widget.isLocked
+          ? null
+          : (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.isLocked ? null : widget.onToggle,
+        child: Container(
+          color: _hovered ? const Color(0x14A855F7) : Colors.transparent,
+          padding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 7,
+          ),
+          child: Row(
+            children: [
+              Icon(
+                widget.isEnabled
+                    ? Icons.check_rounded
+                    : Icons.check_box_outline_blank_rounded,
+                size: 16,
+                color: iconColor,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                _browseColumnLabel(widget.column),
+                style: TextStyle(
+                  fontFamily: 'Inter',
+                  fontSize: 12.5,
+                  color: labelColor,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1013,10 +2554,16 @@ class _SortHeaderLabel extends StatefulWidget {
   });
 
   final String label;
-  final BrowseSortColumn column;
+
+  /// `null` when this column isn't sortable client-side (e.g. Codec,
+  /// Dimensions) — in that case the label renders without a hover
+  /// affordance and click is a no-op.
+  final BrowseSortColumn? column;
   final BrowseSortColumn activeColumn;
   final bool ascending;
-  final VoidCallback onTap;
+
+  /// `null` when [column] is `null` — hover + click suppress.
+  final VoidCallback? onTap;
 
   @override
   State<_SortHeaderLabel> createState() => _SortHeaderLabelState();
@@ -1027,15 +2574,41 @@ class _SortHeaderLabelState extends State<_SortHeaderLabel> {
 
   @override
   Widget build(BuildContext context) {
-    final isActive = widget.column == widget.activeColumn;
-    final color = (isActive || _hovered)
+    final bool isSortable = widget.column != null && widget.onTap != null;
+    final bool isActive =
+        isSortable && widget.column == widget.activeColumn;
+    final Color color = (isActive || (_hovered && isSortable))
         ? AppColors.violet
         : AppColors.textMutedV2;
+    // Title-case labels — no extra letter-spacing tracking (that was
+    // tuned for the previous ALL-CAPS treatment).
     final style = AppTypography.captionV2.copyWith(
       color: color,
       fontWeight: FontWeight.w500,
-      letterSpacing: 0.4,
     );
+
+    final inner = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(widget.label, style: style),
+        const SizedBox(width: 4),
+        if (isActive)
+          Icon(
+            widget.ascending
+                ? Icons.arrow_upward_rounded
+                : Icons.arrow_downward_rounded,
+            size: 12,
+            color: color,
+          ),
+      ],
+    );
+
+    if (!isSortable) {
+      // Non-sortable column — just render the label.  Right-click on
+      // the row (handled by the parent header row) still opens the
+      // column picker so the column can be hidden.
+      return inner;
+    }
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -1044,21 +2617,7 @@ class _SortHeaderLabelState extends State<_SortHeaderLabel> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(widget.label, style: style),
-            const SizedBox(width: 4),
-            if (isActive)
-              Icon(
-                widget.ascending
-                    ? Icons.arrow_upward_rounded
-                    : Icons.arrow_downward_rounded,
-                size: 12,
-                color: color,
-              ),
-          ],
-        ),
+        child: inner,
       ),
     );
   }
@@ -1141,6 +2700,19 @@ class _BrowseRowState extends State<_BrowseRow> {
 
   @override
   Widget build(BuildContext context) {
+    // Subscribe to column-toggle changes so the trailing cells
+    // (Size / Modified / Kind / Codec / etc.) re-render the moment
+    // the operator ticks a checkbox in the column picker — without
+    // this, the row only picks up the new column set on its next
+    // own-state rebuild (hover, selection change) which is what
+    // caused the "only updates on hover" glitch.
+    return ValueListenableBuilder<int>(
+      valueListenable: _columnsVersion,
+      builder: (context, _, _) => _buildRowContent(),
+    );
+  }
+
+  Widget _buildRowContent() {
     final entry = widget.entry;
     final iconData = _iconForKind(entry.kind);
     final iconColor = _colorForKind(entry.kind);
@@ -1174,97 +2746,92 @@ class _BrowseRowState extends State<_BrowseRow> {
             children: [
               Icon(iconData, size: 18, color: iconColor),
               const SizedBox(width: 14),
-              Expanded(
-                child: Tooltip(
-                  message: entry.name,
-                  waitDuration: const Duration(milliseconds: 800),
-                  child: Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          entry.name,
-                          style: TextStyle(
-                            fontFamily: 'Inter',
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w500,
-                            color: entry.isHidden
-                                ? AppColors.textFaint
-                                : AppColors.textBody,
+              // Cells iterate `_persistedColumnOrder` so the row body
+              // matches the header column-for-column.  Name uses a
+              // fixed SizedBox like every other column (was Expanded)
+              // so resizing a fixed column doesn't shift the Name
+              // divider as a side effect of Name absorbing freed
+              // space.  ClipRect on the Name cell handles the case
+              // where the name text + badges are wider than the
+              // column — badges stay visible; the text ellipsises.
+              for (var i = 0; i < _persistedColumnOrder.length; i++) ...[
+                if (i > 0) const _ColumnDivider(),
+                SizedBox(
+                  width: _effectiveColumnWidth(_persistedColumnOrder[i]),
+                  child: _persistedColumnOrder[i] == BrowseColumn.name
+                      ? ClipRect(
+                          child: Tooltip(
+                            message: entry.name,
+                            waitDuration: const Duration(milliseconds: 800),
+                            child: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    entry.name,
+                                    style: TextStyle(
+                                      fontFamily: 'Inter',
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w500,
+                                      color: entry.isHidden
+                                          ? AppColors.textFaint
+                                          : AppColors.textBody,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (entry.isHidden) ...[
+                                  const SizedBox(width: 6),
+                                  const _MutedTag(label: 'Hidden'),
+                                ],
+                                if (showHdrBadge) ...[
+                                  const SizedBox(width: 6),
+                                  _MutedTag(
+                                    label: entry.media!.hdrFormat!
+                                        .toUpperCase(),
+                                    accent: true,
+                                  ),
+                                ],
+                                if (entry.media?.isStreaming == true) ...[
+                                  const SizedBox(width: 6),
+                                  const _MutedTag(
+                                      label: '▶ live', accent: true),
+                                ],
+                                if (entry.media?.hasThumbnailFailed ==
+                                    true) ...[
+                                  const SizedBox(width: 6),
+                                  const Tooltip(
+                                    message: 'Thumbnail generation failed. '
+                                        'Use the right-click menu to retry.',
+                                    waitDuration: Duration(milliseconds: 400),
+                                    child: Icon(
+                                      Icons.warning_amber_rounded,
+                                      size: 13,
+                                      color: AppColors.amber,
+                                    ),
+                                  ),
+                                ],
+                                if (entry.isIndexed) ...[
+                                  const SizedBox(width: 6),
+                                  _IndexedTag(
+                                    indexedAtIso:
+                                        entry.media?.indexedAtIso,
+                                  ),
+                                ],
+                              ],
+                            ),
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        )
+                      : _browseColumnCell(
+                          _persistedColumnOrder[i],
+                          entry,
                         ),
-                      ),
-                      if (entry.isHidden) ...[
-                        const SizedBox(width: 6),
-                        const _MutedTag(label: 'Hidden'),
-                      ],
-                      if (showHdrBadge) ...[
-                        const SizedBox(width: 6),
-                        _MutedTag(
-                          label: entry.media!.hdrFormat!.toUpperCase(),
-                          accent: true,
-                        ),
-                      ],
-                      if (entry.media?.isStreaming == true) ...[
-                        const SizedBox(width: 6),
-                        const _MutedTag(label: '▶ live', accent: true),
-                      ],
-                      if (entry.media?.hasThumbnailFailed == true) ...[
-                        const SizedBox(width: 6),
-                        const Tooltip(
-                          message: 'Thumbnail generation failed. '
-                              'Use the right-click menu to retry.',
-                          waitDuration: Duration(milliseconds: 400),
-                          child: Icon(
-                            Icons.warning_amber_rounded,
-                            size: 13,
-                            color: AppColors.amber,
-                          ),
-                        ),
-                      ],
-                      if (entry.isIndexed) ...[
-                        const SizedBox(width: 6),
-                        _IndexedTag(indexedAtIso: entry.media?.indexedAtIso),
-                      ],
-                    ],
-                  ),
                 ),
-              ),
-              SizedBox(
-                width: 100,
-                child: Text(
-                  entry.isDir ? '—' : _humanBytes(entry.sizeBytes),
-                  style: const TextStyle(
-                    fontFamily: 'JetBrains Mono',
-                    fontSize: 11.5,
-                    color: AppColors.textMutedV2,
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: 160,
-                child: Text(
-                  _formatModified(entry.modifiedIso),
-                  style: const TextStyle(
-                    fontFamily: 'JetBrains Mono',
-                    fontSize: 11.5,
-                    color: AppColors.textMutedV2,
-                  ),
-                ),
-              ),
-              SizedBox(
-                width: 80,
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: _ToolbarIconButton(
-                    icon: Icons.folder_open_outlined,
-                    tooltip: 'Reveal in file manager',
-                    onTap: () => _revealInFileManager(),
-                    compact: true,
-                  ),
-                ),
-              ),
+              ],
+              // Trailing-column reveal icon removed — duplicated the
+              // "Open in Explorer" icon that now lives in the URL
+              // field's trailing slot.  Right-click → Reveal in
+              // folder still surfaces the per-entry path action.
             ],
           ),
         ),
@@ -1352,26 +2919,6 @@ class _BrowseRowState extends State<_BrowseRow> {
     }
   }
 
-  Future<void> _revealInFileManager() async {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    final absolute = _absolutePath();
-    final parent = widget.entry.isDir ? absolute : _parentOf(absolute);
-    try {
-      final ok = await launchUrl(Uri.file(parent));
-      if (!ok) {
-        messenger?.showSnackBar(
-          SnackBar(content: Text('Could not open folder: $parent')),
-        );
-      }
-    } catch (e, st) {
-      _log.e('reveal-in-file-manager failed: $parent',
-          error: e, stackTrace: st);
-      messenger?.showSnackBar(
-        SnackBar(content: Text('Could not open folder: $e')),
-      );
-    }
-  }
-
   String _absolutePath() {
     final separator = widget.rootPath.contains(r'\') ? r'\' : '/';
     final tail = widget.relativePath.isEmpty
@@ -1381,12 +2928,6 @@ class _BrowseRowState extends State<_BrowseRow> {
     return '${widget.rootPath}$separator$tailWithSep';
   }
 
-  String _parentOf(String path) {
-    final sep = path.contains(r'\') ? r'\' : '/';
-    final idx = path.lastIndexOf(sep);
-    if (idx <= 0) return path;
-    return path.substring(0, idx);
-  }
 }
 
 // ── Grid tile ──────────────────────────────────────────────────────────────

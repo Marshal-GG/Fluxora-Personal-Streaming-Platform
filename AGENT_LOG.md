@@ -861,5 +861,100 @@ Phase D code committed at `161461e`.  Doc-sweep + plan archival (this entry + 5 
 3. **Tier 3 features** remain separate plans — recursive FTS5 search across the catalog, bookmarks/favorites for frequent folders, drag-and-drop from the browser into the Convert tab, and live filesystem watching via `watchdog`.  No agent should fold these into a "plan 28.1" — open fresh plans when the operator asks.
 4. **Watch for operator-reported sharp edges** on Phase D: the "Compute size" button should never spike CPU above ~30% on a 5K-file folder; if it does, the lazy compute might need to move to a background thread (`asyncio.to_thread`) or chunked yield-to-event-loop pattern.  Currently it's a single tight `os.walk` loop running inline on the FastAPI worker thread.
 
+---
+
+## [2026-05-17] [desktop] [server] [feat] [fix] [docs] — Post-plan-28 folder browser polish · FluxFilterChips shared widget · soft-refresh · editable URL bar · customizable columns · JXR thumbnail support
+
+**Phase:** Post-archive polish on plan 28 + thumbnail surface expansion driven by operator real-device feedback.
+**Status:** Complete (code).  Docs landed in same session.
+**Commits:** uncommitted at session end — operator owns staging + commit per the no-git-writes rule.
+
+### What Was Done
+
+#### 1. Folder-browser polish (desktop)
+
+Stacked on the archived plan 28 the day after.  Six refinement threads driven by operator paper cuts during real-device use:
+
+- **`FluxFilterChips` lifted out of `library_screen.dart`** into a new shared widget at [`apps/desktop/lib/shared/widgets/flux_filter_chips.dart`](apps/desktop/lib/shared/widgets/flux_filter_chips.dart).  Pixel-matches the original Library page chip strip (`12 px Inter`, fully-rounded radius, violet active-fill `0x24A855F7`, `borderSubtle` inactive border, 120 ms `AnimatedContainer` colour swap).  `FluxFilterChip` (single chip) + `FluxFilterChipsDivider` (1×16 px vertical separator) are public so callers can compose mixed groups.  `library_screen.dart`'s old `_TypeFilterChip` / `_TypeFilterChips` definitions deleted; `LibraryBrowseFilterChips` rewritten as a thin adapter mapping `BrowseKindFilter`↔chip-id with the "Indexed only" toggle passed through the new `trailing` slot after a divider.
+
+- **Editable URL bar with consistent chrome** (`_BreadcrumbBar` / `_PathField` rewrite inside `library_files_screen.dart`).  Display + edit modes share `height=30 / surfaceBandLow fill / borderSubtle border` so the field is visually a field whether or not you're typing.  Click anywhere on the bar enters edit mode; click outside via `TapRegion(onTapOutside)` cancels; `Enter` commits via `cubit.navigateToAbsolute(input)`; `Esc` cancels via an inner `Focus(onKeyEvent)` interceptor.  Copy-path + open-in-Explorer icon buttons sit *inside* the field on the right; per-row reveal-in-folder icons removed since the URL bar owns that action now.
+
+- **Folder-name autocomplete** — new `cubit.pathSuggestions(input, {limit: 10})` parses the typed text as `<root>/<some/path>/<typed_prefix>`, fetches the parent dir, returns matching subdir names case-insensitively, and caches the parent listing in `_childListCache: Map<String, List<BrowseEntry>>` for the lifetime of the cubit.  Suggestions render in an `OverlayPortal` popup keyed to the field rect.
+
+- **Soft-refresh pattern** — new `_softFetch(path)` cubit helper emits the existing `LibraryBrowseLoaded` state with `refreshing: true` instead of `LibraryBrowseLoading` whenever a prior loaded response exists.  `navigateTo` / `goBack` / `goForward` / `refresh` / `setShowHidden` all route through it.  The chrome (breadcrumb, filter chips, toolbar, detail panel) stays mounted across navigation; only the listing's response object swaps when the fetch lands.  `LibraryBrowseLoaded` gained a `refreshing: bool` field driving a thin 2-px violet `_RefreshIndicatorStrip` overlay on the listing body.  Cold-boot path falls back to a hard `Loading` emission when no prior `Loaded` state exists.  Same-path Enter (re-pressing on an unchanged URL) routes through `refresh()` instead of `navigateTo` so the chrome doesn't briefly unmount.
+
+- **Process-wide UI preference persistence** — module-level statics in `library_browse_cubit.dart` (`_persistedShowHidden` / `_persistedIndexedOnly` / `_persistedSortBy` / `_persistedSortAsc` / `_persistedViewMode` / `_persistedKindFilter` / `_persistedDensity`).  The cubit constructor seeds itself from them via initializer list; mutating setters write back so the next screen mount picks up the operator's previous choices.  Within-session only (no `SharedPreferences` — Hard Prohibition #6 on new pub deps); resets on full app restart, acceptable since the operator hardly ever restarts the desktop control panel mid-day.
+
+- **Windows Explorer-style customizable columns** — `BrowseColumn` enum (`name` / `size` / `modified` / `kind` / `indexed` / `codec` / `dimensions` / `duration`) + module-level `_persistedColumnOrder: List<BrowseColumn>` and `_persistedColumnWidths: Map<BrowseColumn, double>`.  `_columnsVersion: ValueNotifier<int>` notifies all consumers wrapped in `ValueListenableBuilder` so column edits update rows + headers immediately.  `_DraggableColumnHeader` uses `Draggable(axis: Axis.horizontal)` + a `DragTarget` whose `onMove` reads local coords to detect left-half-vs-right-half drop (`placeAfter: bool`).  `_ResizableColumnDivider` is the drag handle (9-px hit zone over a 1-px line, violet highlight on hover/drag).  Right-click on any header opens `_ColumnPickerPopup` via `OverlayPortal` with `TapRegion(onTapOutside)` for sticky behaviour + direct `Positioned` return for screen-edge clamping.  Body switched to all-fixed-width columns with a shared `ScrollController _hScroll` driving both the outer `Scrollbar` and the inner `SingleChildScrollView(Axis.horizontal)` so the table scrolls horizontally when the chosen column set exceeds the container width.  `_totalTableWidth()` = 32 px leading spacer + summed column widths + dividers + 26 + 8 px overhead (padding + border + safety buffer) so the no-overflow constraint is satisfied exactly.
+
+- **Card containment** — folder browser body wrapped in a single `FluxCard` with URL band + toolbar band stacked inside (matching the Convert screen's `FluxCard`-wrapped layout); filter chips moved *outside* the card.  `LibraryBrowseDetailPanel` dropped its own `Color(0x800D0B1C)` background + left border since it now sits inside the shared card surface with a 1-px vertical divider to its left.  New `surfaceBandHigh` (`0x06FFFFFF`, `+2.4 % white`) and `surfaceBandLow` (`0x12000000`, `+7 % black`) tokens in `packages/fluxora_core/lib/constants/app_colors.dart` drive the two-band header pattern.
+
+#### 2. Thumbnail surface expansion (server)
+
+Operator reported NVIDIA HDR screenshots weren't generating thumbnails after plan 27 shipped.  Investigation revealed (a) the scanner kind-list didn't include `.jxr` so the files weren't even being inserted into `media_files`, and (b) even with the extension included FFmpeg can't decode JXR.
+
+- **Scanner extension list widened** (`library_service._MEDIA_EXTENSIONS`).  Now includes every common video format (`.mpg .mpeg .ts .3gp` on top of the existing `.mp4 .mkv .mov .avi .webm .wmv .flv .m4v`), every common image format that Windows Explorer auto-thumbnails (`.jpg .jpeg .png .gif .bmp .tiff .tif .webp .heic .heif .ico`), `.opus` audio, and `.jxr` (JPEG XR / HD Photo — NVIDIA GeForce Experience HDR screenshots).  Sectioned with header comments explaining which extractor path each block targets.  `browse_service._VIDEO_EXTENSIONS` / `_IMAGE_EXTENSIONS` mirror the same list so the operator's browser kind-dispatch matches what gets indexed.
+
+- **WIC fallback extractor for JXR** — new `_extract_image_wic` in `services/thumbnail_service.py`.  Shells out to PowerShell with `System.Windows.Media.Imaging` (PresentationCore + WindowsBase) which talks directly to WIC + has built-in JXR decoders that FFmpeg doesn't ship.  Pipeline: `BitmapDecoder.Create` → `FormatConvertedBitmap` to `Rgba128Float` (preserves HDR values without 8-bit clipping) → `TransformedBitmap` scale to target width *first* → manual Reinhard tonemap `out = in / (1 + in)` per RGB channel on the small float buffer → `FormatConvertedBitmap` to `Bgra32` (sRGB gamma applied to in-range values) → `JpegBitmapEncoder` at quality 85.  `_WIC_ONLY_EXTENSIONS = {".jxr"}` dispatch in `_extract_image`; returns `skipped` cleanly on non-Windows platforms.  Single-file extraction measured at 1.62 s for an 8 MB JXR source on the dev machine.
+
+  First attempt used `System.Drawing.Image::FromFile` (GDI+) — fails immediately with "Out of memory" because GDI+ has no JXR codec.  Second attempt used the WPF Imaging path *without* tonemap — succeeded but produced overexposed thumbnails (scRGB linear pixels > 1.0 clipped to white).  Third attempt added the tonemap but ran the per-pixel loop over the full ~3.7 M-pixel buffer — PowerShell interpreted loop hit the 15 s subprocess timeout (exit 137).  Final design scales *first* (drops the loop to ~57 k iterations on a 320-px thumb), tonemaps in float space, then converts to 8-bit.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Created | apps/desktop/lib/shared/widgets/flux_filter_chips.dart | Shared rounded-pill chip row lifted out of `library_screen.dart` so the folder browser + Library page render identical chips |
+| Modified | apps/desktop/lib/features/library/presentation/screens/library_screen.dart | Deletes `_TypeFilterChip` / `_TypeFilterChips` + swaps in the shared `FluxFilterChips` widget |
+| Modified | apps/desktop/lib/features/library/presentation/widgets/library_browse_filter_chips.dart | Rewritten as a thin adapter mapping `BrowseKindFilter`↔chip-id with the "Indexed only" toggle in the `trailing` slot |
+| Modified | apps/desktop/lib/features/library/presentation/widgets/library_browse_detail_panel.dart | Drops own background + left-border since now sits inside the shared `FluxCard` surface |
+| Modified | apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart | URL bar with consistent chrome + click-anywhere-to-edit + folder autocomplete; soft-refresh via cubit; Windows Explorer-style customizable columns (drag-reorder, drag-divider-resize, right-click picker, horizontal scroll); `FluxCard` containment; row-level reveal-in-folder icon removed |
+| Modified | apps/desktop/lib/features/library/presentation/cubit/library_browse_cubit.dart | Process-wide persisted UI prefs (module-level statics); `_softFetch` helper + `LibraryBrowseLoaded.refreshing` field; `pathSuggestions` + `_childListCache` for URL autocomplete; same-path Enter routes through `refresh()` |
+| Modified | packages/fluxora_core/lib/constants/app_colors.dart | New `surfaceBandHigh` (`0x06FFFFFF`) + `surfaceBandLow` (`0x12000000`) tokens for the two-band card header pattern |
+| Modified | apps/server/services/library_service.py | Scanner `_MEDIA_EXTENSIONS` widened to include common image formats + `.opus` + extra video extensions + `.jxr` |
+| Modified | apps/server/services/browse_service.py | Browser `_VIDEO_EXTENSIONS` / `_IMAGE_EXTENSIONS` mirror the new scanner list so kind-dispatch matches what gets indexed |
+| Modified | apps/server/services/thumbnail_service.py | `_extract_image_wic` PowerShell + WPF Imaging fallback for `.jxr` with Reinhard tonemap (scale-first to fit subprocess timeout); `_WIC_ONLY_EXTENSIONS = {".jxr"}` dispatch |
+| Modified | docs/00_overview/current_status.md | New "As of 2026-05-17 (latest)" entry covering this polish wave + thumbnail surface expansion |
+| Modified | DESIGN.md | New "Surface bands" subsection in the Surface Hierarchy table documenting `surface-band-high` / `surface-band-low` |
+| Modified | docs/12_guidelines/03_gotchas.md | New "Thumbnails — JPEG XR / NVIDIA HDR captures need a manual Reinhard tonemap" gotcha covering the two stacked root causes + the scale-first perf rule |
+| Modified | AGENT_LOG.md | This entry |
+
+### Docs Updated
+
+- `docs/00_overview/current_status.md` — new latest entry
+- `DESIGN.md` — Surface band tokens documented in the Surface Hierarchy section
+- `docs/12_guidelines/03_gotchas.md` — JXR / scRGB tonemap gotcha appended at the bottom
+
+### Decisions Made
+
+- **Within-session UI-preference persistence via module-level statics** instead of `SharedPreferences`.  Hard Prohibition #6 forbids adding a new pub dep without justification, and the operator hardly ever restarts the desktop control panel mid-day, so the session-only scope is acceptable for v1.  If true cross-restart persistence becomes a real ask we can promote the statics to a single `SharedPreferences`-backed `LibraryBrowsePrefs` repository in one pass — the shape stays the same.
+- **All-fixed-width columns + horizontal scroll** instead of letting Name expand.  An expanding column absorbs every divider resize on its right edge, so resizing a fixed-width column to the left of Name would visually shift Name's right boundary (looked like the dividers were "drifting").  Fixed-width across the board makes resize feel surgical at the cost of a horizontal scrollbar when the column set exceeds the container.  Matches Explorer behaviour.
+- **Scale before tonemap in the JXR pipeline.**  The Reinhard loop on the full-resolution source (~3.7 M iterations on a 2560×1440 capture) takes well past the 15 s subprocess timeout in interpreted PowerShell.  Scaling first via WIC's native `TransformedBitmap` (which scales in the source pixel format, preserving HDR values) drops the per-pixel work to thumbnail size (~57 k iterations on a 320 px thumb) and the whole pipeline finishes in ~1.6 s.  Inline C# compilation via `Add-Type -TypeDefinition` was considered as an alternative but the scale-first approach is simpler and avoids the JIT startup cost.
+
+### Issues / Sharp Edges Discovered
+
+- **WIC extractor needs the server process to be restarted to pick up code changes.**  Caught the operator after a code edit didn't take effect; the server was running an older module instance.  Worth noting in the docs as the dev-loop workflow for any extractor changes: restart the server, then regenerate thumbnails on the library to re-run failed rows.  Not a code bug — just a runtime characteristic of how the worker holds the extractor reference.
+- **GDI+ (System.Drawing) silently fails on JXR with a misleading "Out of memory" exception.**  Spent some time chasing what looked like a memory issue before realising GDI+ simply doesn't ship the JXR codec; only the WPF Imaging stack (which is WIC-native) does.  Documented in the new gotcha for future agents.
+- **Operator restart + rescan is needed to apply the new tonemap to existing JXR rows.**  Existing `media_thumbnails` rows for JXR files are in `failed` state from the pre-fix attempts.  Operator action: restart the server, then click "Regenerate Thumbnails" on the library that contains the captures.  The new pipeline will pick the failed rows back up and write balanced JPEGs.
+
+### Test Counts (re-baselined)
+
+Unchanged from plan 28 Phase D ship:
+- **Server: 943 passing** (no new behavioural tests — extractor expansion + pixel-loop perf are operationally verified, not unit-tested; would need a WIC mock harness for a clean assertion)
+- **Desktop: 143 passing** (no new tests — UX polish + cubit-helper refactors exercised through the existing browse-state coverage; FluxFilterChips is a pure shape lift so the existing chip-row tests still pass)
+- **Mobile: 97 passing** (untouched)
+- **Core: 20 passing** (untouched)
+
+`flutter analyze` clean across `apps/desktop` + `packages/fluxora_core`.  Ruff clean against `apps/server`.
+
+### Working-Tree Status
+
+13 files modified + 1 untracked (the new `flux_filter_chips.dart`) — all the work above is in the working tree, none committed.  Operator owns staging + commit per the no-git-writes rule.  Suggested commit shape: one commit for server (`feat(server): widen scanner + browse extension lists + add WIC JXR extractor with Reinhard tonemap`); one for desktop UX polish + core token (`feat(desktop,core): plan 28 post-archive polish — shared FluxFilterChips + soft-refresh + editable URL bar + customizable columns`); one for docs (`docs: post-plan-28 polish + JXR thumbnail support — cross-doc sweep`).  Or one bundled commit if the operator prefers — none of the changes interlock with anything outside this wave.
+
+### Next Agent Should
+
+1. **Restart the server + regenerate thumbnails on any library containing `.jxr` files** (NVIDIA HDR screenshot directories) so the new tonemap takes effect on the existing failed rows.  The desktop card's "Regenerate Thumbnails" action does this in one click.
+2. **Real-device smoke** of the new URL bar (autocomplete behaviour against deeply nested folders), customizable columns (drag-reorder + drag-resize + right-click picker), and the soft-refresh path (toolbar + chips + detail panel should never flicker when navigating).  If anything pops in/out, the `_softFetch` `buildWhen` guards on the consumers need to be tightened.
+3. **Consider adding a WIC-extractor unit test** at some point.  A pragmatic shape: stub the PowerShell shell-out with a fake that returns a known JPEG bytes blob and assert the dispatcher routes `.jxr` to the WIC path on `win32` + to FFmpeg elsewhere.  Not a v1 blocker.
+4. **If more HDR source formats appear** (EXR, HEIC10, HDR PNG with `MaxCLL` metadata, Apple ProRAW), use the new gotcha entry's rule as the design guide: confirm FFmpeg actually decodes the format before claiming support, and tone-map *before* the 8-bit conversion if pixel values can exceed 1.0.  Reinhard is the cheap default; Hable (already used in the streaming pipeline) is the next step up.
 
 

@@ -23,6 +23,7 @@ import 'package:fluxora_desktop/features/transcode/presentation/widgets/storage_
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_cubit.dart';
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_state.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_filter_chips.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_glass_dialog.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_glass_menu.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_tab_bar.dart';
@@ -62,118 +63,6 @@ LibraryType? _typeForTab(String tabId) => switch (tabId) {
       'docs' => LibraryType.files,
       _ => null,
     };
-
-// ── Type filter chips ─────────────────────────────────────────────────────────
-
-/// Lighter-weight than the outer `FluxPillTabs` — fully rounded pill
-/// shape, smaller padding, slightly muted typography.  Reads as a
-/// filter row rather than a second level of page navigation.
-class _TypeFilterChips extends StatelessWidget {
-  const _TypeFilterChips({
-    required this.tabs,
-    required this.activeId,
-    required this.onChange,
-  });
-
-  final List<FluxTab> tabs;
-  final String activeId;
-  final ValueChanged<String> onChange;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.s6),
-      child: Wrap(
-        spacing: AppSpacing.s6,
-        runSpacing: AppSpacing.s6,
-        children: [
-          for (final tab in tabs)
-            _TypeFilterChip(
-              tab: tab,
-              isActive: tab.id == activeId,
-              onTap: () => onChange(tab.id),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TypeFilterChip extends StatefulWidget {
-  const _TypeFilterChip({
-    required this.tab,
-    required this.isActive,
-    required this.onTap,
-  });
-
-  final FluxTab tab;
-  final bool isActive;
-  final VoidCallback onTap;
-
-  @override
-  State<_TypeFilterChip> createState() => _TypeFilterChipState();
-}
-
-class _TypeFilterChipState extends State<_TypeFilterChip> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final Color bg = widget.isActive
-        ? const Color(0x24A855F7)
-        : (_hover ? const Color(0x08FFFFFF) : Colors.transparent);
-    final Color border = widget.isActive
-        ? const Color(0x4DA855F7)
-        : AppColors.borderSubtle;
-    final Color fg = widget.isActive
-        ? AppColors.violetSoft
-        : (_hover ? AppColors.textBody : AppColors.textMutedV2);
-
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        behavior: HitTestBehavior.opaque,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s10,
-            vertical: AppSpacing.s6,
-          ),
-          decoration: BoxDecoration(
-            color: bg,
-            border: Border.all(color: border),
-            // Fully rounded for the "chip" feel — distinct from the
-            // small-radius FluxPillTabs above.
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.tab.icon != null) ...[
-                Icon(widget.tab.icon, size: 12, color: fg),
-                const SizedBox(width: 6),
-              ],
-              Text(
-                widget.tab.label,
-                style: TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 12,
-                  fontWeight:
-                      widget.isActive ? FontWeight.w600 : FontWeight.w500,
-                  color: fg,
-                  height: 1.0,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // ── Sort / Filter / View-mode types ────────────────────────────────────────────
 
@@ -370,8 +259,10 @@ class _LibraryViewState extends State<_LibraryView> {
                       // Smaller fully-rounded chips so they read as
                       // filters, not as a second level of navigation
                       // (the outer FluxPillTabs already owns the nav
-                      // role).  2026-05-16 owner review.
-                      _TypeFilterChips(
+                      // role).  2026-05-16 owner review.  Shared widget
+                      // — same chips drive the folder browser's kind
+                      // filter row.
+                      FluxFilterChips(
                         tabs: _kTabs,
                         activeId: _activeTab,
                         onChange: (id) => setState(() => _activeTab = id),

@@ -1291,3 +1291,23 @@ Single-finger vertical drag (brightness/volume) still goes through `GestureDetec
 **Rule going forward:** any bottom sheet that hosts more than ~3 tiles, OR is reachable in landscape mode, MUST use `isScrollControlled: true` + an inner scrollable.  The 50% cap is a footgun for any non-trivial sheet.  The cost of `isScrollControlled: true` for short sheets is zero — the sheet still sizes to its content; the flag just removes the cap.
 
 **Flagged in:** plan 21 M4 agent architectural finding.
+
+---
+
+## Thumbnails — JPEG XR / NVIDIA HDR captures need a manual Reinhard tonemap (FFmpeg can't decode JXR at all)
+
+**Symptom:**  The operator's library contains `.jxr` files from NVIDIA GeForce Experience's HDR screenshot mode (default capture path for HDR games on GeForce drivers from ~2023 on).  After plan 27 shipped, those files indexed and queued for thumbnails but every row failed — and once a workaround was added, the resulting JPEGs were *overexposed* (everything bright clipped to white).
+
+**Two stacked root causes:**
+
+1. **FFmpeg has no JXR decoder.**  The libavformat demuxer doesn't know the container; even the WIC-backed `libavcodec` paths don't ship with JPEG XR support in the static builds we bundle.  `ffmpeg -i foo.jxr` exits with "Invalid data found when processing input" before a single frame is decoded.  Adding `.jxr` to the scanner / browser kind dispatch isn't enough — we need a separate extractor.
+
+2. **scRGB linear pixel values > 1.0 clip to white during 8-bit conversion.**  NVIDIA's HDR JXR captures are scRGB linear with reference-white at `1.0` and highlights going to ~`12.5`.  `System.Drawing.Image::FromFile` (GDI+) refuses the format entirely with a misleading "Out of memory" exception.  `System.Windows.Media.Imaging.BitmapDecoder` (WIC-native, via WPF's PresentationCore) decodes it correctly, but a direct `FormatConvertedBitmap → Bgra32` applies sRGB gamma + clamps to `[0,1]` — every pixel above reference-white turns to a flat block of `#FFFFFF` and the thumbnail looks blown out.
+
+**Fix:** `_extract_image_wic` in [`apps/server/services/thumbnail_service.py`](../../apps/server/services/thumbnail_service.py) shells out to PowerShell with WPF imaging.  Pipeline: decode → convert to `Rgba128Float` (preserves HDR values) → `TransformedBitmap` scale to target width *first* → manual Reinhard tonemap `out = in / (1 + in)` per RGB channel → convert to `Bgra32` (gamma applied to in-range values) → `JpegBitmapEncoder` at quality 85.  `_WIC_ONLY_EXTENSIONS = {".jxr"}` routes JXR through this path; returns `skipped` cleanly on non-Windows platforms.
+
+**Why "scale first, tonemap second" matters:**  the PowerShell pixel loop is interpreted — running it over a full ~3.7 M-pixel buffer on a 2560×1440 source takes well over 15 s and the subprocess hits its timeout (exit code 137).  Scaling to the target thumb width *before* the loop drops it to ~57 k pixels on a 320-px thumbnail, fitting comfortably inside the timeout (~1.6 s end-to-end for an 8 MB source on the dev machine).  The float bitmap survives the `TransformedBitmap` step with HDR values intact — WIC scales in the source pixel format, not in 8-bit.
+
+**Rule going forward:** any future HDR-source extractor (EXR, HEIC10, HDR PNG with `MaxCLL` metadata, Apple ProRAW, etc.) inherits the same two pitfalls: (a) confirm FFmpeg actually decodes the format before claiming "we support `.foo` thumbnails," and (b) if the source preserves >1.0 pixel values, tone-map *before* the 8-bit conversion or accept blown-out highlights.  Reinhard is the cheap default; for film-grade output a Hable curve (already used in the streaming pipeline's HDR→SDR branch) is the next step up.  Also: prefer scale-then-process for any per-pixel work shelled out to an interpreter — the ratio of script-startup cost to per-pixel cost flips above ~100 k pixels.
+
+**Flagged in:** post-plan-28 polish wave, 2026-05-17 — operator-reported "thumbs not loading for HDR screenshots" + "thumbs look overexposed."

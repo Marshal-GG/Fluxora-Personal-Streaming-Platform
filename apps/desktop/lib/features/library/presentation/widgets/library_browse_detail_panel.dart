@@ -45,14 +45,12 @@ class LibraryBrowseDetailPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    // No own background / border — caller (library_files_screen)
+    // sits this widget inside the shared FluxCard surface with a
+    // 1-px vertical divider to its left, so a second background
+    // here would just double up the card tint.
+    return SizedBox(
       width: kWidth,
-      decoration: const BoxDecoration(
-        border: Border(
-          left: BorderSide(color: Color(0x0DFFFFFF)),
-        ),
-        color: Color(0x800D0B1C),
-      ),
       child: BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
         builder: (context, state) {
           final cubit = context.read<LibraryBrowseCubit>();
