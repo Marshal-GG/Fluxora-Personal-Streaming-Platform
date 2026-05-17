@@ -81,6 +81,15 @@ class Endpoints {
   static String libraryFolderSize(String libraryId) =>
       '$_base/library/$libraryId/folder-size';
 
+  /// `GET /api/v1/library/{libraryId}/resolve-absolute?path=<abs>` —
+  /// take an absolute on-disk path the operator typed into the URL
+  /// bar + return the library-relative path under the matching
+  /// `root_paths` entry.  Backs the desktop URL bar's typing-
+  /// fallback when client-side prefix matching against the visible
+  /// root fails (multi-root, case mismatch, canonical-form drift).
+  static String libraryResolveAbsolute(String libraryId) =>
+      '$_base/library/$libraryId/resolve-absolute';
+
   // Stream
   static String streamStart(String fileId) => '$_base/stream/start/$fileId';
   static String streamSession(String sessionId) => '$_base/stream/$sessionId';
