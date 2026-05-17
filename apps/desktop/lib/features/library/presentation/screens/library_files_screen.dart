@@ -44,14 +44,15 @@ import 'package:fluxora_core/network/api_client.dart';
 import 'package:fluxora_desktop/core/router/app_router.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
+import 'package:fluxora_desktop/features/library/data/services/library_events_service.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_browse_cubit.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_context_menu.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_count_footer.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_detail_panel.dart';
-import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_filter_chips.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_search_bar.dart';
 import 'package:fluxora_desktop/features/library/presentation/widgets/library_browse_view_toggle.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_glass_popup_surface.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 
 final _log = Logger();
@@ -63,10 +64,17 @@ class LibraryFilesScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Pull the events service from GetIt if registered; tests + early-
+    // startup paths register it on demand.  Cubit gracefully no-ops on
+    // null so we don't have to guard at every screen mount.
+    final events = GetIt.I.isRegistered<LibraryEventsService>()
+        ? GetIt.I<LibraryEventsService>()
+        : null;
     return BlocProvider<LibraryBrowseCubit>(
       create: (_) => LibraryBrowseCubit(
         libraryId: libraryId,
         repository: GetIt.I<LibraryRepository>(),
+        events: events,
       )..load(),
       child: const _LibraryBrowseView(),
     );
@@ -216,23 +224,9 @@ class _LibraryBrowseViewState extends State<_LibraryBrowseView> {
               verticalPadding: AppSpacing.s16,
             ),
           ),
-          // Type-filter chip row outside the card — only mounted
-          // when the response is loaded.  Matches the library page's
-          // chip-row-above-content layout.
-          BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
-            buildWhen: (a, b) => a.runtimeType != b.runtimeType,
-            builder: (context, state) {
-              if (state is! LibraryBrowseLoaded) {
-                return const SizedBox(height: AppSpacing.s6);
-              }
-              return const Padding(
-                padding: EdgeInsets.fromLTRB(
-                  AppSpacing.s28, 0, AppSpacing.s28, AppSpacing.s10,
-                ),
-                child: LibraryBrowseFilterChips(),
-              );
-            },
-          ),
+          // (Type filters moved into the toolbar's `_FilterButton`
+          // dropdown — no chip strip above the card any more.)
+          const SizedBox(height: AppSpacing.s8),
           // Body card.  Encloses the URL/breadcrumb header + the
           // toggle-icon toolbar directly below it + a horizontal
           // divider that visually separates the header band from the
@@ -428,13 +422,10 @@ class _ListingToolbar extends StatelessWidget {
         final cubit = context.read<LibraryBrowseCubit>();
         return Row(
           children: [
-            // Left side: clickable "Sort: Name ↑" indicator that
-            // mirrors the column-header arrow + lets the operator
-            // cycle through sort columns without clicking the table
-            // header.  Balances the row so the right-side icons
-            // don't float in empty space.
-            _SortIndicatorChip(cubit: cubit),
-            const Spacer(),
+            // Left side: utility icon cluster (hide-hidden / refresh /
+            // density / view toggle).  Right side: Filter dropdown.
+            // Sort is column-header-only — click NAME / SIZE /
+            // MODIFIED to sort.
             _ToolbarIconButton(
               icon: cubit.showHidden
                   ? Icons.visibility_outlined
@@ -455,6 +446,8 @@ class _ListingToolbar extends StatelessWidget {
             _DensityCycleButton(density: cubit.density),
             const SizedBox(width: AppSpacing.s10),
             const LibraryBrowseViewToggle(),
+            const Spacer(),
+            _FilterButton(cubit: cubit),
           ],
         );
       },
@@ -462,76 +455,397 @@ class _ListingToolbar extends StatelessWidget {
   }
 }
 
-/// Compact "Sort: Name ↑" chip rendered on the left of the toolbar.
-/// Click cycles through the sort columns; the arrow icon reflects the
-/// current ascending/descending state.  Matches the chip styling of
-/// `FluxFilterChip` so it reads as part of the same control family.
-class _SortIndicatorChip extends StatefulWidget {
-  const _SortIndicatorChip({required this.cubit});
+/// Pill-styled Filter dropdown on the left of the toolbar.
+///
+/// Trigger chip shows the active filter summary ("Filter" / "Filter:
+/// Videos" / "Filter: Videos · Indexed" / "Filter: Indexed") + a
+/// chevron-down to signal "click for more."  Active state (any non-
+/// default filter) tints the chip violet so the operator can see at a
+/// glance that a filter is applied.
+///
+/// Tapping the chip opens a sticky [_FilterPopup] anchored beneath it
+/// via [OverlayPortal] + [CompositedTransformFollower].  The popup
+/// stays mounted while the operator toggles kind / indexed-only — only
+/// dismisses on tap-outside or a second click on the trigger.
+class _FilterButton extends StatefulWidget {
+  const _FilterButton({required this.cubit});
 
   final LibraryBrowseCubit cubit;
 
   @override
-  State<_SortIndicatorChip> createState() => _SortIndicatorChipState();
+  State<_FilterButton> createState() => _FilterButtonState();
 }
 
-class _SortIndicatorChipState extends State<_SortIndicatorChip> {
+class _FilterButtonState extends State<_FilterButton> {
+  final LayerLink _link = LayerLink();
+  final OverlayPortalController _popup = OverlayPortalController();
   bool _hover = false;
 
-  String _labelFor(BrowseSortColumn col) => switch (col) {
-        BrowseSortColumn.name => 'Name',
-        BrowseSortColumn.size => 'Size',
-        BrowseSortColumn.modified => 'Modified',
+  // Chip height tuned to match the surrounding 28 px toolbar icon
+  // buttons visually — slightly shorter so the rounded pill doesn't
+  // dominate, but tall enough to read as a peer of the icon row.
+  static const double _kButtonHeight = 26;
+
+  void _toggle() {
+    if (_popup.isShowing) {
+      _popup.hide();
+    } else {
+      _popup.show();
+    }
+  }
+
+  String _kindLabel(BrowseKindFilter kind) => switch (kind) {
+        BrowseKindFilter.all => 'All',
+        BrowseKindFilter.folders => 'Folders',
+        BrowseKindFilter.videos => 'Videos',
+        BrowseKindFilter.images => 'Images',
+        BrowseKindFilter.audio => 'Audio',
+        BrowseKindFilter.pdfs => 'PDFs',
+        BrowseKindFilter.other => 'Other',
+      };
+
+  String _summary() {
+    final c = widget.cubit;
+    final parts = <String>[];
+    if (c.kindFilter != BrowseKindFilter.all) {
+      parts.add(_kindLabel(c.kindFilter));
+    }
+    if (c.indexedOnly) parts.add('Indexed');
+    if (parts.isEmpty) return 'Filter';
+    return 'Filter: ${parts.join(' · ')}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.cubit;
+    final hasActive =
+        c.kindFilter != BrowseKindFilter.all || c.indexedOnly;
+    final fg = hasActive
+        ? AppColors.violetSoft
+        : (_hover ? AppColors.textBody : AppColors.textMutedV2);
+    final bg = hasActive
+        ? const Color(0x24A855F7)
+        : (_hover ? const Color(0x08FFFFFF) : Colors.transparent);
+    final border = hasActive
+        ? const Color(0x4DA855F7)
+        : AppColors.borderSubtle;
+
+    return CompositedTransformTarget(
+      link: _link,
+      child: OverlayPortal(
+        controller: _popup,
+        overlayChildBuilder: (_) => _FilterPopup(
+          link: _link,
+          cubit: c,
+          onDismiss: _popup.hide,
+        ),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) => setState(() => _hover = true),
+          onExit: (_) => setState(() => _hover = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggle,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              height: _kButtonHeight,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s10,
+              ),
+              decoration: BoxDecoration(
+                color: bg,
+                border: Border.all(color: border),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.filter_list_rounded, size: 12, color: fg),
+                  const SizedBox(width: 6),
+                  Text(
+                    _summary(),
+                    style: TextStyle(
+                      fontFamily: 'Inter',
+                      fontSize: 11.5,
+                      fontWeight:
+                          hasActive ? FontWeight.w600 : FontWeight.w500,
+                      color: fg,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.arrow_drop_down_rounded, size: 14, color: fg),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Sticky filter popover mounted via [OverlayPortal] beneath the
+/// trigger.  Glass surface (via [FluxGlassPopupSurface]) so it matches
+/// the row context menu + column picker visually.  Tap-outside via
+/// [TapRegion] dismisses; clicking inside (selecting a kind, toggling
+/// "Indexed only") does NOT dismiss — operator can rapid-fire toggle
+/// multiple filters and see the listing update in place.
+class _FilterPopup extends StatelessWidget {
+  const _FilterPopup({
+    required this.link,
+    required this.cubit,
+    required this.onDismiss,
+  });
+
+  final LayerLink link;
+  final LibraryBrowseCubit cubit;
+  final VoidCallback onDismiss;
+
+  static const double _kWidth = 220;
+  // Small vertical gap between the trigger's bottom edge and the
+  // popup's top edge — large enough to read as "separate surface,"
+  // small enough that the cursor's natural downward motion stays on
+  // the popup without re-targeting.
+  static const double _kGap = 6;
+
+  @override
+  Widget build(BuildContext context) {
+    return Positioned(
+      // Anchored via CompositedTransformFollower below — Positioned
+      // just hands the overlay a finite frame so it doesn't expand.
+      // The Filter button sits on the RIGHT side of the toolbar, so
+      // we right-align the popup to the trigger (popup's top-right
+      // corner anchors to the trigger's bottom-right corner) so the
+      // popup extends DOWN+LEFT and stays on-screen.
+      left: 0,
+      top: 0,
+      width: _kWidth,
+      child: CompositedTransformFollower(
+        link: link,
+        targetAnchor: Alignment.bottomRight,
+        followerAnchor: Alignment.topRight,
+        offset: const Offset(0, _kGap),
+        showWhenUnlinked: false,
+        child: Material(
+          color: Colors.transparent,
+          child: TapRegion(
+            onTapOutside: (_) => onDismiss(),
+            child: FluxGlassPopupSurface(
+              width: _kWidth,
+              borderRadius: BorderRadius.circular(AppRadii.sm),
+              // Rebuild on every cubit emission so the active checkmark
+              // updates the same frame as the operator's tap.  Cheap —
+              // the popup body is ~9 rows of static widgets.
+              child: BlocBuilder<LibraryBrowseCubit, LibraryBrowseState>(
+                bloc: cubit,
+                builder: (_, _) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(12, 10, 12, 6),
+                      child: Text(
+                        'SHOW',
+                        style: TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.6,
+                          color: AppColors.textMutedV2,
+                        ),
+                      ),
+                    ),
+                    const Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: AppColors.borderSubtle,
+                    ),
+                    for (final kind in BrowseKindFilter.values)
+                      _FilterKindRow(
+                        kind: kind,
+                        isActive: cubit.kindFilter == kind,
+                        onTap: () => cubit.setKindFilter(kind),
+                      ),
+                    const Divider(
+                      height: 1,
+                      thickness: 1,
+                      color: AppColors.borderSubtle,
+                    ),
+                    _FilterToggleRow(
+                      label: 'Indexed only',
+                      icon: cubit.indexedOnly
+                          ? Icons.bookmark_rounded
+                          : Icons.bookmark_outline_rounded,
+                      isActive: cubit.indexedOnly,
+                      onTap: () => cubit.setIndexedOnly(!cubit.indexedOnly),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Single kind-filter row inside the [_FilterPopup].  Tap selects the
+/// kind (single-select within the group) without dismissing the popup.
+class _FilterKindRow extends StatefulWidget {
+  const _FilterKindRow({
+    required this.kind,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final BrowseKindFilter kind;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  @override
+  State<_FilterKindRow> createState() => _FilterKindRowState();
+}
+
+class _FilterKindRowState extends State<_FilterKindRow> {
+  bool _hover = false;
+
+  IconData _iconFor(BrowseKindFilter k) => switch (k) {
+        BrowseKindFilter.all => Icons.apps_rounded,
+        BrowseKindFilter.folders => Icons.folder_outlined,
+        BrowseKindFilter.videos => Icons.movie_outlined,
+        BrowseKindFilter.images => Icons.image_outlined,
+        BrowseKindFilter.audio => Icons.music_note_outlined,
+        BrowseKindFilter.pdfs => Icons.picture_as_pdf_outlined,
+        BrowseKindFilter.other => Icons.insert_drive_file_outlined,
+      };
+
+  String _labelFor(BrowseKindFilter k) => switch (k) {
+        BrowseKindFilter.all => 'All',
+        BrowseKindFilter.folders => 'Folders',
+        BrowseKindFilter.videos => 'Videos',
+        BrowseKindFilter.images => 'Images',
+        BrowseKindFilter.audio => 'Audio',
+        BrowseKindFilter.pdfs => 'PDFs',
+        BrowseKindFilter.other => 'Other',
       };
 
   @override
   Widget build(BuildContext context) {
-    final cubit = widget.cubit;
-    final color = _hover ? AppColors.violet : AppColors.textMutedV2;
+    final fg = widget.isActive
+        ? AppColors.violetSoft
+        : (_hover ? AppColors.textBody : AppColors.textMutedV2);
+    final bg = widget.isActive
+        ? const Color(0x1AA855F7)
+        : (_hover ? const Color(0x08FFFFFF) : Colors.transparent);
+
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () {
-          final next = switch (cubit.sortBy) {
-            BrowseSortColumn.name => BrowseSortColumn.size,
-            BrowseSortColumn.size => BrowseSortColumn.modified,
-            BrowseSortColumn.modified => BrowseSortColumn.name,
-          };
-          cubit.setSort(next);
-        },
+        onTap: widget.onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s10,
-            vertical: AppSpacing.s4,
-          ),
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.borderSubtle),
-            borderRadius: BorderRadius.circular(999),
-          ),
+          color: bg,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.sort_rounded, size: 12, color: color),
-              const SizedBox(width: 6),
-              Text(
-                'Sort: ${_labelFor(cubit.sortBy)}',
-                style: TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w500,
-                  color: color,
+              Icon(_iconFor(widget.kind), size: 14, color: fg),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  _labelFor(widget.kind),
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 12.5,
+                    fontWeight:
+                        widget.isActive ? FontWeight.w600 : FontWeight.w500,
+                    color: fg,
+                  ),
                 ),
               ),
-              const SizedBox(width: 4),
+              if (widget.isActive)
+                const Icon(
+                  Icons.check_rounded,
+                  size: 14,
+                  color: AppColors.violetSoft,
+                )
+              else
+                const SizedBox(width: 14),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Toggle row used for the "Indexed only" entry below the divider.
+/// Same hover + active treatment as [_FilterKindRow] but the trailing
+/// glyph is a check-on/off pair to communicate that it's a binary
+/// toggle independent of the single-select group above.
+class _FilterToggleRow extends StatefulWidget {
+  const _FilterToggleRow({
+    required this.label,
+    required this.icon,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  @override
+  State<_FilterToggleRow> createState() => _FilterToggleRowState();
+}
+
+class _FilterToggleRowState extends State<_FilterToggleRow> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = widget.isActive
+        ? AppColors.violetSoft
+        : (_hover ? AppColors.textBody : AppColors.textMutedV2);
+    final bg = widget.isActive
+        ? const Color(0x1AA855F7)
+        : (_hover ? const Color(0x08FFFFFF) : Colors.transparent);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: Container(
+          color: bg,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              Icon(widget.icon, size: 14, color: fg),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  widget.label,
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 12.5,
+                    fontWeight:
+                        widget.isActive ? FontWeight.w600 : FontWeight.w500,
+                    color: fg,
+                  ),
+                ),
+              ),
               Icon(
-                cubit.sortAsc
-                    ? Icons.arrow_upward_rounded
-                    : Icons.arrow_downward_rounded,
-                size: 11,
-                color: color,
+                widget.isActive
+                    ? Icons.check_box_rounded
+                    : Icons.check_box_outline_blank_rounded,
+                size: 14,
+                color: fg,
               ),
             ],
           ),
@@ -1285,35 +1599,21 @@ class _SuggestionsOverlay extends StatelessWidget {
         child: Material(
           color: Colors.transparent,
           elevation: 0,
-          child: Container(
-            decoration: BoxDecoration(
-              color: AppColors.bgRaised,
-              border: Border.all(color: AppColors.borderSubtle),
-              borderRadius: BorderRadius.circular(AppRadii.sm),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x66000000),
-                  blurRadius: 16,
-                  offset: Offset(0, 4),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadii.sm - 1),
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                itemCount: suggestions.length,
-                itemExtent: _kRowHeight,
-                itemBuilder: (_, i) {
-                  final e = suggestions[i];
-                  return _SuggestionRow(
-                    entry: e,
-                    isHighlighted: i == highlighted,
-                    onTap: () => onPick(e),
-                    onHover: () => onHover(i),
-                  );
-                },
-              ),
+          child: FluxGlassPopupSurface(
+            borderRadius: BorderRadius.circular(AppRadii.sm),
+            child: ListView.builder(
+              padding: EdgeInsets.zero,
+              itemCount: suggestions.length,
+              itemExtent: _kRowHeight,
+              itemBuilder: (_, i) {
+                final e = suggestions[i];
+                return _SuggestionRow(
+                  entry: e,
+                  isHighlighted: i == highlighted,
+                  onTap: () => onPick(e),
+                  onHover: () => onHover(i),
+                );
+              },
             ),
           ),
         ),
@@ -2408,57 +2708,43 @@ class _ColumnPickerPopup extends StatelessWidget {
         onTapOutside: (_) => onDismiss(),
         child: Material(
           color: Colors.transparent,
-          child: Container(
+          child: FluxGlassPopupSurface(
             width: _kWidth,
-            decoration: BoxDecoration(
-              color: AppColors.bgRaised,
-              border: Border.all(color: AppColors.borderSubtle),
-              borderRadius: BorderRadius.circular(AppRadii.sm),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x66000000),
-                  blurRadius: 16,
-                  offset: Offset(0, 4),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadii.sm - 1),
-              child: ValueListenableBuilder<int>(
-                valueListenable: _columnsVersion,
-                builder: (_, _, _) => Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Padding(
-                      padding: EdgeInsets.fromLTRB(12, 10, 12, 6),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Show columns',
-                          style: TextStyle(
-                            fontFamily: 'Inter',
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.6,
-                            color: AppColors.textMutedV2,
-                          ),
+            borderRadius: BorderRadius.circular(AppRadii.sm),
+            child: ValueListenableBuilder<int>(
+              valueListenable: _columnsVersion,
+              builder: (_, _, _) => Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(12, 10, 12, 6),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Show columns',
+                        style: TextStyle(
+                          fontFamily: 'Inter',
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.6,
+                          color: AppColors.textMutedV2,
                         ),
                       ),
                     ),
-                    const Divider(
-                      height: 1,
-                      thickness: 1,
-                      color: AppColors.borderSubtle,
+                  ),
+                  const Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: AppColors.borderSubtle,
+                  ),
+                  for (final col in BrowseColumn.values)
+                    _ColumnCheckRow(
+                      column: col,
+                      isEnabled: _isBrowseColumnEnabled(col),
+                      isLocked: col == BrowseColumn.name,
+                      onToggle: () => _toggleBrowseColumn(col),
                     ),
-                    for (final col in BrowseColumn.values)
-                      _ColumnCheckRow(
-                        column: col,
-                        isEnabled: _isBrowseColumnEnabled(col),
-                        isLocked: col == BrowseColumn.name,
-                        onToggle: () => _toggleBrowseColumn(col),
-                      ),
-                  ],
-                ),
+                ],
               ),
             ),
           ),
@@ -3165,10 +3451,40 @@ class _BrowseGridTileState extends State<_BrowseGridTile> {
   }
 }
 
-/// The visual half of a grid tile — thumbnail if the media is indexed
-/// and ready, otherwise a large kind icon on a tinted background.
+/// The visual half of a grid tile — TMDB poster (when present) wins
+/// over the extracted-frame thumbnail; falls back to a large kind icon
+/// on a tinted background when neither is available.
 class _GridTileVisual extends StatelessWidget {
   const _GridTileVisual({required this.entry});
+
+  final BrowseEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    // Poster art always wins when present — TMDB's hand-curated art
+    // beats a random video frame.  Matches the library card mosaic's
+    // ranking in `_library_aggregates`.
+    final poster = entry.media?.posterUrl;
+    if (poster != null && poster.isNotEmpty) {
+      return Image.network(
+        poster,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) =>
+            _GridTileGeneratedThumb(entry: entry),
+        loadingBuilder: (_, child, progress) =>
+            progress == null ? child : _KindIconBackground(entry: entry),
+      );
+    }
+    return _GridTileGeneratedThumb(entry: entry);
+  }
+}
+
+/// Falls back to the per-file extracted-frame thumbnail when there's
+/// no TMDB poster.  Extracted as its own widget so the poster path's
+/// `errorBuilder` can reuse the same fallback shape if the TMDB URL
+/// 404s (e.g. TMDB image host transient failure).
+class _GridTileGeneratedThumb extends StatelessWidget {
+  const _GridTileGeneratedThumb({required this.entry});
 
   final BrowseEntry entry;
 
@@ -3177,20 +3493,18 @@ class _GridTileVisual extends StatelessWidget {
     final hasThumb = entry.isIndexed &&
         entry.fileId != null &&
         entry.media?.hasThumbnailReady == true;
-    if (hasThumb) {
-      var base = GetIt.I<ApiClient>().localBaseUrl ?? '';
-      if (base.endsWith('/')) base = base.substring(0, base.length - 1);
-      final v = entry.media?.thumbnailGeneratedAtUnix ?? 0;
-      final url = '$base/api/v1/files/${entry.fileId}/thumbnail?v=$v';
-      return Image.network(
-        url,
-        fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => _KindIconBackground(entry: entry),
-        loadingBuilder: (_, child, progress) =>
-            progress == null ? child : _KindIconBackground(entry: entry),
-      );
-    }
-    return _KindIconBackground(entry: entry);
+    if (!hasThumb) return _KindIconBackground(entry: entry);
+    var base = GetIt.I<ApiClient>().localBaseUrl ?? '';
+    if (base.endsWith('/')) base = base.substring(0, base.length - 1);
+    final v = entry.media?.thumbnailGeneratedAtUnix ?? 0;
+    final url = '$base/api/v1/files/${entry.fileId}/thumbnail?v=$v';
+    return Image.network(
+      url,
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => _KindIconBackground(entry: entry),
+      loadingBuilder: (_, child, progress) =>
+          progress == null ? child : _KindIconBackground(entry: entry),
+    );
   }
 }
 

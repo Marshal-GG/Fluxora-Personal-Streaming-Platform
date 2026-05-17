@@ -76,10 +76,20 @@ class LibraryRepositoryImpl implements LibraryRepository {
       );
 
   @override
-  Future<Library> createLibrary({required String name, required String type, required List<String> rootPaths}) =>
+  Future<Library> createLibrary({
+    required String name,
+    required String type,
+    required List<String> rootPaths,
+    bool tmdbEnabled = true,
+  }) =>
       _apiClient.post<Library>(
         Endpoints.library,
-        data: {'name': name, 'type': type, 'root_paths': rootPaths},
+        data: {
+          'name': name,
+          'type': type,
+          'root_paths': rootPaths,
+          'tmdb_enabled': tmdbEnabled,
+        },
         fromJson: (data) =>
             Library.fromJson(_resolveCoverUrls(data as Map<String, dynamic>)),
       );
@@ -91,6 +101,7 @@ class LibraryRepositoryImpl implements LibraryRepository {
     List<String>? rootPaths,
     LibraryOverrideUpdate? av1Override,
     LibraryOverrideUpdate? vp9Override,
+    bool? tmdbEnabled,
   }) {
     final body = <String, dynamic>{};
     if (name != null) body['name'] = name;
@@ -103,6 +114,7 @@ class LibraryRepositoryImpl implements LibraryRepository {
       final wire = overrideUpdateWireValue(vp9Override);
       if (wire.included) body['vp9_stream_copy_override'] = wire.value;
     }
+    if (tmdbEnabled != null) body['tmdb_enabled'] = tmdbEnabled;
     return _apiClient.patch<Library>(
       '${Endpoints.library}/$libraryId',
       body: body,
@@ -228,6 +240,28 @@ class LibraryRepositoryImpl implements LibraryRepository {
         fromJson: (data) {
           if (data is Map<String, dynamic>) {
             final v = data['files_added'];
+            if (v is int) return v;
+            if (v is num) return v.toInt();
+          }
+          return 0;
+        },
+      );
+
+  @override
+  Future<void> unindexFile(String fileId) =>
+      _apiClient.delete(Endpoints.fileById(fileId));
+
+  @override
+  Future<int> unindexSubtree({
+    required String libraryId,
+    required String relativePath,
+  }) =>
+      _apiClient.post<int>(
+        Endpoints.libraryUnindexSubtree(libraryId),
+        queryParameters: {'path': relativePath},
+        fromJson: (data) {
+          if (data is Map<String, dynamic>) {
+            final v = data['files_removed'];
             if (v is int) return v;
             if (v is num) return v.toInt();
           }

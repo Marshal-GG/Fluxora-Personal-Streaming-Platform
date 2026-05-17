@@ -119,13 +119,15 @@ class LibraryCubit extends Cubit<LibraryState> {
   Future<Library> createLibrary(
     String name,
     String type,
-    List<String> rootPaths,
-  ) async {
+    List<String> rootPaths, {
+    bool tmdbEnabled = true,
+  }) async {
     try {
       final lib = await _repository.createLibrary(
         name: name,
         type: type,
         rootPaths: rootPaths,
+        tmdbEnabled: tmdbEnabled,
       );
       await refresh();
       return lib;
@@ -144,6 +146,7 @@ class LibraryCubit extends Cubit<LibraryState> {
     List<String>? rootPaths,
     LibraryOverrideUpdate? av1Override,
     LibraryOverrideUpdate? vp9Override,
+    bool? tmdbEnabled,
   }) async {
     try {
       final lib = await _repository.updateLibrary(
@@ -152,6 +155,7 @@ class LibraryCubit extends Cubit<LibraryState> {
         rootPaths: rootPaths,
         av1Override: av1Override,
         vp9Override: vp9Override,
+        tmdbEnabled: tmdbEnabled,
       );
       await refresh();
       return lib;

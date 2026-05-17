@@ -440,8 +440,11 @@ class _LibraryViewState extends State<_LibraryView> {
       showCodecOverrides: true,
       initialAv1Override: initialOverrides.av1StreamCopyOverride,
       initialVp9Override: initialOverrides.vp9StreamCopyOverride,
+      initialTmdbEnabled: lib.tmdbEnabled,
       onSubmit: (name, _, paths,
-          {required av1Override, required vp9Override}) async {
+          {required av1Override,
+          required vp9Override,
+          required tmdbEnabled}) async {
         try {
           await cubit.updateLibrary(
             libraryId: lib.id,
@@ -455,6 +458,7 @@ class _LibraryViewState extends State<_LibraryView> {
               initialOverrides.vp9StreamCopyOverride,
               vp9Override,
             ),
+            tmdbEnabled: tmdbEnabled == lib.tmdbEnabled ? null : tmdbEnabled,
           );
           messenger.showSnackBar(SnackBar(
             content: Text('Library "$name" updated'),
@@ -649,6 +653,7 @@ typedef LibraryFormSubmit = void Function(
   List<String> paths, {
   required bool? av1Override,
   required bool? vp9Override,
+  required bool tmdbEnabled,
 });
 
 /// Top-level helper that opens the "Add Library" form.
@@ -666,9 +671,16 @@ Future<void> showAddLibraryDialog(BuildContext context) async {
     submitLabel: 'Create Library',
     typeEditable: true,
     onSubmit: (name, type, paths,
-        {required av1Override, required vp9Override}) async {
+        {required av1Override,
+        required vp9Override,
+        required tmdbEnabled}) async {
       try {
-        await cubit.createLibrary(name, type, paths);
+        await cubit.createLibrary(
+          name,
+          type,
+          paths,
+          tmdbEnabled: tmdbEnabled,
+        );
         messenger.showSnackBar(SnackBar(
           content: Text('Library "$name" created'),
         ));
@@ -693,6 +705,7 @@ Future<void> _showLibraryFormDialog({
   bool showCodecOverrides = false,
   bool? initialAv1Override,
   bool? initialVp9Override,
+  bool initialTmdbEnabled = true,
 }) async {
   final nameController = TextEditingController(text: initialName ?? '');
   String type = initialType ?? 'movies';
@@ -700,6 +713,7 @@ Future<void> _showLibraryFormDialog({
   String? nameError;
   bool? av1Override = initialAv1Override;
   bool? vp9Override = initialVp9Override;
+  bool tmdbEnabled = initialTmdbEnabled;
 
   await showDialog<void>(
     context: context,
@@ -854,6 +868,11 @@ Future<void> _showLibraryFormDialog({
                   onChanged: (v) => setLocal(() => vp9Override = v),
                 ),
               ],
+              const SizedBox(height: AppSpacing.s18),
+              _TmdbToggleRow(
+                value: tmdbEnabled,
+                onChanged: (v) => setLocal(() => tmdbEnabled = v),
+              ),
             ],
           ),
         ),
@@ -882,6 +901,7 @@ Future<void> _showLibraryFormDialog({
                 List<String>.from(paths),
                 av1Override: av1Override,
                 vp9Override: vp9Override,
+                tmdbEnabled: tmdbEnabled,
               );
             },
             child: Text(submitLabel),
@@ -3477,6 +3497,65 @@ class _ListRowAction extends StatelessWidget {
       ),
       visualDensity: VisualDensity.compact,
       splashRadius: 18,
+    );
+  }
+}
+
+// ── Per-library TMDB enrichment toggle ─────────────────────────────────────
+
+/// Single-row switch + label + helper text controlling whether this
+/// library participates in TMDB enrichment.  Maps to the API field
+/// `tmdb_enabled` (bool).  When OFF:
+///   * No future TMDB lookups run for files in this library.
+///   * Already-persisted TMDB metadata (poster_url / title / overview
+///     / tmdb_id) is masked out of every read-path response — the DB
+///     still has it, so flipping back ON instantly restores the cards
+///     + folder browser art without re-fetching from TMDB.
+class _TmdbToggleRow extends StatelessWidget {
+  const _TmdbToggleRow({required this.value, required this.onChanged});
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Use TMDB metadata',
+                style: AppTypography.body.copyWith(
+                  color: AppColors.textBright,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value
+                    ? 'Filenames are matched against TMDB to populate '
+                        'poster art, titles, and overviews.'
+                    : 'TMDB matching is disabled for this library. '
+                        'Existing TMDB data is hidden — flip back on to '
+                        'restore it without re-fetching.',
+                style: AppTypography.captionV2.copyWith(
+                  color: AppColors.textMutedV2,
+                  height: 1.4,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s12),
+        Switch(
+          value: value,
+          onChanged: onChanged,
+          activeThumbColor: AppColors.violet,
+        ),
+      ],
     );
   }
 }

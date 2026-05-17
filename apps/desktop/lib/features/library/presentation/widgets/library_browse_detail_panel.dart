@@ -521,6 +521,62 @@ class _ThumbnailPreview extends StatelessWidget {
     const width = 280.0;
     final height = isImage ? 280.0 : 158.0;
 
+    // TMDB poster art wins over the extracted-frame thumbnail when
+    // present.  Independent of `thumbnail_status` — a movie that has
+    // poster art but no extracted thumb yet still renders the poster
+    // straight away, no "generating…" spinner.  Matches the library
+    // card mosaic where TMDB also takes precedence.  On TMDB image-
+    // host failure, falls back to the extracted-frame branch below.
+    final poster = media.posterUrl;
+    if (poster != null && poster.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.network(
+          poster,
+          width: width,
+          height: height,
+          fit: BoxFit.cover,
+          loadingBuilder: (context, child, progress) {
+            if (progress == null) return child;
+            return _ThumbnailPlaceholder(
+              width: width,
+              height: height,
+              child: const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor:
+                      AlwaysStoppedAnimation<Color>(AppColors.violet),
+                ),
+              ),
+            );
+          },
+          errorBuilder: (_, _, _) => _buildExtractedThumb(
+            media: media,
+            width: width,
+            height: height,
+          ),
+        ),
+      );
+    }
+
+    return _buildExtractedThumb(
+      media: media,
+      width: width,
+      height: height,
+    );
+  }
+
+  /// Render the per-file extracted-frame thumbnail (or a placeholder
+  /// matching the current `thumbnail_status`).  Lifted out so the
+  /// poster-art path's `errorBuilder` can fall back to the same shape
+  /// without recursing into `build`.
+  Widget _buildExtractedThumb({
+    required IndexedMedia media,
+    required double width,
+    required double height,
+  }) {
     if (media.isThumbnailInFlight) {
       return _ThumbnailPlaceholder(
         width: width,

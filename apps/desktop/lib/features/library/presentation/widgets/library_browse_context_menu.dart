@@ -6,15 +6,13 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_browse_cubit.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_glass_menu.dart';
 
 final _log = Logger();
 
-/// Show the right-click context menu for a folder-browser entry.  Plan
-/// 28 §6.1 — every modern file browser has one and our muscle memory
-/// expected it; Phase A shipped without.
+/// Show the right-click context menu for a folder-browser entry.
 ///
 /// Items are dispatched on entry kind + indexed status:
 ///   - Open                         (always)
@@ -24,6 +22,10 @@ final _log = Logger();
 ///   - Index this file              (files only, !is_indexed)
 ///   - Generate thumbnail           (indexed media files only)
 ///   - Scan this folder             (directories only)
+///
+/// Renders against the shared glass popup chrome via [showFluxGlassMenu]
+/// so the dropdown matches the Library page's Sort menu and the
+/// per-card 3-dot menu visually.
 ///
 /// Server endpoints used:
 ///   - POST /api/v1/library/{id}/index-file?path=...
@@ -45,66 +47,94 @@ Future<void> showBrowseEntryContextMenu({
     entry: entry,
   );
 
-  final canIndex = !entry.isDir && !entry.isIndexed &&
-      entry.kind != BrowseKind.other;
+  // Every file kind is indexable server-side now (the catalog needs
+  // to reach arbitrary documents / archives so the mobile client can
+  // surface them via `/files/{id}/content`).  Only the indexed-state
+  // gate remains.
+  final canIndex = !entry.isDir && !entry.isIndexed;
+  final canUnindexFile =
+      !entry.isDir && entry.isIndexed && entry.fileId != null;
   final canRegen = !entry.isDir && entry.isIndexed && entry.fileId != null;
   final canScanSubtree = entry.isDir;
+  final canUnindexSubtree = entry.isDir;
 
+  // The menu's layout delegate works in overlay-LOCAL coordinates, but
+  // `details.globalPosition` (what gets passed in) is in global window
+  // coordinates.  If the Overlay isn't at the window origin (e.g. the
+  // FluxTitlebar / sidebar offset it), passing the raw global pointer
+  // makes the menu drift right + down by the overlay's window offset.
+  // Convert here so the menu anchors exactly at the pointer.
   final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
-  final overlaySize = overlay is RenderBox
-      ? overlay.size
-      : MediaQuery.of(context).size;
-  final selected = await showMenu<_BrowseMenuAction>(
-    context: context,
-    color: AppColors.bgRaised,
-    position: RelativeRect.fromLTRB(
-      position.dx,
-      position.dy,
-      overlaySize.width - position.dx,
-      overlaySize.height - position.dy,
+  final overlayBox = overlay is RenderBox ? overlay : null;
+  final overlaySize = overlayBox?.size ?? MediaQuery.of(context).size;
+  final localPos =
+      overlayBox != null ? overlayBox.globalToLocal(position) : position;
+
+  final items = <FluxGlassMenuItem<_BrowseMenuAction>>[
+    const FluxGlassMenuItem(
+      value: _BrowseMenuAction.open,
+      label: 'Open',
+      icon: Icons.open_in_new_rounded,
     ),
-    items: <PopupMenuEntry<_BrowseMenuAction>>[
-      _MenuItem(
-        action: _BrowseMenuAction.open,
-        icon: Icons.open_in_new_rounded,
-        label: 'Open',
+    const FluxGlassMenuItem(
+      value: _BrowseMenuAction.reveal,
+      label: 'Reveal in folder',
+      icon: Icons.folder_open_outlined,
+    ),
+    const FluxGlassMenuItem(
+      value: _BrowseMenuAction.copyPath,
+      label: 'Copy path',
+      icon: Icons.copy_rounded,
+    ),
+    const FluxGlassMenuItem(
+      value: _BrowseMenuAction.copyName,
+      label: 'Copy name',
+      icon: Icons.text_fields_rounded,
+    ),
+    if (canIndex)
+      const FluxGlassMenuItem(
+        value: _BrowseMenuAction.indexFile,
+        label: 'Index this file',
+        icon: Icons.add_to_photos_outlined,
       ),
-      _MenuItem(
-        action: _BrowseMenuAction.reveal,
-        icon: Icons.folder_open_outlined,
-        label: 'Reveal in folder',
+    if (canUnindexFile)
+      const FluxGlassMenuItem(
+        value: _BrowseMenuAction.unindexFile,
+        label: 'Unindex this file',
+        icon: Icons.remove_circle_outline_rounded,
+        destructive: true,
       ),
-      _MenuItem(
-        action: _BrowseMenuAction.copyPath,
-        icon: Icons.copy_rounded,
-        label: 'Copy path',
+    if (canRegen)
+      const FluxGlassMenuItem(
+        value: _BrowseMenuAction.regenerateThumb,
+        label: 'Regenerate thumbnail',
+        icon: Icons.refresh_rounded,
       ),
-      _MenuItem(
-        action: _BrowseMenuAction.copyName,
-        icon: Icons.text_fields_rounded,
-        label: 'Copy name',
+    if (canScanSubtree)
+      const FluxGlassMenuItem(
+        value: _BrowseMenuAction.scanSubtree,
+        label: 'Scan this folder',
+        icon: Icons.travel_explore_rounded,
       ),
-      if (canIndex || canRegen || canScanSubtree)
-        const PopupMenuDivider(),
-      if (canIndex)
-        _MenuItem(
-          action: _BrowseMenuAction.indexFile,
-          icon: Icons.add_to_photos_outlined,
-          label: 'Index this file',
-        ),
-      if (canRegen)
-        _MenuItem(
-          action: _BrowseMenuAction.regenerateThumb,
-          icon: Icons.refresh_rounded,
-          label: 'Regenerate thumbnail',
-        ),
-      if (canScanSubtree)
-        _MenuItem(
-          action: _BrowseMenuAction.scanSubtree,
-          icon: Icons.travel_explore_rounded,
-          label: 'Scan this folder',
-        ),
-    ],
+    if (canUnindexSubtree)
+      const FluxGlassMenuItem(
+        value: _BrowseMenuAction.unindexSubtree,
+        label: 'Unindex this folder',
+        icon: Icons.layers_clear_outlined,
+        destructive: true,
+      ),
+  ];
+
+  final selected = await showFluxGlassMenu<_BrowseMenuAction>(
+    context: context,
+    position: RelativeRect.fromLTRB(
+      localPos.dx,
+      localPos.dy,
+      overlaySize.width - localPos.dx,
+      overlaySize.height - localPos.dy,
+    ),
+    items: items,
+    width: 200,
   );
 
   if (selected == null) return;
@@ -126,10 +156,14 @@ Future<void> showBrowseEntryContextMenu({
       );
     case _BrowseMenuAction.indexFile:
       await _runIndex(entry, cubit, messenger);
+    case _BrowseMenuAction.unindexFile:
+      await _runUnindex(entry, cubit, messenger);
     case _BrowseMenuAction.regenerateThumb:
       await _runRegenerate(entry, cubit, messenger);
     case _BrowseMenuAction.scanSubtree:
       await _runScanSubtree(entry, cubit, messenger);
+    case _BrowseMenuAction.unindexSubtree:
+      await _runUnindexSubtree(entry, cubit, messenger);
   }
 }
 
@@ -239,6 +273,43 @@ Future<void> _runScanSubtree(
   }
 }
 
+Future<void> _runUnindex(
+  BrowseEntry entry,
+  LibraryBrowseCubit cubit,
+  ScaffoldMessengerState? messenger,
+) async {
+  try {
+    final ok = await cubit.unindexEntry(entry);
+    if (!ok) return;
+    messenger?.showSnackBar(
+      SnackBar(content: Text('Unindexed ${entry.name} (file kept on disk)')),
+    );
+  } catch (e) {
+    messenger?.showSnackBar(
+      SnackBar(content: Text('Failed to unindex ${entry.name}: $e')),
+    );
+  }
+}
+
+Future<void> _runUnindexSubtree(
+  BrowseEntry entry,
+  LibraryBrowseCubit cubit,
+  ScaffoldMessengerState? messenger,
+) async {
+  try {
+    final removed = await cubit.unindexEntrySubtree(entry);
+    final message = removed > 0
+        ? 'Unindexed ${entry.name}: $removed file(s) removed from catalog '
+            '(disk untouched)'
+        : 'Unindexed ${entry.name}: nothing was indexed under it';
+    messenger?.showSnackBar(SnackBar(content: Text(message)));
+  } catch (e) {
+    messenger?.showSnackBar(
+      SnackBar(content: Text('Unindex failed: $e')),
+    );
+  }
+}
+
 String _absolutePathFor({
   required String rootPath,
   required String relativePath,
@@ -264,35 +335,8 @@ enum _BrowseMenuAction {
   copyPath,
   copyName,
   indexFile,
+  unindexFile,
   regenerateThumb,
   scanSubtree,
-}
-
-/// Compact-styled popup menu item.  Subclasses [PopupMenuItem] only so
-/// callers can pass an icon + label without rebuilding the child Row
-/// at every call site.  The child slot itself stays the same — Flutter
-/// handles selection wiring through the inherited `onTap`.
-class _MenuItem extends PopupMenuItem<_BrowseMenuAction> {
-  _MenuItem({
-    required _BrowseMenuAction action,
-    required IconData icon,
-    required String label,
-  }) : super(
-          value: action,
-          height: 32,
-          child: Row(
-            children: [
-              Icon(icon, size: 14, color: AppColors.textMutedV2),
-              const SizedBox(width: 10),
-              Text(
-                label,
-                style: const TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 12.5,
-                  color: AppColors.textBody,
-                ),
-              ),
-            ],
-          ),
-        );
+  unindexSubtree,
 }

@@ -27,7 +27,12 @@ abstract interface class LibraryRepository {
   Future<List<Library>> getLibraries();
 
   Future<List<MediaFile>> getFiles({String? libraryId});
-  Future<Library> createLibrary({required String name, required String type, required List<String> rootPaths});
+  Future<Library> createLibrary({
+    required String name,
+    required String type,
+    required List<String> rootPaths,
+    bool tmdbEnabled = true,
+  });
 
   /// Update a library.  [av1Override] / [vp9Override] are 3-state — pass
   /// `null` to leave the field unchanged on the server, or use one of
@@ -42,6 +47,7 @@ abstract interface class LibraryRepository {
     List<String>? rootPaths,
     LibraryOverrideUpdate? av1Override,
     LibraryOverrideUpdate? vp9Override,
+    bool? tmdbEnabled,
   });
 
   /// Delete a library entry.  When [deleteSidecars] is true (the default
@@ -103,6 +109,20 @@ abstract interface class LibraryRepository {
   /// Returns the count of newly-ingested files.  Backs the "Scan this
   /// folder" right-click action.
   Future<int> scanSubtree({
+    required String libraryId,
+    required String relativePath,
+  });
+
+  /// Remove a single file from the catalog (`DELETE /files/{id}`).
+  /// The physical file on disk is untouched.  Backs the right-click
+  /// "Unindex this file" action.
+  Future<void> unindexFile(String fileId);
+
+  /// Remove every `media_files` row under the given subtree.  Files
+  /// on disk are NOT deleted — this is the inverse of `scanSubtree`,
+  /// not a destructive operation.  Returns the count of removed
+  /// rows.  Backs the right-click "Unindex this folder" action.
+  Future<int> unindexSubtree({
     required String libraryId,
     required String relativePath,
   });

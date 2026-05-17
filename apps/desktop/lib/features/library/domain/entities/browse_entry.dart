@@ -48,6 +48,7 @@ class IndexedMedia {
     this.thumbnailGeneratedAtUnix,
     this.indexedAtIso,
     this.isStreaming = false,
+    this.posterUrl,
   });
 
   final int? width;
@@ -68,14 +69,34 @@ class IndexedMedia {
   /// to a separate event stream for this (cheap to recompute).
   final bool isStreaming;
 
+  /// TMDB poster art URL when the file has been enriched, null
+  /// otherwise.  Already-resolved (absolute http(s) URL) — TMDB
+  /// returns absolute URLs and the server stores them verbatim.
+  /// Client renders this in preference to the extracted-frame
+  /// thumbnail so the folder browser matches the library card
+  /// mosaic (where `_library_aggregates` also prefers TMDB).
+  final String? posterUrl;
+
   bool get hasThumbnailReady => thumbnailStatus == 'ready';
   bool get isThumbnailStale => thumbnailStatus == 'stale';
   bool get isThumbnailInFlight =>
       thumbnailStatus == 'pending' ||
       thumbnailStatus == 'generating' ||
       thumbnailStatus == 'stale';
-  bool get hasThumbnailFailed =>
-      thumbnailStatus == 'failed' || thumbnailStatus == 'skipped';
+
+  /// True only for the transient/recoverable `failed` state — the
+  /// worker tried to extract and crashed (corrupt JXR, FFmpeg
+  /// timeout, PyMuPDF couldn't open the PDF, etc.).  The "Regenerate
+  /// thumbnail" right-click action retries.
+  bool get hasThumbnailFailed => thumbnailStatus == 'failed';
+
+  /// True for the permanent `skipped` state — the file's extension
+  /// has no extractor (subtitles, archives, source files, plain text,
+  /// etc.) or the extractor returned skipped (audio file without
+  /// embedded art, encrypted PDF).  Distinct from `failed` because
+  /// there's no action the operator can take; the UI must not badge
+  /// these as errors.
+  bool get isThumbnailSkipped => thumbnailStatus == 'skipped';
 
   static IndexedMedia? tryFromJson(Map<String, dynamic> json) {
     try {
@@ -91,6 +112,7 @@ class IndexedMedia {
             (json['thumbnail_generated_at_unix'] as num?)?.toInt(),
         indexedAtIso: json['indexed_at_iso'] as String?,
         isStreaming: json['is_streaming'] as bool? ?? false,
+        posterUrl: json['poster_url'] as String?,
       );
     } catch (e, st) {
       _log.w('IndexedMedia.tryFromJson — bad payload',

@@ -1,7 +1,12 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
 
 import 'package:fluxora_core/network/api_exception.dart';
+import 'package:fluxora_core/storage/secure_storage.dart';
+import 'package:fluxora_desktop/features/library/data/services/library_events_service.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
 import 'package:fluxora_desktop/features/library/domain/repositories/library_repository.dart';
 
@@ -65,16 +70,19 @@ enum BrowseKindFilter {
 /// `LibraryBrowseCubit` is constructed fresh on every screen mount
 /// (one cubit per `/library/{id}/files` open), so plain instance
 /// fields would reset every time the operator navigates away and
-/// back.  These module-level statics hold the last-known values and
-/// the cubit's constructor seeds itself from them, then mutating
-/// setters write back into the statics so the next mount picks up the
-/// operator's previous choices.
+/// back.  These module-level statics hold the last-known values + the
+/// cubit's constructor seeds itself from them; mutating setters
+/// write back so the next mount picks up the operator's choices.
 ///
-/// Within-session persistence only — true cross-restart persistence
-/// would require `SharedPreferences` (not currently in the desktop
-/// pubspec).  Acceptable scope for v1: the operator hardly ever
-/// restarts the control panel mid-day, and on first-launch they get
-/// sane defaults that match what's currently the per-cubit defaults.
+/// Cross-restart persistence: [hydrateLibraryBrowsePrefs] runs once
+/// at app startup (from `main.dart` after the DI container is built)
+/// + populates the statics from a single JSON blob stored in
+/// [SecureStorage].  Mutating setters then call [_flushBrowsePrefs]
+/// which re-encodes the bundle + writes it back.  We use
+/// `flutter_secure_storage` because it's already in the pubspec for
+/// the auth token (Hard Prohibition #6 — no new pub deps for the
+/// sake of it); the small per-write encrypt overhead doesn't matter
+/// for a once-per-toggle bool / enum write.
 bool _persistedShowHidden = false;
 bool _persistedIndexedOnly = false;
 BrowseSortColumn _persistedSortBy = BrowseSortColumn.name;
@@ -83,6 +91,82 @@ BrowseViewMode _persistedViewMode = BrowseViewMode.list;
 BrowseKindFilter _persistedKindFilter = BrowseKindFilter.all;
 BrowseDensity _persistedDensity = BrowseDensity.comfortable;
 
+/// Backing storage handle.  Assigned by [hydrateLibraryBrowsePrefs];
+/// stays null in tests + during the brief window before the hydrate
+/// call lands, in which case [_flushBrowsePrefs] becomes a no-op (the
+/// statics still update in-memory so the current session sees the
+/// change).
+SecureStorage? _persistedStorage;
+
+/// Read the persisted browse prefs from [storage] + populate the
+/// module-level statics.  Call once at app startup from
+/// `main.dart` after `setupInjector()` so the first cubit mount sees
+/// the operator's last-saved values instead of the defaults.
+///
+/// Tolerant of corrupt / partial payloads: any missing or
+/// unparseable field falls back to its default.  Never throws —
+/// failing to hydrate just leaves the defaults in place + logs.
+Future<void> hydrateLibraryBrowsePrefs(SecureStorage storage) async {
+  _persistedStorage = storage;
+  final raw = await storage.getBrowsePrefsJson();
+  if (raw == null || raw.isEmpty) return;
+  try {
+    final map = jsonDecode(raw) as Map<String, dynamic>;
+    _persistedShowHidden = map['showHidden'] as bool? ?? _persistedShowHidden;
+    _persistedIndexedOnly =
+        map['indexedOnly'] as bool? ?? _persistedIndexedOnly;
+    _persistedSortAsc = map['sortAsc'] as bool? ?? _persistedSortAsc;
+    _persistedSortBy =
+        _decodeEnum(BrowseSortColumn.values, map['sortBy']) ?? _persistedSortBy;
+    _persistedViewMode =
+        _decodeEnum(BrowseViewMode.values, map['viewMode']) ??
+            _persistedViewMode;
+    _persistedKindFilter =
+        _decodeEnum(BrowseKindFilter.values, map['kindFilter']) ??
+            _persistedKindFilter;
+    _persistedDensity =
+        _decodeEnum(BrowseDensity.values, map['density']) ?? _persistedDensity;
+  } catch (e, st) {
+    // Corrupt payload — keep defaults + wipe so the next write starts
+    // clean.  Don't rethrow; UI prefs being reset is an annoyance,
+    // not a launch-blocker.
+    Logger().w('Failed to parse browse prefs; resetting',
+        error: e, stackTrace: st);
+    unawaited(storage.setBrowsePrefsJson('{}'));
+  }
+}
+
+/// Encode the current persisted statics + push to [SecureStorage].
+/// Called from every setter that mutates one of the statics.  Fire-
+/// and-forget — failures are logged but don't propagate to the
+/// caller (a failed pref write shouldn't block the UI update).
+void _flushBrowsePrefs() {
+  final storage = _persistedStorage;
+  if (storage == null) return;
+  final encoded = jsonEncode(<String, dynamic>{
+    'showHidden': _persistedShowHidden,
+    'indexedOnly': _persistedIndexedOnly,
+    'sortBy': _persistedSortBy.name,
+    'sortAsc': _persistedSortAsc,
+    'viewMode': _persistedViewMode.name,
+    'kindFilter': _persistedKindFilter.name,
+    'density': _persistedDensity.name,
+  });
+  unawaited(storage.setBrowsePrefsJson(encoded));
+}
+
+/// Look up an enum value by its string name with a tolerant return —
+/// any non-string / unknown name yields null so the caller can fall
+/// back to the existing default.  Avoids the throw-on-miss behaviour
+/// of `Enum.values.byName(...)`.
+T? _decodeEnum<T extends Enum>(List<T> values, Object? raw) {
+  if (raw is! String) return null;
+  for (final v in values) {
+    if (v.name == raw) return v;
+  }
+  return null;
+}
+
 /// One cubit per screen mount; the UI prefs seed from the module-level
 /// statics above and write back to them on every mutation so they
 /// survive across screen re-mounts within the same app session.
@@ -90,6 +174,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   LibraryBrowseCubit({
     required this.libraryId,
     required LibraryRepository repository,
+    LibraryEventsService? events,
   })  : _repository = repository,
         _showHidden = _persistedShowHidden,
         _indexedOnly = _persistedIndexedOnly,
@@ -98,11 +183,32 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
         _viewMode = _persistedViewMode,
         _kindFilter = _persistedKindFilter,
         _density = _persistedDensity,
-        super(const LibraryBrowseInitial());
+        super(const LibraryBrowseInitial()) {
+    // Subscribe to server-side thumbnail-progress events for our
+    // library so the listing refreshes as thumbs land in the
+    // background.  Without this the operator has to hit Refresh to
+    // see newly-rendered thumbs after kicking off a regenerate.
+    //
+    // Throttled via a debouncer: each event restarts a short timer,
+    // and only the last event in a burst triggers a refresh.  Under
+    // CONCURRENCY=4 the worker can emit 4 events/second; without
+    // throttling the listing would re-fetch 4×/sec for the whole
+    // duration of a regenerate.  Completion (`isComplete`) bypasses
+    // the debouncer so the operator sees the final state promptly.
+    _progressSub = events?.thumbnailsProgress.listen(_onThumbnailProgress);
+  }
 
   final String libraryId;
   final LibraryRepository _repository;
   static final _log = Logger();
+
+  StreamSubscription<ThumbnailProgress>? _progressSub;
+  Timer? _progressRefreshDebounce;
+  // How long to wait after the last progress event before refreshing
+  // the listing.  Long enough to coalesce a burst of completions into
+  // one fetch, short enough that the operator perceives the listing
+  // as "live."
+  static const Duration _progressDebounce = Duration(milliseconds: 600);
 
   // ── UI preferences (seeded from process-wide statics) ──────────────────
 
@@ -284,6 +390,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     if (_showHidden == value) return;
     _showHidden = value;
     _persistedShowHidden = value;
+    _flushBrowsePrefs();
     await _softFetch(_currentPath());
   }
 
@@ -339,6 +446,44 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
       return added;
     } on ApiException catch (e, st) {
       _log.e('scanEntrySubtree failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  /// Remove a single indexed file from the catalog.  The file on disk
+  /// is untouched.  Returns true when the row was removed (or already
+  /// gone), false when the entry has no `file_id` to delete.  Backs
+  /// the right-click "Unindex this file" action.
+  Future<bool> unindexEntry(BrowseEntry entry) async {
+    final fileId = entry.fileId;
+    if (entry.isDir || fileId == null) return false;
+    try {
+      await _repository.unindexFile(fileId);
+      await refresh();
+      return true;
+    } on ApiException catch (e, st) {
+      _log.e('unindexEntry failed', error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  /// Remove every `media_files` row under a directory entry from the
+  /// catalog.  Returns the count of removed rows so callers can render
+  /// a toast.  Files on disk are untouched.  Backs the right-click
+  /// "Unindex this folder" action.
+  Future<int> unindexEntrySubtree(BrowseEntry entry) async {
+    if (!entry.isDir) return 0;
+    final relativePath = _relativePathFor(entry);
+    if (relativePath == null) return 0;
+    try {
+      final removed = await _repository.unindexSubtree(
+        libraryId: libraryId,
+        relativePath: relativePath,
+      );
+      await refresh();
+      return removed;
+    } on ApiException catch (e, st) {
+      _log.e('unindexEntrySubtree failed', error: e, stackTrace: st);
       rethrow;
     }
   }
@@ -487,6 +632,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     if (_indexedOnly == value) return;
     _indexedOnly = value;
     _persistedIndexedOnly = value;
+    _flushBrowsePrefs();
     _reemit();
   }
 
@@ -496,6 +642,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     if (_kindFilter == filter) return;
     _kindFilter = filter;
     _persistedKindFilter = filter;
+    _flushBrowsePrefs();
     _reemit();
   }
 
@@ -510,6 +657,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     }
     _persistedSortBy = _sortBy;
     _persistedSortAsc = _sortAsc;
+    _flushBrowsePrefs();
     _reemit();
   }
 
@@ -518,6 +666,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     if (_viewMode == mode) return;
     _viewMode = mode;
     _persistedViewMode = mode;
+    _flushBrowsePrefs();
     _reemit();
   }
 
@@ -609,6 +758,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     if (_density == density) return;
     _density = density;
     _persistedDensity = density;
+    _flushBrowsePrefs();
     _reemit();
   }
 
@@ -764,6 +914,32 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
       emit(LibraryBrowseLoading(path: path));
     }
     await _fetch(path);
+  }
+
+  /// Drive the listing's live-refresh on a [ThumbnailProgress] event
+  /// from the server.  Skips events for other libraries, debounces a
+  /// burst into one refresh, and bypasses the debouncer when the
+  /// library finishes (`isComplete`) so the operator sees the final
+  /// thumbs as soon as the worker drains.
+  void _onThumbnailProgress(ThumbnailProgress progress) {
+    if (progress.libraryId != libraryId) return;
+    _progressRefreshDebounce?.cancel();
+    if (progress.isComplete) {
+      // No more events incoming — refresh now without waiting for
+      // a debounce window that nothing will land in.
+      unawaited(refresh());
+      return;
+    }
+    _progressRefreshDebounce = Timer(_progressDebounce, () {
+      unawaited(refresh());
+    });
+  }
+
+  @override
+  Future<void> close() {
+    _progressSub?.cancel();
+    _progressRefreshDebounce?.cancel();
+    return super.close();
   }
 
   @override
