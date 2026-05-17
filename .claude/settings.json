@@ -49,7 +49,12 @@
       "PowerShell(Remove-Item $env:TEMP\\fluxora*)",
       "PowerShell(Remove-Item -Force $env:TEMP\\fluxora*)",
       "Bash(python -m pip install pymupdf==1.27.2.3)",
-      "Bash(python -c \"from services.thumbnail_service import extract_thumbnail, kind_for_extension; print\\(kind_for_extension\\('.mkv'\\), kind_for_extension\\('.pdf'\\), kind_for_extension\\('.txt'\\)\\)\")"
+      "Bash(python -c \"from services.thumbnail_service import extract_thumbnail, kind_for_extension; print\\(kind_for_extension\\('.mkv'\\), kind_for_extension\\('.pdf'\\), kind_for_extension\\('.txt'\\)\\)\")",
+      "Skill(ci-status)",
+      "Skill(ci-status:*)",
+      "Bash(PATH='/c/Program Files/GitHub CLI:__TRACKED_VAR__' gh run view 25993935463 --log-failed)",
+      "Bash(python -m black .)",
+      "Bash(python -m black --check .)"
     ]
   }
 }
