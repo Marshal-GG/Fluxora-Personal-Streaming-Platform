@@ -1311,3 +1311,56 @@ Single-finger vertical drag (brightness/volume) still goes through `GestureDetec
 **Rule going forward:** any future HDR-source extractor (EXR, HEIC10, HDR PNG with `MaxCLL` metadata, Apple ProRAW, etc.) inherits the same two pitfalls: (a) confirm FFmpeg actually decodes the format before claiming "we support `.foo` thumbnails," and (b) if the source preserves >1.0 pixel values, tone-map *before* the 8-bit conversion or accept blown-out highlights.  Reinhard is the cheap default; for film-grade output a Hable curve (already used in the streaming pipeline's HDR→SDR branch) is the next step up.  Also: prefer scale-then-process for any per-pixel work shelled out to an interpreter — the ratio of script-startup cost to per-pixel cost flips above ~100 k pixels.
 
 **Flagged in:** post-plan-28 polish wave, 2026-05-17 — operator-reported "thumbs not loading for HDR screenshots" + "thumbs look overexposed."
+
+---
+
+## `FluxGlassMenu` / `_GlassMenuLayoutDelegate` expects overlay-LOCAL coords, not global
+
+**Symptom:**  Right-click context menu opens noticeably to the **right and below** the pointer.  Drift magnitude equals the offset of the Flutter `Overlay` widget from the application window's top-left corner — in Fluxora's case the `FluxTitlebar` (36 px) + the left sidebar (~240 px) push the menu visibly right.
+
+**Root cause:**  `_GlassMenuLayoutDelegate.getPositionForChild` reads `position.left` / `position.top` from the `RelativeRect` passed to `showFluxGlassMenu` and uses those values directly as the menu's anchor in the overlay's coordinate system.  But the natural input for a context menu is `TapDownDetails.globalPosition`, which is in **global window** coordinates.  Apps where the Overlay covers the entire window (the common case) see no drift because window-local ≡ overlay-local.  Apps with chrome that offsets the Overlay (Fluxora's frameless titlebar + sidebar) get a menu that drifts by exactly the overlay's origin.
+
+**Fix at the call site:**  before composing the `RelativeRect`, convert the pointer position from global window coords to overlay-local coords:
+
+```dart
+final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
+final overlayBox = overlay is RenderBox ? overlay : null;
+final overlaySize = overlayBox?.size ?? MediaQuery.of(context).size;
+final localPos =
+    overlayBox != null ? overlayBox.globalToLocal(position) : position;
+
+final selected = await showFluxGlassMenu<MyAction>(
+  context: context,
+  position: RelativeRect.fromLTRB(
+    localPos.dx,
+    localPos.dy,
+    overlaySize.width - localPos.dx,
+    overlaySize.height - localPos.dy,
+  ),
+  items: items,
+);
+```
+
+The same conversion is **not** needed for `FluxGlassMenu` (the widget — not the `show...` function) because its internal `_open` calls `box.localToGlobal(..., ancestor: overlay)` which already returns overlay-local coords.
+
+**Rule going forward:**  any new caller of `showFluxGlassMenu` that anchors on a pointer position MUST convert to overlay-local before building the `RelativeRect`.  Custom `OverlayPortal` popups (column picker, suggestions list, the new Filter popup) avoid this problem by mounting at overlay-local origin natively — only the `showFluxGlassMenu` route needs the dance.
+
+**Flagged in:** folder-browser polish wave 2, 2026-05-17 — operator-reported "right-click menu opens far right side of pointer" after the row context menu switched from Material `showMenu` to `showFluxGlassMenu`.
+
+---
+
+## Per-library TMDB toggle masks at the API surface, not the DB — new read paths must opt in
+
+**Symptom:**  Operator flips a library's `tmdb_enabled` toggle OFF.  Library cards drop the poster mosaic and the folder browser falls back to extracted-frame thumbs — but some other catalog surface (a new endpoint, a custom report, a future feature) still shows the TMDB-derived title / overview / poster.
+
+**Root cause:**  Migration 040's "hide but keep" semantics are deliberate — DB rows retain `tmdb_id` / `title` / `overview` / `poster_url` / `tmdb_show_id` / `season_number` / `episode_number` so flipping the toggle back ON restores the data instantly without re-fetching from TMDB.  The masking happens at the API response shape, not the row.  `library_service._apply_tmdb_mask(db, rows)` is the helper that walks the row list, batched-looks-up `tmdb_enabled` per `library_id`, and zeroes out the TMDB columns for rows whose library has the flag off.  As of 2026-05-17 it's wired into:
+
+- `library_service.list_files` / `list_recent_files` / `search_files` / `list_continue_watching` / `get_file` (the 5 main `media_files` read paths)
+- `library_service._library_aggregates` (library card mosaic — skips TMDB poster query when disabled)
+- `browse_service._attach_index_status` (folder browser media payload — masks `poster_url` per-entry)
+
+Any **new** code path that reads `media_files` rows directly and surfaces them in an API response will silently bypass the toggle.
+
+**Rule going forward:**  when adding a new service function that returns `media_files` rows to an operator-facing response, route the result through `await _apply_tmdb_mask(db, rows)` before returning.  When adding a new endpoint that JOINs `media_files` with library data, gate on `_is_tmdb_enabled(db, library_id)` and either skip TMDB columns from the SELECT or mask them in the projection.  A regression test inserting two libraries (`tmdb_enabled=0` and `=1`) with TMDB-enriched files in both and asserting null-vs-populated TMDB fields catches future bypasses cheaply.
+
+**Flagged in:** plan migration 040, 2026-05-17 — per-library TMDB toggle implementation.

@@ -401,6 +401,7 @@ Originally introduced for the folder browser's URL + toolbar stack ([`apps/deskt
 | `FluxSidebar` | [`apps/desktop/lib/shared/widgets/flux_sidebar.dart`](apps/desktop/lib/shared/widgets/flux_sidebar.dart) | 20 |
 | `FluxGlassDialog` (**canonical `AlertDialog` replacement** — never use Material `AlertDialog` for new code) | [`apps/desktop/lib/shared/widgets/flux_glass_dialog.dart`](apps/desktop/lib/shared/widgets/flux_glass_dialog.dart) | 20 |
 | `FluxGlassMenu` (replaces `PopupMenuButton`) | [`apps/desktop/lib/shared/widgets/flux_glass_menu.dart`](apps/desktop/lib/shared/widgets/flux_glass_menu.dart) | 20 |
+| `FluxGlassPopupSurface` (chrome-only primitive for custom popup content — column picker, autocomplete suggestion lists, sticky filter popovers; share the glass shell without inheriting `FluxGlassMenu`'s flat-select list shape) | [`apps/desktop/lib/shared/widgets/flux_glass_popup_surface.dart`](apps/desktop/lib/shared/widgets/flux_glass_popup_surface.dart) | 20 (configurable) |
 | Command palette overlay | [`apps/desktop/lib/features/command_palette/presentation/widgets/command_palette_overlay.dart`](apps/desktop/lib/features/command_palette/presentation/widgets/command_palette_overlay.dart) | 8 |
 
 **Opaque-raised widgets** (`bg-raised`, no blur) — for surfaces where blur isn't worth the GPU cost:

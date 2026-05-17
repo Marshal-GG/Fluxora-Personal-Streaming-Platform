@@ -506,7 +506,7 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
 ---
 
 ### `DELETE /api/v1/files/{file_id}`
-**Description:** Remove a media file record from the index (does not delete the file from disk).  
+**Description:** Remove a media file record from the index (does not delete the file from disk).  Doubles as the per-file unindex action backing the desktop folder browser's right-click "Unindex this file" — the file on disk stays put; only the `media_files` row + its cascades (`media_thumbnails`, `transcode_jobs`) are removed.  Records a `file.delete` activity event.  For bulk unindex of a folder, use `POST /api/v1/library/{library_id}/unindex-subtree`.  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
 **Status:** ✅ Implemented
 
@@ -545,12 +545,17 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
     "cover_urls": [
       "https://image.tmdb.org/t/p/w500/9gk7adHYeDvHkCSEqAvQNLV5Uge.jpg",
       "https://image.tmdb.org/t/p/w500/aBcD....jpg"
-    ]
+    ],
+    "av1_stream_copy_override": null,
+    "vp9_stream_copy_override": null,
+    "tmdb_enabled": true
   }
 ]
 ```
 
 `total_size_bytes` is computed via `SUM(media_files.size_bytes)` in the `list_libraries` / `get_library` SQL — `0` for libraries with no files.
+
+`tmdb_enabled` (bool, default `true`) — per-library TMDB toggle (migration 040).  When `false`, the server skips all future TMDB enrichment passes for files in this library and **masks** already-persisted TMDB columns (`tmdb_id` / `title` / `overview` / `poster_url` / `tmdb_show_id` / `season_number` / `episode_number`) out of every read-path response (catalog list/get, search, recent, continue-watching, browse-entry media payload, library card mosaic).  Underlying rows are not dropped — flipping back to `true` instantly restores the data without a TMDB round-trip.
 
 `cover_urls` is a small ordered list of TMDB poster URLs sampled from the library's most-recently-enriched files — backs the desktop Library card collage.  Empty list when the library has no TMDB-enriched files yet (no posters available); never `null`.  Defaulted to `[]` server-side so older clients deserialising the response don't break.
 
@@ -566,11 +571,14 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
 {
   "name": "Movies",
   "type": "movies",
-  "root_paths": ["/media/movies", "/nas/movies"]
+  "root_paths": ["/media/movies", "/nas/movies"],
+  "tmdb_enabled": true
 }
 ```
 
 Valid `type` values: `movies` · `tv` · `music` · `files`
+
+`tmdb_enabled` (bool, optional, default `true`) — when `false`, the library starts with TMDB matching disabled.  Useful for non-media libraries (screenshots, captures, document archives) where TMDB would just produce noise.  Operator can also toggle this later via PATCH.
 
 **Response:** `201 Created` with the created library object (same schema as list item).
 
@@ -621,9 +629,14 @@ Valid `type` values: `movies` · `tv` · `music` · `files`
 ```json
 {
   "name": "Movies (4K)",
-  "root_paths": ["/media/movies", "/nas/movies"]
+  "root_paths": ["/media/movies", "/nas/movies"],
+  "av1_stream_copy_override": null,
+  "vp9_stream_copy_override": null,
+  "tmdb_enabled": false
 }
 ```
+
+`tmdb_enabled` (bool, optional) — per-library TMDB toggle.  Omitting the field leaves it untouched.  Setting `false` triggers the hide-but-keep masking described under `GET /api/v1/library`; setting `true` instantly restores any already-persisted TMDB metadata to the response shape without a TMDB round-trip.
 
 **Response:** `200 OK` with the updated library object (same schema as list item, including the recomputed `total_size_bytes`).  
 **Errors:** `404` library not found · `400` no fields supplied · `422` validation failure
@@ -723,7 +736,8 @@ When `FLUXORA_TMDB_KEY` is not configured, returns zeros + a `detail` field inst
         "thumbnail_status": "ready",       // 'pending' | 'generating' | 'ready' | 'failed' | 'skipped' | 'stale' (synthesised)
         "thumbnail_generated_at_unix": 1747059128,  // null when not yet generated; for ?v= cache-buster
         "indexed_at_iso": "2026-05-10T08:14:22Z",
-        "is_streaming": false              // true when an active stream_sessions row points at this file_id
+        "is_streaming": false,             // true when an active stream_sessions row points at this file_id
+        "poster_url": "https://image.tmdb.org/t/p/w500/poster.jpg"  // TMDB art when enriched + library has tmdb_enabled=true; null otherwise. Client prefers this over /files/{id}/thumbnail.
       }
     }
   ]
@@ -736,8 +750,33 @@ Entries are sorted **directories-first then files-alphabetical (case-insensitive
 - `mtime_unix` (int) and `media` (object|null) added 2026-05-16.  Clients that don't recognise the new keys must ignore them.
 - `media.thumbnail_status='stale'` is **synthesised** by the server — it doesn't appear in `media_thumbnails.status`.  When the source file's `media_files.updated_at` is newer than the thumbnail's `generated_at`, the row is auto-flipped back to `status='pending'` with `priority=5` (worker auto-regenerates) + the response reports `thumbnail_status='stale'` so the client renders a "regenerating" affordance.
 - `media.is_streaming` is recomputed per browse request via a `JOIN stream_sessions ... WHERE ended_at IS NULL` subquery; no separate event stream subscribes to it.
+- `media.poster_url` added 2026-05-17.  Carries the persisted `media_files.poster_url` (TMDB art).  Masked to `null` when the library has `tmdb_enabled=false` (per-library toggle).  Client prefers this over the extracted-frame `/files/{id}/thumbnail` so the folder browser matches the library card mosaic's poster-first ranking.
 
 **Errors:** `403` path escapes every library root · `403` permission denied reading directory · `404` library not found / path doesn't exist / library has no root_paths · `500` library `root_paths` JSON corrupted
+
+---
+
+### `POST /api/v1/library/{library_id}/unindex-subtree`
+**Description:** Remove every `media_files` row whose path sits under the given subtree.  Inverse of "Scan this folder" — files on disk are **never** deleted; this is a catalog-only operation.  Cascades to `media_thumbnails` / `transcode_jobs` via the existing `ON DELETE CASCADE` foreign keys.  Backs the desktop folder browser's right-click "Unindex this folder" action.
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).
+**Status:** ✅ Implemented (2026-05-17)
+
+**Query params:**
+- `path` (str, required) — relative path under one of the library's `root_paths` identifying the directory whose indexed files should be removed from the catalog.  Path security mirrors `/browse`: 403 on escape, 404 on missing, 400 when the path resolves to a file.
+
+**Response:**
+```json
+{
+  "library_id": "uuid",
+  "files_removed": 47
+}
+```
+
+Broadcasts `library_changed` + `storage_changed` WS events when `files_removed > 0`.  Files on disk + thumbnail JPEG sidecars stay where they are (orphan-JPEG sweeper in the thumbnail worker picks the JPEGs up on its next 6-h cycle).
+
+**Errors:** `400` path is not a directory · `403` path escapes every library root · `404` library not found / path doesn't exist · `500` unindex failed (DB error)
+
+For single-file unindex, use the existing `DELETE /api/v1/files/{file_id}` endpoint.
 
 ---
 
