@@ -22,6 +22,14 @@ abstract class Library with _$Library {
     @Default(0) int fileCount,
     @Default(0) int totalSizeBytes,
     @Default(<String>[]) List<String> coverUrls,
+    /// Per-library TMDB-enrichment toggle (server migration 040).
+    /// Default `true` so pre-flag libraries continue behaving as
+    /// before.  When `false`, the server (a) skips future TMDB
+    /// enrichment for this library and (b) masks already-persisted
+    /// TMDB columns (poster_url / title / overview / tmdb_id) out of
+    /// every read-path response without dropping the underlying
+    /// rows — re-enabling restores the data instantly.
+    @Default(true) bool tmdbEnabled,
   }) = _Library;
 
   factory Library.fromJson(Map<String, dynamic> json) =>

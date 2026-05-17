@@ -61,6 +61,14 @@ class Endpoints {
   static String libraryScanSubtree(String libraryId) =>
       '$_base/library/$libraryId/scan-subtree';
 
+  /// `POST /api/v1/library/{libraryId}/unindex-subtree?path=<relative>`
+  /// — remove every `media_files` row under the given subtree.  Files
+  /// on disk are NOT deleted; this is the inverse of "Scan this
+  /// folder," not a destructive operation.  Right-click "Unindex this
+  /// folder" action.
+  static String libraryUnindexSubtree(String libraryId) =>
+      '$_base/library/$libraryId/unindex-subtree';
+
   /// `POST /api/v1/files/{fileId}/regenerate-thumbnail` — per-file
   /// thumbnail regenerate (priority=10).  Right-click "Generate
   /// thumbnail" action.

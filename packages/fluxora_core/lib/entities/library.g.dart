@@ -22,6 +22,7 @@ _Library _$LibraryFromJson(Map<String, dynamic> json) => _Library(
           ?.map((e) => e as String)
           .toList() ??
       const <String>[],
+  tmdbEnabled: json['tmdb_enabled'] as bool? ?? true,
 );
 
 Map<String, dynamic> _$LibraryToJson(_Library instance) => <String, dynamic>{
@@ -34,6 +35,7 @@ Map<String, dynamic> _$LibraryToJson(_Library instance) => <String, dynamic>{
   'file_count': instance.fileCount,
   'total_size_bytes': instance.totalSizeBytes,
   'cover_urls': instance.coverUrls,
+  'tmdb_enabled': instance.tmdbEnabled,
 };
 
 const _$LibraryTypeEnumMap = {

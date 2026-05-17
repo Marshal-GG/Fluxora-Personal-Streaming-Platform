@@ -19,6 +19,13 @@ class SecureStorage {
   static const String _keyMaxStreamingQuality = 'max_streaming_quality';
   static const String _keyAutoplayNext = 'autoplay_next';
   static const String _keySubtitlesDefaultOn = 'subtitles_default_on';
+  // Library folder-browser UI prefs (desktop).  Stored as a single JSON
+  // blob keyed under `_keyBrowsePrefs` rather than 7 separate keys so
+  // a new pref can be added without bumping a key list — the loader is
+  // tolerant of missing fields.  Version suffix lets us bump the
+  // schema (e.g. add a new enum value) without colliding with old
+  // payloads.
+  static const String _keyBrowsePrefs = 'library_browse_prefs_v1';
 
   /// Allowed values for [getMaxStreamingQuality] / [setMaxStreamingQuality].
   /// Anything else round-trips back as [maxStreamingQualityDefault].
@@ -322,6 +329,29 @@ class SecureStorage {
     } catch (e, st) {
       _log.e('Failed to write subtitles-default-on pref',
           error: e, stackTrace: st);
+      rethrow;
+    }
+  }
+
+  // ── Library folder-browser UI prefs (desktop, cross-restart) ─────────────
+  // Read/written as one opaque JSON string so the cubit owns the
+  // schema and the storage layer stays schema-agnostic.  Returns null
+  // on a fresh install or after a corrupt write was wiped.
+
+  Future<String?> getBrowsePrefsJson() async {
+    try {
+      return await _storage.read(key: _keyBrowsePrefs);
+    } catch (e, st) {
+      _log.e('Failed to read browse prefs', error: e, stackTrace: st);
+      return null;
+    }
+  }
+
+  Future<void> setBrowsePrefsJson(String json) async {
+    try {
+      await _storage.write(key: _keyBrowsePrefs, value: json);
+    } catch (e, st) {
+      _log.e('Failed to write browse prefs', error: e, stackTrace: st);
       rethrow;
     }
   }
