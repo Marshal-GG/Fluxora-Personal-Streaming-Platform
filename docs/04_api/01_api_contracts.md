@@ -525,6 +525,27 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
 
 ---
 
+### `POST /api/v1/files/{file_id}/stream-test`
+**Description:** Operator-facing dry-run sanity check for the desktop folder browser's "Stream test" affordance.  Verifies the file is reachable on disk + reports the codec + the exact playback path that `POST /stream/start` would route through (the plan-18 H.264 sidecar wins over the source when present + on disk).  **Does NOT spawn FFmpeg, does NOT INSERT a `stream_sessions` row, does NOT require a bearer token** — pure read-only probe.
+**Auth:** Localhost only — `require_local_caller`.  Bypasses the group-visibility gate that bearer callers go through.
+**Status:** ✅ Implemented (2026-05-18)
+
+**Response:**
+```json
+{
+  "file_id": "uuid",
+  "playback_path": "D:/.../Movie.h264.mp4",  // sidecar when present + on disk, else original source
+  "codec": "hevc",                            // from media_files.codec_name; null for non-probeable kinds (PDF / EPUB / etc)
+  "audio_codec": "eac3",                      // first track from media_files.audio_tracks JSON; null when malformed/absent
+  "would_use_sidecar": true,
+  "ok": true
+}
+```
+
+**Errors:** `404` file not found in catalog · `404` source file missing on disk · `404` transcoded sidecar missing on disk (reports the side that's missing in the `detail` so the operator knows whether to re-scan or retry plan-18 transcoding)
+
+---
+
 ### `GET /api/v1/library`
 **Description:** List all libraries.  
 **Auth:** Bearer token **or** localhost (`validate_token_or_local`).  
@@ -726,6 +747,7 @@ When `FLUXORA_TMDB_KEY` is not configured, returns zeros + a `detail` field inst
       "mtime_unix": 1747059128,           // raw mtime for client-side stale-thumb math
       "is_indexed": true,                 // has a media_files row pointing at this absolute path
       "file_id": "uuid-of-media_files-row",  // null when not indexed
+      "cataloged_size_bytes": 0,          // directory entries only — SUM of media_files.size_bytes for every indexed descendant under this folder; 0 for files + un-indexed directories. Sub-millisecond on the server (path-prefix LIKE against the media_files index), so the folder browser shows a size for directory rows without the operator clicking "Compute size".  See `_attach_directory_catalog_sizes` in `browse_service.py`.
       "media": {                          // null for non-indexed entries + directories — plan 28 Phase A
         "width": 3840,
         "height": 2160,
@@ -751,8 +773,30 @@ Entries are sorted **directories-first then files-alphabetical (case-insensitive
 - `media.thumbnail_status='stale'` is **synthesised** by the server — it doesn't appear in `media_thumbnails.status`.  When the source file's `media_files.updated_at` is newer than the thumbnail's `generated_at`, the row is auto-flipped back to `status='pending'` with `priority=5` (worker auto-regenerates) + the response reports `thumbnail_status='stale'` so the client renders a "regenerating" affordance.
 - `media.is_streaming` is recomputed per browse request via a `JOIN stream_sessions ... WHERE ended_at IS NULL` subquery; no separate event stream subscribes to it.
 - `media.poster_url` added 2026-05-17.  Carries the persisted `media_files.poster_url` (TMDB art).  Masked to `null` when the library has `tmdb_enabled=false` (per-library toggle).  Client prefers this over the extracted-frame `/files/{id}/thumbnail` so the folder browser matches the library card mosaic's poster-first ranking.
+- `cataloged_size_bytes` (int) added 2026-05-18.  Directory entries only.  Sum of `media_files.size_bytes` for every indexed descendant under the folder, computed batched via `_attach_directory_catalog_sizes` (a single SQL pass per browse — one `LIKE 'prefix/%'` per dir against the `media_files` path index).  0 for files and for directories whose contents are entirely un-indexed.  Lets the desktop folder browser populate the SIZE column for folder rows instantly — the operator only has to hit "Compute size" when they want the authoritative on-disk walk via `GET /api/v1/library/{id}/folder-size` (which counts everything on disk, indexed or not).
 
 **Errors:** `403` path escapes every library root · `403` permission denied reading directory · `404` library not found / path doesn't exist / library has no root_paths · `500` library `root_paths` JSON corrupted
+
+---
+
+### `GET /api/v1/library/{library_id}/resolve-absolute`
+**Description:** Walk every `library.root_paths` entry and return the library-relative path matching an absolute on-disk path the operator typed into the desktop URL bar.  Backs the manual-typing fallback when the client-side prefix match against the currently-visible root fails (multi-root library, case mismatch on Windows, typed canonical form differs from the visible root).
+**Auth:** Bearer token **or** localhost (`validate_token_or_local`).
+**Status:** ✅ Implemented (2026-05-18)
+
+**Query params:**
+- `path` (str, required) — absolute on-disk path.  Resolved via `Path.resolve(strict=True)` so the response carries the OS canonical form (Windows: `GetFinalPathNameByHandle` corrects case + UNC normalisation).
+
+**Response:**
+```json
+{
+  "library_id": "uuid",
+  "root_path": "D:/Movies",
+  "relative_path": "Action/2024"
+}
+```
+
+**Errors:** `403` path escapes every root · `404` library not found / path doesn't exist on disk / path isn't under any of this library's roots
 
 ---
 
