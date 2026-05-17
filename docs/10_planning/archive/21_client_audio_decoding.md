@@ -240,8 +240,6 @@ docs/09_backend/01_backend_architecture.md
 docs/10_planning/01_roadmap.md
 docs/10_planning/archive/21_client_audio_decoding.md (this file — moved from 21_client_audio_decoding.md)
 docs/12_guidelines/03_gotchas.md
-CLAUDE.md
-AGENT_LOG.md
 ```
 
 ## Sharp edges (all documented in `docs/12_guidelines/03_gotchas.md`)

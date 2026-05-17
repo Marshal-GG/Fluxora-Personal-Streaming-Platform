@@ -513,4 +513,3 @@ Each of these is large enough to warrant its own plan doc.  Tracked here for vis
 - Plan 26: `docs/10_planning/26_desktop_cp_ia_redesign.md` — IndexedStack tab host + WS event push (the `LibraryEventsService` Phase A reuses)
 - `docs/03_data/02_database_schema.md` — `media_files` + `media_thumbnails` + `stream_sessions` column inventory
 - `docs/04_api/01_api_contracts.md` — existing `/browse` endpoint + WS frame format docs
-- `docs/12_guidelines/04_agent_log_format.md` — AGENT_LOG entry format spec for the per-phase landing entries

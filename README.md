@@ -229,7 +229,6 @@ Phases 1–4 shipped. **Phase 5 — advanced features + brand redesign** is in p
 | **[SECURITY.md](SECURITY.md)** | Vulnerability disclosure — private channels, response SLAs, scope. |
 | **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** | How we work together in issues / PRs / Discussions. |
 | **[NOTICE](NOTICE)** | Third-party libraries used + credits to projects that inspired Fluxora (Plex, Jellyfin, Syncthing, FFmpeg, mpv, TMDB, …). |
-| **[CONTRIBUTING.md](CONTRIBUTING.md)** | First-30-minute setup for new contributors. |
 
 The **server software is MIT-licensed** — use it, fork it, build a service on top of it. The **paid tiers fund continued development** without locking the basics; the Free tier remains fully functional forever.
 

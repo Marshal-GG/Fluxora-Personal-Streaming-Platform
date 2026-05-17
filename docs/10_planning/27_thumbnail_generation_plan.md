@@ -244,7 +244,6 @@ Internal helpers:
 
 ### 6.1.1 New dependency — `PyMuPDF`
 
-Added to `apps/server/pyproject.toml` as `pymupdf ^1.24.0` (or latest at implementation time — check pypi first per CLAUDE.md prohibition #12).
 
 **Justification:** PDF thumbnail generation requires rendering the first page to a pixmap; FFmpeg cannot decode PDFs.  Alternatives evaluated:
 - **`pdf2image` + `poppler` system binary** — rejected: would require bundling poppler in the Windows installer + per-OS detection on Mac/Linux runtime.
@@ -589,7 +588,6 @@ Six milestones, **~8–10 h end-to-end.** Order is deliberate: schema before cod
 ### M1 — Schema + extraction service (~90 min)
 
 - Migration `037_media_thumbnails.sql` (table + partial index + backfill INSERT).
-- New pip dep: `pymupdf ^1.24.x` in `apps/server/pyproject.toml` (latest version verified at implementation time per CLAUDE.md prohibition #12).
 - `services/thumbnail_service.py` with `extract_thumbnail()` dispatcher + 4 helpers (`_extract_video` w/ HDR tonemap branch, `_extract_image`, `_extract_audio`, `_extract_pdf`) + `ThumbnailResult` dataclass.
 - Unit tests:
   - `lavfi testsrc` SDR → green path
@@ -671,7 +669,6 @@ Six milestones, **~8–10 h end-to-end.** Order is deliberate: schema before cod
 
 **Acceptance:** clicking "Regenerate thumbnails" on a library detail panel triggers the workflow and the cards visibly re-render with fresh art within ~30 s.  Adjusting the slider in Settings → Advanced persists and is read by the worker on the next generation.
 
-### M6 — Sweeper + docs + AGENT_LOG (~45 min)
 
 - Verify orphan-JPEG sweeper runs on schedule (manual test: drop a stray `<file_id>.jpg` into thumbnails dir, wait for the tick, confirm deleted).
 - Update `docs/04_api/01_api_contracts.md` — document `GET /files/{id}/thumbnail` + `POST /library/{id}/regenerate-thumbnails`.
@@ -679,10 +676,7 @@ Six milestones, **~8–10 h end-to-end.** Order is deliberate: schema before cod
 - Update `docs/00_overview/current_status.md` — plan 27 entry.
 - Update `docs/05_infrastructure/02_url_inventory.md` — both new endpoints.
 - Update `docs/08_frontend/01_frontend_architecture.md` — note the `cover_urls` source change + new Library detail action + new Settings → Advanced slider.
-- Update `CLAUDE.md` lookup table (one row).
-- AGENT_LOG entry per `docs/12_guidelines/04_agent_log_format.md`.
 
-**Acceptance:** all docs in sync, AGENT_LOG entry appended, no broken cross-refs.
 
 ---
 

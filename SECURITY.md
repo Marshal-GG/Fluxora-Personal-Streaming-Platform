@@ -102,13 +102,11 @@ For context, the things we actively defend against:
 
 | Asset | Control |
 |-------|---------|
-| Bearer auth tokens | Stored as HMAC-SHA256 hashes only — never plaintext (CLAUDE.md hard prohibition #13). Token is shown to the client once at approval and never re-derivable from the DB. |
 | License keys | HMAC-SHA256 signed; format `FLUXORA-<TIER>-<EXPIRY>-<NONCE>-<SIG>`. Server validates the signature locally with a secret from `~/.fluxora/config.json` — no network call. |
 | Polar webhook events | Verified via Standard-Webhooks signature before any side effect. Order-ID idempotency table rejects replays. |
 | Admin endpoints | Localhost-only via `require_local_caller` (rejects loopback callers carrying `CF-Connecting-IP` so a tunneled request cannot impersonate localhost). See `docs/06_security/01_security.md`. |
 | HLS segments over the public tunnel | Blocked by `HLSBlockOverTunnelMiddleware` — segments are LAN-only by design. |
 | Path traversal / unsafe upload paths | `library_service._is_valid_absolute_media_path` rejects relative, `[`-prefixed, and null-byte paths in scan + upload (migration 022). |
-| Logged sensitive data | CLAUDE.md hard prohibition #8 — bearer tokens, passwords, license keys, customer email, file system paths under user's home directory: never logged in production. |
 
 If you find a way around any of these, that's the kind of report we want.
 
