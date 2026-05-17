@@ -11,13 +11,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
-
-import pytest
 
 from services import thumbnail_worker
 from services.thumbnail_service import ThumbnailResult
-
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -173,7 +169,7 @@ async def test_claim_picks_highest_priority_first(test_db):
     lib_a = await _insert_library(test_db, name="A")
     lib_b = await _insert_library(test_db, name="B")
     # Create A's file first (older created_at) but boost B.
-    fid_a = await _insert_file(test_db, library_id=lib_a)
+    await _insert_file(test_db, library_id=lib_a)
     # ensure created_at diverges
     import asyncio
 
@@ -246,9 +242,7 @@ async def test_process_marks_ready_on_success(test_db, monkeypatch, tmp_path):
     async def fake_extract(*_args, **_kwargs):
         return ThumbnailResult(success=True)
 
-    monkeypatch.setattr(
-        "services.thumbnail_service.extract_thumbnail", fake_extract
-    )
+    monkeypatch.setattr("services.thumbnail_service.extract_thumbnail", fake_extract)
     monkeypatch.setattr(thumbnail_worker, "_THUMBNAILS_DIR", tmp_path)
 
     claim = {
@@ -276,9 +270,7 @@ async def test_process_marks_skipped_on_skip(test_db, monkeypatch, tmp_path):
             success=False, skipped=True, error="no embedded album art"
         )
 
-    monkeypatch.setattr(
-        "services.thumbnail_service.extract_thumbnail", fake_extract
-    )
+    monkeypatch.setattr("services.thumbnail_service.extract_thumbnail", fake_extract)
     monkeypatch.setattr(thumbnail_worker, "_THUMBNAILS_DIR", tmp_path)
 
     claim = {
@@ -305,9 +297,7 @@ async def test_process_marks_failed_and_increments_attempts(
     async def fake_extract(*_args, **_kwargs):
         return ThumbnailResult(success=False, error="ffmpeg exit=1")
 
-    monkeypatch.setattr(
-        "services.thumbnail_service.extract_thumbnail", fake_extract
-    )
+    monkeypatch.setattr("services.thumbnail_service.extract_thumbnail", fake_extract)
     monkeypatch.setattr(thumbnail_worker, "_THUMBNAILS_DIR", tmp_path)
 
     claim = {
@@ -349,17 +339,13 @@ async def test_process_unknown_extension_is_skipped(test_db, tmp_path, monkeypat
 # ── Failure notification aggregation ───────────────────────────────────────
 
 
-async def test_failure_notification_fires_at_threshold(
-    test_db, monkeypatch, tmp_path
-):
+async def test_failure_notification_fires_at_threshold(test_db, monkeypatch, tmp_path):
     lib_id = await _insert_library(test_db)
 
     async def fake_extract(*_args, **_kwargs):
         return ThumbnailResult(success=False, error="broken")
 
-    monkeypatch.setattr(
-        "services.thumbnail_service.extract_thumbnail", fake_extract
-    )
+    monkeypatch.setattr("services.thumbnail_service.extract_thumbnail", fake_extract)
     monkeypatch.setattr(thumbnail_worker, "_THUMBNAILS_DIR", tmp_path)
 
     threshold = thumbnail_worker.FAILURE_NOTIFICATION_THRESHOLD
@@ -387,23 +373,18 @@ async def test_failure_notification_fires_at_threshold(
     assert row["n"] == 1  # one summary, not N per-file
 
 
-async def test_failure_notification_dedup_on_open(
-    test_db, monkeypatch, tmp_path
-):
+async def test_failure_notification_dedup_on_open(test_db, monkeypatch, tmp_path):
     lib_id = await _insert_library(test_db)
 
     async def fake_extract(*_args, **_kwargs):
         return ThumbnailResult(success=False, error="broken")
 
-    monkeypatch.setattr(
-        "services.thumbnail_service.extract_thumbnail", fake_extract
-    )
+    monkeypatch.setattr("services.thumbnail_service.extract_thumbnail", fake_extract)
     monkeypatch.setattr(thumbnail_worker, "_THUMBNAILS_DIR", tmp_path)
 
     threshold = thumbnail_worker.FAILURE_NOTIFICATION_THRESHOLD
     fids = [
-        await _insert_file(test_db, library_id=lib_id)
-        for _ in range(threshold * 2)
+        await _insert_file(test_db, library_id=lib_id) for _ in range(threshold * 2)
     ]
 
     for fid in fids:
@@ -436,9 +417,7 @@ async def test_failure_notification_below_threshold_is_silent(
     async def fake_extract(*_args, **_kwargs):
         return ThumbnailResult(success=False, error="broken")
 
-    monkeypatch.setattr(
-        "services.thumbnail_service.extract_thumbnail", fake_extract
-    )
+    monkeypatch.setattr("services.thumbnail_service.extract_thumbnail", fake_extract)
     monkeypatch.setattr(thumbnail_worker, "_THUMBNAILS_DIR", tmp_path)
 
     # Only 2 failures — under the default threshold of 5
@@ -465,9 +444,7 @@ async def test_failure_notification_below_threshold_is_silent(
 # ── regenerate_library ─────────────────────────────────────────────────────
 
 
-async def test_regenerate_resets_and_deletes_jpegs(
-    test_db, monkeypatch, tmp_path
-):
+async def test_regenerate_resets_and_deletes_jpegs(test_db, monkeypatch, tmp_path):
     lib_id = await _insert_library(test_db)
     fids = [await _insert_file(test_db, library_id=lib_id) for _ in range(3)]
 
@@ -539,9 +516,7 @@ async def test_settings_reader_returns_default_width_pre_migration_038(test_db):
 # ── Progress emission (post-ship visibility) ───────────────────────────────
 
 
-async def test_emit_progress_counts_pending_ready_total(
-    test_db, monkeypatch
-):
+async def test_emit_progress_counts_pending_ready_total(test_db, monkeypatch):
     """`_emit_progress` should compute pending+generating, ready, total for
     a library and fire a thumbnails_progress event with those counts."""
     lib_id = await _insert_library(test_db)
@@ -580,9 +555,7 @@ async def test_emit_progress_counts_pending_ready_total(
     assert f_pending != f_other
 
 
-async def test_emit_progress_throttles_library_changed(
-    test_db, monkeypatch
-):
+async def test_emit_progress_throttles_library_changed(test_db, monkeypatch):
     """`library_changed` should fire every Nth call OR on the last-pending
     completion, not on every progress emission."""
     lib_id = await _insert_library(test_db)
@@ -601,9 +574,9 @@ async def test_emit_progress_throttles_library_changed(
     for _ in range(4):
         await thumbnail_worker._emit_progress(test_db, lib_id)
     library_changed_events = [c for c in captured if c[0] == "library_changed"]
-    assert len(library_changed_events) == 0, (
-        f"unexpected library_changed before threshold: {captured}"
-    )
+    assert (
+        len(library_changed_events) == 0
+    ), f"unexpected library_changed before threshold: {captured}"
 
     # 5th call — counter hits threshold → emit.
     await thumbnail_worker._emit_progress(test_db, lib_id)
@@ -620,9 +593,7 @@ async def test_emit_progress_throttles_library_changed(
     assert fid is not None
 
 
-async def test_emit_progress_force_emits_when_queue_empties(
-    test_db, monkeypatch
-):
+async def test_emit_progress_force_emits_when_queue_empties(test_db, monkeypatch):
     """Even below the throttle threshold, library_changed should fire if
     the library has zero pending+generating rows (last completion)."""
     lib_id = await _insert_library(test_db)
@@ -661,9 +632,7 @@ async def test_emit_progress_ignores_null_library_id(test_db, monkeypatch):
     assert captured == []
 
 
-async def test_process_one_emits_progress_after_success(
-    test_db, monkeypatch, tmp_path
-):
+async def test_process_one_emits_progress_after_success(test_db, monkeypatch, tmp_path):
     """End-to-end: completing a thumbnail through _process_one fires
     thumbnails_progress for the parent library."""
     lib_id = await _insert_library(test_db)
@@ -672,9 +641,7 @@ async def test_process_one_emits_progress_after_success(
     async def fake_extract(*_args, **_kwargs):
         return ThumbnailResult(success=True)
 
-    monkeypatch.setattr(
-        "services.thumbnail_service.extract_thumbnail", fake_extract
-    )
+    monkeypatch.setattr("services.thumbnail_service.extract_thumbnail", fake_extract)
     monkeypatch.setattr(thumbnail_worker, "_THUMBNAILS_DIR", tmp_path)
 
     captured: list[tuple[str, dict | None]] = []

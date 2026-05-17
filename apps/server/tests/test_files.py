@@ -638,3 +638,78 @@ async def test_get_file_content_local_caller_skips_visibility(
     resp = await client.get(f"/api/v1/files/{file_id}/content")
     assert resp.status_code == 200
     assert resp.content == payload
+
+
+# ── POST /api/v1/files/{id}/stream-test ──────────────────────────────────────
+# Localhost-only sanity probe.  Verifies the file is reachable on disk +
+# reports the codec / playback path the streaming pipeline would route
+# through.  Does NOT spawn FFmpeg or create a stream_sessions row.  Backs
+# the desktop folder browser's "Stream test" affordance, which bypasses
+# the bearer-only `/stream/start/{id}` endpoint because the desktop is
+# the operator (no paired-client token).
+
+
+@pytest.mark.asyncio
+async def test_stream_test_returns_ok_when_file_on_disk(
+    client: AsyncClient, test_db, tmp_path
+):
+    on_disk = tmp_path / "movie.mp4"
+    on_disk.write_bytes(b"fake-mp4-bytes")
+    file_id = await _insert_file_with_path(test_db, path=str(on_disk), name="movie.mp4")
+    # Stamp codec on the row so the probe surfaces it in the response.
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = ? WHERE id = ?",
+        ("h264", file_id),
+    )
+    await test_db.commit()
+
+    resp = await client.post(f"/api/v1/files/{file_id}/stream-test")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["file_id"] == file_id
+    assert body["codec"] == "h264"
+    assert body["would_use_sidecar"] is False
+    assert body["playback_path"] == str(on_disk)
+
+
+@pytest.mark.asyncio
+async def test_stream_test_routes_through_sidecar_when_present(
+    client: AsyncClient, test_db, tmp_path
+):
+    source = tmp_path / "src.mkv"
+    source.write_bytes(b"av1-source-bytes")
+    sidecar = tmp_path / "src.h264.mkv"
+    sidecar.write_bytes(b"h264-sidecar-bytes")
+    file_id = await _insert_file_with_path(test_db, path=str(source), name="src.mkv")
+    await test_db.execute(
+        "UPDATE media_files SET codec_name = ?, transcoded_path = ?" " WHERE id = ?",
+        ("av1", str(sidecar), file_id),
+    )
+    await test_db.commit()
+
+    resp = await client.post(f"/api/v1/files/{file_id}/stream-test")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["would_use_sidecar"] is True
+    assert body["playback_path"] == str(sidecar)
+
+
+@pytest.mark.asyncio
+async def test_stream_test_404_when_file_id_missing(client: AsyncClient):
+    resp = await client.post("/api/v1/files/nonexistent-id/stream-test")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_stream_test_404_when_source_missing_on_disk(
+    client: AsyncClient, test_db
+):
+    # Insert a row pointing at a path that never existed; probe should
+    # surface the missing-on-disk case with a clear message.
+    file_id = await _insert_file_with_path(
+        test_db, path="/nonexistent/path/movie.mp4", name="movie.mp4"
+    )
+    resp = await client.post(f"/api/v1/files/{file_id}/stream-test")
+    assert resp.status_code == 404
+    assert "disk" in resp.json()["detail"].lower()

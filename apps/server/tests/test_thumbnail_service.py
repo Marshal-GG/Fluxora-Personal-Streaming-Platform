@@ -19,12 +19,10 @@ from pathlib import Path
 import pytest
 
 from services.thumbnail_service import (
-    ThumbnailResult,
     _build_video_filter_chain,
     extract_thumbnail,
     kind_for_extension,
 )
-
 
 # ── kind dispatch table ────────────────────────────────────────────────────
 
@@ -73,9 +71,7 @@ async def test_extract_thumbnail_missing_source(tmp_path: Path):
 async def test_extract_thumbnail_unknown_kind(tmp_path: Path):
     src = tmp_path / "anything.bin"
     src.write_bytes(b"\x00")
-    result = await extract_thumbnail(
-        src, tmp_path / "out.jpg", kind="docx"
-    )
+    result = await extract_thumbnail(src, tmp_path / "out.jpg", kind="docx")
     assert result.success is False
     assert result.skipped is True
     assert "unsupported" in (result.error or "").lower()
@@ -172,7 +168,7 @@ def test_video_filter_chain_hdr_includes_tonemap():
     assert "zscale=p=bt709" in vf
     assert "zscale=t=bt709:m=bt709" in vf
     # Final downscale runs AFTER the tonemap so resize works on SDR pixels.
-    assert vf.endswith(f"scale=320:-2:flags=bilinear")
+    assert vf.endswith("scale=320:-2:flags=bilinear")
     # Width is plumbed correctly.
     vf_640 = _build_video_filter_chain(width=640, hdr=True)
     assert "scale=640:-2:flags=bilinear" in vf_640

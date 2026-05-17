@@ -425,6 +425,47 @@ async def get_folder_size(
     }
 
 
+@router.get(
+    "/{library_id}/resolve-absolute",
+    status_code=status.HTTP_200_OK,
+)
+async def resolve_absolute_path(
+    library_id: str,
+    path: str = Query(
+        ...,
+        description="absolute on-disk path the operator typed into the "
+        "desktop URL bar; the server walks every library root and "
+        "returns the relative path under the matching one",
+    ),
+    db: aiosqlite.Connection = Depends(get_db),
+    _client: aiosqlite.Row | None = Depends(validate_token_or_local),
+) -> dict:
+    """Resolve an absolute on-disk path to a library-relative path.
+
+    Backs the desktop folder browser's manual-typing fallback: when
+    the URL bar's client-side prefix match against the currently-
+    visible root fails (multi-root library, case mismatch, typed
+    canonical form differs), the client posts the absolute here and
+    walks every configured `library.root_paths`.
+
+    Returns ``{library_id, root_path, relative_path}`` on a match.
+
+    Errors:
+        - 404 path doesn't exist OR isn't under any library root
+    """
+    try:
+        matched_root, relative = await browse_service.resolve_absolute_to_relative(
+            db, library_id=library_id, absolute_path=path
+        )
+    except BrowseError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from e
+    return {
+        "library_id": library_id,
+        "root_path": str(matched_root),
+        "relative_path": relative,
+    }
+
+
 @router.post(
     "/{library_id}/index-file",
     status_code=status.HTTP_200_OK,

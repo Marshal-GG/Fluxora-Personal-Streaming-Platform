@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import stat
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -55,14 +56,38 @@ logger = logging.getLogger(__name__)
 # pdf, then a small set of "common doc" types we badge for the UI but
 # can't render directly (clicks fall through to "Open in file manager").
 
-_VIDEO_EXTENSIONS = frozenset({
-    ".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".flv", ".m4v",
-    ".ts", ".mpg", ".mpeg", ".3gp",
-})
-_IMAGE_EXTENSIONS = frozenset({
-    ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp",
-    ".tiff", ".tif", ".ico", ".jxr",
-})
+_VIDEO_EXTENSIONS = frozenset(
+    {
+        ".mp4",
+        ".mkv",
+        ".mov",
+        ".avi",
+        ".webm",
+        ".wmv",
+        ".flv",
+        ".m4v",
+        ".ts",
+        ".mpg",
+        ".mpeg",
+        ".3gp",
+    }
+)
+_IMAGE_EXTENSIONS = frozenset(
+    {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".heic",
+        ".heif",
+        ".gif",
+        ".bmp",
+        ".tiff",
+        ".tif",
+        ".ico",
+        ".jxr",
+    }
+)
 _AUDIO_EXTENSIONS = frozenset(
     {".mp3", ".m4a", ".flac", ".ogg", ".opus", ".wav", ".aac"}
 )
@@ -136,12 +161,12 @@ class IndexedMedia:
     height: int | None
     duration_sec: float | None
     codec_name: str | None
-    hdr_format: str | None        # HDR10 / HLG / DolbyVision / null
-    audio_codec: str | None       # primary track's codec from audio_tracks
+    hdr_format: str | None  # HDR10 / HLG / DolbyVision / null
+    audio_codec: str | None  # primary track's codec from audio_tracks
     thumbnail_status: str | None  # see docstring
     thumbnail_generated_at_unix: int | None  # for ?v= cache-buster
-    indexed_at_iso: str | None    # media_files.created_at
-    is_streaming: bool            # active stream_session row exists
+    indexed_at_iso: str | None  # media_files.created_at
+    is_streaming: bool  # active stream_session row exists
     # TMDB poster art for this file, or null when un-enriched.  Client
     # prefers this over the extracted-frame thumbnail when present so
     # the folder browser matches the library card mosaic (where TMDB
@@ -172,7 +197,7 @@ class BrowseEntry:
     is_hidden: bool
     size_bytes: int
     modified_iso: str  # ISO-8601 UTC
-    mtime_unix: int    # raw mtime for client-side stale-thumb checks
+    mtime_unix: int  # raw mtime for client-side stale-thumb checks
 
     # Indexed-status fields are filled in by `_attach_index_status` from
     # a single SQL lookup over `media_files`.  `file_id` is the row id;
@@ -188,6 +213,19 @@ class BrowseEntry:
     # indexed entries and directories.
     media: IndexedMedia | None = None
 
+    # Directory entries only — SUM of `media_files.size_bytes` for every
+    # indexed descendant.  Sub-millisecond to compute (index-friendly
+    # `LIKE 'prefix/%' ESCAPE '|'`); populated by
+    # `_attach_directory_catalog_sizes` so the desktop folder browser
+    # can fill the SIZE column instantly without the operator clicking
+    # "Compute size" (which still does an authoritative on-disk walk
+    # via `library_service.folder_size`).  Returns 0 for files + for
+    # directories whose contents are entirely un-indexed (e.g. a
+    # Documents library with random extensions, or a folder that was
+    # just unindexed via right-click).  Distinct from `size_bytes`
+    # which is always the filesystem stat — never use this for files.
+    cataloged_size_bytes: int = 0
+
     def to_json(self) -> dict:
         return {
             "name": self.name,
@@ -200,14 +238,15 @@ class BrowseEntry:
             "is_indexed": self.is_indexed,
             "file_id": self.file_id,
             "media": self.media.to_json() if self.media else None,
+            "cataloged_size_bytes": self.cataloged_size_bytes,
         }
 
 
 @dataclass(frozen=True)
 class BrowseResponse:
     library_id: str
-    root_path: str          # the resolved root the relative path lives under
-    relative_path: str      # normalised relative path (forward slashes)
+    root_path: str  # the resolved root the relative path lives under
+    relative_path: str  # normalised relative path (forward slashes)
     parent_path: str | None  # one level up, or None at the library root
     entries: list[BrowseEntry]
 
@@ -248,9 +287,7 @@ def _normalise_relative(relative: str) -> str:
     return rel
 
 
-def _resolve_path_under_root(
-    roots: list[Path], relative: str
-) -> tuple[Path, Path]:
+def _resolve_path_under_root(roots: list[Path], relative: str) -> tuple[Path, Path]:
     """Resolve `relative` against one of `roots`.
 
     Returns `(matched_root, resolved_absolute)`.  The target may be a
@@ -304,6 +341,20 @@ def _resolve_path_under_root(
         if not candidate.exists():
             last_err = FileNotFoundError(str(candidate))
             continue
+        # Case-correct on Windows.  `Path.resolve(strict=False)` keeps
+        # the typed case (e.g. operator types `i:\rupam\cars`, the
+        # candidate stays lowercase).  `strict=True` queries the FS
+        # via `GetFinalPathNameByHandle` which returns the on-disk
+        # casing — `I:\Rupam\Cars`.  POSIX is case-sensitive so this
+        # is a no-op there.
+        try:
+            candidate = candidate.resolve(strict=True)
+        except OSError:
+            # Race: file vanished between `.exists()` and `.resolve()`.
+            # Fall through with the un-canonicalised form rather than
+            # surfacing a 500; the caller's own existence check will
+            # catch the real error.
+            pass
         return root_resolved, candidate
 
     if isinstance(last_err, FileNotFoundError):
@@ -311,9 +362,7 @@ def _resolve_path_under_root(
     raise BrowseError(403, "path escapes every library root")
 
 
-def _resolve_under_root(
-    roots: list[Path], relative: str
-) -> tuple[Path, Path]:
+def _resolve_under_root(roots: list[Path], relative: str) -> tuple[Path, Path]:
     """Directory-only resolver used by `browse_library`.
 
     Delegates to `_resolve_path_under_root` then enforces is_dir.
@@ -324,9 +373,7 @@ def _resolve_under_root(
     return matched_root, resolved
 
 
-async def _load_library_roots(
-    db: aiosqlite.Connection, library_id: str
-) -> list[Path]:
+async def _load_library_roots(db: aiosqlite.Connection, library_id: str) -> list[Path]:
     """Common helper: load + parse a library's `root_paths` column.
 
     Raises `BrowseError(404)` when the library doesn't exist or has no
@@ -342,9 +389,7 @@ async def _load_library_roots(
         raise BrowseError(404, "library not found")
     raw_roots = row["root_paths"]
     try:
-        decoded = (
-            json.loads(raw_roots) if isinstance(raw_roots, str) else raw_roots
-        )
+        decoded = json.loads(raw_roots) if isinstance(raw_roots, str) else raw_roots
     except (TypeError, ValueError) as e:
         raise BrowseError(500, "library root_paths corrupted") from e
     if not isinstance(decoded, list) or not decoded:
@@ -403,6 +448,52 @@ async def resolve_subtree_for_scan(
     if not resolved.is_dir():
         raise BrowseError(400, "target is not a directory")
     return resolved
+
+
+async def resolve_absolute_to_relative(
+    db: aiosqlite.Connection,
+    *,
+    library_id: str,
+    absolute_path: str,
+) -> tuple[Path, str]:
+    """Find which library root contains [absolute_path] and return the
+    relative path under that root.
+
+    Used by the desktop URL bar's "type an absolute path + press Enter"
+    flow when the client's local prefix-matching (against the single
+    `BrowseResponse.root_path` of the currently-visible directory)
+    fails — multi-root libraries, case mismatches on Windows, or a
+    typed prefix that doesn't quite match the canonical form all
+    cause the local match to miss.  This walks every root and returns
+    the first match.
+
+    Returns `(matched_root, relative)`.  Raises `BrowseError(404)`
+    when the absolute lives under no root and `BrowseError(403)`
+    only when the path is structurally invalid (currently unused —
+    falls through to 404).
+    """
+    roots = await _load_library_roots(db, library_id)
+    try:
+        target = Path(absolute_path).resolve(strict=True)
+    except FileNotFoundError as e:
+        raise BrowseError(404, f"path does not exist on disk: {absolute_path}") from e
+    for root in roots:
+        try:
+            root_resolved = root.resolve(strict=True)
+        except FileNotFoundError:
+            continue
+        try:
+            inside = target.is_relative_to(root_resolved)
+        except ValueError:
+            inside = False
+        if inside:
+            # Posix slashes on the wire — matches `_normalise_relative`.
+            # `Path.relative_to(self)` returns `Path('.')`; the rest of
+            # the API expects empty string for "root" so normalise.
+            rel_path = target.relative_to(root_resolved).as_posix()
+            relative = "" if rel_path == "." else rel_path
+            return root_resolved, relative
+    raise BrowseError(404, "path is not under any library root")
 
 
 async def folder_size(
@@ -535,8 +626,7 @@ async def _attach_index_status(
     # absolute path for each candidate.  Build the list of (name,
     # absolute_path) up front and query in one IN-clause.
     candidates = {
-        name: str((target / name).resolve(strict=False))
-        for name in file_names
+        name: str((target / name).resolve(strict=False)) for name in file_names
     }
     placeholders = ",".join("?" for _ in candidates)
     params: list[str] = list(candidates.values())
@@ -586,7 +676,6 @@ async def _attach_index_status(
             stale_file_ids.append(row["file_id"])
     if stale_file_ids:
         try:
-            from services import thumbnail_worker
 
             now = datetime.now(UTC).isoformat()
             for file_id in stale_file_ids:
@@ -631,10 +720,7 @@ async def _attach_index_status(
         # just flipped back to 'pending' by the auto-re-queue above;
         # the client wants to know "this WAS ready but is now being
         # regenerated").
-        if (
-            row["file_id"] in stale_file_ids
-            and thumb_status in ("ready", "pending")
-        ):
+        if row["file_id"] in stale_file_ids and thumb_status in ("ready", "pending"):
             thumb_status = "stale"
 
         # Per-library TMDB toggle: mask the persisted poster_url when
@@ -673,9 +759,7 @@ async def _attach_index_status(
             size_bytes=e.size_bytes,
             modified_iso=e.modified_iso,
             mtime_unix=e.mtime_unix,
-            is_indexed=(
-                e.is_dir or candidates.get(e.name) in by_path
-            ),
+            is_indexed=(e.is_dir or candidates.get(e.name) in by_path),
             file_id=(
                 None
                 if e.is_dir
@@ -693,6 +777,79 @@ async def _attach_index_status(
         )
         for e in entries
     ]
+
+
+async def _attach_directory_catalog_sizes(
+    db: aiosqlite.Connection,
+    *,
+    library_id: str,
+    target: Path,
+    entries: list[BrowseEntry],
+) -> list[BrowseEntry]:
+    """Fill `cataloged_size_bytes` on directory entries.
+
+    For each directory entry, runs a single `SUM(media_files.size_bytes)
+    WHERE library_id = ? AND path LIKE 'subdir<sep>%' ESCAPE '|'` query.
+    The `path` index makes each LIKE-prefix a B-tree range scan; total
+    cost is `O(N * log F)` where N = directories in the listing and
+    F = files in the library.  For a typical 20-subdir listing on a
+    100k-file library this is sub-10 ms.
+
+    Lets the desktop folder browser fill the SIZE column instantly
+    without the operator clicking "Compute size."  The on-disk walk
+    via `library_service.folder_size` stays as the authoritative
+    answer for cases where unindexed / hidden / freshly-added files
+    matter.
+    """
+    dir_entries = [e for e in entries if e.is_dir]
+    if not dir_entries:
+        return entries
+
+    # Build {entry_name: size_sum_bytes} via N small queries.  One
+    # round-trip per directory keeps the SQL legible vs. a single
+    # CASE-WHEN scalar that would need 2N parameter bindings.
+    sep = os.sep
+    sums: dict[str, int] = {}
+    for entry in dir_entries:
+        abs_dir = target / entry.name
+        prefix = _sql_like_escape(str(abs_dir) + sep) + "%"
+        async with db.execute(
+            "SELECT COALESCE(SUM(size_bytes), 0) AS total"
+            "  FROM media_files"
+            " WHERE library_id = ? AND path LIKE ? ESCAPE '|'",
+            (library_id, prefix),
+        ) as cur:
+            row = await cur.fetchone()
+        sums[entry.name] = int(row["total"]) if row else 0
+
+    return [
+        (
+            BrowseEntry(
+                name=e.name,
+                kind=e.kind,
+                is_dir=e.is_dir,
+                is_hidden=e.is_hidden,
+                size_bytes=e.size_bytes,
+                modified_iso=e.modified_iso,
+                mtime_unix=e.mtime_unix,
+                is_indexed=e.is_indexed,
+                file_id=e.file_id,
+                media=e.media,
+                cataloged_size_bytes=sums.get(e.name, 0),
+            )
+            if e.is_dir
+            else e
+        )
+        for e in entries
+    ]
+
+
+def _sql_like_escape(value: str) -> str:
+    """Escape `%`, `_`, and `|` so the result is safe inside a SQLite
+    `LIKE ... ESCAPE '|'` pattern.  Mirrors the helper of the same
+    name in `library_service.py` — duplicated to keep this module
+    self-contained (no cross-service imports for a 1-line helper)."""
+    return value.replace("|", "||").replace("%", "|%").replace("_", "|_")
 
 
 # ── Public surface ─────────────────────────────────────────────────────────
@@ -726,11 +883,24 @@ async def browse_library(
         if lib_row is None
         else (lib_row["tmdb_enabled"] is None or bool(lib_row["tmdb_enabled"]))
     )
-    entries = await _attach_index_status(
-        db, target, entries, tmdb_enabled=tmdb_enabled
+    entries = await _attach_index_status(db, target, entries, tmdb_enabled=tmdb_enabled)
+    entries = await _attach_directory_catalog_sizes(
+        db, library_id=library_id, target=target, entries=entries
     )
 
-    rel_norm = _normalise_relative(relative_path)
+    # Canonicalise the relative path from the resolved target + the
+    # matched root.  `_resolve_path_under_root` already case-corrects
+    # `target` on Windows via `resolve(strict=True)`, so this gives
+    # the actual on-disk casing — operator typing `i:\rupam\cars`
+    # comes back with `relative_path='Cars'` not `'cars'`.  Falls back
+    # to the operator-typed form on the (vanishingly rare) ValueError
+    # path that means `target` isn't actually a descendant of
+    # `matched_root` after re-resolution.
+    try:
+        canonical = target.relative_to(matched_root).as_posix()
+        rel_norm = "" if canonical == "." else canonical
+    except ValueError:
+        rel_norm = _normalise_relative(relative_path)
     # Parent path: drop the last segment; None when we're at the root.
     parent: str | None
     if rel_norm:

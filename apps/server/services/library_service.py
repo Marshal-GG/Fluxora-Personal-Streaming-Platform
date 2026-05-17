@@ -387,9 +387,7 @@ async def _library_aggregates(
     needed = 4 - len(cover_urls)
     if needed > 0:
         poster_filter = (
-            " AND (mf.poster_url IS NULL OR mf.poster_url = '')"
-            if tmdb_enabled
-            else ""
+            " AND (mf.poster_url IS NULL OR mf.poster_url = '')" if tmdb_enabled else ""
         )
         async with db.execute(
             f"""
@@ -870,9 +868,7 @@ async def scan_library(
     subdir without paying for a full library walk.
     """
     async with _get_scan_lock(library_id):
-        return await _scan_library_locked(
-            db, library_id, tmdb_api_key, subtree_abs
-        )
+        return await _scan_library_locked(db, library_id, tmdb_api_key, subtree_abs)
 
 
 async def _scan_library_locked(
@@ -1050,9 +1046,10 @@ async def _scan_library_locked(
             try:
                 from services import thumbnail_service, thumbnail_worker
 
-                if thumbnail_service.kind_for_extension(
-                    file_path.suffix or ""
-                ) is not None:
+                if (
+                    thumbnail_service.kind_for_extension(file_path.suffix or "")
+                    is not None
+                ):
                     await thumbnail_worker.enqueue(db, file_id)
             except Exception:
                 logger.warning(
@@ -1086,11 +1083,7 @@ async def _scan_library_locked(
             )
 
     # ── TMDB enrichment (best-effort) ──────────────────────────────────────
-    if (
-        tmdb_api_key
-        and new_file_ids
-        and await _is_tmdb_enabled(db, library_id)
-    ):
+    if tmdb_api_key and new_file_ids and await _is_tmdb_enabled(db, library_id):
         await _enrich_with_tmdb(db, new_file_ids, tmdb_api_key)
 
     return added
@@ -1216,9 +1209,7 @@ async def index_single_file(
     file_id = str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
     try:
-        size = await asyncio.to_thread(
-            lambda p=absolute_path: p.stat().st_size
-        )
+        size = await asyncio.to_thread(lambda p=absolute_path: p.stat().st_size)
     except OSError:
         size = 0
 
@@ -1250,14 +1241,10 @@ async def index_single_file(
     try:
         from services import thumbnail_service, thumbnail_worker
 
-        if thumbnail_service.kind_for_extension(
-            absolute_path.suffix or ""
-        ) is not None:
+        if thumbnail_service.kind_for_extension(absolute_path.suffix or "") is not None:
             await thumbnail_worker.enqueue(db, file_id, priority=10)
     except Exception:
-        logger.warning(
-            "thumbnail enqueue failed for %s", file_id, exc_info=True
-        )
+        logger.warning("thumbnail enqueue failed for %s", file_id, exc_info=True)
 
     enriched = False
     if (
@@ -1271,9 +1258,7 @@ async def index_single_file(
             )
             enriched = n > 0
         except Exception:
-            logger.warning(
-                "TMDB enrichment failed for %s", file_id, exc_info=True
-            )
+            logger.warning("TMDB enrichment failed for %s", file_id, exc_info=True)
 
     await db.commit()
     logger.info(
@@ -1377,9 +1362,7 @@ _TMDB_MASKED_FIELDS: tuple[str, ...] = (
 )
 
 
-async def _apply_tmdb_mask(
-    db: aiosqlite.Connection, rows: list[dict]
-) -> list[dict]:
+async def _apply_tmdb_mask(db: aiosqlite.Connection, rows: list[dict]) -> list[dict]:
     """In-place null-out of TMDB-derived columns on rows whose library
     has `tmdb_enabled=0`.  Non-destructive — the DB still has the
     values; this masking is purely a response-shape concern so the
@@ -1417,9 +1400,7 @@ async def _apply_tmdb_mask(
     return rows
 
 
-async def _is_tmdb_enabled(
-    db: aiosqlite.Connection, library_id: str
-) -> bool:
+async def _is_tmdb_enabled(db: aiosqlite.Connection, library_id: str) -> bool:
     """Return the per-library TMDB toggle (migration 040).
 
     Defaults to True for any library row whose `tmdb_enabled` column

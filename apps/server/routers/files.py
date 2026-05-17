@@ -2,6 +2,7 @@ import logging
 import mimetypes
 import os
 from datetime import UTC
+from pathlib import Path
 
 import aiosqlite
 from fastapi import (
@@ -19,7 +20,7 @@ from fastapi.responses import FileResponse
 from config import get_data_dir, settings
 from database.db import get_db
 from models.media_file import MediaFileResponse
-from routers.deps import validate_token_or_local
+from routers.deps import require_local_caller, validate_token_or_local
 from services import activity_service, group_service, library_service, thumbnail_worker
 
 logger = logging.getLogger(__name__)
@@ -271,9 +272,7 @@ async def get_thumbnail(
     if not jpeg_path.exists():
         # Row says ready but the file is gone — log + 404.  Worker can
         # re-queue on the operator's next regenerate sweep.
-        logger.warning(
-            "Thumbnail row=ready but file missing: %s", jpeg_path
-        )
+        logger.warning("Thumbnail row=ready but file missing: %s", jpeg_path)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="thumbnail file missing",
@@ -284,6 +283,87 @@ async def get_thumbnail(
         media_type="image/jpeg",
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+@router.post("/{file_id}/stream-test", status_code=status.HTTP_200_OK)
+async def stream_test(
+    file_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+    _: None = Depends(require_local_caller),
+) -> dict:
+    """Dry-run sanity check for the operator-facing "Stream test" affordance.
+
+    Verifies the file is reachable on disk + reports the codec + the
+    playback path that `/stream/start` would route through (the H.264
+    sidecar from plan 18 wins over the source when present + on disk).
+    Does NOT spawn FFmpeg, does NOT INSERT a `stream_sessions` row, does
+    NOT require a bearer token.  Localhost-only because it bypasses the
+    group-visibility gate that bearer-token callers go through —
+    operators on the desktop have full access to every library; remote
+    clients shouldn't be able to probe arbitrary file ids.
+
+    Returns:
+        ``{file_id, playback_path, codec, audio_codec, would_use_sidecar,
+        ok: True}`` on success.
+
+    Errors:
+        - 404 file not found in catalog
+        - 404 file (or its sidecar) missing on disk — surfaces a clear
+          message so the operator knows whether to re-scan / re-locate
+          the source or to retry plan-18 transcoding.
+    """
+    file_row = await library_service.get_file(db, file_id)
+    if file_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="File not found"
+        )
+
+    # Mirror `start_stream`'s playback-path resolution so the operator
+    # tests the *exact* file that would be served — when a plan-18
+    # H.264 sidecar exists, that's what plays, not the original AV1/VP9
+    # source.  Falls back to the source if the sidecar row is set but
+    # the on-disk file has been deleted / moved.
+    sidecar_path = file_row.get("transcoded_path")
+    using_sidecar = bool(sidecar_path) and Path(sidecar_path).exists()
+    playback_path = sidecar_path if using_sidecar else file_row["path"]
+
+    if not Path(playback_path).is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Source file missing on disk"
+                if not using_sidecar
+                else "Transcoded sidecar missing on disk"
+            ),
+        )
+
+    # Pull cached codec from the scan-populated columns; null when the
+    # file is a non-probeable kind (PDF / EPUB / etc.) — operator sees
+    # the codec slot empty in the toast which is the correct signal.
+    audio_codec: str | None = None
+    raw_tracks = file_row.get("audio_tracks")
+    if raw_tracks:
+        import json
+
+        try:
+            parsed = json.loads(raw_tracks)
+            if isinstance(parsed, list) and parsed:
+                first = parsed[0]
+                if isinstance(first, dict):
+                    codec_val = first.get("codec")
+                    if isinstance(codec_val, str):
+                        audio_codec = codec_val
+        except (TypeError, ValueError):
+            audio_codec = None
+
+    return {
+        "file_id": file_id,
+        "playback_path": playback_path,
+        "codec": file_row.get("codec_name"),
+        "audio_codec": audio_codec,
+        "would_use_sidecar": using_sidecar,
+        "ok": True,
+    }
 
 
 @router.get("/{file_id}", response_model=MediaFileResponse)

@@ -52,19 +52,42 @@ _MAX_WIDTH = 2048
 # in the table is treated as ``skipped`` by the worker (the dispatcher
 # is in the worker, not here, because the worker also wants this
 # mapping for stats / observability).
-_VIDEO_EXTENSIONS = frozenset({
-    ".mp4", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".flv", ".m4v",
-    ".ts", ".mpg", ".mpeg", ".3gp",
-})
-_IMAGE_EXTENSIONS = frozenset({
-    ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".gif", ".bmp",
-    ".tiff", ".tif", ".ico",
-    # JXR (JPEG XR / HD Photo) — Windows-only, extracted via WIC.
-    # NVIDIA GeForce Experience saves HDR screenshots in this format;
-    # FFmpeg has no decoder, so the extractor dispatches to GDI+ via
-    # PowerShell on Windows and reports `skipped` elsewhere.
-    ".jxr",
-})
+_VIDEO_EXTENSIONS = frozenset(
+    {
+        ".mp4",
+        ".mkv",
+        ".mov",
+        ".avi",
+        ".webm",
+        ".wmv",
+        ".flv",
+        ".m4v",
+        ".ts",
+        ".mpg",
+        ".mpeg",
+        ".3gp",
+    }
+)
+_IMAGE_EXTENSIONS = frozenset(
+    {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".heic",
+        ".heif",
+        ".gif",
+        ".bmp",
+        ".tiff",
+        ".tif",
+        ".ico",
+        # JXR (JPEG XR / HD Photo) — Windows-only, extracted via WIC.
+        # NVIDIA GeForce Experience saves HDR screenshots in this format;
+        # FFmpeg has no decoder, so the extractor dispatches to GDI+ via
+        # PowerShell on Windows and reports `skipped` elsewhere.
+        ".jxr",
+    }
+)
 
 # Extensions FFmpeg can't decode but Windows Imaging Component (WIC)
 # handles natively.  Routed through the PowerShell + GDI+ fallback
@@ -102,7 +125,7 @@ class ThumbnailResult:
 
       success=True              → status='ready'
       skipped=True              → status='skipped' (permanent, no retry)
-      success=False & skipped=False → status='failed' (transient, retried up to max_attempts)
+      success=False & skipped=False → status='failed' (transient, retried up to max)
     """
 
     success: bool
@@ -160,9 +183,7 @@ def _pick_seek_seconds(duration_sec: float | None) -> float:
     return max(1.0, min(10.0, duration_sec / 3.0))
 
 
-async def _run_subprocess(
-    argv: list[str], *, timeout: float
-) -> tuple[int, bytes]:
+async def _run_subprocess(argv: list[str], *, timeout: float) -> tuple[int, bytes]:
     """Spawn a subprocess with bounded stderr capture + hard timeout.
 
     Returns ``(returncode, stderr_bytes)``.  On timeout the process is
@@ -183,14 +204,14 @@ async def _run_subprocess(
     try:
         _, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return proc.returncode or 0, stderr or b""
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             proc.kill()
         except ProcessLookupError:
             pass
         try:
             await asyncio.wait_for(proc.wait(), timeout=2.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         return 137, b"timeout"
 
@@ -387,6 +408,7 @@ async def _extract_image_wic(
     Returns `skipped` on non-Windows platforms.
     """
     import sys
+
     if sys.platform != "win32":
         return ThumbnailResult(
             skipped=True,
@@ -493,13 +515,9 @@ async def _extract_image_wic(
     ]
 
     try:
-        returncode, stderr = await _run_subprocess(
-            argv, timeout=_IMAGE_TIMEOUT_SEC
-        )
+        returncode, stderr = await _run_subprocess(argv, timeout=_IMAGE_TIMEOUT_SEC)
     except (OSError, FileNotFoundError) as e:
-        return ThumbnailResult(
-            success=False, error=f"powershell spawn failed: {e}"
-        )
+        return ThumbnailResult(success=False, error=f"powershell spawn failed: {e}")
 
     if returncode == 0 and output_path.exists() and output_path.stat().st_size > 0:
         return ThumbnailResult(success=True)
@@ -631,7 +649,7 @@ async def _extract_pdf(
             ),
             timeout=_PDF_TIMEOUT_SEC,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return ThumbnailResult(success=False, error="pymupdf timeout")
 
 

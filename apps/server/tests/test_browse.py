@@ -24,7 +24,6 @@ from pathlib import Path
 
 import pytest
 
-
 HMAC_KEY = "test-secret-key-for-unit-tests-only"
 
 
@@ -45,9 +44,7 @@ async def _insert_library_with_root(test_db, *, root: Path, name: str = "lib") -
     return lib_id
 
 
-async def _insert_indexed_file(
-    test_db, *, library_id: str, absolute_path: Path
-) -> str:
+async def _insert_indexed_file(test_db, *, library_id: str, absolute_path: Path) -> str:
     file_id = str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
     await test_db.execute(
@@ -75,15 +72,15 @@ async def _insert_indexed_file(
 @pytest.fixture
 def tree(tmp_path: Path) -> Path:
     """Build:
-        <root>/
-            movie.mp4
-            photo.jpg
-            readme.txt
-            .hidden_file
-            sub/
-                song.mp3
-                nested/
-                    doc.pdf
+    <root>/
+        movie.mp4
+        photo.jpg
+        readme.txt
+        .hidden_file
+        sub/
+            song.mp3
+            nested/
+                doc.pdf
     """
     root = tmp_path / "library_root"
     root.mkdir()
@@ -118,13 +115,9 @@ async def test_browse_root_default_hides_dotfiles(client, test_db, tree):
     assert names == ["sub", "movie.mp4", "photo.jpg", "readme.txt"]
 
 
-async def test_browse_root_show_hidden_includes_dotfiles(
-    client, test_db, tree
-):
+async def test_browse_root_show_hidden_includes_dotfiles(client, test_db, tree):
     lib_id = await _insert_library_with_root(test_db, root=tree)
-    r = await client.get(
-        f"/api/v1/library/{lib_id}/browse?show_hidden=true"
-    )
+    r = await client.get(f"/api/v1/library/{lib_id}/browse?show_hidden=true")
     assert r.status_code == 200
     names = [e["name"] for e in r.json()["entries"]]
     assert ".hidden_file" in names
@@ -144,9 +137,7 @@ async def test_browse_subdirectory_lists_children(client, test_db, tree):
     assert names == ["nested", "song.mp3"]
 
 
-async def test_browse_nested_subdirectory_parent_is_one_level_up(
-    client, test_db, tree
-):
+async def test_browse_nested_subdirectory_parent_is_one_level_up(client, test_db, tree):
     lib_id = await _insert_library_with_root(test_db, root=tree)
     r = await client.get(f"/api/v1/library/{lib_id}/browse?path=sub/nested")
     assert r.status_code == 200
@@ -208,6 +199,7 @@ async def _insert_indexed_video(
 ) -> str:
     """Insert a probed media_files row with width/height/codec metadata."""
     import json as _json
+
     file_id = str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
     await test_db.execute(
@@ -230,8 +222,7 @@ async def _insert_indexed_video(
             duration_sec,
             codec_name,
             hdr_format,
-            audio_tracks_json
-            or _json.dumps([{"index": 0, "codec": "aac"}]),
+            audio_tracks_json or _json.dumps([{"index": 0, "codec": "aac"}]),
             now,
             now,
         ),
@@ -260,14 +251,13 @@ async def _insert_thumbnail_row(
     await test_db.commit()
 
 
-async def test_browse_indexed_video_returns_media_metadata(
-    client, test_db, tree
-):
+async def test_browse_indexed_video_returns_media_metadata(client, test_db, tree):
     """Phase A: indexed video entries carry width/height/duration/codec
     + audio_codec parsed from audio_tracks JSON + indexed_at_iso."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
     movie_path = tree / "movie.mp4"
     import json as _json
+
     file_id = await _insert_indexed_video(
         test_db,
         library_id=lib_id,
@@ -277,9 +267,7 @@ async def test_browse_indexed_video_returns_media_metadata(
         duration_sec=7200.0,
         codec_name="hevc",
         hdr_format="HDR10",
-        audio_tracks_json=_json.dumps(
-            [{"index": 0, "codec": "eac3", "channels": 6}]
-        ),
+        audio_tracks_json=_json.dumps([{"index": 0, "codec": "eac3", "channels": 6}]),
     )
 
     r = await client.get(f"/api/v1/library/{lib_id}/browse")
@@ -356,9 +344,7 @@ async def test_browse_directory_has_null_media(client, test_db, tree):
     assert by_name["sub"]["media"] is None
 
 
-async def test_browse_includes_thumbnail_status_when_ready(
-    client, test_db, tree
-):
+async def test_browse_includes_thumbnail_status_when_ready(client, test_db, tree):
     """When media_thumbnails.status='ready', entry's media.thumbnail_status
     is 'ready' + thumbnail_generated_at_unix is populated."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
@@ -378,9 +364,7 @@ async def test_browse_includes_thumbnail_status_when_ready(
     assert media["thumbnail_generated_at_unix"] > 0
 
 
-async def test_browse_includes_thumbnail_pending_status(
-    client, test_db, tree
-):
+async def test_browse_includes_thumbnail_pending_status(client, test_db, tree):
     """Pending thumbnails report status='pending', no generated_at_unix."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
     file_id = await _insert_indexed_video(
@@ -478,9 +462,7 @@ async def test_browse_entry_carries_mtime_unix(client, test_db, tree):
     assert by_name["sub"]["mtime_unix"] > 0
 
 
-async def test_browse_audio_codec_handles_malformed_json(
-    client, test_db, tree
-):
+async def test_browse_audio_codec_handles_malformed_json(client, test_db, tree):
     """audio_tracks parsing tolerates garbage — returns null instead of
     raising."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
@@ -495,10 +477,18 @@ async def test_browse_audio_codec_handles_malformed_json(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            file_id, str(movie), movie.name, movie.suffix.lower(),
-            movie.stat().st_size, lib_id, 1920, 1080, "h264",
+            file_id,
+            str(movie),
+            movie.name,
+            movie.suffix.lower(),
+            movie.stat().st_size,
+            lib_id,
+            1920,
+            1080,
+            "h264",
             "this is not json",  # malformed
-            now, now,
+            now,
+            now,
         ),
     )
     await test_db.commit()
@@ -520,9 +510,7 @@ async def test_browse_blocks_dot_dot_traversal(client, test_db, tree):
     r = await client.get(f"/api/v1/library/{lib_id}/browse?path=..")
     assert r.status_code in (403, 404)
     # Deeper escape attempt
-    r2 = await client.get(
-        f"/api/v1/library/{lib_id}/browse?path=../../etc"
-    )
+    r2 = await client.get(f"/api/v1/library/{lib_id}/browse?path=../../etc")
     assert r2.status_code in (403, 404)
 
 
@@ -536,25 +524,19 @@ async def test_browse_blocks_absolute_path_injection(client, test_db, tree):
 
 async def test_browse_nonexistent_path_returns_404(client, test_db, tree):
     lib_id = await _insert_library_with_root(test_db, root=tree)
-    r = await client.get(
-        f"/api/v1/library/{lib_id}/browse?path=does/not/exist"
-    )
+    r = await client.get(f"/api/v1/library/{lib_id}/browse?path=does/not/exist")
     assert r.status_code == 404
 
 
 async def test_browse_unknown_library_returns_404(client, tree):
-    r = await client.get(
-        f"/api/v1/library/{uuid.uuid4()}/browse"
-    )
+    r = await client.get(f"/api/v1/library/{uuid.uuid4()}/browse")
     assert r.status_code == 404
 
 
 # ── Empty / corrupt library ────────────────────────────────────────────────
 
 
-async def test_browse_library_with_no_root_paths_returns_404(
-    client, test_db
-):
+async def test_browse_library_with_no_root_paths_returns_404(client, test_db):
     """A library row with `root_paths='[]'` (or NULL) returns 404."""
     lib_id = str(uuid.uuid4())
     now = datetime.now(UTC).isoformat()
@@ -589,9 +571,7 @@ async def test_browse_entries_carry_size_and_modified(client, test_db, tree):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only attribute")
-async def test_browse_respects_windows_hidden_attribute(
-    client, test_db, tree
-):
+async def test_browse_respects_windows_hidden_attribute(client, test_db, tree):
     """A file marked with `attrib +H` should be filtered by default."""
     visible = tree / "marked_hidden.bin"
     visible.write_bytes(b"\x00")
@@ -604,9 +584,7 @@ async def test_browse_respects_windows_hidden_attribute(
     names = [e["name"] for e in r.json()["entries"]]
     assert "marked_hidden.bin" not in names
 
-    r2 = await client.get(
-        f"/api/v1/library/{lib_id}/browse?show_hidden=true"
-    )
+    r2 = await client.get(f"/api/v1/library/{lib_id}/browse?show_hidden=true")
     names2 = [e["name"] for e in r2.json()["entries"]]
     assert "marked_hidden.bin" in names2
 
@@ -619,9 +597,7 @@ async def test_index_file_inserts_media_files_row(client, test_db, tree):
     + enqueues a thumbnail, returns the new file_id."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
 
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/index-file?path=movie.mp4"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/index-file?path=movie.mp4")
     assert r.status_code == 200
     body = r.json()
     assert body["already_indexed"] is False
@@ -653,15 +629,11 @@ async def test_index_file_is_idempotent(client, test_db, tree):
     already_indexed=True; doesn't re-INSERT or re-enqueue."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
 
-    r1 = await client.post(
-        f"/api/v1/library/{lib_id}/index-file?path=movie.mp4"
-    )
+    r1 = await client.post(f"/api/v1/library/{lib_id}/index-file?path=movie.mp4")
     assert r1.status_code == 200
     first_id = r1.json()["file_id"]
 
-    r2 = await client.post(
-        f"/api/v1/library/{lib_id}/index-file?path=movie.mp4"
-    )
+    r2 = await client.post(f"/api/v1/library/{lib_id}/index-file?path=movie.mp4")
     assert r2.status_code == 200
     body = r2.json()
     assert body["file_id"] == first_id
@@ -672,24 +644,18 @@ async def test_index_file_rejects_directory(client, test_db, tree):
     """Pointing index-file at a directory returns 400."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
 
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/index-file?path=sub"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/index-file?path=sub")
     assert r.status_code == 400
     assert "directory" in r.json()["detail"].lower()
 
 
-async def test_index_file_accepts_any_extension(
-    client, test_db, tree
-):
+async def test_index_file_accepts_any_extension(client, test_db, tree):
     """`readme.txt` (kind='other') is indexable — the operator's mobile
     catalog needs to be able to surface arbitrary documents / archives /
     text files reached via `/files/{id}/content`."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
 
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/index-file?path=readme.txt"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/index-file?path=readme.txt")
     assert r.status_code == 200
     body = r.json()
     assert body["already_indexed"] is False
@@ -700,9 +666,7 @@ async def test_index_file_rejects_path_escape(client, test_db, tree):
     """`..`-style escapes return 403/404 — never 200."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
 
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/index-file?path=../escape.mp4"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/index-file?path=../escape.mp4")
     # Resolves outside the root => 403 (escapes) or 404 (not found
     # after resolution) — either is acceptable so long as we don't
     # silently 200.
@@ -711,9 +675,7 @@ async def test_index_file_rejects_path_escape(client, test_db, tree):
 
 async def test_index_file_404_when_library_missing(client, test_db):
     """Library id that doesn't exist returns 404."""
-    r = await client.post(
-        "/api/v1/library/nonexistent-lib/index-file?path=movie.mp4"
-    )
+    r = await client.post("/api/v1/library/nonexistent-lib/index-file?path=movie.mp4")
     assert r.status_code == 404
 
 
@@ -742,9 +704,7 @@ async def test_regenerate_file_thumbnail_resets_status(client, test_db, tree):
         generated_at=datetime.now(UTC).isoformat(),
     )
 
-    r = await client.post(
-        f"/api/v1/files/{file_id}/regenerate-thumbnail"
-    )
+    r = await client.post(f"/api/v1/files/{file_id}/regenerate-thumbnail")
     assert r.status_code == 200
     body = r.json()
     assert body["file_id"] == file_id
@@ -761,9 +721,7 @@ async def test_regenerate_file_thumbnail_resets_status(client, test_db, tree):
     assert row["generated_at"] is None
 
 
-async def test_regenerate_file_thumbnail_inserts_when_missing(
-    client, test_db, tree
-):
+async def test_regenerate_file_thumbnail_inserts_when_missing(client, test_db, tree):
     """File has no `media_thumbnails` row yet — endpoint INSERT OR
     IGNOREs a fresh pending row at priority=10 instead of 404'ing."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
@@ -772,9 +730,7 @@ async def test_regenerate_file_thumbnail_inserts_when_missing(
         test_db, library_id=lib_id, absolute_path=movie
     )
 
-    r = await client.post(
-        f"/api/v1/files/{file_id}/regenerate-thumbnail"
-    )
+    r = await client.post(f"/api/v1/files/{file_id}/regenerate-thumbnail")
     assert r.status_code == 200
 
     async with test_db.execute(
@@ -787,13 +743,9 @@ async def test_regenerate_file_thumbnail_inserts_when_missing(
     assert row["priority"] == 10
 
 
-async def test_regenerate_file_thumbnail_404_when_file_missing(
-    client, test_db
-):
+async def test_regenerate_file_thumbnail_404_when_file_missing(client, test_db):
     """Unknown file_id => 404."""
-    r = await client.post(
-        "/api/v1/files/nonexistent-file-id/regenerate-thumbnail"
-    )
+    r = await client.post("/api/v1/files/nonexistent-file-id/regenerate-thumbnail")
     assert r.status_code == 404
 
 
@@ -802,9 +754,7 @@ async def test_scan_subtree_walks_only_one_directory(client, test_db, tree):
     the requested subdir, not the rest of the library root."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
 
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/scan-subtree?path=sub"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/scan-subtree?path=sub")
     assert r.status_code == 200
     body = r.json()
     assert body["library_id"] == lib_id
@@ -828,9 +778,7 @@ async def test_scan_subtree_rejects_file_path(client, test_db, tree):
     """Pointing scan-subtree at a file (not a directory) returns 400."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
 
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/scan-subtree?path=movie.mp4"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/scan-subtree?path=movie.mp4")
     assert r.status_code == 400
 
 
@@ -838,18 +786,14 @@ async def test_scan_subtree_rejects_path_escape(client, test_db, tree):
     """`..`-style escape returns 403/404."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
 
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/scan-subtree?path=../outside"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/scan-subtree?path=../outside")
     assert r.status_code in (403, 404)
 
 
 # ── Unindex-subtree ────────────────────────────────────────────────────────
 
 
-async def test_unindex_subtree_removes_only_subtree_rows(
-    client, test_db, tree
-):
+async def test_unindex_subtree_removes_only_subtree_rows(client, test_db, tree):
     """`/library/{id}/unindex-subtree?path=sub` removes only the rows
     whose path sits under `<root>/sub/`; top-level files stay indexed."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
@@ -866,9 +810,7 @@ async def test_unindex_subtree_removes_only_subtree_rows(
     assert str(tree / "sub" / "nested" / "doc.pdf") in before
     assert str(tree / "movie.mp4") in before
 
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/unindex-subtree?path=sub"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/unindex-subtree?path=sub")
     assert r.status_code == 200
     body = r.json()
     assert body["library_id"] == lib_id
@@ -894,26 +836,20 @@ async def test_unindex_subtree_files_remain_on_disk(client, test_db, tree):
     song = tree / "sub" / "song.mp3"
     assert song.exists()
 
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/unindex-subtree?path=sub"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/unindex-subtree?path=sub")
     assert r.status_code == 200
 
     # File on disk untouched.
     assert song.exists()
 
 
-async def test_unindex_subtree_returns_zero_on_empty_subtree(
-    client, test_db, tree
-):
+async def test_unindex_subtree_returns_zero_on_empty_subtree(client, test_db, tree):
     """Subtree that contains no indexed files returns 0, not an error."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
     # Scan only the top-level (so `sub/` files are not in media_files).
     # The scanner has no top-level-only mode, so simulate by walking the
     # subtree first then unindexing without any prior scan.
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/unindex-subtree?path=sub"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/unindex-subtree?path=sub")
     assert r.status_code == 200
     assert r.json()["files_removed"] == 0
 
@@ -922,19 +858,80 @@ async def test_unindex_subtree_rejects_file_path(client, test_db, tree):
     """Pointing unindex-subtree at a file returns 400 — same shape as
     scan-subtree."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/unindex-subtree?path=movie.mp4"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/unindex-subtree?path=movie.mp4")
     assert r.status_code == 400
 
 
 async def test_unindex_subtree_rejects_path_escape(client, test_db, tree):
     """`..`-style escapes return 403/404."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
-    r = await client.post(
-        f"/api/v1/library/{lib_id}/unindex-subtree?path=../outside"
-    )
+    r = await client.post(f"/api/v1/library/{lib_id}/unindex-subtree?path=../outside")
     assert r.status_code in (403, 404)
+
+
+# ── Resolve-absolute ───────────────────────────────────────────────────────
+
+
+async def test_resolve_absolute_returns_relative_for_path_under_root(
+    client, test_db, tree
+):
+    """`/library/{id}/resolve-absolute?path=<abs>` returns the
+    library-relative path when the absolute lives under one of the
+    library's root_paths.  Backs the desktop URL bar's manual-typing
+    fallback when client-side prefix matching can't pin the typed
+    absolute against the currently-visible root."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    target = tree / "sub" / "nested" / "doc.pdf"
+
+    r = await client.get(
+        f"/api/v1/library/{lib_id}/resolve-absolute",
+        params={"path": str(target)},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["library_id"] == lib_id
+    assert body["relative_path"] == "sub/nested/doc.pdf"
+    # `root_path` is the resolved root the match was found under.
+    assert body["root_path"].endswith("library_root")
+
+
+async def test_resolve_absolute_returns_empty_for_root_itself(client, test_db, tree):
+    """Passing the root path itself returns relative_path=''."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    r = await client.get(
+        f"/api/v1/library/{lib_id}/resolve-absolute",
+        params={"path": str(tree)},
+    )
+    assert r.status_code == 200
+    assert r.json()["relative_path"] == ""
+
+
+async def test_resolve_absolute_404_when_path_missing_on_disk(client, test_db, tree):
+    """A path that doesn't exist on disk returns 404 — not the same as
+    'outside any root' but the client treats both as the same null
+    result + falls back to its existing validation copy."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    r = await client.get(
+        f"/api/v1/library/{lib_id}/resolve-absolute",
+        params={"path": str(tree / "does_not_exist.mp4")},
+    )
+    assert r.status_code == 404
+
+
+async def test_resolve_absolute_404_when_path_outside_any_root(
+    client, test_db, tree, tmp_path
+):
+    """An absolute that exists on disk but lives outside every
+    library root returns 404 — the resolver walks every root_paths
+    entry and only matches if the absolute is a descendant."""
+    lib_id = await _insert_library_with_root(test_db, root=tree)
+    outside = tmp_path / "outside_root"
+    outside.mkdir()
+    r = await client.get(
+        f"/api/v1/library/{lib_id}/resolve-absolute",
+        params={"path": str(outside)},
+    )
+    assert r.status_code == 404
 
 
 # ── Phase D: folder-size ───────────────────────────────────────────────────
@@ -952,8 +949,8 @@ async def test_folder_size_sums_subtree_bytes(client, test_db, tree):
     assert r.status_code == 200
     body = r.json()
     assert body["library_id"] == lib_id
-    assert body["relative_path"] == 'sub'
-    assert body["size_bytes"] == 2048 + len(b'%PDF-1.4')
+    assert body["relative_path"] == "sub"
+    assert body["size_bytes"] == 2048 + len(b"%PDF-1.4")
     assert body["file_count"] == 2
 
 
@@ -966,24 +963,20 @@ async def test_folder_size_at_root_includes_every_file(client, test_db, tree):
     # movie.mp4 (1024) + photo.jpg (512) + readme.txt (5) +
     # .hidden_file (6) + sub/song.mp3 (2048) + sub/nested/doc.pdf (8)
     assert body["file_count"] == 6
-    assert body["size_bytes"] == 1024 + 512 + 5 + 6 + 2048 + len(b'%PDF-1.4')
+    assert body["size_bytes"] == 1024 + 512 + 5 + 6 + 2048 + len(b"%PDF-1.4")
 
 
 async def test_folder_size_rejects_file_path(client, test_db, tree):
     """File path returns 400."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
-    r = await client.get(
-        f"/api/v1/library/{lib_id}/folder-size?path=movie.mp4"
-    )
+    r = await client.get(f"/api/v1/library/{lib_id}/folder-size?path=movie.mp4")
     assert r.status_code == 400
 
 
 async def test_folder_size_rejects_path_escape(client, test_db, tree):
     """`..` returns 403/404."""
     lib_id = await _insert_library_with_root(test_db, root=tree)
-    r = await client.get(
-        f"/api/v1/library/{lib_id}/folder-size?path=../escape"
-    )
+    r = await client.get(f"/api/v1/library/{lib_id}/folder-size?path=../escape")
     assert r.status_code in (403, 404)
 
 

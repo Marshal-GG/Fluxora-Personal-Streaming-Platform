@@ -24,9 +24,7 @@ async def test_get_settings_includes_thumbnail_width_default(client):
 
 
 async def test_patch_settings_persists_thumbnail_width(client):
-    r = await client.patch(
-        "/api/v1/settings", json={"thumbnail_width": 480}
-    )
+    r = await client.patch("/api/v1/settings", json={"thumbnail_width": 480})
     assert r.status_code == 200
     body = r.json()
     assert body["thumbnail_width"] == 480
@@ -38,17 +36,13 @@ async def test_patch_settings_persists_thumbnail_width(client):
 
 @pytest.mark.parametrize("bad_value", [0, 32, 100, 159, 641, 1024, 99999])
 async def test_patch_settings_rejects_out_of_range_width(client, bad_value):
-    r = await client.patch(
-        "/api/v1/settings", json={"thumbnail_width": bad_value}
-    )
+    r = await client.patch("/api/v1/settings", json={"thumbnail_width": bad_value})
     assert r.status_code == 422
 
 
 @pytest.mark.parametrize("good_value", [160, 200, 320, 480, 640])
 async def test_patch_settings_accepts_in_range_width(client, good_value):
-    r = await client.patch(
-        "/api/v1/settings", json={"thumbnail_width": good_value}
-    )
+    r = await client.patch("/api/v1/settings", json={"thumbnail_width": good_value})
     assert r.status_code == 200
     assert r.json()["thumbnail_width"] == good_value
 

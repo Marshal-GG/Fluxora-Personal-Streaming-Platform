@@ -99,9 +99,7 @@ def _thumbnails_dir() -> Path:
 # ── Public surface called from scan path + files router ────────────────────
 
 
-async def enqueue(
-    db: aiosqlite.Connection, file_id: str, *, priority: int = 0
-) -> None:
+async def enqueue(db: aiosqlite.Connection, file_id: str, *, priority: int = 0) -> None:
     """Add a pending thumbnail row for ``file_id``.
 
     INSERT OR IGNORE — re-scanning an already-thumbed file is a no-op.
@@ -151,9 +149,7 @@ async def boost_library(db: aiosqlite.Connection, library_id: str) -> int:
     return rows
 
 
-async def regenerate_file(
-    db: aiosqlite.Connection, file_id: str
-) -> bool:
+async def regenerate_file(db: aiosqlite.Connection, file_id: str) -> bool:
     """Reset a single thumbnail row to pending + delete the cached JPEG.
 
     Returns True when a `media_thumbnails` row was reset or freshly
@@ -166,9 +162,7 @@ async def regenerate_file(
     queue).  Mirror of `regenerate_library` scoped to one file with
     priority=10.
     """
-    async with db.execute(
-        "SELECT id FROM media_files WHERE id = ?", (file_id,)
-    ) as cur:
+    async with db.execute("SELECT id FROM media_files WHERE id = ?", (file_id,)) as cur:
         row = await cur.fetchone()
     if row is None:
         return False
@@ -213,9 +207,7 @@ async def regenerate_file(
     return True
 
 
-async def regenerate_library(
-    db: aiosqlite.Connection, library_id: str
-) -> int:
+async def regenerate_library(db: aiosqlite.Connection, library_id: str) -> int:
     """Reset every thumbnail row for files in ``library_id`` to pending.
 
     Deletes the cached JPEGs on disk so the worker re-renders them at
@@ -376,9 +368,7 @@ async def _claim_one(db: aiosqlite.Connection) -> dict | None:
     }
 
 
-async def _mark_ready(
-    db: aiosqlite.Connection, file_id: str, attempts: int
-) -> None:
+async def _mark_ready(db: aiosqlite.Connection, file_id: str, attempts: int) -> None:
     now = datetime.now(UTC).isoformat()
     await db.execute(
         """
@@ -395,9 +385,7 @@ async def _mark_ready(
     await db.commit()
 
 
-async def _mark_skipped(
-    db: aiosqlite.Connection, file_id: str, error: str
-) -> None:
+async def _mark_skipped(db: aiosqlite.Connection, file_id: str, error: str) -> None:
     now = datetime.now(UTC).isoformat()
     # Truncate error to fit a reasonable column size; full FFmpeg
     # stderr can be many KB.
@@ -446,9 +434,7 @@ async def _mark_failed(
         await _maybe_emit_failure_notification(db, library_id)
 
 
-async def _emit_progress(
-    db: aiosqlite.Connection, library_id: str | None
-) -> None:
+async def _emit_progress(db: aiosqlite.Connection, library_id: str | None) -> None:
     """Emit a `thumbnails_progress` WS event for this library + throttled
     `library_changed` so cover_urls refresh as thumbs land.
 
@@ -471,7 +457,8 @@ async def _emit_progress(
     async with db.execute(
         """
         SELECT
-            SUM(CASE WHEN t.status IN ('pending', 'generating') THEN 1 ELSE 0 END) AS pending,
+            SUM(CASE WHEN t.status IN ('pending', 'generating') THEN 1 ELSE 0 END)
+                AS pending,
             SUM(CASE WHEN t.status = 'ready' THEN 1 ELSE 0 END) AS ready,
             COUNT(*) AS total
           FROM media_thumbnails t
@@ -582,9 +569,7 @@ async def _maybe_emit_failure_notification(
             related_id=library_id,
         )
     except Exception:
-        logger.warning(
-            "Failed to write thumbnail failure notification", exc_info=True
-        )
+        logger.warning("Failed to write thumbnail failure notification", exc_info=True)
 
 
 async def _recover_orphan_generating_rows(db: aiosqlite.Connection) -> int:
@@ -624,7 +609,8 @@ async def _get_current_settings(
     """
     try:
         async with db.execute(
-            "SELECT generate_thumbnails, thumbnail_width FROM user_settings WHERE id = 1"
+            "SELECT generate_thumbnails, thumbnail_width "
+            "FROM user_settings WHERE id = 1"
         ) as cur:
             row = await cur.fetchone()
         if row is None:
@@ -736,7 +722,7 @@ async def _worker_loop(slot_id: int) -> None:
                     await asyncio.wait_for(
                         _STOP_EVENT.wait(), timeout=POLL_INTERVAL_SEC
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
                 continue
 
@@ -747,7 +733,7 @@ async def _worker_loop(slot_id: int) -> None:
                     await asyncio.wait_for(
                         _STOP_EVENT.wait(), timeout=POLL_INTERVAL_SEC
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
                 continue
 
@@ -762,10 +748,8 @@ async def _worker_loop(slot_id: int) -> None:
                 slot_id,
             )
             try:
-                await asyncio.wait_for(
-                    _STOP_EVENT.wait(), timeout=POLL_INTERVAL_SEC
-                )
-            except asyncio.TimeoutError:
+                await asyncio.wait_for(_STOP_EVENT.wait(), timeout=POLL_INTERVAL_SEC)
+            except TimeoutError:
                 pass
 
     logger.info("Thumbnail worker slot %d stopped", slot_id)
@@ -817,12 +801,10 @@ async def _sweeper_loop() -> None:
     assert _STOP_EVENT is not None
     while not _STOP_EVENT.is_set():
         try:
-            await asyncio.wait_for(
-                _STOP_EVENT.wait(), timeout=SWEEPER_INTERVAL_SEC
-            )
+            await asyncio.wait_for(_STOP_EVENT.wait(), timeout=SWEEPER_INTERVAL_SEC)
             # If we made it here, stop event fired — exit.
             return
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
         try:
@@ -865,9 +847,7 @@ async def start_worker() -> None:
         _WORKER_TASKS.append(
             asyncio.create_task(_worker_loop(i), name=f"thumbnail-worker-{i}")
         )
-    _SWEEPER_TASK = asyncio.create_task(
-        _sweeper_loop(), name="thumbnail-sweeper"
-    )
+    _SWEEPER_TASK = asyncio.create_task(_sweeper_loop(), name="thumbnail-sweeper")
     logger.info("Thumbnail worker started with %d slot(s)", CONCURRENCY)
 
 
@@ -891,10 +871,8 @@ async def stop_worker() -> None:
                 asyncio.gather(*tasks, return_exceptions=True),
                 timeout=5.0,
             )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Thumbnail worker did not drain in 5 s; cancelling tasks"
-            )
+        except TimeoutError:
+            logger.warning("Thumbnail worker did not drain in 5 s; cancelling tasks")
             for t in tasks:
                 if not t.done():
                     t.cancel()

@@ -14,10 +14,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from services import library_service, thumbnail_worker
-
 
 HMAC_KEY = "test-secret-key-for-unit-tests-only"
 
@@ -129,7 +126,9 @@ async def test_thumbnail_endpoint_accepts_cache_buster_query(
     assert r2.status_code == 200
 
 
-async def test_thumbnail_endpoint_404_when_not_ready(client, test_db, tmp_path, monkeypatch):
+async def test_thumbnail_endpoint_404_when_not_ready(
+    client, test_db, tmp_path, monkeypatch
+):
     monkeypatch.setattr("routers.files.get_data_dir", lambda: tmp_path)
     fid = await _insert_file(test_db)
     # Row exists as 'pending' (from enqueue) but not ready.
@@ -223,9 +222,7 @@ async def test_regenerate_resets_pending_and_returns_count(
 
 
 async def test_regenerate_unknown_library_returns_404(client):
-    r = await client.post(
-        f"/api/v1/library/{uuid.uuid4()}/regenerate-thumbnails"
-    )
+    r = await client.post(f"/api/v1/library/{uuid.uuid4()}/regenerate-thumbnails")
     assert r.status_code == 404
 
 
@@ -278,9 +275,7 @@ async def test_cover_urls_all_thumbs_no_tmdb(test_db):
     assert count == 4
     assert len(covers) == 4
     # All slots filled by /api/v1/files/.../thumbnail?v=...
-    assert all(
-        c.startswith("/api/v1/files/") and "/thumbnail?v=" in c for c in covers
-    )
+    assert all(c.startswith("/api/v1/files/") and "/thumbnail?v=" in c for c in covers)
 
 
 async def test_cover_urls_mixed_tmdb_first(test_db):
@@ -295,9 +290,7 @@ async def test_cover_urls_mixed_tmdb_first(test_db):
             poster_url=f"https://image.tmdb.org/t/p/w342/p{i}.jpg",
         )
     # 3 files without TMDB but with ready thumbnails
-    thumb_fids = [
-        await _insert_file(test_db, library_id=lib_id) for _ in range(3)
-    ]
+    thumb_fids = [await _insert_file(test_db, library_id=lib_id) for _ in range(3)]
     for fid in thumb_fids:
         await _mark_thumb_ready(test_db, fid)
 
@@ -308,8 +301,7 @@ async def test_cover_urls_mixed_tmdb_first(test_db):
     assert covers[0].startswith("https://image.tmdb.org")
     assert covers[1].startswith("https://image.tmdb.org")
     assert all(
-        c.startswith("/api/v1/files/") and "/thumbnail?v=" in c
-        for c in covers[2:]
+        c.startswith("/api/v1/files/") and "/thumbnail?v=" in c for c in covers[2:]
     )
 
 
@@ -343,9 +335,7 @@ async def test_cover_urls_excludes_thumbs_for_files_with_tmdb(test_db):
 # ── Priority boost on GET /files?library_id=X ──────────────────────────────
 
 
-async def test_list_files_boosts_thumbnail_priority(
-    client, test_db
-):
+async def test_list_files_boosts_thumbnail_priority(client, test_db):
     lib_id = await _insert_library(test_db)
     fids = [await _insert_file(test_db, library_id=lib_id) for _ in range(2)]
 
