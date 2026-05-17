@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:fluxora_core/entities/library.dart';
 import 'package:fluxora_core/entities/media_file.dart';
 import 'package:fluxora_core/network/api_client.dart';
+import 'package:fluxora_core/network/api_exception.dart';
 import 'package:fluxora_core/network/endpoints.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/browse_entry.dart';
 import 'package:fluxora_desktop/features/library/domain/entities/library.dart' as desktop;
@@ -293,6 +294,32 @@ class LibraryRepositoryImpl implements LibraryRepository {
           );
         },
       );
+
+  @override
+  Future<String?> resolveAbsolutePath({
+    required String libraryId,
+    required String absolutePath,
+  }) async {
+    try {
+      return await _apiClient.get<String?>(
+        Endpoints.libraryResolveAbsolute(libraryId),
+        queryParameters: {'path': absolutePath},
+        fromJson: (data) {
+          if (data is Map<String, dynamic>) {
+            final rel = data['relative_path'];
+            if (rel is String) return rel;
+          }
+          return null;
+        },
+      );
+    } on ApiException catch (e) {
+      // 404 = "path is not under any library root" — treat as null
+      // so the cubit can surface the usual validation copy instead
+      // of throwing.  Other status codes still bubble up.
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
 
   @override
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath}) async {

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:logger/logger.dart';
 
@@ -98,6 +99,128 @@ BrowseDensity _persistedDensity = BrowseDensity.comfortable;
 /// change).
 SecureStorage? _persistedStorage;
 
+// ── Folder-browser column layout ──────────────────────────────────────────
+//
+// Operator-configurable list of which columns appear in the desktop
+// folder browser's listing + their pixel widths.  Mutators here own
+// both the in-memory statics + the SecureStorage flush so the screen
+// just calls the public mutator after each toggle / drag / resize.
+//
+// Defaults match the original 3-column layout (Name / Size / Modified)
+// so first launch looks identical to before the column-customisation
+// feature shipped.
+
+/// Visible columns in the folder browser's row table.  `name` is
+/// pinned to slot 0 and can't be toggled off (it's the entry's primary
+/// identifier).  Every other column toggles independently via the
+/// right-click column-picker popup.
+enum BrowseColumn {
+  name,
+  size,
+  modified,
+  kind,
+  indexed,
+  codec,
+  dimensions,
+  duration,
+}
+
+/// Default pixel width for each column when the operator hasn't set
+/// an explicit override.  Name's "default" is the width it lands at
+/// the first time it's resized (it ships as flexible / Expanded).
+double defaultBrowseColumnWidth(BrowseColumn col) => switch (col) {
+      BrowseColumn.name => 280,
+      BrowseColumn.size => 100,
+      BrowseColumn.modified => 160,
+      BrowseColumn.kind => 90,
+      BrowseColumn.indexed => 110,
+      BrowseColumn.codec => 80,
+      BrowseColumn.dimensions => 110,
+      BrowseColumn.duration => 90,
+    };
+
+/// Process-wide persisted display order of enabled listing columns.
+/// Iteration order IS the on-screen left-to-right order; mutable via
+/// drag-and-drop on column headers (handled by [reorderBrowseColumn]).
+List<BrowseColumn> persistedColumnOrder = [
+  BrowseColumn.name,
+  BrowseColumn.size,
+  BrowseColumn.modified,
+];
+
+/// Operator-overridden widths for fixed-size columns.  Empty by
+/// default — columns fall back to [defaultBrowseColumnWidth].  Set by
+/// [resizeBrowseColumn] when the operator drags a column-header's
+/// right-edge resize handle.
+Map<BrowseColumn, double> persistedColumnWidths = {};
+
+/// Bumps every time the column set or any width mutates.  Widgets
+/// that depend on the column layout (header row + visible body rows)
+/// wrap themselves in a [ValueListenableBuilder] against this so a
+/// toggle / drag / resize repaints them on the same frame, instead
+/// of waiting for each row to re-build for an unrelated reason.
+final ValueNotifier<int> columnsVersion = ValueNotifier(0);
+
+const double kBrowseColumnMinWidth = 60;
+const double kBrowseColumnMaxWidth = 360;
+
+bool isBrowseColumnEnabled(BrowseColumn col) =>
+    persistedColumnOrder.contains(col);
+
+void toggleBrowseColumn(BrowseColumn col) {
+  if (col == BrowseColumn.name) return; // locked
+  if (persistedColumnOrder.contains(col)) {
+    persistedColumnOrder = [...persistedColumnOrder]..remove(col);
+  } else {
+    persistedColumnOrder = [...persistedColumnOrder, col];
+  }
+  columnsVersion.value = columnsVersion.value + 1;
+  _flushBrowsePrefs();
+}
+
+/// Move [moved] adjacent to [target] inside [persistedColumnOrder].
+/// [placeAfter] picks whether the moved column lands to the RIGHT
+/// (true) or LEFT (false) of target — driven by which half of
+/// target's cell the operator dropped on, Windows Explorer style.
+/// Name is pinned to slot 0; attempts to move Name or drop onto Name
+/// are ignored.
+void reorderBrowseColumn(
+  BrowseColumn moved,
+  BrowseColumn target, {
+  bool placeAfter = false,
+}) {
+  if (moved == target) return;
+  if (moved == BrowseColumn.name) return;
+  if (target == BrowseColumn.name) return;
+  final list = [...persistedColumnOrder];
+  final fromIdx = list.indexOf(moved);
+  if (fromIdx < 0) return;
+  list.removeAt(fromIdx);
+  // After the removal the target's index may have shifted left by one
+  // — read it fresh from the post-removal list so the insert slot is
+  // always correct regardless of drag direction.
+  final targetIdx = list.indexOf(target);
+  if (targetIdx < 0) return;
+  list.insert(placeAfter ? targetIdx + 1 : targetIdx, moved);
+  persistedColumnOrder = list;
+  columnsVersion.value = columnsVersion.value + 1;
+  _flushBrowsePrefs();
+}
+
+double effectiveColumnWidth(BrowseColumn col) =>
+    persistedColumnWidths[col] ?? defaultBrowseColumnWidth(col);
+
+void resizeBrowseColumn(BrowseColumn col, double newWidth) {
+  final clamped =
+      newWidth.clamp(kBrowseColumnMinWidth, kBrowseColumnMaxWidth);
+  if ((persistedColumnWidths[col] ?? defaultBrowseColumnWidth(col)) == clamped) {
+    return;
+  }
+  persistedColumnWidths = {...persistedColumnWidths, col: clamped};
+  columnsVersion.value = columnsVersion.value + 1;
+  _flushBrowsePrefs();
+}
+
 /// Read the persisted browse prefs from [storage] + populate the
 /// module-level statics.  Call once at app startup from
 /// `main.dart` after `setupInjector()` so the first cubit mount sees
@@ -126,6 +249,46 @@ Future<void> hydrateLibraryBrowsePrefs(SecureStorage storage) async {
             _persistedKindFilter;
     _persistedDensity =
         _decodeEnum(BrowseDensity.values, map['density']) ?? _persistedDensity;
+
+    // Column layout — order + widths.  Schema:
+    //   columnOrder:  ["name", "size", "modified", ...]
+    //   columnWidths: {"size": 100.0, "modified": 130.0, ...}
+    // Both tolerant of unknown enum names (skipped silently).  Name is
+    // re-pinned to slot 0 if missing or moved away from there — the
+    // toggle / reorder mutators enforce this invariant at write time
+    // but a corrupt blob could otherwise smuggle a Name-less order
+    // through.
+    final orderRaw = map['columnOrder'];
+    if (orderRaw is List) {
+      final restored = <BrowseColumn>[];
+      for (final v in orderRaw) {
+        final col = _decodeEnum(BrowseColumn.values, v);
+        if (col != null && !restored.contains(col)) restored.add(col);
+      }
+      if (restored.isNotEmpty) {
+        // Force Name to slot 0; drop a stray Name elsewhere.
+        restored.removeWhere((c) => c == BrowseColumn.name);
+        persistedColumnOrder = [BrowseColumn.name, ...restored];
+      }
+    }
+    final widthsRaw = map['columnWidths'];
+    if (widthsRaw is Map) {
+      final restored = <BrowseColumn, double>{};
+      widthsRaw.forEach((k, v) {
+        final col = _decodeEnum(BrowseColumn.values, k);
+        if (col != null && v is num) {
+          restored[col] = v.toDouble().clamp(
+                kBrowseColumnMinWidth,
+                kBrowseColumnMaxWidth,
+              );
+        }
+      });
+      persistedColumnWidths = restored;
+    }
+    // Bump the notifier so any widget that mounted before hydrate ran
+    // re-renders against the restored layout.  Cheap — only the column
+    // header + row body subscribe.
+    columnsVersion.value = columnsVersion.value + 1;
   } catch (e, st) {
     // Corrupt payload — keep defaults + wipe so the next write starts
     // clean.  Don't rethrow; UI prefs being reset is an annoyance,
@@ -151,6 +314,11 @@ void _flushBrowsePrefs() {
     'viewMode': _persistedViewMode.name,
     'kindFilter': _persistedKindFilter.name,
     'density': _persistedDensity.name,
+    'columnOrder': persistedColumnOrder.map((c) => c.name).toList(),
+    'columnWidths': {
+      for (final entry in persistedColumnWidths.entries)
+        entry.key.name: entry.value,
+    },
   });
   unawaited(storage.setBrowsePrefsJson(encoded));
 }
@@ -165,6 +333,32 @@ T? _decodeEnum<T extends Enum>(List<T> values, Object? raw) {
     if (v.name == raw) return v;
   }
   return null;
+}
+
+/// Single result from [LibraryBrowseCubit.pathSuggestions] — bundles
+/// the directory entry with the relative path the cubit fetched it
+/// against.  The pick handler navigates via
+/// `cubit.navigateTo('${parentRelative}/${entry.name}')` directly,
+/// bypassing the absolute-string-prefix matching in
+/// [LibraryBrowseCubit.navigateToAbsolute] (which is fragile across
+/// multi-root libraries, case mismatches, and stale `rootPath`
+/// values).  The relative is guaranteed valid because the cubit had
+/// to use it to fetch the suggestion in the first place.
+///
+/// `parentRelative` is empty at the library root.
+class PathSuggestion {
+  const PathSuggestion({
+    required this.parentRelative,
+    required this.entry,
+  });
+
+  final String parentRelative;
+  final BrowseEntry entry;
+
+  /// Compose the absolute-from-library-root relative path that
+  /// `cubit.navigateTo(...)` accepts.
+  String get relativePath =>
+      parentRelative.isEmpty ? entry.name : '$parentRelative/${entry.name}';
 }
 
 /// One cubit per screen mount; the UI prefs seed from the module-level
@@ -491,13 +685,19 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   /// Navigate to an absolute or library-relative path entered into the
   /// editable path textbox (Phase C).  Strips any matched root prefix
   /// to produce a relative path the server's `/browse?path=` accepts;
-  /// returns false (without navigating) when the input doesn't sit
-  /// under the loaded library's `root_path`.
+  /// when the local prefix-match fails (multi-root library, case
+  /// mismatch on Windows, or typed canonical form differs from the
+  /// visible `rootPath`), falls back to
+  /// `GET /api/v1/library/{id}/resolve-absolute?path=<abs>` which
+  /// walks every configured `root_paths` server-side.  Returns false
+  /// only when both the local match AND the server fallback fail —
+  /// the path is genuinely outside the library or doesn't exist.
   Future<bool> navigateToAbsolute(String input) async {
     final current = state;
     if (current is! LibraryBrowseLoaded) return false;
     final root = current.response.rootPath;
-    final normalised = input.trim().replaceAll(r'\', '/');
+    final trimmedInput = input.trim();
+    final normalised = trimmedInput.replaceAll(r'\', '/');
     final normalisedRoot = root.replaceAll(r'\', '/');
     if (normalised.isEmpty) {
       await navigateTo('');
@@ -513,6 +713,19 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     } else if (!normalised.contains(':') && !normalised.startsWith('/')) {
       // Looks like an already-relative path.
       relative = normalised;
+    } else {
+      // Absolute path that doesn't match the displayed root.  Ask the
+      // server to walk every configured root_paths and see if any of
+      // them contain it.  Single round-trip; returns null on miss.
+      try {
+        relative = await _repository.resolveAbsolutePath(
+          libraryId: libraryId,
+          absolutePath: trimmedInput,
+        );
+      } on ApiException catch (e, st) {
+        _log.w('resolveAbsolutePath failed', error: e, stackTrace: st);
+        relative = null;
+      }
     }
     if (relative == null) return false;
     // Same-path commit (Enter on an unchanged URL): route through a
@@ -550,7 +763,7 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
   /// suggests siblings of `Movies` under `D:\Library`; the same
   /// string with a trailing slash (`D:\Library\Movies\`) → suggests
   /// every direct child of `Movies` (empty prefix).
-  Future<List<BrowseEntry>> pathSuggestions(
+  Future<List<PathSuggestion>> pathSuggestions(
     String input, {
     int limit = 10,
   }) async {
@@ -582,12 +795,15 @@ class LibraryBrowseCubit extends Cubit<LibraryBrowseState> {
     final children = await _fetchChildrenCached(parentRelative);
     if (children.isEmpty) return const [];
 
-    final matches = <BrowseEntry>[];
+    final matches = <PathSuggestion>[];
     for (final e in children) {
       if (!e.isDir) continue;
       if (prefixLower.isEmpty ||
           e.name.toLowerCase().startsWith(prefixLower)) {
-        matches.add(e);
+        matches.add(PathSuggestion(
+          parentRelative: parentRelative,
+          entry: e,
+        ));
         if (matches.length >= limit) break;
       }
     }

@@ -134,6 +134,16 @@ abstract interface class LibraryRepository {
     required String relativePath,
   });
 
+  /// Take an absolute on-disk path the operator typed into the URL
+  /// bar + return the library-relative path under the matching
+  /// `root_paths` entry, or `null` when the path lives under no
+  /// root (404 from the server treated as "not under this library").
+  /// Backs the URL bar's manual-typing fallback.
+  Future<String?> resolveAbsolutePath({
+    required String libraryId,
+    required String absolutePath,
+  });
+
   Future<MediaFile> uploadFileToLibrary({required String libraryId, required String filePath});
 }
 

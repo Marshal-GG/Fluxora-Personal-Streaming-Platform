@@ -864,12 +864,24 @@ class _QuickStatsGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final isFile = !entry.isDir;
     final extension = isFile ? _extensionOf(entry.name) : null;
+    // Directories show the catalog-sum (instant, indexed-only) here;
+    // the "Folder Size" block below still surfaces the disk-walked
+    // truth when the operator clicks "Compute size."  Same fallback
+    // chain as the listing column's SIZE cell.
+    final String sizeValue;
+    if (entry.isDir) {
+      sizeValue = entry.catalogedSizeBytes > 0
+          ? _humanBytes(entry.catalogedSizeBytes)
+          : '—';
+    } else {
+      sizeValue = _humanBytes(entry.sizeBytes);
+    }
     return Column(
       children: [
         _GridRow(
           left: _StatCell(
             label: 'Size',
-            value: entry.isDir ? '—' : _humanBytes(entry.sizeBytes),
+            value: sizeValue,
           ),
           right: _StatCell(
             label: 'Modified',
@@ -1220,29 +1232,29 @@ class _ActionsRowState extends State<_ActionsRow> {
     setState(() => _streamTestInFlight = true);
     try {
       final api = GetIt.I<ApiClient>();
-      final started = await api.post<Map<String, dynamic>>(
-        '/api/v1/stream/start/$fileId',
+      // Lightweight probe via the localhost-only stream-test endpoint —
+      // verifies the file is reachable on disk + reports the codec the
+      // streaming pipeline would route through (sidecar or source).
+      // Does not spawn FFmpeg or create a stream_sessions row, so the
+      // operator can hammer the button without leaking sessions or
+      // tripping per-client concurrency caps.  Bearer-auth /stream/start
+      // is not used here because the desktop has no bearer token; the
+      // request would 401 against `validate_token`.
+      final result = await api.post<Map<String, dynamic>>(
+        '/api/v1/files/$fileId/stream-test',
       );
-      final sessionId = started['session_id'] as String?;
-      final codec = (started['codec'] as String? ??
-              entry.media?.codecName ??
-              '')
+      final codec = (result['codec'] as String? ?? entry.media?.codecName ?? '')
           .toUpperCase();
-      // Best-effort cleanup.  Failure here is non-fatal — surface the
-      // start outcome to the operator regardless.
-      if (sessionId != null) {
-        try {
-          await api.delete('/api/v1/stream/$sessionId');
-        } catch (e, st) {
-          _log.w('Stream-test cleanup failed for $sessionId',
-              error: e, stackTrace: st);
-        }
-      }
+      final usingSidecar = result['would_use_sidecar'] as bool? ?? false;
       if (!mounted) return;
       messenger?.showSnackBar(
         SnackBar(
           content: Text(
-            codec.isEmpty ? 'Stream test OK' : 'Stream test OK · $codec',
+            codec.isEmpty
+                ? 'Stream test OK'
+                : (usingSidecar
+                    ? 'Stream test OK · $codec (sidecar)'
+                    : 'Stream test OK · $codec'),
           ),
         ),
       );

@@ -134,6 +134,7 @@ class BrowseEntry {
     required this.isIndexed,
     this.fileId,
     this.media,
+    this.catalogedSizeBytes = 0,
   });
 
   /// Display name (file or directory basename).
@@ -175,6 +176,21 @@ class BrowseEntry {
   /// entries and directories.
   final IndexedMedia? media;
 
+  /// Directory entries only — SUM of `media_files.size_bytes` for every
+  /// indexed descendant under this folder.  Sub-millisecond on the
+  /// server (`LIKE 'prefix/%'` against the path index), populated by
+  /// `browse_service._attach_directory_catalog_sizes`.  Returns 0 for
+  /// files and for directories whose contents are entirely un-indexed
+  /// (e.g. a folder that was just unindexed via right-click).
+  ///
+  /// The desktop folder browser displays this inline in the SIZE
+  /// column so directory rows show a value without the operator
+  /// clicking "Compute size" first.  The button still triggers an
+  /// authoritative on-disk walk via `library_service.folder_size`
+  /// when the indexed-only estimate isn't enough (Documents library
+  /// with random extensions, `.git` / `node_modules` trees, etc).
+  final int catalogedSizeBytes;
+
   static BrowseEntry? tryFromJson(Map<String, dynamic> json) {
     try {
       final mediaJson = json['media'];
@@ -191,6 +207,8 @@ class BrowseEntry {
         media: mediaJson is Map<String, dynamic>
             ? IndexedMedia.tryFromJson(mediaJson)
             : null,
+        catalogedSizeBytes:
+            (json['cataloged_size_bytes'] as num?)?.toInt() ?? 0,
       );
     } catch (e, st) {
       _log.w('BrowseEntry.tryFromJson — bad payload',
