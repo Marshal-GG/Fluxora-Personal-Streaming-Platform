@@ -13,11 +13,11 @@ dependencies:
   dio: ^5.4.0
   flutter_secure_storage: ^9.0.0
   freezed_annotation: ^3.0.0
-  json_annotation: ^4.11.0
+  json_annotation: ^4.12.0
   logger: ^2.7.0
   connectivity_plus: ^7.1.1
   equatable: ^2.0.8
-  flutter_svg: ^2.2.4
+  flutter_svg: ^2.3.0
   cached_network_image: ^3.4.1
   # `MediaKitEngine` lives in this package so desktop + iOS (and the
   # Android libmpv fallback path) can share one Dart-side player
