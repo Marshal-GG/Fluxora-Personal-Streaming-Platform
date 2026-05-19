@@ -27,6 +27,13 @@ class SecureStorage {
   // payloads.
   static const String _keyBrowsePrefs = 'library_browse_prefs_v1';
 
+  /// Clients-screen data-table column widths (per-column `double` keyed
+  /// by `ClientColumn.name`).  Same shape as the folder browser's
+  /// `columnWidths` map nested inside its prefs blob but stored under
+  /// its own key so the Clients-table state survives without coupling
+  /// to the folder-browser persistence schema.
+  static const String _keyClientsColumnPrefs = 'clients_column_prefs_v1';
+
   /// Allowed values for [getMaxStreamingQuality] / [setMaxStreamingQuality].
   /// Anything else round-trips back as [maxStreamingQualityDefault].
   static const String maxStreamingQualityDefault = 'auto';
@@ -352,6 +359,32 @@ class SecureStorage {
       await _storage.write(key: _keyBrowsePrefs, value: json);
     } catch (e, st) {
       _log.e('Failed to write browse prefs', error: e, stackTrace: st);
+      // Rethrow so the caller can circuit-break (disable further
+      // writes for this session) — without it the per-drag flush
+      // floods the log when the OS-side storage is wedged (corrupt
+      // DAT + locked by another process).
+      rethrow;
+    }
+  }
+
+  Future<String?> getClientsColumnPrefsJson() async {
+    try {
+      return await _storage.read(key: _keyClientsColumnPrefs);
+    } catch (e, st) {
+      _log.e('Failed to read clients column prefs', error: e, stackTrace: st);
+      return null;
+    }
+  }
+
+  Future<void> setClientsColumnPrefsJson(String json) async {
+    try {
+      await _storage.write(key: _keyClientsColumnPrefs, value: json);
+    } catch (e, st) {
+      _log.e('Failed to write clients column prefs', error: e, stackTrace: st);
+      // Rethrow so the caller can circuit-break (disable further
+      // writes for this session) — without it the per-drag flush
+      // floods the log when the OS-side storage is wedged (corrupt
+      // DAT + locked by another process).
       rethrow;
     }
   }

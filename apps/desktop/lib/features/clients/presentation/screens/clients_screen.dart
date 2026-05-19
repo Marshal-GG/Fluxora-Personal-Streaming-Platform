@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
@@ -8,6 +11,7 @@ import 'package:fluxora_core/constants/app_typography.dart';
 import 'package:fluxora_core/entities/client_list_item.dart';
 import 'package:fluxora_core/entities/enums.dart';
 import 'package:fluxora_core/entities/group.dart';
+import 'package:fluxora_core/storage/secure_storage.dart';
 import 'package:logger/logger.dart';
 import 'package:fluxora_desktop/features/clients/domain/repositories/clients_repository.dart';
 import 'package:fluxora_desktop/features/clients/presentation/cubit/clients_cubit.dart';
@@ -114,7 +118,13 @@ class _ClientsViewState extends State<_ClientsView> {
     } else {
       result = result.where((c) {
         return switch (_statusFilter) {
-          'Online' => c.status == ClientStatus.approved && c.isTrusted,
+          // Online here mirrors the chip — approved + trusted + last
+          // seen within `_kOnlineThreshold`.  Was just `is_trusted`,
+          // which counted every approved device regardless of when it
+          // last phoned home.
+          'Online' => c.status == ClientStatus.approved &&
+              c.isTrusted &&
+              _liveStatusFor(c) == _LiveStatus.online,
           'Pending' => c.status == ClientStatus.pending,
           'Revoked' => c.status == ClientStatus.rejected,
           _ => true,
@@ -205,7 +215,10 @@ class _ClientsViewState extends State<_ClientsView> {
         state is ClientsLoaded ? state.clients : <ClientListItem>[];
     final total = clients.length;
     final online = clients
-        .where((c) => c.status == ClientStatus.approved && c.isTrusted)
+        .where((c) =>
+            c.status == ClientStatus.approved &&
+            c.isTrusted &&
+            _liveStatusFor(c) == _LiveStatus.online)
         .length;
     final activeStreams = context
             .select<SystemStatsCubit, int?>((c) => c.state.latest?.activeStreams)
@@ -529,6 +542,9 @@ class _ClientsViewState extends State<_ClientsView> {
                                                 onRevoke: () =>
                                                     _confirmRevoke(
                                                         context, c),
+                                                onDelete: () =>
+                                                    _confirmDelete(
+                                                        context, c),
                                               ))
                                           .toList();
                                     }(),
@@ -636,6 +652,41 @@ class _ClientsViewState extends State<_ClientsView> {
       await cubit.revoke(client.id);
     }
   }
+
+  Future<void> _confirmDelete(
+    BuildContext context,
+    ClientListItem client,
+  ) async {
+    final cubit = context.read<ClientsCubit>();
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierColor: const Color(0xCC0F0C24),
+      builder: (dialogCtx) => FluxGlassDialog(
+        title: Text('Delete ${client.name}?'),
+        content: const Text(
+          'The client row will be removed permanently.  Audit-history '
+          'references (past stream sessions, activity events) lose '
+          'their client-name resolution; the device can pair again as '
+          'a fresh entry.  This action cannot be undone.',
+        ),
+        actions: [
+          FluxButton(
+            variant: FluxButtonVariant.secondary,
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FluxButton(
+            variant: FluxButtonVariant.danger,
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await cubit.delete(client.id);
+    }
+  }
 }
 
 // ── Search input ───────────────────────────────────────────────────────────────
@@ -740,9 +791,14 @@ class _IconActionButtonState extends State<_IconActionButton> {
 
 // ── Table header row ───────────────────────────────────────────────────────────
 
-/// Min / max column width clamp.  Below the min the label truncates
-/// uselessly; above the max the column hogs the listing.
-const double _kClientColumnMinWidth = 80;
+/// Min / max column width clamp.  Below the min icon-only columns
+/// can't render their hit target; above the max the column hogs the
+/// listing.  40 px lower bound = a single 28-px icon button + 12 px
+/// breathing room — wide enough that Actions / icon-only columns
+/// shrink down sensibly, narrow enough that text-bearing columns
+/// will clip their labels (the operator's choice once they drag
+/// that small).
+const double _kClientColumnMinWidth = 40;
 const double _kClientColumnMaxWidth = 480;
 
 /// Stable identifier for every Clients table column.  Used as the key
@@ -763,20 +819,58 @@ enum ClientColumn {
 /// tabbing away from Clients + back) but reset on app restart —
 /// browser-style cross-restart persistence via `SecureStorage` is a
 /// follow-up if the operator asks for it.
+// Defaults tuned so the row fits a typical viewport WITHOUT the
+// horizontal scrollbar kicking in on cold open.  Sum 805 px content
+// + 63 px dividers (7 × 9) + 36 px outer row padding = 904 px total
+// row width — fits comfortably inside a `FluxCard` body even with
+// the 300-px detail panel mounted on the right.  Operator can still
+// drag any column wider; the table starts scrolling horizontally
+// only once their total exceeds the available width.
 final Map<ClientColumn, double> _clientColumnWidths = {
   ClientColumn.client: 200,
   ClientColumn.device: 100,
-  ClientColumn.ip: 130,
-  ClientColumn.status: 90,
-  ClientColumn.lastActive: 110,
-  ClientColumn.currentStream: 200,
-  ClientColumn.actions: 160,
+  ClientColumn.ip: 120,
+  ClientColumn.status: 95,
+  ClientColumn.lastActive: 100,
+  ClientColumn.currentStream: 115,
+  // Actions column hugs its 28-px icon button + 15 px breathing
+  // room.  Single-icon states (approved revoke / revoked delete)
+  // sit centred without empty void.  The pending state's
+  // Approve+Reject pair (28+4+28 = 60 px) clips at this width and
+  // requires a manual drag-wider to fully see both icons — operator
+  // tradeoff, the pair-approval flow is rare and the post-approval
+  // single-icon state is the steady-state.
+  ClientColumn.actions: 43,
 };
 
 /// `ValueNotifier` ticked on every resize so every `_HeaderCell` +
 /// `_ClientRow` + listing wrapper rebuilds the same frame as the
 /// drag updates the widths map.
 final ValueNotifier<int> _clientColumnsVersion = ValueNotifier<int>(0);
+
+/// `SecureStorage` handle, set once by [hydrateClientsColumnPrefs] at
+/// app startup.  `null` until hydrate runs — [_flushClientsColumnPrefs]
+/// becomes a no-op in that window (the in-memory map still updates,
+/// just isn't persisted yet).  Mirrors the folder browser's
+/// `_persistedStorage` pattern.
+SecureStorage? _clientsColumnPrefsStorage;
+
+/// Debounce timer for column-width persistence.  A column-resize drag
+/// fires `resizeClientColumn` on every pointer move (50+ times a
+/// second); without debouncing each tick would round-trip through
+/// secure-storage's platform channel and — when the on-disk DAT is
+/// wedged — flood the log with identical write failures.  Coalesces
+/// to one write 400 ms after the last drag tick.
+Timer? _clientsColumnFlushDebounce;
+
+/// Circuit-breaker for the persistence path.  Flipped to `false` the
+/// first time a write rethrows (corrupt secure-storage file, locked
+/// by another process, DPAPI failure).  Subsequent flushes return
+/// early so the in-memory map keeps updating but the platform channel
+/// no longer gets hammered.  Operator can restart the app once the
+/// underlying storage issue is fixed; the flag resets at process
+/// start.
+bool _clientsColumnPrefsWritable = true;
 
 /// Read the effective width for [column], clamped to the
 /// [_kClientColumnMinWidth] / [_kClientColumnMaxWidth] range.
@@ -785,14 +879,90 @@ double effectiveClientColumnWidth(ClientColumn column) {
   return raw.clamp(_kClientColumnMinWidth, _kClientColumnMaxWidth);
 }
 
-/// Drag-update entry point — sets [column]'s width, clamps, and
-/// ticks [_clientColumnsVersion] so listeners rebuild.
+/// Drag-update entry point — sets [column]'s width, clamps, ticks
+/// [_clientColumnsVersion] so listeners rebuild, and persists the
+/// new layout to [SecureStorage] (fire-and-forget; failed writes log
+/// but don't propagate).
 void resizeClientColumn(ClientColumn column, double width) {
   _clientColumnWidths[column] = width.clamp(
     _kClientColumnMinWidth,
     _kClientColumnMaxWidth,
   );
   _clientColumnsVersion.value++;
+  _flushClientsColumnPrefs();
+}
+
+/// One-shot startup hydration of [_clientColumnWidths] from
+/// [SecureStorage].  Call once from `main.dart` after
+/// `setupInjector()` so the first Clients-screen mount sees the
+/// operator's last-saved widths instead of the defaults.  Tolerant
+/// of missing / corrupt payloads — falls back to defaults silently
+/// in those cases.  Mirrors `hydrateLibraryBrowsePrefs` in the
+/// folder browser.
+Future<void> hydrateClientsColumnPrefs(SecureStorage storage) async {
+  _clientsColumnPrefsStorage = storage;
+  final raw = await storage.getClientsColumnPrefsJson();
+  if (raw == null || raw.isEmpty) return;
+  try {
+    final map = jsonDecode(raw) as Map<String, dynamic>;
+    map.forEach((k, v) {
+      ClientColumn? col;
+      for (final c in ClientColumn.values) {
+        if (c.name == k) {
+          col = c;
+          break;
+        }
+      }
+      if (col != null && v is num) {
+        _clientColumnWidths[col] = v.toDouble().clamp(
+              _kClientColumnMinWidth,
+              _kClientColumnMaxWidth,
+            );
+      }
+    });
+    // Bump the notifier so any widget that mounted before hydrate
+    // completed re-renders against the restored widths.
+    _clientColumnsVersion.value++;
+  } catch (e, st) {
+    Logger().w('Failed to parse clients column prefs; resetting',
+        error: e, stackTrace: st);
+    unawaited(storage.setClientsColumnPrefsJson('{}'));
+  }
+}
+
+/// Encode the current widths map + push to [SecureStorage].  Called
+/// from every [resizeClientColumn].  Debounced 400 ms so a single
+/// drag-resize collapses to one write instead of one-per-pointer-tick;
+/// circuit-broken via [_clientsColumnPrefsWritable] so a wedged
+/// on-disk DAT can't keep flooding the log.
+void _flushClientsColumnPrefs() {
+  final storage = _clientsColumnPrefsStorage;
+  if (storage == null) return;
+  if (!_clientsColumnPrefsWritable) return;
+  _clientsColumnFlushDebounce?.cancel();
+  _clientsColumnFlushDebounce = Timer(const Duration(milliseconds: 400), () {
+    final encoded = jsonEncode(<String, double>{
+      for (final entry in _clientColumnWidths.entries)
+        entry.key.name: entry.value,
+    });
+    () async {
+      try {
+        await storage.setClientsColumnPrefsJson(encoded);
+      } catch (_) {
+        // First attempt may have failed because the plugin found a
+        // corrupt DPAPI blob on disk — its load() path deletes the
+        // bad file then rethrows, so the retry writes into an empty
+        // store and succeeds.  Only trip the breaker if the retry
+        // also fails (truly wedged storage: locked file, missing
+        // master key, etc.).
+        try {
+          await storage.setClientsColumnPrefsJson(encoded);
+        } catch (_) {
+          _clientsColumnPrefsWritable = false;
+        }
+      }
+    }();
+  });
 }
 
 /// Thin adapter around the shared [FluxResizableColumnDivider] that
@@ -913,6 +1083,7 @@ class _ClientRow extends StatefulWidget {
     required this.onApprove,
     required this.onReject,
     required this.onRevoke,
+    required this.onDelete,
   });
 
   final ClientListItem client;
@@ -922,6 +1093,7 @@ class _ClientRow extends StatefulWidget {
   final VoidCallback onApprove;
   final VoidCallback onReject;
   final VoidCallback onRevoke;
+  final VoidCallback onDelete;
 
   @override
   State<_ClientRow> createState() => _ClientRowState();
@@ -1003,6 +1175,11 @@ class _ClientRowState extends State<_ClientRow> {
                 width: effectiveClientColumnWidth(ClientColumn.ip),
                 child: Text(
                   c.lastIp ?? '—',
+                  // `maxLines: 1` is required — `overflow: ellipsis`
+                  // alone lets Text wrap to a second line first and
+                  // only ellipsis-clip on the last line.  Pinning
+                  // maxLines forces single-line truncation.
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontFamily: 'JetBrains Mono',
@@ -1014,7 +1191,14 @@ class _ClientRowState extends State<_ClientRow> {
               const FluxColumnSpacer(),
               SizedBox(
                 width: effectiveClientColumnWidth(ClientColumn.status),
-                child: _StatusChip(client: c),
+                // FluxChip uses `MainAxisSize.min` internally; without
+                // Align it stretches to the SizedBox tight constraint
+                // and clumps the label to the left edge.  Align lets
+                // the pill stay compact + sit at the leading edge.
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: _StatusChip(client: c),
+                ),
               ),
               const FluxColumnSpacer(),
               SizedBox(
@@ -1028,6 +1212,7 @@ class _ClientRowState extends State<_ClientRow> {
                 width: effectiveClientColumnWidth(ClientColumn.currentStream),
                 child: Text(
                   c.activeSession?.mediaTitle ?? '—',
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontFamily: 'Inter',
@@ -1041,12 +1226,26 @@ class _ClientRowState extends State<_ClientRow> {
               const FluxColumnSpacer(),
               SizedBox(
                 width: effectiveClientColumnWidth(ClientColumn.actions),
-                child: _RowActions(
-                  client: c,
-                  isProcessing: widget.isProcessing,
-                  onApprove: widget.onApprove,
-                  onReject: widget.onReject,
-                  onRevoke: widget.onRevoke,
+                // Centre the action icon inside the cell + clip
+                // overflow.  Centred lets a 28-px icon sit in a
+                // 43-px cell looking visually balanced.  ClipRect
+                // suppresses the RenderFlex overflow paint when the
+                // operator drags the divider narrower than the
+                // icon — the icon clips at the cell edge instead of
+                // bleeding into the next column or pushing onto a
+                // new line.
+                child: ClipRect(
+                  child: Align(
+                    alignment: Alignment.center,
+                    child: _RowActions(
+                      client: c,
+                      isProcessing: widget.isProcessing,
+                      onApprove: widget.onApprove,
+                      onReject: widget.onReject,
+                      onRevoke: widget.onRevoke,
+                      onDelete: widget.onDelete,
+                    ),
+                  ),
                 ),
               ),
               // Trailing spacer matches the header's trailing divider
@@ -1133,17 +1332,45 @@ class _DeviceCell extends StatelessWidget {
       children: [
         Icon(_deviceTypeIcon(platform), size: 12, color: AppColors.textDim),
         const SizedBox(width: 6),
-        Text(
-          label,
-          style: const TextStyle(
-            fontFamily: 'Inter',
-            fontSize: 12,
-            color: AppColors.textMutedV2,
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: 'Inter',
+              fontSize: 12,
+              color: AppColors.textMutedV2,
+            ),
           ),
         ),
       ],
     );
   }
+}
+
+/// Online if last_seen within 2 minutes — mobile clients poll
+/// authenticated endpoints frequently, so a 2-minute gap means the
+/// device has gone quiet (screen off, app killed, network drop).
+const Duration _kOnlineThreshold = Duration(minutes: 2);
+
+/// Idle if last_seen within 15 minutes — device was active recently
+/// but isn't actively heartbeating right now.
+const Duration _kIdleThreshold = Duration(minutes: 15);
+
+/// Derives the live connectivity bucket for an approved device.
+/// `is_trusted` alone is NOT a connectivity signal — it's the
+/// persistent authorisation flag set at pair-approval and only
+/// cleared on revoke.  The right "online" signal is freshness of
+/// `last_seen`, which the server bumps on every authenticated
+/// request.
+enum _LiveStatus { online, idle, offline }
+
+_LiveStatus _liveStatusFor(ClientListItem c) {
+  final since = DateTime.now().toUtc().difference(c.lastSeen.toUtc());
+  if (since < _kOnlineThreshold) return _LiveStatus.online;
+  if (since < _kIdleThreshold) return _LiveStatus.idle;
+  return _LiveStatus.offline;
 }
 
 class _StatusChip extends StatelessWidget {
@@ -1153,14 +1380,23 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (client.status == ClientStatus.approved && client.isTrusted) {
-      return const FluxChip('Online', color: FluxChipColor.success);
-    } else if (client.status == ClientStatus.approved && !client.isTrusted) {
-      return const FluxChip('Idle', color: FluxChipColor.warning);
-    } else if (client.status == ClientStatus.rejected) {
-      return const FluxChip('Offline', color: FluxChipColor.neutral);
+    // Pending + rejected statuses bypass the freshness check —
+    // `last_seen` is meaningful only for approved devices that have
+    // had a chance to make authenticated requests.
+    if (client.status == ClientStatus.pending) {
+      return const FluxChip('Pending', color: FluxChipColor.info);
     }
-    return const FluxChip('Pending', color: FluxChipColor.info);
+    if (client.status == ClientStatus.rejected || !client.isTrusted) {
+      return const FluxChip('Revoked', color: FluxChipColor.neutral);
+    }
+    return switch (_liveStatusFor(client)) {
+      _LiveStatus.online =>
+        const FluxChip('Online', color: FluxChipColor.success),
+      _LiveStatus.idle =>
+        const FluxChip('Idle', color: FluxChipColor.warning),
+      _LiveStatus.offline =>
+        const FluxChip('Offline', color: FluxChipColor.neutral),
+    };
   }
 }
 
@@ -1182,6 +1418,8 @@ class _LastActiveCell extends StatelessWidget {
       child: Text(
         label,
         textAlign: TextAlign.right,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
           fontFamily: 'Inter',
           fontSize: 12,
@@ -1199,6 +1437,7 @@ class _RowActions extends StatelessWidget {
     required this.onApprove,
     required this.onReject,
     required this.onRevoke,
+    required this.onDelete,
   });
 
   final ClientListItem client;
@@ -1206,12 +1445,13 @@ class _RowActions extends StatelessWidget {
   final VoidCallback onApprove;
   final VoidCallback onReject;
   final VoidCallback onRevoke;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
     if (isProcessing) {
       return const Row(
-        mainAxisAlignment: MainAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox(
             width: 26,
@@ -1229,8 +1469,12 @@ class _RowActions extends StatelessWidget {
       );
     }
 
+    // `MainAxisSize.min` so the Row hugs its children — the parent
+    // cell wraps this in `Align(center)` and clips overflow, so a
+    // tight Row is the right primitive here (with `MainAxisSize.max`
+    // the Row would fill the cell and defeat the outer Align).
     return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
       children: switch (client.status) {
         ClientStatus.pending => [
             // Pending: prominent green Approve check + red X Reject.  These
@@ -1269,15 +1513,14 @@ class _RowActions extends StatelessWidget {
             ),
           ],
         ClientStatus.rejected => [
-            // Rejected / revoked rows are hidden by default (see the 'All'
-            // filter in _applyFilters); when the operator surfaces them via
-            // the 'Revoked' filter there's no further action — pairing has
-            // to start from the device.
-            const Tooltip(
-              message: 'Revoked — re-pair from the device',
-              child: _SmallIconButton(
-                icon: Icons.history_rounded,
-                onTap: null,
+            // Revoked rows can be hard-deleted from this action slot
+            // — pairing has to start fresh from the device anyway.
+            Tooltip(
+              message: 'Delete this device permanently',
+              child: _ColoredIconButton(
+                icon: Icons.delete_outline_rounded,
+                tint: const Color(0xFFF87171),
+                onTap: onDelete,
               ),
             ),
           ],
@@ -1329,53 +1572,6 @@ class _ColoredIconButtonState extends State<_ColoredIconButton> {
           ),
           child: Center(
             child: Icon(widget.icon, size: 14, color: widget.tint),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Small 26×26 icon button ────────────────────────────────────────────────────
-
-class _SmallIconButton extends StatefulWidget {
-  const _SmallIconButton({required this.icon, this.onTap});
-
-  final IconData icon;
-  final VoidCallback? onTap;
-
-  @override
-  State<_SmallIconButton> createState() => _SmallIconButtonState();
-}
-
-class _SmallIconButtonState extends State<_SmallIconButton> {
-  bool _hovered = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = widget.onTap != null;
-    return Opacity(
-      opacity: enabled ? 1.0 : 0.4,
-      child: MouseRegion(
-        cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-        onEnter: enabled ? (_) => setState(() => _hovered = true) : null,
-        onExit: enabled ? (_) => setState(() => _hovered = false) : null,
-        child: GestureDetector(
-          onTap: widget.onTap,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            width: 26,
-            height: 26,
-            decoration: BoxDecoration(
-              color: _hovered
-                  ? const Color(0x0AFFFFFF)
-                  : const Color(0x08FFFFFF),
-              border: Border.all(color: const Color(0x0DFFFFFF)),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Center(
-              child: Icon(widget.icon, size: 12, color: AppColors.textMutedV2),
-            ),
           ),
         ),
       ),

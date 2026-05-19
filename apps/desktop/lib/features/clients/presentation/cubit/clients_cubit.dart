@@ -149,6 +149,42 @@ class ClientsCubit extends Cubit<ClientsState> {
     }
   }
 
+  /// Hard-delete a client row.  Calls `DELETE /auth/clients/{id}` —
+  /// removes the `clients` row entirely (FKs cascade to
+  /// `group_members`, null-out `stream_sessions.client_id`).  Use
+  /// after a revoke when the operator wants to clean up the Revoked
+  /// view.  Different from [revoke] which only flips the row to
+  /// `status='rejected'`.
+  Future<void> delete(String clientId) async {
+    final current = state;
+    if (current is! ClientsLoaded) return;
+
+    emit(current.copyWith(
+      processingIds: {...current.processingIds, clientId},
+    ));
+
+    try {
+      await _repository.deleteClient(clientId);
+      await load();
+    } on ApiException catch (e, st) {
+      _log.e('Delete failed for $clientId', error: e, stackTrace: st);
+      final next = state;
+      if (next is ClientsLoaded) {
+        emit(next.copyWith(
+          processingIds: {...next.processingIds}..remove(clientId),
+        ));
+      }
+    } catch (e, st) {
+      _log.e('Delete failed for $clientId', error: e, stackTrace: st);
+      final next = state;
+      if (next is ClientsLoaded) {
+        emit(next.copyWith(
+          processingIds: {...next.processingIds}..remove(clientId),
+        ));
+      }
+    }
+  }
+
   @override
   void emit(ClientsState state) {
     if (isClosed) return;

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:fluxora_core/storage/secure_storage.dart';
 import 'package:fluxora_desktop/app.dart';
 import 'package:fluxora_desktop/core/di/injector.dart';
+import 'package:fluxora_desktop/features/clients/presentation/screens/clients_screen.dart';
 import 'package:fluxora_desktop/features/library/presentation/cubit/library_browse_cubit.dart';
 import 'package:get_it/get_it.dart';
 import 'package:window_manager/window_manager.dart';
@@ -34,5 +35,8 @@ void main() async {
   // here (not fire-and-forget) so `runApp` doesn't paint a frame
   // with the wrong values before the storage read lands.
   await hydrateLibraryBrowsePrefs(GetIt.I<SecureStorage>());
+  // Same hydration pattern for the Clients-table column widths so
+  // the operator's resizes survive an app restart.
+  await hydrateClientsColumnPrefs(GetIt.I<SecureStorage>());
   runApp(const FluxoraDesktopApp());
 }

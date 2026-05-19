@@ -19,4 +19,11 @@ abstract class ClientsRepository {
   /// taking it back".  The DB row stays so audit history (stream
   /// sessions, activity events) still resolves the client_id.
   Future<void> revokeClient(String clientId);
+
+  /// `DELETE /auth/clients/{id}` — operator-driven hard-delete of a
+  /// client row.  Distinct from [revokeClient] which only flips the
+  /// row to `status='rejected'` for audit-history preservation; this
+  /// actually removes the `clients` row.  Use after a revoke when
+  /// the operator wants to clean up the Revoked-filter view.
+  Future<void> deleteClient(String clientId);
 }
