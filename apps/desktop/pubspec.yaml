@@ -21,11 +21,13 @@ dependencies:
   intl: ^0.20.2
   freezed_annotation: ^3.0.0
   json_annotation: ^4.11.0
-  file_picker: ^11.0.2
   dio: ^5.9.2
   window_manager: ^0.5.1
   qr_flutter: ^4.1.0
   url_launcher: ^6.3.2
+  file_selector: ^1.1.0
+  win32: ^5.15.0
+  ffi: ^2.2.0
 
 dev_dependencies:
   flutter_test:

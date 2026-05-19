@@ -464,12 +464,9 @@ class _ListingToolbar extends StatelessWidget {
               active: cubit.showHidden,
               onTap: () => cubit.setShowHidden(!cubit.showHidden),
             ),
-            const SizedBox(width: AppSpacing.s8),
-            _ToolbarIconButton(
-              icon: Icons.refresh_rounded,
-              tooltip: 'Refresh',
-              onTap: () => cubit.refresh(),
-            ),
+            // Refresh moved to the URL bar row (left of the path field)
+            // so the navigation cluster (history / up / refresh / URL)
+            // lives in one place.
             const SizedBox(width: AppSpacing.s8),
             _DensityCycleButton(density: cubit.density),
             const SizedBox(width: AppSpacing.s10),
@@ -534,7 +531,15 @@ class _BrowseFilterButton extends StatelessWidget {
       label: _summary(),
       leadingIcon: Icons.filter_list_rounded,
       isActive: hasActive,
-      popupBuilder: (_, link, dismiss) => Positioned(
+      // Rounded-rectangle chrome (radius 7) matches the Clients +
+      // Library Filter pills, but the height is sized to PEER with the
+      // 28 px `_ToolbarIconButton`s on the same row (hide-hidden /
+      // density / view-toggle).  The 32 px height used on Clients /
+      // Library makes sense there next to a 32 px search input; here
+      // the row neighbours are 28 px icon buttons.
+      height: 28,
+      borderRadius: BorderRadius.circular(7),
+      popupBuilder: (_, link, dismiss, groupId) => Positioned(
         left: 0,
         top: 0,
         width: _kPopupWidth,
@@ -549,7 +554,11 @@ class _BrowseFilterButton extends StatelessWidget {
           showWhenUnlinked: false,
           child: Material(
             color: Colors.transparent,
+            // Share the trigger's `groupId` so re-clicking the trigger
+            // to close the popup doesn't race onTapOutside (close) and
+            // onTap (re-open) into the popup just bouncing back open.
             child: TapRegion(
+              groupId: groupId,
               onTapOutside: (_) => dismiss(),
               child: FluxGlassPopupSurface(
                 width: _kPopupWidth,
@@ -886,6 +895,9 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
               icon: Icons.arrow_back_ios_new_rounded,
               tooltip: cubit.canGoBack ? 'Back (Alt+←)' : 'No history',
               onTap: cubit.canGoBack ? () => cubit.goBack() : null,
+              // Match the URL bar's 32 px height so the hover-chrome
+              // rectangle aligns with the input row to the right.
+              size: 32,
             ),
             const SizedBox(width: 2),
             _ToolbarIconButton(
@@ -896,6 +908,7 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
               onTap: cubit.canGoForward
                   ? () => cubit.goForward()
                   : null,
+              size: 32,
             ),
           ],
         );
@@ -909,6 +922,9 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
           onTap: response.parentPath == null
               ? null
               : () => cubit.goUp(),
+          // Match the URL bar's 32 px height — peers with the back /
+          // forward / refresh buttons in this nav cluster.
+          size: 32,
         );
 
         final segments = response.relativePath.isEmpty
@@ -1123,8 +1139,12 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Expanded(child: pathFieldWithSuggestions),
-              const SizedBox(width: AppSpacing.s6),
+              // Edit-mode affordances only.  At rest the operator
+              // clicks anywhere on the bar to begin editing (set up
+              // by `_PathField.onTapDisplay`) — a dedicated pencil
+              // button was redundant.
               if (_editing) ...[
+                const SizedBox(width: AppSpacing.s6),
                 _ToolbarIconButton(
                   icon: Icons.check_rounded,
                   tooltip: 'Navigate (Enter)',
@@ -1136,12 +1156,7 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
                   tooltip: 'Cancel (Esc)',
                   onTap: _cancelEdit,
                 ),
-              ] else
-                _ToolbarIconButton(
-                  icon: Icons.edit_rounded,
-                  tooltip: 'Edit path',
-                  onTap: () => _beginEdit(state),
-                ),
+              ],
             ],
           ),
         );
@@ -1151,6 +1166,16 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
             historyButtons,
             const SizedBox(width: AppSpacing.s4),
             upButton,
+            const SizedBox(width: AppSpacing.s4),
+            // Refresh sits with the rest of the navigation cluster
+            // (history / up / refresh) immediately left of the URL
+            // bar — was in the lower listing toolbar before.
+            _ToolbarIconButton(
+              icon: Icons.refresh_rounded,
+              tooltip: 'Refresh',
+              onTap: () => cubit.refresh(),
+              size: 32,
+            ),
             const SizedBox(width: AppSpacing.s8),
             Expanded(child: fieldCluster),
             const SizedBox(width: AppSpacing.s10),
@@ -1231,7 +1256,9 @@ class _PathField extends StatefulWidget {
 class _PathFieldState extends State<_PathField> {
   bool _hovered = false;
 
-  static const double _kHeight = 30;
+  // Matches the search bar's 32 px height so the two input-style
+  // controls on the same toolbar row read as peers.
+  static const double _kHeight = 32;
 
   @override
   Widget build(BuildContext context) {
@@ -3341,6 +3368,7 @@ class _ToolbarIconButton extends StatefulWidget {
     required this.onTap,
     this.active = false,
     this.compact = false,
+    this.size,
   });
 
   final IconData icon;
@@ -3348,6 +3376,11 @@ class _ToolbarIconButton extends StatefulWidget {
   final VoidCallback? onTap;
   final bool active;
   final bool compact;
+
+  /// Override the default 28 px (or 24 px when `compact`) container
+  /// size — used by the nav cluster left of the URL bar where the
+  /// icons need to peer with the 32 px input row.
+  final double? size;
 
   @override
   State<_ToolbarIconButton> createState() => _ToolbarIconButtonState();
@@ -3359,7 +3392,7 @@ class _ToolbarIconButtonState extends State<_ToolbarIconButton> {
   @override
   Widget build(BuildContext context) {
     final enabled = widget.onTap != null;
-    final size = widget.compact ? 24.0 : 28.0;
+    final size = widget.size ?? (widget.compact ? 24.0 : 28.0);
     return MouseRegion(
       cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
       onEnter: (_) => setState(() => _hovered = true && enabled),
@@ -3374,6 +3407,11 @@ class _ToolbarIconButtonState extends State<_ToolbarIconButton> {
             duration: const Duration(milliseconds: 80),
             width: size,
             height: size,
+            // Centre the icon glyph inside the chrome — without this,
+            // Container defaults to top-left positioning and the
+            // chrome reads as visually unbalanced (extra empty space
+            // on the right + bottom around a top-left icon).
+            alignment: Alignment.center,
             decoration: BoxDecoration(
               color: widget.active
                   ? const Color(0x1AA855F7)
@@ -3389,7 +3427,13 @@ class _ToolbarIconButtonState extends State<_ToolbarIconButton> {
             ),
             child: Icon(
               widget.icon,
-              size: widget.compact ? 13 : 14,
+              // Scale the icon to the container so a 32 px button
+              // doesn't read as empty chrome around a 14 px icon.
+              // Default 28 px keeps the original 14 px icon (50 %);
+              // 32 px gets a 16 px icon (50 %); compact 24 px gets 13.
+              size: widget.compact
+                  ? 13
+                  : (size >= 32 ? 16 : 14),
               color: enabled
                   ? (widget.active || _hovered
                       ? AppColors.violet

@@ -7,7 +7,7 @@ library;
 
 import 'dart:io' show File;
 
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:get_it/get_it.dart';
 import 'package:logger/logger.dart';
@@ -692,17 +692,18 @@ class _DiagnosticsCardState extends State<_DiagnosticsCard> {
       final defaultName =
           result.filename ?? 'fluxora-support.tar.gz';
 
-      final savePath = await FilePicker.saveFile(
-        dialogTitle: 'Save Support Bundle',
-        fileName: defaultName,
-        type: FileType.custom,
-        allowedExtensions: const ['gz'],
+      final location = await getSaveLocation(
+        suggestedName: defaultName,
+        acceptedTypeGroups: const [
+          XTypeGroup(label: 'Support bundle', extensions: ['gz']),
+        ],
       );
-      if (savePath == null) {
+      if (location == null) {
         // User cancelled — silent return; reset busy.
         if (mounted) setState(() => _busy = false);
         return;
       }
+      final savePath = location.path;
       await File(savePath).writeAsBytes(result.bytes, flush: true);
       if (!mounted) return;
       messenger.showSnackBar(

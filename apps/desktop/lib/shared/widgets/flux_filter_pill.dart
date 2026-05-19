@@ -105,7 +105,7 @@ class FluxFilterPill<T> extends StatelessWidget {
       isActive: isActive,
       height: height,
       borderRadius: borderRadius ?? BorderRadius.circular(7),
-      popupBuilder: (_, link, dismiss) {
+      popupBuilder: (_, link, dismiss, groupId) {
         final isRight = popupAnchor == FluxFilterPillPopupAnchor.right;
         return Positioned(
           left: 0,
@@ -120,7 +120,12 @@ class FluxFilterPill<T> extends StatelessWidget {
             showWhenUnlinked: false,
             child: Material(
               color: Colors.transparent,
+              // Share the trigger's `groupId` so a click on the
+              // trigger pill is treated as INSIDE the popup's tap
+              // group — otherwise re-clicking the trigger to close
+              // would race onTapOutside (close) and onTap (re-open).
               child: TapRegion(
+                groupId: groupId,
                 onTapOutside: (_) => dismiss(),
                 child: FluxGlassPopupSurface(
                   width: popupWidth,

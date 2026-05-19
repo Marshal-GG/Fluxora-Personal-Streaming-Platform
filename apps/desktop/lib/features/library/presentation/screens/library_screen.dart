@@ -1,4 +1,4 @@
-import 'package:file_picker/file_picker.dart';
+import 'package:fluxora_desktop/shared/util/folder_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:get_it/get_it.dart';
@@ -23,7 +23,7 @@ import 'package:fluxora_desktop/features/transcode/presentation/widgets/storage_
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_cubit.dart';
 import 'package:fluxora_desktop/features/storage/presentation/cubit/storage_state.dart';
 import 'package:fluxora_core/widgets/flux_button.dart';
-import 'package:fluxora_desktop/shared/widgets/flux_filter_chips.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_filter_pill.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_glass_dialog.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_glass_menu.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_tab_bar.dart';
@@ -53,7 +53,9 @@ const _kTabs = [
   FluxTab(id: 'movies', label: 'Movies', icon: Icons.movie_outlined),
   FluxTab(id: 'tv', label: 'TV Shows', icon: Icons.tv_outlined),
   FluxTab(id: 'music', label: 'Music', icon: Icons.music_note_outlined),
-  FluxTab(id: 'docs', label: 'Documents', icon: Icons.description_outlined),
+  // The `files` enum value (catch-all bucket) reads to operators as
+  // "Other" — covers any library that isn't movies / tv / music.
+  FluxTab(id: 'docs', label: 'Other', icon: Icons.folder_outlined),
 ];
 
 LibraryType? _typeForTab(String tabId) => switch (tabId) {
@@ -255,19 +257,9 @@ class _LibraryViewState extends State<_LibraryView> {
                           ),
                         ),
 
-                      // ── Type filter chips (was a FluxTabBar) ───────────
-                      // Smaller fully-rounded chips so they read as
-                      // filters, not as a second level of navigation
-                      // (the outer FluxPillTabs already owns the nav
-                      // role).  2026-05-16 owner review.  Shared widget
-                      // — same chips drive the folder browser's kind
-                      // filter row.
-                      FluxFilterChips(
-                        tabs: _kTabs,
-                        activeId: _activeTab,
-                        onChange: (id) => setState(() => _activeTab = id),
-                      ),
-                      const SizedBox(height: AppSpacing.s18),
+                      // Type-filter pill now lives inside `_ToolbarRow`
+                      // (next to Sort).  Removed from this slot so the
+                      // toolbar is the single place every filter lives.
 
                       // ── Body ───────────────────────────────────────────
                       // Skeleton on first paint + during reload — keeps
@@ -281,6 +273,8 @@ class _LibraryViewState extends State<_LibraryView> {
                             sortBy: _sortBy,
                             viewMode: _viewMode,
                             filters: _filters,
+                            onTabChanged: (id) =>
+                                setState(() => _activeTab = id),
                             onSortChanged: (s) => setState(() => _sortBy = s),
                             onViewModeChanged: (m) =>
                                 setState(() => _viewMode = m),
@@ -300,6 +294,8 @@ class _LibraryViewState extends State<_LibraryView> {
                             onScan: (lib) => _scan(context, lib),
                             onEdit: (lib) => _showEditLibraryDialog(context, lib),
                             onRemove: (lib) => _confirmRemove(context, lib),
+                            onTabChanged: (id) =>
+                                setState(() => _activeTab = id),
                             onSortChanged: (s) => setState(() => _sortBy = s),
                             onViewModeChanged: (m) =>
                                 setState(() => _viewMode = m),
@@ -715,6 +711,22 @@ Future<void> _showLibraryFormDialog({
   bool? vp9Override = initialVp9Override;
   bool tmdbEnabled = initialTmdbEnabled;
 
+  // Per-type metadata for the FluxFilterPill rows so the type
+  // picker reads the same as the Library page's type-filter pill.
+  const typeOptions = ['movies', 'tv', 'music', 'files'];
+  IconData iconForType(String t) => switch (t) {
+        'movies' => Icons.movie_outlined,
+        'tv' => Icons.tv_outlined,
+        'music' => Icons.music_note_outlined,
+        _ => Icons.folder_outlined,
+      };
+  String labelForType(String t) => switch (t) {
+        'movies' => 'Movies',
+        'tv' => 'TV Shows',
+        'music' => 'Music',
+        _ => 'Other',
+      };
+
   await showDialog<void>(
     context: context,
     builder: (dialogCtx) => StatefulBuilder(
@@ -725,55 +737,56 @@ Future<void> _showLibraryFormDialog({
           width: 460,
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextField(
+              const _FieldLabel('Name'),
+              const SizedBox(height: AppSpacing.s6),
+              _DialogTextField(
                 controller: nameController,
-                decoration: InputDecoration(
-                  labelText: 'Library Name',
-                  errorText: nameError,
-                ),
+                hint: 'e.g. Movies, Photos',
+                errorText: nameError,
               ),
               const SizedBox(height: AppSpacing.s14),
-              DropdownButtonFormField<String>(
-                initialValue: type,
-                decoration: const InputDecoration(labelText: 'Library Type'),
-                items: const [
-                  DropdownMenuItem(value: 'movies', child: Text('Movies')),
-                  DropdownMenuItem(value: 'tv', child: Text('TV Shows')),
-                  DropdownMenuItem(value: 'music', child: Text('Music')),
-                  DropdownMenuItem(value: 'files', child: Text('Documents')),
-                ],
-                onChanged: typeEditable
-                    ? (val) {
-                        if (val != null) setLocal(() => type = val);
-                      }
-                    : null,
+              const _FieldLabel('Type'),
+              const SizedBox(height: AppSpacing.s6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FluxFilterPill<String>(
+                  leadingIcon: iconForType(type),
+                  summary: labelForType(type),
+                  options: typeOptions,
+                  selected: type,
+                  optionIcon: iconForType,
+                  optionLabel: labelForType,
+                  isActive: false,
+                  onSelected: typeEditable
+                      ? (v) => setLocal(() => type = v)
+                      : (_) {},
+                ),
               ),
               const SizedBox(height: AppSpacing.s18),
               Row(
                 children: [
-                  Expanded(
-                    child: Text(
-                      'Folders',
-                      style: AppTypography.captionV2.copyWith(
-                        color: AppColors.textMutedV2,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  TextButton.icon(
-                    icon: const Icon(Icons.add_rounded, size: 14),
-                    label: const Text('Add folder'),
+                  const Expanded(child: _FieldLabel('Folders')),
+                  FluxButton(
+                    variant: FluxButtonVariant.secondary,
+                    icon: Icons.add_rounded,
                     onPressed: () async {
-                      final picked = await FilePicker.getDirectoryPath();
+                      // Plex-style folder picker — uses Win32
+                      // `IFileSaveDialog` on Windows so the dialog
+                      // shows files inside folders as read-only
+                      // context (the standard `FOS_PICKFOLDERS`
+                      // dialog hides files entirely).  Falls back to
+                      // the platform's standard folder picker on
+                      // macOS / Linux via `file_selector`.
+                      final picked = await pickFolderPath();
                       if (picked != null && !paths.contains(picked)) {
                         setLocal(() {
                           paths.add(picked);
                           // Auto-populate the Library Name from the
-                          // picked folder's basename when the field is
-                          // still empty — operators can override it for
-                          // a custom name.  2026-05-16 owner ask.
+                          // picked folder's basename when the field
+                          // is still empty — operator can override
+                          // for a custom name.
                           if (nameController.text.trim().isEmpty) {
                             final basename = picked
                                 .split(RegExp(r'[\\/]'))
@@ -786,16 +799,18 @@ Future<void> _showLibraryFormDialog({
                         });
                       }
                     },
+                    child: const Text('Add folder'),
                   ),
                 ],
               ),
+              const SizedBox(height: AppSpacing.s8),
               if (paths.isEmpty)
                 Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 12),
+                      horizontal: 12, vertical: 14),
                   decoration: BoxDecoration(
-                    color: const Color(0x08FFFFFF),
-                    border: Border.all(color: const Color(0x0DFFFFFF)),
+                    color: AppColors.surfaceBandLow,
+                    border: Border.all(color: AppColors.borderSubtle),
                     borderRadius: BorderRadius.circular(AppRadii.sm),
                   ),
                   child: Text(
@@ -808,53 +823,52 @@ Future<void> _showLibraryFormDialog({
                 Column(
                   children: [
                     for (var i = 0; i < paths.length; i++)
-                      Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: const Color(0x08FFFFFF),
-                          border: Border.all(color: const Color(0x0DFFFFFF)),
-                          borderRadius: BorderRadius.circular(AppRadii.sm),
+                      Padding(
+                        padding: EdgeInsets.only(
+                          bottom: i == paths.length - 1 ? 0 : 6,
                         ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.folder_outlined,
-                                size: 14, color: AppColors.violet),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                paths[i],
-                                style: const TextStyle(
-                                  fontFamily: 'JetBrains Mono',
-                                  fontSize: 12,
-                                  color: AppColors.textBody,
-                                  height: 1.4,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceBandLow,
+                            border:
+                                Border.all(color: AppColors.borderSubtle),
+                            borderRadius:
+                                BorderRadius.circular(AppRadii.sm),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.folder_outlined,
+                                  size: 14, color: AppColors.violet),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  paths[i],
+                                  style: const TextStyle(
+                                    fontFamily: 'JetBrains Mono',
+                                    fontSize: 12,
+                                    color: AppColors.textBody,
+                                    height: 1.4,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.close_rounded, size: 14),
-                              tooltip: 'Remove path',
-                              onPressed: () =>
-                                  setLocal(() => paths.removeAt(i)),
-                            ),
-                          ],
+                              _RowCloseButton(
+                                tooltip: 'Remove path',
+                                onTap: () =>
+                                    setLocal(() => paths.removeAt(i)),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                   ],
                 ),
               if (showCodecOverrides) ...[
                 const SizedBox(height: AppSpacing.s18),
-                Text(
-                  'Stream original codec to clients',
-                  style: AppTypography.captionV2.copyWith(
-                    color: AppColors.textMutedV2,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+                const _FieldLabel('Stream original codec to clients'),
                 const SizedBox(height: AppSpacing.s10),
                 _CodecOverrideRow(
                   label: 'AV1',
@@ -877,11 +891,13 @@ Future<void> _showLibraryFormDialog({
           ),
         ),
         actions: [
-          TextButton(
+          FluxButton(
+            variant: FluxButtonVariant.secondary,
             onPressed: () => Navigator.of(dialogCtx).pop(),
             child: const Text('Cancel'),
           ),
-          FilledButton(
+          FluxButton(
+            variant: FluxButtonVariant.primary,
             onPressed: () {
               final name = nameController.text.trim();
               if (name.isEmpty) {
@@ -912,6 +928,135 @@ Future<void> _showLibraryFormDialog({
   );
 }
 
+/// Compact chrome-less close button for path rows inside the library
+/// form dialog.  Faint at rest, violet on hover — no Material ripple,
+/// 22 px hit target.
+class _RowCloseButton extends StatefulWidget {
+  const _RowCloseButton({required this.tooltip, required this.onTap});
+
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  State<_RowCloseButton> createState() => _RowCloseButtonState();
+}
+
+class _RowCloseButtonState extends State<_RowCloseButton> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.tooltip,
+      waitDuration: const Duration(milliseconds: 350),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) {
+          if (!_hover) setState(() => _hover = true);
+        },
+        onExit: (_) {
+          if (_hover) setState(() => _hover = false);
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onTap,
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: Center(
+              child: Icon(
+                Icons.close_rounded,
+                size: 14,
+                color: _hover ? AppColors.violet : AppColors.textDim,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Eyebrow-style field label rendered above each input in the library
+/// form dialog.  10 px Inter / 600 / muted, slight letter-spacing.
+class _FieldLabel extends StatelessWidget {
+  const _FieldLabel(this.text);
+  final String text;
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 10,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.6,
+        color: AppColors.textMutedV2,
+      ),
+    );
+  }
+}
+
+/// Styled `TextField` matching the search-bar / URL-bar input chrome
+/// used elsewhere on the desktop control panel (`surfaceBandLow` fill,
+/// `border-subtle` rest border, violet focus border).
+class _DialogTextField extends StatelessWidget {
+  const _DialogTextField({
+    required this.controller,
+    required this.hint,
+    this.errorText,
+  });
+
+  final TextEditingController controller;
+  final String hint;
+  final String? errorText;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      style: const TextStyle(
+        fontFamily: 'Inter',
+        fontSize: 13,
+        color: AppColors.textBright,
+      ),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 13,
+          color: AppColors.textFaint,
+        ),
+        errorText: errorText,
+        isDense: true,
+        filled: true,
+        fillColor: AppColors.surfaceBandLow,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 12,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadii.sm),
+          borderSide: const BorderSide(color: AppColors.borderSubtle),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadii.sm),
+          borderSide: const BorderSide(color: AppColors.violet, width: 1.5),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadii.sm),
+          borderSide: const BorderSide(color: AppColors.statusError),
+        ),
+        focusedErrorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppRadii.sm),
+          borderSide:
+              const BorderSide(color: AppColors.statusError, width: 1.5),
+        ),
+      ),
+    );
+  }
+}
+
 // ── Loading ────────────────────────────────────────────────────────────────────
 
 /// Renders the same outer scaffold as `_LoadedBody` (optional stat
@@ -925,6 +1070,7 @@ class _SkeletonBody extends StatelessWidget {
     required this.sortBy,
     required this.viewMode,
     required this.filters,
+    required this.onTabChanged,
     required this.onSortChanged,
     required this.onViewModeChanged,
     required this.onFiltersChanged,
@@ -934,6 +1080,7 @@ class _SkeletonBody extends StatelessWidget {
   final _SortBy sortBy;
   final _ViewMode viewMode;
   final _LibraryFilters filters;
+  final ValueChanged<String> onTabChanged;
   final ValueChanged<_SortBy> onSortChanged;
   final ValueChanged<_ViewMode> onViewModeChanged;
   final ValueChanged<_LibraryFilters> onFiltersChanged;
@@ -949,12 +1096,14 @@ class _SkeletonBody extends StatelessWidget {
           const SizedBox(height: AppSpacing.s18),
         ],
         _ToolbarRow(
+          activeTab: activeTab,
           sortBy: sortBy,
           viewMode: viewMode,
           filters: filters,
           // No real result count yet — toolbar's count label hides
           // when 0 / handles gracefully.
           resultCount: 0,
+          onTabChanged: onTabChanged,
           onSortChanged: onSortChanged,
           onViewModeChanged: onViewModeChanged,
           onFiltersChanged: onFiltersChanged,
@@ -1108,6 +1257,7 @@ class _LoadedBody extends StatelessWidget {
     required this.onScan,
     required this.onEdit,
     required this.onRemove,
+    required this.onTabChanged,
     required this.onSortChanged,
     required this.onViewModeChanged,
     required this.onFiltersChanged,
@@ -1124,6 +1274,7 @@ class _LoadedBody extends StatelessWidget {
   final ValueChanged<Library> onScan;
   final ValueChanged<Library> onEdit;
   final ValueChanged<Library> onRemove;
+  final ValueChanged<String> onTabChanged;
   final ValueChanged<_SortBy> onSortChanged;
   final ValueChanged<_ViewMode> onViewModeChanged;
   final ValueChanged<_LibraryFilters> onFiltersChanged;
@@ -1181,10 +1332,12 @@ class _LoadedBody extends StatelessWidget {
         ],
 
         _ToolbarRow(
+          activeTab: activeTab,
           sortBy: sortBy,
           viewMode: viewMode,
           filters: filters,
           resultCount: visible.length,
+          onTabChanged: onTabChanged,
           onSortChanged: onSortChanged,
           onViewModeChanged: onViewModeChanged,
           onFiltersChanged: onFiltersChanged,
@@ -2875,23 +3028,27 @@ class _DangerActionTileState extends State<_DangerActionTile> {
   }
 }
 
-// ── Toolbar row (Sort · Filters · Grid/List toggle) ────────────────────────────
+// ── Toolbar row (Type · Sort · Filters · Grid/List toggle) ─────────────────────
 
 class _ToolbarRow extends StatelessWidget {
   const _ToolbarRow({
+    required this.activeTab,
     required this.sortBy,
     required this.viewMode,
     required this.filters,
     required this.resultCount,
+    required this.onTabChanged,
     required this.onSortChanged,
     required this.onViewModeChanged,
     required this.onFiltersChanged,
   });
 
+  final String activeTab;
   final _SortBy sortBy;
   final _ViewMode viewMode;
   final _LibraryFilters filters;
   final int resultCount;
+  final ValueChanged<String> onTabChanged;
   final ValueChanged<_SortBy> onSortChanged;
   final ValueChanged<_ViewMode> onViewModeChanged;
   final ValueChanged<_LibraryFilters> onFiltersChanged;
@@ -2902,25 +3059,30 @@ class _ToolbarRow extends StatelessWidget {
       children: [
         _ResultCountLabel(count: resultCount, filtersActive: filters.isActive),
         const Spacer(),
-        _SortMenu(value: sortBy, onChanged: onSortChanged),
-        const SizedBox(width: AppSpacing.s10),
-        _FiltersButton(
-          filters: filters,
-          onTap: () => _openFiltersDialog(context),
+        // Type filter — moved here from above the body so all
+        // filter / sort affordances live in one row.  Uses the same
+        // FluxFilterPill chrome as the Sort pill to its right so the
+        // two read as a peer set.
+        FluxFilterPill<String>(
+          leadingIcon: Icons.filter_list_rounded,
+          summary: _kTabs.firstWhere((t) => t.id == activeTab).label,
+          options: _kTabs.map((t) => t.id).toList(),
+          selected: activeTab,
+          optionIcon: (id) =>
+              _kTabs.firstWhere((t) => t.id == id).icon ??
+              Icons.folder_outlined,
+          optionLabel: (id) => _kTabs.firstWhere((t) => t.id == id).label,
+          isActive: activeTab != 'all',
+          onSelected: onTabChanged,
         ),
+        const SizedBox(width: AppSpacing.s10),
+        _SortMenu(value: sortBy, onChanged: onSortChanged),
         const SizedBox(width: AppSpacing.s10),
         _ViewModeToggle(value: viewMode, onChanged: onViewModeChanged),
       ],
     );
   }
 
-  Future<void> _openFiltersDialog(BuildContext context) async {
-    final result = await showDialog<_LibraryFilters>(
-      context: context,
-      builder: (ctx) => _FiltersDialog(initial: filters),
-    );
-    if (result != null) onFiltersChanged(result);
-  }
 }
 
 class _ResultCountLabel extends StatelessWidget {
@@ -2946,87 +3108,31 @@ class _SortMenu extends StatelessWidget {
   final _SortBy value;
   final ValueChanged<_SortBy> onChanged;
 
+  /// Per-option leading glyph for the popup rows.  Each sort key gets
+  /// a glyph that hints at what's being compared (alphabetical letter
+  /// for Name, schedule clock for Last scanned, etc).
+  IconData _iconFor(_SortBy s) => switch (s) {
+        _SortBy.name => Icons.sort_by_alpha_rounded,
+        _SortBy.lastScanned => Icons.schedule_rounded,
+        _SortBy.fileCount => Icons.insert_drive_file_outlined,
+        _SortBy.totalSize => Icons.storage_outlined,
+      };
+
   @override
   Widget build(BuildContext context) {
-    return FluxGlassMenu<_SortBy>(
-      width: 200,
+    // Same FluxFilterPill chrome as the type-filter pill to its left
+    // so the two read as a peer set instead of two unrelated dropdown
+    // styles.  Sort stays neutral (`isActive: false`) so it doesn't
+    // compete visually with an active type filter.
+    return FluxFilterPill<_SortBy>(
+      leadingIcon: Icons.sort_rounded,
+      summary: 'Sort: ${value.label}',
+      options: _SortBy.values,
+      selected: value,
+      optionIcon: _iconFor,
+      optionLabel: (s) => s.label,
+      isActive: false,
       onSelected: onChanged,
-      items: [
-        for (final option in _SortBy.values)
-          FluxGlassMenuItem(
-            value: option,
-            label: option.label,
-            selected: option == value,
-          ),
-      ],
-      child: _ToolbarChip(
-        icon: Icons.sort_rounded,
-        label: 'Sort: ${value.label}',
-      ),
-    );
-  }
-}
-
-class _FiltersButton extends StatelessWidget {
-  const _FiltersButton({required this.filters, required this.onTap});
-
-  final _LibraryFilters filters;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(AppRadii.md),
-      child: _ToolbarChip(
-        icon: Icons.tune_rounded,
-        label: filters.isActive
-            ? 'Filters · ${filters.activeCount}'
-            : 'Filters',
-        accent: filters.isActive,
-      ),
-    );
-  }
-}
-
-class _ToolbarChip extends StatelessWidget {
-  const _ToolbarChip({
-    required this.icon,
-    required this.label,
-    this.accent = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool accent;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: accent
-            ? AppColors.violet.withValues(alpha: 0.12)
-            : AppColors.bgRaised,
-        borderRadius: BorderRadius.circular(AppRadii.md),
-        border: Border.all(
-          color: accent ? AppColors.violet : AppColors.borderSubtle,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon,
-              size: 16,
-              color: accent ? AppColors.violet : AppColors.textMutedV2),
-          const SizedBox(width: 6),
-          Text(label,
-              style: AppTypography.bodySmall.copyWith(
-                color: accent ? AppColors.violet : AppColors.textBright,
-                fontWeight: FontWeight.w500,
-              )),
-        ],
-      ),
     );
   }
 }

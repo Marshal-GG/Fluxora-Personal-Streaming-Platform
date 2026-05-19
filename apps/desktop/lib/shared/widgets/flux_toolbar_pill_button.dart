@@ -32,13 +32,20 @@ import 'package:flutter/material.dart';
 import 'package:fluxora_core/constants/app_colors.dart';
 import 'package:fluxora_core/constants/app_spacing.dart';
 
-/// Builder for the popup body.  Receives the `LayerLink` to follow +
-/// a `dismiss` callback the popup should fire from `TapRegion` /
-/// programmatic close paths.
+/// Builder for the popup body.  Receives the `LayerLink` to follow,
+/// a `dismiss` callback (fire from `TapRegion.onTapOutside` /
+/// programmatic close paths), and a `groupId` to attach to the
+/// popup's `TapRegion(groupId: ...)` so a click on the trigger pill
+/// itself is treated as INSIDE the group — without sharing the
+/// `groupId`, clicking the trigger while the popup is open would
+/// fire `onTapOutside` on pointer-down (popup hides) and then the
+/// trigger's `onTap` on pointer-up (popup re-opens), making the
+/// trigger feel like it only ever opens the popup.
 typedef FluxToolbarPillPopupBuilder = Widget Function(
   BuildContext context,
   LayerLink link,
   VoidCallback dismiss,
+  Object groupId,
 );
 
 class FluxToolbarPillButton extends StatefulWidget {
@@ -99,6 +106,16 @@ class FluxToolbarPillButton extends StatefulWidget {
 class _FluxToolbarPillButtonState extends State<FluxToolbarPillButton> {
   final LayerLink _link = LayerLink();
   final OverlayPortalController _popup = OverlayPortalController();
+
+  /// Shared `TapRegion.groupId` between the trigger pill and the
+  /// popup body so a click on the trigger isn't treated as "outside
+  /// the popup" — without this, clicking the trigger while the popup
+  /// is showing fires the popup's `onTapOutside` first (popup hides)
+  /// and the trigger's `onTap` second (popup re-opens because
+  /// `isShowing` is now false), so the trigger feels like it only
+  /// ever opens the popup.
+  final Object _tapGroup = Object();
+
   bool _hover = false;
 
   void _toggle() {
@@ -117,53 +134,66 @@ class _FluxToolbarPillButtonState extends State<FluxToolbarPillButton> {
     final fg = widget.isActive
         ? AppColors.violetSoft
         : (_hover ? AppColors.textBody : AppColors.textMutedV2);
+    // Rest fill = `bg-raised` (opaque dark purple-black, same as the
+    // view-mode toggle container + the search input on data toolbars)
+    // so the pill reads as a peer of those controls on the same row.
+    // Hover lifts via an 8 % white overlay baked on top; active wins
+    // with the violet-tint fill.
     final bg = widget.isActive
         ? const Color(0x24A855F7)
-        : (_hover ? const Color(0x08FFFFFF) : Colors.transparent);
+        : (_hover
+            ? Color.alphaBlend(
+                const Color(0x14FFFFFF),
+                AppColors.bgRaised,
+              )
+            : AppColors.bgRaised);
     final border = widget.isActive
         ? const Color(0x4DA855F7)
         : AppColors.borderSubtle;
     final shape = widget.borderRadius ??
         BorderRadius.circular(widget.height / 2);
 
-    final trigger = MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) {
-        if (!_hover) setState(() => _hover = true);
-      },
-      onExit: (_) {
-        if (_hover) setState(() => _hover = false);
-      },
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _toggle,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          height: widget.height,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s10),
-          decoration: BoxDecoration(
-            color: bg,
-            border: Border.all(color: border),
-            borderRadius: shape,
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(widget.leadingIcon, size: 12, color: fg),
-              const SizedBox(width: 6),
-              Text(
-                widget.label,
-                style: TextStyle(
-                  fontFamily: 'Inter',
-                  fontSize: 11.5,
-                  fontWeight:
-                      widget.isActive ? FontWeight.w600 : FontWeight.w500,
-                  color: fg,
+    final trigger = TapRegion(
+      groupId: _tapGroup,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) {
+          if (!_hover) setState(() => _hover = true);
+        },
+        onExit: (_) {
+          if (_hover) setState(() => _hover = false);
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _toggle,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            height: widget.height,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s10),
+            decoration: BoxDecoration(
+              color: bg,
+              border: Border.all(color: border),
+              borderRadius: shape,
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(widget.leadingIcon, size: 12, color: fg),
+                const SizedBox(width: 6),
+                Text(
+                  widget.label,
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 11.5,
+                    fontWeight:
+                        widget.isActive ? FontWeight.w600 : FontWeight.w500,
+                    color: fg,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              Icon(widget.trailingIcon, size: 14, color: fg),
-            ],
+                const SizedBox(width: 4),
+                Icon(widget.trailingIcon, size: 14, color: fg),
+              ],
+            ),
           ),
         ),
       ),
@@ -176,7 +206,7 @@ class _FluxToolbarPillButtonState extends State<FluxToolbarPillButton> {
       child: OverlayPortal(
         controller: _popup,
         overlayChildBuilder: (_) =>
-            widget.popupBuilder!(context, _link, _popup.hide),
+            widget.popupBuilder!(context, _link, _popup.hide, _tapGroup),
         child: trigger,
       ),
     );

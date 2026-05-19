@@ -127,7 +127,11 @@ class _LibraryBrowseSearchBarState extends State<LibraryBrowseSearchBar> {
                   minHeight: 28,
                 ),
                 filled: true,
-                fillColor: const Color(0x0AFFFFFF),
+                // Matches the URL bar's `surfaceBandLow` fill so the
+                // two input-style controls on the same toolbar row read
+                // as peers — was a 4 % white tint which sat lighter
+                // than the URL bar against the same band.
+                fillColor: AppColors.surfaceBandLow,
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: 10,
                   vertical: 7,

@@ -99,6 +99,19 @@ BrowseDensity _persistedDensity = BrowseDensity.comfortable;
 /// change).
 SecureStorage? _persistedStorage;
 
+/// Debounce timer for browse-prefs persistence.  Column-resize drags
+/// fire setters 50+ times per second; coalesces to one write 400 ms
+/// after the last mutation so secure-storage's platform channel
+/// isn't hammered.
+Timer? _browsePrefsFlushDebounce;
+
+/// Circuit-breaker — flipped to `false` the first time a write
+/// rethrows (corrupt secure-storage file, locked DAT, DPAPI failure).
+/// Subsequent flushes return early so the in-memory statics keep
+/// updating but the platform channel no longer spams identical
+/// failures.  Resets on process restart.
+bool _browsePrefsWritable = true;
+
 // ── Folder-browser column layout ──────────────────────────────────────────
 //
 // Operator-configurable list of which columns appear in the desktop
@@ -300,27 +313,45 @@ Future<void> hydrateLibraryBrowsePrefs(SecureStorage storage) async {
 }
 
 /// Encode the current persisted statics + push to [SecureStorage].
-/// Called from every setter that mutates one of the statics.  Fire-
-/// and-forget — failures are logged but don't propagate to the
-/// caller (a failed pref write shouldn't block the UI update).
+/// Called from every setter that mutates one of the statics.
+/// Debounced 400 ms so a drag-resize collapses to a single write;
+/// circuit-broken via [_browsePrefsWritable] so a wedged on-disk DAT
+/// stops flooding the log after the first failure.
 void _flushBrowsePrefs() {
   final storage = _persistedStorage;
   if (storage == null) return;
-  final encoded = jsonEncode(<String, dynamic>{
-    'showHidden': _persistedShowHidden,
-    'indexedOnly': _persistedIndexedOnly,
-    'sortBy': _persistedSortBy.name,
-    'sortAsc': _persistedSortAsc,
-    'viewMode': _persistedViewMode.name,
-    'kindFilter': _persistedKindFilter.name,
-    'density': _persistedDensity.name,
-    'columnOrder': persistedColumnOrder.map((c) => c.name).toList(),
-    'columnWidths': {
-      for (final entry in persistedColumnWidths.entries)
-        entry.key.name: entry.value,
-    },
+  if (!_browsePrefsWritable) return;
+  _browsePrefsFlushDebounce?.cancel();
+  _browsePrefsFlushDebounce = Timer(const Duration(milliseconds: 400), () {
+    final encoded = jsonEncode(<String, dynamic>{
+      'showHidden': _persistedShowHidden,
+      'indexedOnly': _persistedIndexedOnly,
+      'sortBy': _persistedSortBy.name,
+      'sortAsc': _persistedSortAsc,
+      'viewMode': _persistedViewMode.name,
+      'kindFilter': _persistedKindFilter.name,
+      'density': _persistedDensity.name,
+      'columnOrder': persistedColumnOrder.map((c) => c.name).toList(),
+      'columnWidths': {
+        for (final entry in persistedColumnWidths.entries)
+          entry.key.name: entry.value,
+      },
+    });
+    () async {
+      try {
+        await storage.setBrowsePrefsJson(encoded);
+      } catch (_) {
+        // Plugin self-heals on the first failure by deleting the
+        // corrupt blob; the retry then writes into an empty store.
+        // Breaker trips only if the second attempt also fails.
+        try {
+          await storage.setBrowsePrefsJson(encoded);
+        } catch (_) {
+          _browsePrefsWritable = false;
+        }
+      }
+    }();
   });
-  unawaited(storage.setBrowsePrefsJson(encoded));
 }
 
 /// Look up an enum value by its string name with a tolerant return —
