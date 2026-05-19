@@ -224,3 +224,119 @@ Uncommitted at session end. The diff is 3 modified files (`DESIGN.md`, `clients_
 2. **Consider cross-restart persistence for Clients column widths** via SecureStorage if the operator asks for it. The infrastructure is in place (the version notifier already fires on every resize); only the load/flush wiring is missing. Mirror `hydrateLibraryBrowsePrefs` in the cubit / a new `hydrateClientsPrefs`.
 3. **`docs/12_guidelines/03_gotchas.md` entry** for `crossAxisAlignment: stretch` inside an unbounded-height parent is still pending from the previous entry — neither agent has gotten to it yet. Worth ~5 lines so future agents don't re-hit the paint-cascade mystery.
 4. **Pick up open items from the archive summary** — Plan 24 M5/M6 device verification, end-of-episode resolver, streaming pipeline regressions, Tier 3 folder-browser features all remain open.
+
+---
+
+## [2026-05-20] [feat] [fix] [desktop] [server] [core] — Clients-screen polish wave · operator hard-delete · live-status connectivity fix · column-width persistence · Add-Library dialog rebuild · Plex-style folder picker · SecureStorage debounce + retry
+**Phase:** Post-redesign polish sweep on the Clients + Library screens — close the gaps the 2026-05-18 redesign left open, plus a new server endpoint operators kept asking for.
+**Status:** Complete (uncommitted — operator owns the staging + commit per the no-git-writes rule).
+**Commits:** uncommitted.
+
+### What Was Done
+
+#### 1. Clients-screen — operator hard-delete + live-status fix + column persistence
+- **`_LiveStatus {online, idle, offline}` derived from `last_seen` freshness** instead of the `is_trusted` bool. The old code conflated "authorization" with "connectivity" — an approved phone that hadn't checked in for hours still showed as Online. New thresholds: `< 2 min` = online, `< 15 min` = idle, anything older = offline. Three sites updated: the row status chip, the Status filter pill, and the Active-Clients stat tile.
+- **Operator-driven hard-delete.** New server route `DELETE /api/v1/auth/clients/{client_id}` ⇒ `auth_service.delete_client` ⇒ parameterised `DELETE FROM clients`. Migration-declared `ON DELETE CASCADE` on `group_members` + `ON DELETE SET NULL` on `stream_sessions.client_id` clean up dependent rows automatically. Localhost-only via `require_local_caller`. Records a new `client.delete` activity event with `actor_kind='operator'`. Distinct from `DELETE /auth/revoke/{id}` which only flips `status='rejected'`.
+- **Client wiring:** new `Endpoints.authClientDelete(clientId)` constant in `fluxora_core`, new `ClientsRepository.deleteClient` interface + impl, new `ClientsCubit.delete(clientId)` mirroring the existing `revoke` pattern (processing-ids set + post-call `load()` + per-error rollback). The Clients-screen actions cell now renders a trash-can icon on Revoked rows (replaces the previously-unclickable history icon) opening a `FluxGlassDialog` `_confirmDelete` mirroring `_confirmRevoke`.
+- **Column-width cross-restart persistence.** New `SecureStorage.{get,set}ClientsColumnPrefsJson` (key `clients_column_prefs_v1`). `_clientColumnWidths` JSON-encoded `{ColumnName: pxWidth}`. Hydrated from `main.dart` via new `hydrateClientsColumnPrefs(SecureStorage)` before `runApp` — mirrors `hydrateLibraryBrowsePrefs`. Flush is **debounced 400 ms** so a column drag's 50+ ticks collapse to one write, and **circuit-broken after two consecutive failures** (one for the plugin's self-heal pass, one for the retry) so a corrupt DPAPI blob doesn't flood the log indefinitely.
+- **Defaults tuned to fit a typical viewport without horizontal scroll** — `client:200 / device:100 / ip:120 / status:95 / lastActive:100 / currentStream:115 / actions:43`. The 43 px Actions column hugs the icon button width + breathing room; a manual drag-wider is required only for the rare pending-state Approve+Reject pair.
+- **Overflow handling on every cell.** All text cells now use `maxLines: 1 + overflow: ellipsis` (just `overflow: ellipsis` was permitting wrap-then-truncate). Actions cell wrapped in `ClipRect + Align(center)` so shrinking past the icon width clips horizontally rather than overflowing into a second row.
+
+#### 2. Library screen — Add-Library dialog rebuild + filter/sort harmonisation
+- Three Material `PopupMenuButton`s for filter + sort swapped for `FluxFilterPill<String>` (type) + `FluxFilterPill<_SortBy>` (sort) sitting next to each other on the toolbar. The standalone `_SortMenu` + the `_FiltersButton` (which previously opened a Material `AlertDialog`) are gone; both controls now share the `FluxToolbarPillButton` chrome with `bg-raised` rest fill so they read as peers of the view-mode toggle.
+- **Add Library dialog rebuilt on the FluxGlass widget set.** New `_DialogTextField` + `_FieldLabel` for the name / path inputs, `FluxFilterPill` type picker (Movies / TV / Music / Photos / Documents / **Other** — the new "Other" entry replaces the legacy "Documents" catch-all for non-media folders), `FluxButton` action row, `_RowCloseButton` in the header.
+- Auto-name-from-folder heuristic when the operator picks a folder before typing a name — `path.basename(folderPath)` populates the name field if it's still empty.
+- Placeholder text in the path field reverted to a neutral example (`e.g. Movies, Photos`); old text contained personal-data references caught during operator review.
+
+#### 3. Library files screen — toolbar refinements
+- Nav cluster icons (back / forward / up / refresh) sized to **32 × 32** to match the URL bar's new 32 px height; inner icon scaled to 16 px when the container is ≥ 32 so the hover glow reads as a square.
+- Refresh button moved from the listing toolbar to the LEFT of the URL bar so all four navigation affordances live in one cluster.
+- Edit-pencil icon removed from the URL bar (the bar's text is already click-to-edit since Phase C of plan 28).
+- Filter pill resized to **28 px height** in the folder-browser toolbar context to read as a peer of the 28 px icon buttons on the same row.
+- Search-box background changed from `Color(0x0AFFFFFF)` (4 % white tint, lighter than its peers) to `AppColors.surfaceBandLow` — matches the URL bar's fill so the two input-style controls on the same toolbar read as the same surface.
+
+#### 4. Plex-style folder picker (Win32 IFileSaveDialog hack)
+- New `apps/desktop/lib/shared/util/folder_picker.dart` exporting `Future<String?> pickFolderPath()`. On Windows uses Win32 COM via `package:win32` + `package:ffi`: `CoInitializeEx(COINIT_APARTMENTTHREADED)` → `FileSaveDialog.createInstance()` → set `FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST` → phantom filename `"Select this folder."` → button label `"Select Folder"` → `Show()` → call `IFileDialog.getFolder()` to read the current folder regardless of what was typed.
+- The reason this exists: the default `IFileDialog` with `FOS_PICKFOLDERS` hides files inside each folder — operators couldn't see what was in a folder before selecting it. Plex's installer uses the same `IFileSaveDialog` trick. Other platforms (macOS / Linux) fall back to `file_selector.getDirectoryPath()` which already shows files.
+- `file_picker` dep removed from `pubspec.yaml` since `file_selector` covers the cross-platform path (and the help-screen export migrated to `file_selector.getSaveLocation` as part of this swap). New deps: `file_selector ^1.1.0`, `win32 ^5.15.0`, `ffi ^2.2.0`. Generated plugin registrants (linux / macos / windows) regenerated.
+
+#### 5. Shared widgets — popup tap-region groupId
+- `FluxToolbarPillButton`'s `popupBuilder` callback signature gained a fourth param (`Object groupId`). The button now wears a `TapRegion(groupId: …)` on the trigger pill itself; popup bodies must apply the same `groupId` to their own `TapRegion`. Without this, clicking the trigger while the popup is open fired `onTapOutside` on pointer-down (popup hides) and the trigger's `onTap` on pointer-up (popup re-opens) — so the trigger only ever opened the popup. `FluxFilterPill` updated to forward the new arg.
+- Rest fill switched from `Colors.transparent` to `AppColors.bgRaised` (opaque) — the previous transparent fill made the buttons blend with the page gradient on the data toolbars; operator flagged it as "doesn't look like a button". Hover lifts via an 8 % white overlay baked on top.
+
+#### 6. SecureStorage debounce + retry pattern
+- Both `_flushClientsColumnPrefs` (in `clients_screen.dart`) and `_flushBrowsePrefs` (in `library_browse_cubit.dart`) now:
+  1. **Debounce 400 ms** via a `Timer?` so per-pointer-tick mutations collapse to one write.
+  2. **Retry once** before tripping a per-session breaker — the plugin's `load()` deletes a corrupt DPAPI blob on the first decrypt-fail then rethrows, so the retry writes into an empty store and succeeds.
+  3. **Trip a per-session bool flag** only if both attempts fail (`_clientsColumnPrefsWritable` / `_browsePrefsWritable`). Subsequent flushes return early — silence rather than thousands of identical log lines.
+- `SecureStorage.setBrowsePrefsJson` reverted from silent-swallow back to rethrow — the new flush wrapper does the catching; the storage layer staying loud lets future callers wire their own retry strategy.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Created | apps/desktop/lib/shared/util/folder_picker.dart | Win32 `IFileSaveDialog` Plex-style folder picker showing files inside each folder; cross-platform `pickFolderPath()` |
+| Modified | apps/server/routers/auth.py | New `DELETE /api/v1/auth/clients/{client_id}` localhost-only route + `client.delete` activity event |
+| Modified | apps/server/services/auth_service.py | New `delete_client(db, client_id)` parameterised DELETE — FK cascades clean up dependents |
+| Modified | packages/fluxora_core/lib/network/endpoints.dart | New `Endpoints.authClientDelete(clientId)` constant |
+| Modified | packages/fluxora_core/lib/storage/secure_storage.dart | New `clients_column_prefs_v1` key + `{get,set}ClientsColumnPrefsJson`; `setBrowsePrefsJson` reverted to rethrow so callers can catch + retry |
+| Modified | apps/desktop/lib/features/clients/domain/repositories/clients_repository.dart | `Future<void> deleteClient(String clientId)` interface |
+| Modified | apps/desktop/lib/features/clients/data/repositories/clients_repository_impl.dart | `deleteClient` impl over `DELETE Endpoints.authClientDelete` |
+| Modified | apps/desktop/lib/features/clients/presentation/cubit/clients_cubit.dart | New `delete(clientId)` method mirroring revoke pattern (processing-ids set + load + rollback) |
+| Modified | apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart | `_LiveStatus` connectivity helper; Delete affordance + `_confirmDelete` dialog on Revoked rows; column-width persistence (`_clientsColumnPrefsStorage` + `_flushClientsColumnPrefs` with debounce + retry + circuit breaker); cell overflow handling; default-width retune |
+| Modified | apps/desktop/lib/main.dart | `hydrateClientsColumnPrefs(GetIt.I<SecureStorage>())` awaited before `runApp` so first mount sees persisted widths |
+| Modified | apps/desktop/lib/features/library/presentation/screens/library_screen.dart | Add Library dialog rebuilt on Flux widgets; filter chips → `FluxFilterPill<String>`; `_SortMenu` → `FluxFilterPill<_SortBy>`; `_FiltersButton` removed; "Documents" → "Other" |
+| Modified | apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart | Nav cluster sized to 32 px; refresh moved into URL row; pencil edit removed; filter pill height tuned to 28 px |
+| Modified | apps/desktop/lib/features/library/presentation/widgets/library_browse_search_bar.dart | fillColor → `AppColors.surfaceBandLow` so search box matches URL bar |
+| Modified | apps/desktop/lib/features/library/presentation/cubit/library_browse_cubit.dart | `_flushBrowsePrefs` debounce + retry + circuit-breaker; matches the new pattern |
+| Modified | apps/desktop/lib/features/help/presentation/screens/help_screen.dart | `FilePicker.saveFile` → `file_selector.getSaveLocation` so `file_picker` dep can be dropped |
+| Modified | apps/desktop/lib/shared/widgets/flux_toolbar_pill_button.dart | `popupBuilder` signature gains `groupId` param; trigger pill wears `TapRegion(groupId: _tapGroup)`; rest fill → `bg-raised` opaque (was transparent) |
+| Modified | apps/desktop/lib/shared/widgets/flux_filter_pill.dart | Forwards new `groupId` arg to popup's `TapRegion` |
+| Modified | apps/desktop/pubspec.yaml + pubspec.lock | `file_picker` removed; `file_selector ^1.1.0` + `win32 ^5.15.0` + `ffi ^2.2.0` added |
+| Modified | apps/desktop/{linux,macos,windows}/flutter/generated_plugin_registrant.{cc,swift} + generated_plugins.cmake | Auto-regenerated by `flutter pub get` after the dep swap |
+| Modified | DESIGN.md | Toolbar pill button rest-fill spec updated (transparent → `bg-raised`); `popupBuilder` signature documents the new `groupId` param + the re-click trap it solves |
+| Modified | docs/04_api/01_api_contracts.md | New `DELETE /api/v1/auth/clients/{client_id}` section + `client.delete` activity event row + localhost-only guard list updated |
+| Modified | docs/09_backend/01_backend_architecture.md | `auth.py` + `auth_service.py` lines updated for the new route + `delete_client` helper |
+| Modified | docs/05_infrastructure/02_url_inventory.md | New `DELETE /api/v1/auth/clients/{client_id}` row + Last-Updated note |
+| Modified | docs/08_frontend/01_frontend_architecture.md | Clients-screen description updated for `_LiveStatus` + Delete affordance + column-width persistence + overflow handling; Library-screen description updated for FluxFilterPill swap + Add-Library dialog rebuild + Plex-style folder picker + dep swap |
+| Modified | docs/12_guidelines/03_gotchas.md | New row: "Per-drag `flutter_secure_storage.write` floods the log on a corrupt DPAPI blob" — documents the debounce + retry-before-circuit-break pattern |
+
+### Docs Updated
+- `DESIGN.md` — toolbar pill button rest fill + `popupBuilder` signature doc.
+- `docs/04_api/01_api_contracts.md` — new endpoint section, activity event row, localhost guard list.
+- `docs/09_backend/01_backend_architecture.md` — auth router + auth_service lines.
+- `docs/05_infrastructure/02_url_inventory.md` — endpoint row + Last-Updated note.
+- `docs/08_frontend/01_frontend_architecture.md` — Clients + Library entries refreshed.
+- `docs/12_guidelines/03_gotchas.md` — new debounce + retry-before-breaker gotcha.
+
+### Decisions Made
+- **`is_trusted` is authorization, not connectivity.** The bug masked itself for weeks because `is_trusted` *correlates* with online status when the operator approves a device they're actively pairing with. Splitting the concept into a dedicated `_LiveStatus` enum derived from `last_seen` freshness avoids future drift — the same enum drives the chip, filter, and stat-tile so any future copy / colour change happens in one place.
+- **Hard-delete is a separate endpoint, not a query param on revoke.** Keeping `revoke` as a status flip preserves audit history (operators sometimes want to see "this device was revoked on 2025-08-04" months later). Hard-delete is the prune action on the Revoked-filter view — used when the row has been revoked long enough that the operator just wants it gone. Two endpoints, two activity events, no ambiguity.
+- **Debounce window: 400 ms.** Long enough that a single drag collapses to one write (drags rarely last under 400 ms steady-state but the timer resets on every tick so even slow drags stay coalesced); short enough that releasing the column and immediately switching screens still flushes before the screen tear-down. Tuned by feel; not load-bearing — anywhere in `[300, 600]` would work.
+- **Retry-once-before-breaker over no-retry.** Naive "trip the breaker on first failure" lost persistence forever in any session that started with a corrupt DPAPI blob — the plugin's own self-heal pattern requires two writes to land (the first deletes the bad file, the second writes fresh). The retry costs one extra log line on the unhealthy path and saves persistence forever on the healed path; clean payoff.
+- **Plex-style `IFileSaveDialog` hack over a vendored picker dependency.** The cross-platform pickers all wrap the same OS-level dialog underneath; the trick to show files is purely about *which* COM interface you ask for. Vendoring a third dep just to flip one bit isn't worth it. Pattern lives in one ~80-line `shared/util/folder_picker.dart` file with platform branching — easy to swap if a maintained package later exposes the same flag.
+
+### Issues / Sharp Edges Discovered
+- **`flutter_secure_storage.dat` corruption is *common* on Windows.** Anything that changes the DPAPI master key — Windows password reset, profile rebuild after a Windows update, account migration to a Microsoft account, even some Windows-Hello changes — invalidates every encrypted blob written under the old key. The plugin self-heals (`load()` deletes the bad file, next write starts fresh) but the cycle requires two writes to land. Any code that calls `secureStorage.write` on a hot path needs the debounce + retry pattern documented in `docs/12_guidelines/03_gotchas.md`; a future Cubit that persists a user preference via the same pattern should reach for the same wrapper.
+- **`FluxToolbarPillButton.popupBuilder` signature change is API-breaking.** Any caller outside `FluxFilterPill` (e.g. the folder browser's `_BrowseFilterButton`) needs the new `Object groupId` param wired through to its popup's `TapRegion`. Skipping this leaves the popup with the re-click-to-close trap. Currently only `FluxFilterPill` is on the new signature; `_BrowseFilterButton` should be reviewed next time it's touched.
+- **`file_picker` → `file_selector` migration loses the "default filename" field on save dialogs.** The `getSaveLocation` API takes a suggestion but doesn't pre-fill the name field as reliably across platforms as `FilePicker.saveFile` did. The help-screen support-bundle export still works (the user retypes if they want a custom name) but if a future feature needs strict default-filename behaviour, evaluate before swapping.
+
+### Test Counts (re-baselined)
+- Server: **962 → 962** (this session deliberately added the endpoint + service helper without test coverage; the operator typically asks for tests after the manual smoke confirms the route shape is right. New tests are next-agent work — see below).
+- Desktop: **143 → 143** (no new widget / cubit tests; existing coverage continues to pass).
+- Mobile: **97 unchanged.**
+- Core: **20 unchanged.**
+
+### Working-Tree Status
+Uncommitted at session end. `git status --short` shows 24 modified files + 1 new directory (`apps/desktop/lib/shared/util/`). Recommended chunking:
+- **(a) server + core:** `apps/server/routers/auth.py`, `apps/server/services/auth_service.py`, `packages/fluxora_core/lib/network/endpoints.dart` — the new endpoint surface.
+- **(b) Clients screen feature:** `clients_repository.dart`, `clients_repository_impl.dart`, `clients_cubit.dart`, `clients_screen.dart`, `secure_storage.dart`, `main.dart` — the delete affordance + column persistence wave.
+- **(c) Library + shared widgets polish:** `library_screen.dart`, `library_files_screen.dart`, `library_browse_search_bar.dart`, `library_browse_cubit.dart`, `flux_toolbar_pill_button.dart`, `flux_filter_pill.dart`, `help_screen.dart`, `folder_picker.dart`, `pubspec.yaml`/`lock`, generated plugin registrants.
+- **(d) docs:** `DESIGN.md`, `docs/04_api/01_api_contracts.md`, `docs/09_backend/01_backend_architecture.md`, `docs/05_infrastructure/02_url_inventory.md`, `docs/08_frontend/01_frontend_architecture.md`, `docs/12_guidelines/03_gotchas.md`, this `AGENT_LOG.md` entry.
+
+### Next Agent Should
+1. **Add server-side tests for `DELETE /api/v1/auth/clients/{client_id}`** in `apps/server/tests/test_auth.py`: 204 on a valid revoked-row id, 404 on missing id, 403 on non-localhost caller, FK-cascade assertion that the matching `group_members` rows are gone after the delete, and `client.delete` activity event recorded with `actor_kind='operator'`. Mirror the existing `test_revoke_client` shape.
+2. **Wire the new `Object groupId` param through `_BrowseFilterButton`** in `library_files_screen.dart` so the folder browser's Filter popup behaves identically to the Clients-screen pills under re-click-to-close. Currently the browser uses its own bespoke popup code, so the bug doesn't repro there yet — but if the bespoke code is ever replaced by `FluxToolbarPillButton`, the param needs forwarding.
+3. **Smoke-test the corrupt-DAT recovery path on a real DPAPI failure.** Delete `c:\users\<user>\appdata\roaming\fluxora\fluxora\flutter_secure_storage.dat` between launches and verify: (a) first column drag results in exactly one log line, (b) widths persist across a subsequent restart, (c) the breaker never trips on a clean machine. If the retry doesn't actually land on the corrupt path, increase the retry count or add a brief delay between attempts.
+4. **Confirm `pubspec.lock` is regenerated cleanly** (the dep swap touched the lockfile — run `flutter pub get` once per platform to make sure the generated plugin registrants for linux / macos / windows haven't drifted).
+5. **Pick up open items from prior entries** — Plan 24 M5/M6 device verification, end-of-episode resolver, streaming pipeline regressions, Tier 3 folder-browser features.

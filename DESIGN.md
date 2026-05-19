@@ -786,15 +786,15 @@ padding: 0 10px
 shape: borderRadius 999px (fully rounded)
 content: leading icon (12px) + label (Inter 11.5/500) + trailing caret (14px)
 
-(rest):    border `border-subtle`, transparent fill, fg `on-bg-muted`
-(hover):   border `border-subtle`, fill rgba(255,255,255,0.03), fg `on-bg`
+(rest):    border `border-subtle`, fill `bg-raised` (opaque dark — same as view-mode toggle + search input on data toolbars), fg `on-bg-muted`
+(hover):   border `border-subtle`, fill `bg-raised + 8 % white overlay`, fg `on-bg`
 (active):  border rgba(168,85,247,0.30), fill rgba(168,85,247,0.14), fg `primary-soft`, weight 600
 animated: 120ms color transitions via AnimatedContainer
 ```
 
 Active means "the caller's underlying state has a non-default value" — e.g. `Filter` at rest becomes `Filter: Videos · Indexed` once a kind filter + the indexed-only toggle are both set.  Multi-axis state collapses into one summary string so the operator sees what's applied at a glance without expanding the popup.
 
-**Popup body** is caller-provided via a `popupBuilder` callback that receives the `LayerLink` to follow + a `dismiss` callback to wire into `TapRegion.onTapOutside`.  Anchor the popup with `CompositedTransformFollower` — `targetAnchor: bottomRight, followerAnchor: topRight, offset: Offset(0, 6)` right-aligns the popup to a trigger sitting on the right side of the toolbar so it extends DOWN+LEFT and stays on-screen.  Mirror the anchors for a left-side trigger.
+**Popup body** is caller-provided via a `popupBuilder` callback that receives the `LayerLink` to follow, a `dismiss` callback to wire into `TapRegion.onTapOutside`, and a `groupId` to attach to the popup's `TapRegion(groupId: …)`.  The trigger pill internally wears the same `groupId`, so a click on the trigger while the popup is open counts as INSIDE the tap group rather than outside — without sharing the id, the click would fire `onTapOutside` on pointer-down (popup hides) and the trigger's `onTap` on pointer-up (popup re-opens), making the trigger feel like it only ever opens the popup.  Anchor the popup with `CompositedTransformFollower` — `targetAnchor: bottomRight, followerAnchor: topRight, offset: Offset(0, 6)` right-aligns the popup to a trigger sitting on the right side of the toolbar so it extends DOWN+LEFT and stays on-screen.  Mirror the anchors for a left-side trigger.
 
 **Shape variants.** `height` (default 26 px) + `borderRadius` (default fully-rounded `height/2`) are both parameterised:
 

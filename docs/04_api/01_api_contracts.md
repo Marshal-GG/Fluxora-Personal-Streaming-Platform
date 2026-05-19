@@ -35,7 +35,7 @@ Authorization: Bearer {auth_token}
 |------|-----------|---------|
 | Bearer token required | `validate_token` | Stream + HLS endpoints, all `/api/v1/ws/*` WebSockets (when not localhost), every `/auth/clients/me*` route (`GET`, `PATCH`, `DELETE`, `/stats`, `/continue-watching`, `/visible-libraries`), and the bearer-only PIN unlock surfaces (`POST /groups/{id}/enter`, `POST /groups/{id}/enroll`, `POST /groups/{id}/enroll/change`, `DELETE /groups/{id}/grant`, `GET /groups/{id}/grant-status`) |
 | Bearer token OR localhost | `validate_token_or_local` | `/files`, `/library`, `GET /info/stats`, `GET /groups`, `GET /groups/{id}`, `GET /groups/{id}/members`, `GET /notifications`, `POST /notifications/{id}/read`, `POST /notifications/read-all`, `DELETE /notifications/{id}`, `GET /activity`, `GET /logs` — desktop control panel needs no token |
-| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `GET /auth/clients/{id}/visible-libraries`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `GET /transcoding/advisor`, `GET /transcoding/devices`, `GET /transcoding/fallback-history`, `POST /transcoding/benchmark`, `GET /transcoding/benchmark/progress`, `GET /transcoding/benchmark/history`, `GET /transcoding/benchmark/history/{id}`, `DELETE /transcoding/benchmark/history/{id}`, `POST /info/restart`, `POST /info/stop`, `POST /info/support-bundle`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `PATCH /groups/{id}/members/{cid}`, `DELETE /groups/{id}/members/{cid}`, `DELETE /groups/{id}/members/{cid}/pin`, `POST /groups/{id}/grants/reset`, `POST /groups/{id}/master-override`, `GET /profile`, `PATCH /profile` |
+| Localhost only | `require_local_caller` | `/auth/approve`, `/auth/reject`, `/auth/revoke`, `/auth/clients`, `DELETE /auth/clients/{id}` (operator hard-delete), `GET /auth/clients/{id}/visible-libraries`, `/settings`, `/orders`, `/orders/portal-url`, `/stream/sessions`, `GET /transcoding/status`, `GET /transcoding/advisor`, `GET /transcoding/devices`, `GET /transcoding/fallback-history`, `POST /transcoding/benchmark`, `GET /transcoding/benchmark/progress`, `GET /transcoding/benchmark/history`, `GET /transcoding/benchmark/history/{id}`, `DELETE /transcoding/benchmark/history/{id}`, `POST /info/restart`, `POST /info/stop`, `POST /info/support-bundle`, `POST /groups`, `PATCH /groups/{id}`, `DELETE /groups/{id}`, `POST /groups/{id}/members`, `PATCH /groups/{id}/members/{cid}`, `DELETE /groups/{id}/members/{cid}`, `DELETE /groups/{id}/members/{cid}/pin`, `POST /groups/{id}/grants/reset`, `POST /groups/{id}/master-override`, `GET /profile`, `PATCH /profile` |
 | No auth | — | `/info`, `/healthz`, `/auth/request-pair`, `/auth/status/{client_id}`, `/webhook/polar` |
 
 **Heartbeat side effect (migration 023, 2026-05-06):** every successful `validate_token` resolution writes `clients.last_seen = NOW()` and `clients.last_ip = request.client.host` for the resolving client. This is best-effort — wrapped in try/except + WARNING log so a transient SQLite write failure can't 401 a valid request — but it changes the semantics of `last_seen` from "frozen at pair / approval" to "live within one poll cycle." Tunneled requests (cloudflared) record the loopback IP because `CF-Connecting-IP` isn't consumed in this path; documented limitation. See [`docs/03_data/02_database_schema.md`](../03_data/02_database_schema.md) migration 023 row.
@@ -246,6 +246,17 @@ logs/<filename>       # active rotating log file + up to 4 rotated siblings
 **Description:** Revoke an approved client's access. Takes effect immediately. Emits a `client.revoke` activity event.  
 **Auth:** Localhost only (`require_local_caller`). Operator action surfaced from the desktop Clients screen — clients cannot revoke each other.  
 **Status:** ✅ Implemented
+
+**Response:** `204 No Content`
+
+---
+
+### `DELETE /api/v1/auth/clients/{client_id}`
+**Description:** Hard-delete a client row entirely. Distinct from `DELETE /auth/revoke/{client_id}` which only flips `status='rejected'` and clears the bearer (audit-history preservation). This route physically removes the row from `clients`; the migration-declared `ON DELETE CASCADE` on `group_members` and `ON DELETE SET NULL` on `stream_sessions.client_id` clean up dependent rows automatically. Emits a `client.delete` activity event.  
+**Auth:** Localhost only (`require_local_caller`). Operator-driven cleanup — surfaced from the Clients screen's Revoked-filter view as a separate Delete affordance next to the row's actions cell so the operator can prune long-ago-revoked devices. Use after a revoke when the row is no longer wanted in the table; calling this on an approved client skips the revoke step entirely (bearer token disappears with the row).  
+**Status:** ✅ Implemented
+
+**Errors:** `403` not from localhost · `404` no client with that id
 
 **Response:** `204 No Content`
 
@@ -2005,6 +2016,7 @@ All emitter call-sites are wrapped in `try/except` with logging — a notificati
 | `client.approve` | `operator` | `client` | Operator approves a client |
 | `client.reject` | `operator` | `client` | Operator rejects a client |
 | `client.revoke` | `operator` or `client` | `client` | Operator-driven revoke via `DELETE /auth/revoke/{id}` (`actor_kind=operator`) OR mobile self-revoke via `DELETE /auth/clients/me` (`actor_kind=client`) |
+| `client.delete` | `operator` | `client` | Operator hard-deletes a client row via `DELETE /auth/clients/{id}` (distinct from revoke — physical row removal, used to prune the Revoked-filter view) |
 | `client.profile_updated` | `client` | `client` | Calling client renamed itself via `PATCH /auth/clients/me` |
 | `library.scan` | `system` | `library` | Library scan adds 1+ files (no-op scans are not recorded) |
 | `library.create` | `client` or `operator` | `library` | New library created via `POST /library` |
