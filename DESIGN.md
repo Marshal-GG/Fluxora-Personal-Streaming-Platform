@@ -585,6 +585,22 @@ padding: 8px 16px
 hover → color: #F1F5F9, background: rgba(255,255,255,0.04)
 ```
 
+**Back navigation (sub-page chevron)** — paired with [`PageHeader.onBack`](apps/desktop/lib/shared/widgets/page_header.dart) at the top of every sub-page (folder browser, encoder settings, transcoding detail, etc.).  Top-level destinations (Dashboard, Library list, Activity) leave `onBack` null and skip the chevron.
+
+```
+shape: 36×36 square, border-radius 8px
+icon: arrow_back_rounded 18px, color textBright
+(rest):  fill rgba(255,255,255,0.03), border rgba(255,255,255,0.08)
+(hover): fill rgba(168,85,247,0.10), border rgba(168,85,247,0.40)
+animated: 120ms color transitions via AnimatedContainer
+
+a11y: Semantics(button: true, label: 'Back') + Tooltip('Back', wait 350ms)
+```
+
+**Mounted guard.** `MouseRegion.onExit` can fire mid-route-transition after the back button's state has been disposed (because the back button itself triggered that transition).  Every `setState` inside the button's hover handlers must check `if (!mounted) return;` first — same pattern used across the codebase's hover-state widgets.  Skipping the guard surfaces as a "setState called after dispose" exception in the console.
+
+Pages get the back chevron + behaviour for free by passing `onBack:` to `PageHeader` — don't reach for `_BackButton` directly (it's private inside `page_header.dart`).  Pages that route back to a known top-level destination should fall back via `context.canPop() ? context.pop() : context.go(Routes.<destination>)` so a deep-link hit (no router history) still has a destination.
+
 ### Inputs
 
 ```
@@ -693,6 +709,158 @@ padding per cell: 10px 12px
 Primary text in a row (e.g., client name): #F1F5F9 / 500
 Active stream column: #A855F7
 ```
+
+### Flat data list rows (folder browser, future Sessions / Logs / file lists)
+
+A lighter alternative to the bordered `Tables` treatment above for **dense data lists** where the operator scans many rows quickly and inter-row dividers add visual noise.  Established for the desktop folder browser ([`apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart`](apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart)); reuse anywhere you'd otherwise reach for a Material `DataTable` row.
+
+```
+row: padding (8/12/16) per density × 12px horizontal, transparent fill, NO border, NO rounded corners
+row separator: none (omit ListView.separated separators or use SizedBox.shrink)
+row (hover):   background rgba(255,255,255,0.03), text #E2E8F0
+row (selected): background rgba(168,85,247,0.08), text #E9D5FF
+row (selected + hover): background rgba(168,85,247,0.12)
+
+Column dividers (body): invisible 9px SizedBox spacers — present only so
+header `_ResizableColumnDivider` boundaries line up pixel-for-pixel with
+body cells; nothing is painted between body cells.
+```
+
+**Numeric column alignment.** Cells in columns whose content reads as a number — sizes, modified timestamps, durations, dimensions — right-align both the text (`textAlign: TextAlign.right`) and the cell box (`Align(alignment: Alignment.centerRight)`).  The units digit then stacks vertically across rows, which is the Windows Explorer convention every operator expects from a data table.  **Header labels stay LEFT-aligned** even in numeric columns — header reads as a label / sort affordance, not as a value.
+
+**Empty cells render as `''`** rather than em-dash / `—` / `N/A`.  Most file rows have no value for several columns (durations on a PDF, dimensions on an audio file) and a sea of em-dashes is noisier than blank space.
+
+**MouseRegion guard.** `onEnter`/`onExit` callbacks must check `if (!_hovered) setState(...)` before flipping the hover bool — Flutter fires identical hover events when sibling widgets rebuild mid-frame, and unguarded `setState`s churn the build phase for nothing.
+
+**Reusable widget:** `FluxListRow` is not yet extracted because the row's tap / double-tap / selection / context-menu behaviour is too tightly coupled to per-screen state.  Three similar rows beats a premature abstraction here; copy the pattern + tints rather than reaching for a shared widget.
+
+### Header band + column-reorder affordances (data lists)
+
+When using the flat-row treatment above, the header gets a **separate visual treatment** so it reads as fixed chrome and not as another row.
+
+```
+header row: padding 0 (cells own their own vertical padding via AnimatedContainer)
+header padding (outer): horizontal 12 only
+header cell padding (inner): vertical 6
+header cell at rest: transparent fill, label #94A3B8 / 12px / 500
+header cell (hover): rgba(168,85,247,0.05) fill, AnimatedContainer 120ms transition
+header cell (drag source while reordering): rgba(168,85,247,0.10) fill + 1px violet border, 55 % opacity
+column divider (header): 9px-wide hit zone over a 1px line, violet 2px line on hover/drag
+trailing column divider: present after the last header cell so the rightmost column has a resize handle
+                        and the header row visually closes (doesn't trail off into empty space)
+```
+
+**Anti-pattern: `crossAxisAlignment: stretch` on the header `Row` inside an unbounded-height parent.** Visually identical to `center` because every cell has the same intrinsic height anyway, but `stretch` with infinite max-height leaves Draggable / AnimatedContainer descendants' intrinsic-height path inconsistent across layout passes.  A `RenderRepaintBoundary` inside the implicit ListView / Scrollbar chain ends up `NEEDS-PAINT` without a settled size every frame, the paint-time throw leaves Flutter's `_debugDuringDeviceUpdate` re-entrancy flag stuck, and the mouse_tracker assertion at `mouse_tracker.dart:199` then fires at ~1 Hz forever.  **Use `center` (the default), not `stretch`** — see `_SortableColumnHeaderRow` in the folder browser.
+
+### Resizable column divider (data tables)
+
+Established as `FluxResizableColumnDivider<T>` + `FluxColumnSpacer` ([`apps/desktop/lib/shared/widgets/flux_resizable_column_divider.dart`](apps/desktop/lib/shared/widgets/flux_resizable_column_divider.dart)).  Powers the column resize handles on both the folder browser AND the Clients table — the visual + drag behaviour is identical; only the column-identifier type and the backing width store differ per caller.
+
+```
+outer slot: 9px (`kFluxColumnDividerWidth`) — header divider + body spacer share this
+inner line: 1px tall × 16px high, centered, color `border-subtle`
+inner line (hover/drag): 2px tall × 16px high, color `primary` (violet)
+cursor (hover): SystemMouseCursors.resizeLeftRight
+drag axis: horizontal
+drag math: newWidth = dragStartWidth + details.localPosition.dx
+clamping: caller's responsibility (typically 80–480 px)
+```
+
+**Drag widens the LEFT column** — the column whose RIGHT edge this divider draws.  Windows Explorer convention.
+
+**State is caller-owned.** The widget exposes two callbacks — `readWidth: double Function(T)` + `writeWidth: void Function(T, double)` — so callers plug in any backing store: a module-level `Map<T, double>` (Clients screen), a `SecureStorage` JSON blob (folder browser), or anything else.  The caller is also responsible for triggering rebuilds when widths change (typically a `ValueNotifier<int>` ticked from inside `writeWidth`, then `ListenableBuilder`/`addListener` against it from the header + each body row).
+
+**Body alignment.** Body rows pair each `FluxResizableColumnDivider` in the header with one `FluxColumnSpacer` between body cells — an invisible 9-px `SizedBox` that reserves the same horizontal slot the header divider occupies so body cells line up pixel-for-pixel with the resize handles.
+
+**Trailing divider.** Always include one `FluxResizableColumnDivider` AFTER the last header cell so the rightmost column has its own resize handle and the header row visually closes (doesn't trail off into empty space).  Body rows mirror this with a trailing `FluxColumnSpacer`.
+
+**Total table width** = `2 * 18` (outer horizontal padding) + `N * 9` (N inter-column dividers + 1 trailing) + sum of column widths.  When this exceeds the viewport, wrap the header + listing in a shared `ScrollController` + `Scrollbar` + horizontal `SingleChildScrollView(SizedBox(width: totalTableWidth))` so header + body scroll in lockstep.  The pagination footer (if any) belongs OUTSIDE this horizontal scroll wrapper so it stays pinned to the card width — putting it inside causes the footer to stretch + scroll with the resized table, which reads as a bug.
+
+### Toolbar pill button (filter / sort summary chips)
+
+Established as `FluxToolbarPillButton` ([`apps/desktop/lib/shared/widgets/flux_toolbar_pill_button.dart`](apps/desktop/lib/shared/widgets/flux_toolbar_pill_button.dart)).  A rounded pill that summarises the current state of a multi-axis filter / sort group + opens a sticky popup on tap.
+
+```
+height: 26px (tuned to read as a peer of 28px toolbar icon buttons)
+padding: 0 10px
+shape: borderRadius 999px (fully rounded)
+content: leading icon (12px) + label (Inter 11.5/500) + trailing caret (14px)
+
+(rest):    border `border-subtle`, transparent fill, fg `on-bg-muted`
+(hover):   border `border-subtle`, fill rgba(255,255,255,0.03), fg `on-bg`
+(active):  border rgba(168,85,247,0.30), fill rgba(168,85,247,0.14), fg `primary-soft`, weight 600
+animated: 120ms color transitions via AnimatedContainer
+```
+
+Active means "the caller's underlying state has a non-default value" — e.g. `Filter` at rest becomes `Filter: Videos · Indexed` once a kind filter + the indexed-only toggle are both set.  Multi-axis state collapses into one summary string so the operator sees what's applied at a glance without expanding the popup.
+
+**Popup body** is caller-provided via a `popupBuilder` callback that receives the `LayerLink` to follow + a `dismiss` callback to wire into `TapRegion.onTapOutside`.  Anchor the popup with `CompositedTransformFollower` — `targetAnchor: bottomRight, followerAnchor: topRight, offset: Offset(0, 6)` right-aligns the popup to a trigger sitting on the right side of the toolbar so it extends DOWN+LEFT and stays on-screen.  Mirror the anchors for a left-side trigger.
+
+**Shape variants.** `height` (default 26 px) + `borderRadius` (default fully-rounded `height/2`) are both parameterised:
+
+| Shape | Use for |
+|-------|---------|
+| 26 px tall, fully-rounded pill (default) | Folder browser's Filter pill — sits next to 28 px icon buttons in a compact toolbar |
+| 32 px tall, `BorderRadius.circular(7)` rounded-rectangle | Data-toolbar screens (Clients) — sits next to a search-box-style input so the pill reads as a peer of the input field, not as a floating chip |
+
+### Filter pill (single-axis radio-group filter)
+
+Established as `FluxFilterPill<T>` ([`apps/desktop/lib/shared/widgets/flux_filter_pill.dart`](apps/desktop/lib/shared/widgets/flux_filter_pill.dart)).  The single-axis assembly of `FluxToolbarPillButton` + glass popup + `FluxPopupRow.singleSelect` rows — what you want when the popup is just a flat radio group, no toggles or section headings.
+
+```dart
+FluxFilterPill<String>(
+  leadingIcon: Icons.adjust_rounded,
+  summary: status == 'All' ? 'All Status' : status,
+  options: const ['All', 'Online', 'Pending', 'Revoked'],
+  selected: status,
+  optionIcon: (s) => /* per-option glyph */,
+  optionLabel: (s) => s,
+  isActive: status != 'All',
+  onSelected: (v) => setState(() => status = v),
+)
+```
+
+Defaults match the data-toolbar shape (32 px tall, `BorderRadius.circular(7)`, popup width 200, anchored to the LEFT of the trigger).  Override `popupAnchor: FluxFilterPillPopupAnchor.right` when the pill sits on the RIGHT side of the toolbar so the popup extends DOWN+LEFT and stays on-screen.
+
+**Pick the right widget for the filter popup:**
+
+| Pattern | Use |
+|---------|-----|
+| Single-axis radio group (Sort, Status, Device, Kind) — popup is a flat list of options | `FluxFilterPill<T>` |
+| Multi-axis filter (single-select rows + boolean toggles + section headings + dividers) | Compose `FluxToolbarPillButton` + `FluxGlassPopupSurface` + `FluxPopupRow.{singleSelect,toggle}` directly.  Folder browser's Filter button is the canonical example. |
+
+### Glass popup rows (filter / sort / picker bodies)
+
+Established as `FluxPopupRow` ([`apps/desktop/lib/shared/widgets/flux_popup_row.dart`](apps/desktop/lib/shared/widgets/flux_popup_row.dart)).  Single row inside a glass popup — leading icon + label + trailing glyph, with the same hover + active tints used by the toolbar pill button's active state.
+
+```
+row padding: 8 vertical × 12 horizontal
+row layout: icon (14px) + 10px gap + Expanded(label, Inter 12.5/500) + trailing widget
+(rest):    transparent fill, fg `on-bg-muted`
+(hover):   fill rgba(255,255,255,0.03), fg `on-bg`
+(active):  fill rgba(168,85,247,0.10), fg `primary-soft`, weight 600
+```
+
+Two named constructors cover the standard treatments:
+
+| Constructor | Trailing slot | Use for |
+|-------------|---------------|---------|
+| `FluxPopupRow.singleSelect(...)` | `check_rounded` (14 px, `primary-soft`) when active, blank 14 px otherwise | Radio-group rows — Filter kind, Sort key, view-mode picker |
+| `FluxPopupRow.toggle(...)`       | `check_box_rounded` / `check_box_outline_blank_rounded`, colour-matches the row foreground | Boolean preference rows — Indexed only, Show hidden |
+
+Both share the same hover + active treatment so the popup reads as one cohesive list even when single-select rows + toggle rows are stacked under a divider in the same body.  See `_BrowseFilterButton` in the folder browser for the canonical assembly: a 'SHOW' eyebrow heading, single-select kind rows, divider, indexed-only toggle row.
+
+### Soft-refresh strip (background fetch indicator)
+
+Established as `FluxRefreshIndicatorStrip` ([`apps/desktop/lib/shared/widgets/flux_refresh_indicator_strip.dart`](apps/desktop/lib/shared/widgets/flux_refresh_indicator_strip.dart)).  A 2-px indeterminate violet bar pinned to the top of a listing area while a background fetch is in flight.  Pairs with a "stale-while-revalidate" cubit that emits the existing loaded state with a `refreshing: true` flag (instead of flipping back to `*Loading`) so the chrome stays mounted.
+
+```
+height: 2px
+fill (refreshing): indeterminate LinearProgressIndicator on transparent track, valueColor = `primary`
+fill (idle):       SizedBox.shrink — slot collapses, parent column doesn't reserve dead space
+```
+
+Mount it inside the listing's outer `Stack` at `Positioned(top: 0, left: 0, right: 0)` so it floats over the listing without consuming vertical layout space.  Gate it via `BlocBuilder.buildWhen` so the strip only rebuilds when the refreshing flag actually flips.
 
 ### Progress Bars
 

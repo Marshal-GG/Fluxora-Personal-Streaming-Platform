@@ -135,3 +135,92 @@ Uncommitted at session end. Operator owns staging + commit per the no-git-writes
 1. **Verify the cascade fix landed cleanly** by hot-restarting the desktop app + sitting on the folder browser for ~60 s. Issues panel should stay quiet — if `mouse_tracker.dart:199` shows up again, the trigger is somewhere I missed (different cell-band or a layout combination outside the header), and the next step is to re-install the `###CASCADE-ROOT###` instrument in `main.dart` to find it.
 2. **Consider a `docs/12_guidelines/03_gotchas.md` entry** for `crossAxisAlignment: stretch` inside an unbounded-height parent. The failure mode is invisible at layout time (no exception, no `RenderFlex overflow`) but breaks at paint time and creates a misleading mouse_tracker cascade. Worth a 5-line warning so a future agent doesn't go down the same investigation path.
 3. **Pick up open items from the archive summary** — Plan 24 M5/M6 device verification, end-of-episode resolver, streaming pipeline regressions, Tier 3 folder-browser features all remain open.
+
+---
+
+## [2026-05-18] [refactor] [feat] [desktop] — Clients-screen redesign · 5 shared widget extractions · resizable Clients columns · folder browser refactored onto shared widgets
+**Phase:** Post-wave-3 design refresh — apply the folder-browser visual + interaction patterns to Clients so the two data-table screens read as one family, then promote the patterns shared between them to `apps/desktop/lib/shared/widgets/`.
+**Status:** Complete (uncommitted — operator owns the staging + commit per the no-git-writes rule).
+**Commits:** uncommitted.
+
+### What Was Done
+
+#### 1. Clients-screen visual redesign
+- Three Material `PopupMenuButton` filter dropdowns (Status / Devices / Sort) swapped for glass popups with leading icons + violet active-state treatment.
+- Search input + the three filter pills + Refresh button hoisted INSIDE the body `FluxCard` on a `surfaceBandHigh` band (matches the folder browser's URL + toolbar bands so the two screens read as part of the same control surface).
+- Table column header sits on `surfaceBandLow` immediately below the filter band.
+- Flat row chrome (per DESIGN.md "Flat data list rows"): per-row top `BorderSide` dropped, header bottom `BorderSide` dropped, hover (3 % white) + selected (8 % violet) tints stay. `MouseRegion` `onEnter`/`onExit` setStates guarded with `if (!_hovered)` so background-poll sibling rebuilds don't churn.
+- `LAST ACTIVE` body cells right-align via `Align(centerRight)` + `textAlign: right`; `Actions` header LEFT-aligned (body action icons stay right-aligned inside the cell via `Row(mainAxisAlignment: end)`) per the headers-as-labels convention.
+- Column header labels switched to title case (`Client / Device / IP address / Status / Last active / Current stream / Actions`); `letterSpacing: 0.04em` dropped (was tuned for ALL-CAPS); font weight 600 → 500, size 11 → 12 (matches folder browser).
+- `_ClientDetailPanel` lost its own `Color(0x800D0B1C)` background + left `BorderSide` and now lives INSIDE the body `FluxCard` split by a new `_CardVerticalDivider` (mirrors the folder browser's listing | divider | detail-panel pattern). Width still fixed at 300 px via the parent `SizedBox`.
+- Listing scrolls inside the card (`SingleChildScrollView`) so the surrounding chrome (filter band, header band, footer, detail panel) stays fixed.
+- Pagination footer pinned to the card width OUTSIDE the horizontal scroll wrapper — when columns are resized past the viewport, the footer doesn't stretch or scroll with the table.
+- `PageHeader.verticalPadding` trimmed to `AppSpacing.s16` (was the s24 default) to match the folder browser.
+- Material `AlertDialog` in `_confirmRevoke` swapped for `FluxGlassDialog` with `FluxButton(variant: secondary / danger)` actions.
+
+#### 2. Resizable Clients columns
+- New `ClientColumn` enum (client / device / ip / status / lastActive / currentStream / actions); module-level `Map<ClientColumn, double> _clientColumnWidths` with sensible defaults (200 / 100 / 130 / 90 / 110 / 200 / 160) clamped to `[80, 480]`.
+- `ValueNotifier<int> _clientColumnsVersion` ticked on every resize. `_TableHeaderRow` consumes it via `ListenableBuilder`; each `_ClientRowState` adds a listener in `initState` + `setState`s on tick so every row re-lays-out the same frame as the drag.
+- Header + listing share `ScrollController _hScroll` + horizontal `Scrollbar` / `SingleChildScrollView`. When `_totalTableWidth() > viewport` the two scroll in lockstep; physics flip to `NeverScrollableScrollPhysics` when content fits so no idle scrollbar thumb shows.
+- Widths survive screen re-mount (operator tabbing away from Clients + back) but reset on app restart — `SecureStorage` cross-restart persistence (like the folder browser) deferred until the operator asks.
+
+#### 3. Five shared widget extractions
+All in `apps/desktop/lib/shared/widgets/`. Each was promoted from a one-off widget once the second use case landed (the Clients screen).
+
+| File | What |
+|---|---|
+| `flux_toolbar_pill_button.dart` | `FluxToolbarPillButton` — pill button with optional sticky `OverlayPortal` popup. `height` + `borderRadius` params let the same widget cover the folder browser's compact 26 px fully-rounded pill AND the Clients data-toolbar's 32 px rounded-rectangle chrome. `popupBuilder` callback receives a `LayerLink` to follow + a `dismiss` callback to wire into `TapRegion.onTapOutside`. |
+| `flux_popup_row.dart` | `FluxPopupRow` — single row inside a glass popup with `.singleSelect` (check-mark trailing) + `.toggle` (checkbox trailing) named constructors. Hover + active tints match the toolbar pill button's active treatment so popup + trigger read as one cohesive surface. |
+| `flux_refresh_indicator_strip.dart` | `FluxRefreshIndicatorStrip` — 2-px indeterminate violet `LinearProgressIndicator` pinned to the top of a listing during a background refresh. Caller gates `refreshing: bool`. When idle the slot collapses to `SizedBox.shrink`. |
+| `flux_resizable_column_divider.dart` | `FluxResizableColumnDivider<T>` + `FluxColumnSpacer` + `kFluxColumnDividerWidth` (= 9) constant. Generic column-resize handle that lets each caller plug in its own `readWidth: double Function(T)` + `writeWidth: void Function(T, double)` callbacks against its own column-id type. State (column enum, widths map, version notifier, min/max clamp) stays caller-owned — exactly the bits that should differ between screens. Eliminates ~200 lines of duplicate state-management. |
+| `flux_filter_pill.dart` | `FluxFilterPill<T>` — generic single-axis radio-group filter chip composing `FluxToolbarPillButton` + glass popup + `FluxPopupRow.singleSelect`. `popupAnchor: FluxFilterPillPopupAnchor.left|right` controls which side of the trigger the popup extends from. Defaults match the Clients data-toolbar shape (32 px / `BorderRadius.circular(7)` / 200 px popup / left-anchored). |
+
+#### 4. Folder browser refactored onto shared widgets
+- `_ResizableColumnDivider` is now a 3-line `StatelessWidget` handing the existing `effectiveColumnWidth` / `resizeBrowseColumn` helpers to `FluxResizableColumnDivider<BrowseColumn>`.
+- `_ColumnDivider` returns `const FluxColumnSpacer()`.
+- `_kColumnDividerWidth` aliases `kFluxColumnDividerWidth` so the existing `_totalTableWidth()` arithmetic keeps reading the short name.
+- `_BrowseFilterButton` stays bespoke (multi-axis: single-select kind rows + "Indexed only" toggle + SHOW eyebrow + dividers) — that's NOT the single-axis case `FluxFilterPill` covers, and the two patterns deliberately coexist. DESIGN.md documents which to pick for what.
+
+### Files Created / Modified
+
+| Action | Path | Why |
+|---|---|---|
+| Created | apps/desktop/lib/shared/widgets/flux_toolbar_pill_button.dart | Shared pill button (originally lifted from the folder browser's Filter button earlier today; now powers Clients filter pills too via `FluxFilterPill`) |
+| Created | apps/desktop/lib/shared/widgets/flux_popup_row.dart | Shared single-select + toggle row primitive used by both the folder browser's Filter popup body and the Clients screen's filter popups |
+| Created | apps/desktop/lib/shared/widgets/flux_refresh_indicator_strip.dart | Shared 2-px violet refresh strip — folder browser uses it on the listing area; Clients can adopt when soft-refresh lands there |
+| Created | apps/desktop/lib/shared/widgets/flux_resizable_column_divider.dart | Generic resizable column divider + invisible body spacer + `kFluxColumnDividerWidth` constant. Both folder browser + Clients screens consume it |
+| Created | apps/desktop/lib/shared/widgets/flux_filter_pill.dart | Generic single-axis radio-group filter chip — used 3× in Clients (Status / Devices / Sort) |
+| Modified | apps/desktop/lib/features/clients/presentation/screens/clients_screen.dart | Full visual redesign + resizable columns + detail panel inside card + AlertDialog → FluxGlassDialog + 3× `_FilterDropdown` → `FluxFilterPill<String>` |
+| Modified | apps/desktop/lib/features/library/presentation/screens/library_files_screen.dart | `_ResizableColumnDivider` + `_ColumnDivider` reduced to thin adapters around the shared widgets; `_kColumnDividerWidth` aliases the shared constant. Also: `mouse_tracker.dart:199` paint-cascade fix (`crossAxisAlignment: stretch` removed from header `Row`, `_totalTableWidth` counts trailing divider). Also: column-picker right-click coord-system fix (`overlayBox.globalToLocal(globalPos)` before composing the popup anchor). |
+| Modified | DESIGN.md | New sections under Components: Back navigation button, Flat data list rows, Header band + column-reorder, Resizable column divider, Toolbar pill button (with shape variants table), Filter pill, Glass popup rows, Soft-refresh strip |
+
+### Docs Updated
+- `DESIGN.md` — 5 new Components sections covering the extracted shared widgets (one per widget) + a "Pick the right widget for the filter popup" decision table.
+- `docs/00_overview/current_status.md` — new 2026-05-18 entry at the top covering the Clients redesign + 5 shared widget extractions + resizable columns + folder-browser refactor onto the shared widgets. Prior 2026-05-18 wave-3 entry kept as "Earlier 2026-05-18".
+
+### Decisions Made
+- **Kept the folder browser's `_BrowseFilterButton` bespoke** instead of forcing it through `FluxFilterPill`. The browser's popup is multi-axis (kind radio group + Indexed-only boolean toggle + SHOW section heading + dividers) — that's a different shape from the single-axis radio group `FluxFilterPill` covers. Generalising `FluxFilterPill` to support both shapes would have meant a much wider API surface (toggle slots, divider slots, heading slots, custom-builder escape hatches) that nothing else needs. The two widgets coexist; DESIGN.md spells out which to pick.
+- **`FluxResizableColumnDivider<T>` takes callbacks, not a controller object.** A `FluxColumnController<T>` abstraction with `widthFor(T)` / `resize(T, double)` / `notifyListeners()` was tempting but adds an object both callers would have to construct + dispose, and neither caller actually needs the controller's lifecycle (widths are module-level for Clients, persisted JSON for the browser). Two function-typed params keep the API tight + non-prescriptive about storage.
+- **Per-caller column state stays per-caller** (column enum, widths map, version notifier, min/max clamp). Those are exactly the bits that *should* differ between screens — different column sets, different default widths, different persistence stories. Only the visual + drag behaviour was promoted.
+- **Pagination footer pinned outside the horizontal scroll wrapper.** Initial draft had the footer inside the same `SizedBox(width: tableWidth)` as the header + rows, which made the footer stretch + scroll with column resizes — operator flagged it as a bug. Fix moves the footer one level up, outside the scroll wrapper.
+
+### Issues / Sharp Edges Discovered
+- **`const` widget reuse defeats `setState`-on-notifier rebuilds.** First draft of the Clients resizable-header had `const _HeaderCell(...)` inside `const _TableHeaderRow()`. Flutter canonicalises const constructors with identical args → same widget instance → `Element.update` short-circuits the rebuild → cells never see the new column widths even though the version notifier ticked. Fix: hoist the rebuild listener (`ListenableBuilder(listenable: _clientColumnsVersion, builder: ...)`) into the smallest enclosing scope that contains the width-reading widgets. The header cells inside the builder's return become non-const widgets, which Flutter then actually rebuilds. Documented inline in the widget for future readers.
+- **`MouseRegion.onExit` can fire mid-route-transition after the State is disposed.** Hit while exploring the back-button widget — `_BackButton`'s hover setState raced its own pop-triggered dispose. Resolved with an `if (!mounted) return;` guard on every setState in hover handlers. Same pattern needed on every desktop hover-state widget; DESIGN.md's Back-button section calls it out.
+
+### Test Counts (re-baselined)
+- Server: **962 unchanged** (no server-side changes).
+- Desktop: **143 unchanged** (visual + structural refactor exercised through existing widget-test coverage; no new tests required for the extractions since they're pure presentation primitives).
+- Mobile: **97 unchanged.**
+- Core: **20 unchanged.**
+
+`flutter analyze` clean across the full desktop app.
+
+### Working-Tree Status
+Uncommitted at session end. The diff is 3 modified files (`DESIGN.md`, `clients_screen.dart`, `library_files_screen.dart`) + 5 new files in `apps/desktop/lib/shared/widgets/` + this AGENT_LOG entry + the `current_status.md` update — 10 files total. Recommend a 3-chunk commit: (a) shared widgets — all 5 new files; (b) screens refactored onto them — `library_files_screen.dart` + `clients_screen.dart`; (c) docs — `DESIGN.md` + `current_status.md` + `AGENT_LOG.md`.
+
+### Next Agent Should
+1. **Hot-restart the desktop app + visit both Clients and Library Files** to confirm the visual parity. Resize a few columns on each screen + verify the body cells stay aligned with the header dividers pixel-for-pixel.
+2. **Consider cross-restart persistence for Clients column widths** via SecureStorage if the operator asks for it. The infrastructure is in place (the version notifier already fires on every resize); only the load/flush wiring is missing. Mirror `hydrateLibraryBrowsePrefs` in the cubit / a new `hydrateClientsPrefs`.
+3. **`docs/12_guidelines/03_gotchas.md` entry** for `crossAxisAlignment: stretch` inside an unbounded-height parent is still pending from the previous entry — neither agent has gotten to it yet. Worth ~5 lines so future agents don't re-hit the paint-cascade mystery.
+4. **Pick up open items from the archive summary** — Plan 24 M5/M6 device verification, end-of-episode resolver, streaming pipeline regressions, Tier 3 folder-browser features all remain open.
