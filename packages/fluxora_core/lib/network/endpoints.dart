@@ -29,6 +29,15 @@ class Endpoints {
   static String authRevoke(String clientId) =>
       '$_base/auth/revoke/$clientId';
 
+  /// `DELETE /api/v1/auth/clients/{clientId}` — operator-driven
+  /// hard-delete of a client row.  Distinct from `authRevoke` which
+  /// only flips the row to `status='rejected'` for audit-history
+  /// preservation; this route actually removes the row from
+  /// `clients` (FKs cascade to `group_members` + nullable in
+  /// `stream_sessions`).  Localhost-only on the server.
+  static String authClientDelete(String clientId) =>
+      '$_base/auth/clients/$clientId';
+
   // Files
   static const String files = '$_base/files';
   static const String filesRecent = '$_base/files/recent';

@@ -253,6 +253,41 @@ async def revoke_client(
         logger.warning("Failed to record client.revoke activity event", exc_info=True)
 
 
+@router.delete("/clients/{client_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_client(
+    client_id: str,
+    db: aiosqlite.Connection = Depends(get_db),
+    _local: None = Depends(require_local_caller),
+) -> None:
+    """Hard-delete a client row.
+
+    Operator-facing "forget this device entirely" action — distinct
+    from `DELETE /auth/revoke/{client_id}` which only flips the row
+    to `status='rejected'`.  Use after the row has been revoked + the
+    operator wants to clean up the Revoked-filter view.  Localhost-
+    only because it's a destructive admin action that bypasses any
+    bearer-token visibility check.
+    """
+    client = await auth_service.get_client(db, client_id)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Client not found"
+        )
+
+    await auth_service.delete_client(db, client_id)
+    try:
+        await activity_service.record(
+            db,
+            type="client.delete",
+            summary=f"Client {client_id} deleted",
+            actor_kind="operator",
+            target_kind="client",
+            target_id=client_id,
+        )
+    except Exception:
+        logger.warning("Failed to record client.delete activity event", exc_info=True)
+
+
 @router.delete("/clients/me", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_me(
     me: aiosqlite.Row = Depends(validate_token),

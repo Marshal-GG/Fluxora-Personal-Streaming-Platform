@@ -220,6 +220,23 @@ async def revoke_client(db: aiosqlite.Connection, client_id: str) -> None:
     logger.info("Client revoked: %s", client_id)
 
 
+async def delete_client(db: aiosqlite.Connection, client_id: str) -> None:
+    """Hard-delete a client row.
+
+    Distinct from `revoke_client` which only flips the row to
+    `status='rejected'` + clears the bearer token (audit-history
+    preservation).  This route is the operator-facing "forget this
+    device entirely" action — removes the row from `clients`
+    permanently.  Foreign-key cascades clean up `group_members` +
+    `stream_sessions` rows that referenced this client id (the FKs
+    are declared `ON DELETE CASCADE` / `ON DELETE SET NULL` in the
+    initial migration + subsequent additions).
+    """
+    await db.execute("DELETE FROM clients WHERE id = ?", (client_id,))
+    await db.commit()
+    logger.info("Client deleted: %s", client_id)
+
+
 async def update_client_display_name(
     db: aiosqlite.Connection, client_id: str, display_name: str
 ) -> None:
