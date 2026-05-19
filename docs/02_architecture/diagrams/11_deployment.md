@@ -157,7 +157,6 @@ flowchart TD
 | `TMDB_API_KEY` | server env | Optional — server falls through if unset |
 | `POLAR_WEBHOOK_SECRET` | server env | Signature verify |
 
-> **Hard prohibition #11:** No API keys, Firebase config files, or secrets in git. Ever. See [CLAUDE.md](../../../CLAUDE.md).
 
 ---
 

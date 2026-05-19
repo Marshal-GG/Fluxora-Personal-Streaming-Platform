@@ -23,7 +23,6 @@ The user asked for: which GPU is detected, whether CPU or GPU is being used, mul
 - [`docs/04_api/01_api_contracts.md`](../04_api/01_api_contracts.md) — every new endpoint here lands there.
 - [`docs/03_data/02_database_schema.md`](../03_data/02_database_schema.md) — schema additions (none expected for Slices A+B; Slice C may add a session-routing table).
 - [`docs/05_infrastructure/02_url_inventory.md`](../05_infrastructure/02_url_inventory.md) — every new URL here lands there.
-- [`AGENT_LOG.md`](../../AGENT_LOG.md) — implementation entries land here per slice.
 
 ---
 
@@ -201,7 +200,6 @@ Three slices, each independently shippable. **Slice A is the value-per-effort sw
 2. **Desktop analyze + tests green** — `flutter analyze` + `flutter test` from `apps/desktop/`.
 3. **Manual smoke test on the user's actual machine.** Walk through: open Settings → Streaming → confirm the active encoder strip reflects what's running; pick a Failed encoder → confirm the modal fires; pick a working encoder → confirm session count updates after a stream starts.
 4. **Doc round** — update `docs/04_api/01_api_contracts.md` (every new endpoint), `docs/05_infrastructure/02_url_inventory.md`, `docs/09_backend/02_hardware_acceleration.md` (advisor algo / chain schema / probe coverage), `docs/00_overview/current_status.md` (test counts + slice marker), `docs/12_guidelines/03_gotchas.md` (any sharp edges discovered), `docs/10_planning/01_roadmap.md` (slice marked ✅).
-5. **AGENT_LOG entry** — files modified, decisions made, blockers, suggested next steps.
 6. **No commits** until the owner approves — Hard Prohibition #1.
 
 ---
@@ -239,7 +237,6 @@ If only one slice ships, **Slice A** alone is worth shipping — it removes the 
 
 ## 10. Locked once owner approves
 
-1. Slice A approval = green light to start. Implement → tests → doc round → AGENT_LOG → owner reviews diff.
 2. Slice B approval = green light *after* Slice A ships. Implementing in parallel risks merge conflicts in `transcoding_service.py` + the desktop's Streaming tab.
 3. Slice C approval = green light *after* Slices A + B ship. Slice C's UI sits on top of B's hardware data.
 4. Decisions §4 are locked at approval; any change after triggers a plan amendment, not a silent code change.

@@ -72,7 +72,6 @@ flowchart LR
   Note["Raw token NEVER leaves the device<br/>beyond the initial pair body<br/>and Bearer header.<br/>DB only ever sees the HMAC hash."]
 ```
 
-> **Hard prohibition #13:** Bearer tokens are stored as HMAC-SHA256 hashes. No plaintext, no reversible encryption. See [CLAUDE.md](../../../CLAUDE.md).
 
 ---
 

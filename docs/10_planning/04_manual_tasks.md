@@ -68,7 +68,6 @@ Code-side TODOs live with the code (`grep -rn "TODO\|FIXME" .`) or as GitHub iss
 
 #### Pre-flight (each release)
 
-Per-release checklist in SHIP.md §8 — copy-pasteable for every cut. Includes version bumps in `apps/server/pyproject.toml` + `apps/desktop/pubspec.yaml` + `apps/web_landing/package.json` + `installer/Fluxora.iss`, AGENT_LOG entry, current_status.md update, GitHub Release publish, Squirrel `RELEASES` entry, Flutter symbol-map archive.
 
 ---
 

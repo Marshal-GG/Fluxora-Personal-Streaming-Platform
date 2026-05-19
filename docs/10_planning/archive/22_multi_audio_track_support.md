@@ -156,7 +156,6 @@ None. Desktop has no player feature (plan 21 §17.3 #4 gotcha). The audio track 
 | **M2** | Migration 035 + persist `audio_tracks` JSON on scan | 2 h | `database/migrations/035_media_files_audio_tracks.sql`, `services/library_service.py`, `tests/test_library_service.py` |
 | **M3** | `/stream/start` response field + `AudioTrackInfo` model + server tests | 1.5 h | `routers/stream.py`, `models/stream_session.py`, `tests/test_stream.py` |
 | **M4** | Mobile entity + cubit state + Audio sheet picker UI + media_kit track switch | 3 h | `apps/mobile/lib/features/player/domain/entities/stream_start_response.dart`, `apps/mobile/lib/features/player/presentation/cubit/player_cubit.dart`, `apps/mobile/lib/features/player/presentation/widgets/flux_player_controls.dart`, mobile tests |
-| **M5** | Tests sweep + doc-update-protocol sweep + AGENT_LOG entry | 1.5 h | All docs touched (api_contracts, backend_architecture, frontend_architecture, database_schema, migration_guide, current_status, gotchas, roadmap), AGENT_LOG entry |
 
 **Total: ~10 h** — same shape as plan 21, two more files than plan 20.
 

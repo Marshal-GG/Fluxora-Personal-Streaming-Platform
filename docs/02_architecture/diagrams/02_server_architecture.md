@@ -177,4 +177,3 @@ graph LR
 | Parameterised SQL only | All queries use `?` placeholders |
 | No PII in logs | `support_bundle_service.py` scrubs before bundling |
 
-See [CLAUDE.md → Hard Prohibitions](../../../CLAUDE.md).

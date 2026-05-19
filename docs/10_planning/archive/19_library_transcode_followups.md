@@ -464,7 +464,6 @@ The original 8 design questions for the full follow-up scope are in [`19_library
 | ✏️ | `apps/desktop/lib/features/settings/presentation/cubit/settings_state.dart` | New field on `SettingsLoaded` |
 | ✏️ | `apps/desktop/lib/features/settings/data/repositories/settings_repository_impl.dart` | Maps `streaming_mode` JSON ↔ Dart field |
 | ✏️ | All launch-affected docs: `current_status.md`, `folder_structure.md`, `tech_stack.md`, `04_api/01_api_contracts.md` (settings PATCH field), `03_data/02_database_schema.md` (migration 028 row), `03_data/04_migration_guide.md` (file-layout extended), `09_backend/01_backend_architecture.md` (test count), `08_frontend/01_frontend_architecture.md` (encoder settings widget), `01_roadmap.md` (new "Client-side codec passthrough" row), `05_ship_readiness.md` (test count + feature line) | Standard doc-update protocol |
-| ✏️ | `AGENT_LOG.md` | Entry for the M7 launch round |
 | ✏️ | `docs/10_planning/19_library_transcode_followups.md` | This plan's status banner + milestone table reflect the launch-priority pivot |
 
 ### 10.2 · Deferred (M1-M6 + M8) — NOT shipping in this round

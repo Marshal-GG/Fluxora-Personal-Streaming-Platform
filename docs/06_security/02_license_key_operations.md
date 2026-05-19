@@ -154,7 +154,6 @@ If you need to invalidate a single key (refund, abuse, lost device), the only op
 
 ### Why no real revocation?
 
-The license check is **fully offline** (CLAUDE.md "local-first, zero cloud dependency" constraint). A revocation list would require either:
 - A public CRL the home server fetches (adds a cloud dependency)
 - An expiry-based scheme (already exists — keys default to 1 year)
 
@@ -176,7 +175,6 @@ If revocation becomes important (e.g. piracy at scale), a v2 feature could be a 
 | Re-issue every key, update `polar_orders.license_key` | Operator | ☐ |
 | Restart server, validate own key | Operator | ☐ |
 | Email all affected customers | Operator | ☐ |
-| Document the incident in `AGENT_LOG.md` (date, scope, root cause, time-to-resolve) | Operator | ☐ |
 | If `TOKEN_HMAC_KEY` was leaked too: every paired client must re-pair | Operator | ☐ |
 | If `POLAR_WEBHOOK_SECRET` was leaked: rotate in Polar dashboard, replay any in-flight orders | Operator | ☐ |
 | Schedule a post-mortem within 7 days | Operator | ☐ |

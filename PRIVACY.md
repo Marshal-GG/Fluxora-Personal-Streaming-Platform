@@ -189,11 +189,9 @@ If the maintainer ever ceases to operate, the customer-email + license-key table
 We protect what we hold using the following controls. These are real implementations, not aspirational:
 
 - **License-key signing key** is stored in `~/.fluxora/config.json` with file-system permissions and never logged. Validation is local — no key check ever leaves the maintainer's machine.
-- **Bearer-token storage** uses HMAC-SHA256 hashes only (CLAUDE.md hard prohibition #13). The raw token is shown to the client once at approval and never recoverable.
 - **Polar webhook verification** uses the Standard-Webhooks signature scheme. Replay attacks are prevented by an idempotency table on `order_id`.
 - **Admin endpoints** are localhost-only via `require_local_caller`, which rejects loopback callers carrying `CF-Connecting-IP` (so a tunneled request cannot impersonate localhost).
 - **HLS media segments** are blocked on the public Cloudflare Tunnel ingress by `HLSBlockOverTunnelMiddleware` — your media never traverses the public internet via the tunnel.
-- **Logs are scrubbed** of bearer tokens, license keys, customer emails, and home-directory file paths (CLAUDE.md hard prohibition #8). The support-bundle generator (`apps/server/services/support_bundle_service.py`) further redacts settings (`tmdb_api_key`, `license_key`, `email`) to the literal string `***REDACTED***`.
 
 For the marketing site:
 
