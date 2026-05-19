@@ -18,7 +18,9 @@ import 'package:fluxora_desktop/features/system_stats/presentation/cubit/system_
 import 'package:fluxora_core/widgets/flux_button.dart';
 import 'package:fluxora_core/widgets/flux_chip.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_card.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_filter_pill.dart';
 import 'package:fluxora_desktop/shared/widgets/flux_glass_dialog.dart';
+import 'package:fluxora_desktop/shared/widgets/flux_resizable_column_divider.dart';
 import 'package:fluxora_desktop/shared/widgets/page_header.dart';
 import 'package:fluxora_desktop/shared/widgets/stat_tile.dart';
 import 'package:fluxora_desktop/shared/widgets/status_dot.dart';
@@ -57,8 +59,31 @@ class _ClientsViewState extends State<_ClientsView> {
 
   final _searchController = TextEditingController();
 
+  /// Shared horizontal scroll controller for the table header + body —
+  /// passed to both the wrapping `Scrollbar` and the inner
+  /// `SingleChildScrollView(Axis.horizontal)` so the header drag-
+  /// reorder + the body listing scroll in lockstep when the operator
+  /// widens columns past the viewport.
+  late final ScrollController _hScroll = ScrollController();
+
+  /// Sum of every column's effective width + the 9-px reserved slot
+  /// for every divider (one per column = N inter-column dividers +
+  /// the trailing divider — same N count) + the outer 18-px
+  /// horizontal padding on each side.
+  double _totalTableWidth() {
+    const double outerPadding = AppSpacing.s18 * 2;
+    final int columnCount = ClientColumn.values.length;
+    double total = outerPadding +
+        columnCount * kFluxColumnDividerWidth; // dividers between + trailing
+    for (final col in ClientColumn.values) {
+      total += effectiveClientColumnWidth(col);
+    }
+    return total;
+  }
+
   @override
   void dispose() {
+    _hScroll.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -123,49 +148,49 @@ class _ClientsViewState extends State<_ClientsView> {
       color: AppColors.bgRoot,
       child: BlocBuilder<ClientsCubit, ClientsState>(
         builder: (context, state) {
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          // Mirror the folder browser's layout — PageHeader on top,
+          // stat tiles below, then ONE big `FluxCard` that grows to
+          // fill remaining height and hosts the [filter band, header
+          // band, listing | divider | detail panel] split.  Detail
+          // panel lives inside the card with `_CardVerticalDivider`
+          // separating it from the listing — no separate background or
+          // left border, the card surface continues across.
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ── Main content ─────────────────────────────────────────────
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.only(
-                    left: AppSpacing.s28,
-                    right: AppSpacing.s28,
-                    bottom: AppSpacing.s28,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // ── Page header ──────────────────────────────────────
-                      PageHeader(
-                        title: 'Clients',
-                        subtitle:
-                            'Manage connected devices and client access',
-                        actions: FluxButton(
-                          icon: Icons.qr_code_2_rounded,
-                          onPressed: () => showPairDeviceDialog(context),
-                          child: const Text('Pair device'),
-                        ),
-                      ),
-
-                      // ── Stat tiles ───────────────────────────────────────
-                      _buildStatTiles(context, state),
-                      const SizedBox(height: AppSpacing.s18),
-
-                      // ── Filter row ───────────────────────────────────────
-                      _buildFilterRow(context),
-                      const SizedBox(height: AppSpacing.s14),
-
-                      // ── Table ────────────────────────────────────────────
-                      _buildTable(context, state),
-                    ],
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s28,
+                ),
+                child: PageHeader(
+                  title: 'Clients',
+                  subtitle: 'Manage connected devices and client access',
+                  verticalPadding: AppSpacing.s16,
+                  actions: FluxButton(
+                    icon: Icons.qr_code_2_rounded,
+                    onPressed: () => showPairDeviceDialog(context),
+                    child: const Text('Pair device'),
                   ),
                 ),
               ),
-
-              // ── Right detail panel ───────────────────────────────────────
-              _buildDetailPanel(state),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s28,
+                ),
+                child: _buildStatTiles(context, state),
+              ),
+              const SizedBox(height: AppSpacing.s14),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.s28,
+                    0,
+                    AppSpacing.s28,
+                    AppSpacing.s14,
+                  ),
+                  child: _buildTable(context, state),
+                ),
+              ),
             ],
           );
         },
@@ -261,30 +286,61 @@ class _ClientsViewState extends State<_ClientsView> {
         ),
         const SizedBox(width: AppSpacing.s10),
 
-        // Status popup.  'All' default-hides revoked clients (see
+        // Status pill.  'All' default-hides revoked clients (see
         // _applyFilters); 'Revoked' is the explicit way to see them.
-        _FilterDropdown(
-          label: _statusFilter == 'All' ? 'All Status' : _statusFilter,
+        FluxFilterPill<String>(
+          leadingIcon: Icons.adjust_rounded,
+          summary: _statusFilter == 'All' ? 'All Status' : _statusFilter,
           options: const ['All', 'Online', 'Pending', 'Revoked'],
           selected: _statusFilter,
+          optionIcon: (s) => const {
+                'All': Icons.apps_rounded,
+                'Online': Icons.circle_rounded,
+                'Pending': Icons.hourglass_top_rounded,
+                'Revoked': Icons.block_rounded,
+              }[s] ??
+              Icons.label_outline_rounded,
+          optionLabel: (s) => s,
+          isActive: _statusFilter != 'All',
           onSelected: (v) => setState(() => _statusFilter = v),
         ),
         const SizedBox(width: AppSpacing.s10),
 
-        // Device popup
-        _FilterDropdown(
-          label: _deviceFilter == 'All' ? 'All Devices' : _deviceFilter,
+        // Device pill
+        FluxFilterPill<String>(
+          leadingIcon: Icons.devices_rounded,
+          summary: _deviceFilter == 'All' ? 'All Devices' : _deviceFilter,
           options: const ['All', 'Mobile', 'Tablet', 'TV', 'Desktop'],
           selected: _deviceFilter,
+          optionIcon: (s) => const {
+                'All': Icons.apps_rounded,
+                'Mobile': Icons.smartphone_rounded,
+                'Tablet': Icons.tablet_mac_rounded,
+                'TV': Icons.tv_rounded,
+                'Desktop': Icons.desktop_windows_rounded,
+              }[s] ??
+              Icons.label_outline_rounded,
+          optionLabel: (s) => s,
+          isActive: _deviceFilter != 'All',
           onSelected: (v) => setState(() => _deviceFilter = v),
         ),
         const SizedBox(width: AppSpacing.s10),
 
-        // Sort popup
-        _FilterDropdown(
-          label: 'Sort: $_sortBy',
+        // Sort pill — kept neutral (isActive: false) so it doesn't
+        // compete visually with the active filter chips above.
+        FluxFilterPill<String>(
+          leadingIcon: Icons.swap_vert_rounded,
+          summary: 'Sort: $_sortBy',
           options: const ['Name', 'Status', 'Last Active'],
           selected: _sortBy,
+          optionIcon: (s) => const {
+                'Name': Icons.sort_by_alpha_rounded,
+                'Status': Icons.flag_outlined,
+                'Last Active': Icons.schedule_rounded,
+              }[s] ??
+              Icons.label_outline_rounded,
+          optionLabel: (s) => s,
+          isActive: false,
           onSelected: (v) => setState(() => _sortBy = v),
         ),
 
@@ -307,83 +363,214 @@ class _ClientsViewState extends State<_ClientsView> {
   Widget _buildTable(BuildContext context, ClientsState state) {
     return FluxCard(
       padding: 0,
-      child: switch (state) {
-        ClientsInitial() || ClientsLoading() => const Padding(
-            padding: EdgeInsets.symmetric(vertical: 48),
-            child: Center(
-              child: SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: AppColors.violet,
-                ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Filter band — `surfaceBandHigh` (elevated stripe) at the
+          // top of the card spanning the FULL card width so the toolbar
+          // reads as card chrome above both halves of the body split
+          // (table + detail panel).  Matches the folder browser's URL
+          // bar band.
+          Container(
+            decoration: const BoxDecoration(
+              color: AppColors.surfaceBandHigh,
+              border: Border(
+                bottom: BorderSide(color: AppColors.borderSubtle),
               ),
             ),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s14,
+              vertical: AppSpacing.s10,
+            ),
+            child: _buildFilterRow(context),
           ),
-        ClientsFailure(:final message) => Padding(
-            padding: const EdgeInsets.all(AppSpacing.s28),
-            child: Column(
+          // Body row — table on the left, vertical divider, detail
+          // panel on the right.  Mirrors the folder browser layout —
+          // detail panel sits INSIDE the card with the card surface
+          // continuing across the divider.
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Icon(Icons.cloud_off_outlined,
-                    color: AppColors.textDim, size: 48),
-                const SizedBox(height: AppSpacing.s12),
-                Text(message,
-                    style: AppTypography.body
-                        .copyWith(color: AppColors.textMutedV2),
-                    textAlign: TextAlign.center),
-                const SizedBox(height: AppSpacing.s16),
-                FluxButton(
-                  variant: FluxButtonVariant.secondary,
-                  icon: Icons.refresh_rounded,
-                  onPressed: () => context.read<ClientsCubit>().load(),
-                  child: const Text('Retry'),
+                Expanded(
+                  child: _buildTableBody(context, state),
+                ),
+                const _CardVerticalDivider(),
+                SizedBox(
+                  width: 300,
+                  child: _buildDetailPanel(state),
                 ),
               ],
             ),
           ),
-        ClientsLoaded(:final clients) => Column(
+        ],
+      ),
+    );
+  }
+
+  // ── Table body (left side of the card split) ──────────────────────────────
+
+  Widget _buildTableBody(BuildContext context, ClientsState state) {
+    return switch (state) {
+      ClientsInitial() || ClientsLoading() => const Padding(
+          padding: EdgeInsets.symmetric(vertical: 48),
+          child: Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.violet,
+              ),
+            ),
+          ),
+        ),
+      ClientsFailure(:final message) => Padding(
+          padding: const EdgeInsets.all(AppSpacing.s28),
+          child: Column(
             children: [
-              // Header row
-              const _TableHeaderRow(),
-              // Data rows
-              ...() {
-                final filtered = _applyFilters(clients);
-                if (filtered.isEmpty) {
-                  return [
-                    _EmptyTableState(
-                      hasFilters: _searchQuery.isNotEmpty ||
-                          _statusFilter != 'All' ||
-                          _deviceFilter != 'All',
-                    ),
-                  ];
-                }
-                return filtered
-                    .map((c) => _ClientRow(
-                          client: c,
-                          isSelected: _selectedClientId == c.id,
-                          isProcessing: state.processingIds.contains(c.id),
-                          onTap: () => setState(
-                              () => _selectedClientId = c.id),
-                          onApprove: () =>
-                              context.read<ClientsCubit>().approve(c.id),
-                          onReject: () =>
-                              context.read<ClientsCubit>().reject(c.id),
-                          onRevoke: () =>
-                              _confirmRevoke(context, c),
-                        ))
-                    .toList();
-              }(),
-              // Pagination footer (visual only)
-              _TableFooter(
-                count: _applyFilters(clients).length,
-                total: clients.length,
+              const Icon(Icons.cloud_off_outlined,
+                  color: AppColors.textDim, size: 48),
+              const SizedBox(height: AppSpacing.s12),
+              Text(message,
+                  style: AppTypography.body
+                      .copyWith(color: AppColors.textMutedV2),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: AppSpacing.s16),
+              FluxButton(
+                variant: FluxButtonVariant.secondary,
+                icon: Icons.refresh_rounded,
+                onPressed: () => context.read<ClientsCubit>().load(),
+                child: const Text('Retry'),
               ),
             ],
           ),
-      },
-    );
+        ),
+      ClientsLoaded(:final clients) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Header + scrollable listing in a horizontal scroll
+            // viewport — widening columns past the viewport scrolls
+            // header + body in lockstep via the shared `_hScroll`.
+            Expanded(
+              child: ListenableBuilder(
+                // Re-run LayoutBuilder.builder on every resize tick so
+                // the computed `tableWidth` matches the current widths.
+                listenable: _clientColumnsVersion,
+                builder: (_, _) => LayoutBuilder(
+                  builder: (ctx, constraints) {
+                    final totalWidth = _totalTableWidth();
+                    final overflows = totalWidth > constraints.maxWidth;
+                    final tableWidth =
+                        overflows ? totalWidth : constraints.maxWidth;
+                    return Scrollbar(
+                      controller: _hScroll,
+                      thumbVisibility: overflows,
+                      child: SingleChildScrollView(
+                        controller: _hScroll,
+                        scrollDirection: Axis.horizontal,
+                        // No horizontal scroll physics when content
+                        // fits — avoids an idle scrollbar thumb.
+                        physics: overflows
+                            ? const ClampingScrollPhysics()
+                            : const NeverScrollableScrollPhysics(),
+                        child: SizedBox(
+                          width: tableWidth,
+                          height: constraints.maxHeight,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // Header row — `surfaceBandLow` band.
+                              Container(
+                                decoration: const BoxDecoration(
+                                  color: AppColors.surfaceBandLow,
+                                  border: Border(
+                                    bottom: BorderSide(
+                                        color: AppColors.borderSubtle),
+                                  ),
+                                ),
+                                child: const _TableHeaderRow(),
+                              ),
+                              // Listing — vertical scroll inside the
+                              // card so chrome stays fixed.
+                              Expanded(
+                                child: SingleChildScrollView(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: () {
+                                      final filtered = _applyFilters(clients);
+                                      if (filtered.isEmpty) {
+                                        return <Widget>[
+                                          _EmptyTableState(
+                                            hasFilters:
+                                                _searchQuery.isNotEmpty ||
+                                                    _statusFilter != 'All' ||
+                                                    _deviceFilter != 'All',
+                                          ),
+                                        ];
+                                      }
+                                      return filtered
+                                          .map((c) => _ClientRow(
+                                                client: c,
+                                                isSelected:
+                                                    _selectedClientId == c.id,
+                                                isProcessing: state
+                                                    .processingIds
+                                                    .contains(c.id),
+                                                onTap: () => setState(() =>
+                                                    _selectedClientId = c.id),
+                                                onApprove: () => context
+                                                    .read<ClientsCubit>()
+                                                    .approve(c.id),
+                                                onReject: () => context
+                                                    .read<ClientsCubit>()
+                                                    .reject(c.id),
+                                                onRevoke: () =>
+                                                    _confirmRevoke(
+                                                        context, c),
+                                              ))
+                                          .toList();
+                                    }(),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            // Pagination footer — pinned to the card width OUTSIDE
+            // the horizontal scroll wrapper above so a header column
+            // resize doesn't stretch / scroll the footer with it.
+            // Depressed band so the scrollable listing is bracketed
+            // by two matching darker stripes (header band + footer).
+            Container(
+              decoration: const BoxDecoration(
+                color: AppColors.surfaceBandLow,
+                border: Border(
+                  top: BorderSide(color: AppColors.borderSubtle),
+                ),
+              ),
+              child: _TableFooter(
+                count: _applyFilters(clients).length,
+                total: clients.length,
+              ),
+            ),
+          ],
+        ),
+    };
   }
+
+  // ── Card divider (1-px vertical line between table + detail panel) ────────
+
+  // Kept inline rather than promoted to shared/widgets because it's
+  // literally a SizedBox(width: 1) ColoredBox — three lines, no
+  // abstraction tax.
 
   // ── Right detail panel ─────────────────────────────────────────────────────
 
@@ -423,40 +610,24 @@ class _ClientsViewState extends State<_ClientsView> {
     final ok = await showDialog<bool>(
       context: context,
       barrierColor: const Color(0xCC0F0C24),
-      builder: (dialogCtx) => AlertDialog(
-        backgroundColor: AppColors.bgRaised,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppRadii.lg),
-          side: const BorderSide(color: AppColors.borderSubtle),
-        ),
-        title: Text(
-          'Revoke ${client.name}?',
-          style: AppTypography.h2.copyWith(color: AppColors.textBright),
-        ),
-        content: Text(
+      builder: (dialogCtx) => FluxGlassDialog(
+        title: Text('Revoke ${client.name}?'),
+        content: const Text(
           'The device will be signed out immediately.  Its bearer token '
           'is dead the moment this lands — any in-flight request will '
           '401 on the next round-trip.  The client_id is kept for audit '
           'history; the user can pair the same device again from scratch.',
-          style: AppTypography.body.copyWith(color: AppColors.textBody),
         ),
         actions: [
-          TextButton(
+          FluxButton(
+            variant: FluxButtonVariant.secondary,
             onPressed: () => Navigator.of(dialogCtx).pop(false),
-            child: Text(
-              'Cancel',
-              style: AppTypography.body.copyWith(color: AppColors.textBright),
-            ),
+            child: const Text('Cancel'),
           ),
-          TextButton(
+          FluxButton(
+            variant: FluxButtonVariant.danger,
             onPressed: () => Navigator.of(dialogCtx).pop(true),
-            child: Text(
-              'Revoke',
-              style: AppTypography.body.copyWith(
-                color: const Color(0xFFF87171),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            child: const Text('Revoke'),
           ),
         ],
       ),
@@ -522,81 +693,7 @@ class _SearchInput extends StatelessWidget {
   }
 }
 
-// ── Filter dropdown ────────────────────────────────────────────────────────────
-
-class _FilterDropdown extends StatelessWidget {
-  const _FilterDropdown({
-    required this.label,
-    required this.options,
-    required this.selected,
-    required this.onSelected,
-  });
-
-  final String label;
-  final List<String> options;
-  final String selected;
-  final ValueChanged<String> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      tooltip: '',
-      color: AppColors.bgRaised,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadii.sm),
-        side: const BorderSide(color: Color(0x14FFFFFF)),
-      ),
-      onSelected: onSelected,
-      itemBuilder: (_) => options
-          .map((o) => PopupMenuItem<String>(
-                value: o,
-                height: 32,
-                child: Text(
-                  o,
-                  style: TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: 12,
-                    color: o == selected
-                        ? AppColors.violetTint
-                        : AppColors.textBody,
-                    fontWeight: o == selected
-                        ? FontWeight.w600
-                        : FontWeight.w400,
-                  ),
-                ),
-              ))
-          .toList(),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: const Color(0x0AFFFFFF),
-          border: Border.all(color: const Color(0x14FFFFFF)),
-          borderRadius: BorderRadius.circular(AppRadii.sm),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(
-                fontFamily: 'Inter',
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textBody,
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Icon(
-              Icons.keyboard_arrow_down_rounded,
-              size: 13,
-              color: AppColors.textBody,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+// ── Filter pill (uses FluxToolbarPillButton + FluxPopupRow) ────────────────────
 
 // ── Small icon button (32×32 refresh) ─────────────────────────────────────────
 
@@ -643,41 +740,164 @@ class _IconActionButtonState extends State<_IconActionButton> {
 
 // ── Table header row ───────────────────────────────────────────────────────────
 
+/// Min / max column width clamp.  Below the min the label truncates
+/// uselessly; above the max the column hogs the listing.
+const double _kClientColumnMinWidth = 80;
+const double _kClientColumnMaxWidth = 480;
+
+/// Stable identifier for every Clients table column.  Used as the key
+/// in [_clientColumnWidths] so a resize on one column survives
+/// rebuilds + re-mounts (within the same app session).
+enum ClientColumn {
+  client,
+  device,
+  ip,
+  status,
+  lastActive,
+  currentStream,
+  actions,
+}
+
+/// Per-column widths, persisted at module level for the lifetime of
+/// the app session.  Operator resizes survive a screen re-mount (e.g.
+/// tabbing away from Clients + back) but reset on app restart —
+/// browser-style cross-restart persistence via `SecureStorage` is a
+/// follow-up if the operator asks for it.
+final Map<ClientColumn, double> _clientColumnWidths = {
+  ClientColumn.client: 200,
+  ClientColumn.device: 100,
+  ClientColumn.ip: 130,
+  ClientColumn.status: 90,
+  ClientColumn.lastActive: 110,
+  ClientColumn.currentStream: 200,
+  ClientColumn.actions: 160,
+};
+
+/// `ValueNotifier` ticked on every resize so every `_HeaderCell` +
+/// `_ClientRow` + listing wrapper rebuilds the same frame as the
+/// drag updates the widths map.
+final ValueNotifier<int> _clientColumnsVersion = ValueNotifier<int>(0);
+
+/// Read the effective width for [column], clamped to the
+/// [_kClientColumnMinWidth] / [_kClientColumnMaxWidth] range.
+double effectiveClientColumnWidth(ClientColumn column) {
+  final raw = _clientColumnWidths[column] ?? 120;
+  return raw.clamp(_kClientColumnMinWidth, _kClientColumnMaxWidth);
+}
+
+/// Drag-update entry point — sets [column]'s width, clamps, and
+/// ticks [_clientColumnsVersion] so listeners rebuild.
+void resizeClientColumn(ClientColumn column, double width) {
+  _clientColumnWidths[column] = width.clamp(
+    _kClientColumnMinWidth,
+    _kClientColumnMaxWidth,
+  );
+  _clientColumnsVersion.value++;
+}
+
+/// Thin adapter around the shared [FluxResizableColumnDivider] that
+/// pins this screen's [effectiveClientColumnWidth] /
+/// [resizeClientColumn] helpers as the width read/write callbacks.
+/// Lets the call-sites stay short (`const _ResizableClientColumnDivider(
+/// leftColumn: ClientColumn.x)`) without leaking the generic type.
+class _ResizableClientColumnDivider extends StatelessWidget {
+  const _ResizableClientColumnDivider({required this.leftColumn});
+
+  final ClientColumn leftColumn;
+
+  @override
+  Widget build(BuildContext context) {
+    return FluxResizableColumnDivider<ClientColumn>(
+      leftColumn: leftColumn,
+      readWidth: effectiveClientColumnWidth,
+      writeWidth: resizeClientColumn,
+    );
+  }
+}
+
 class _TableHeaderRow extends StatelessWidget {
   const _TableHeaderRow();
 
   @override
   Widget build(BuildContext context) {
-    const style = TextStyle(
-      fontFamily: 'Inter',
-      fontSize: 11,
-      fontWeight: FontWeight.w600,
-      color: AppColors.textMutedV2,
-      letterSpacing: 0.04 * 11, // 0.04em
-    );
+    // ListenableBuilder pinned to the columns version notifier so the
+    // header re-lays-out the same frame a resize updates a column
+    // width.  Cheap — only this Row rebuilds (label widgets are
+    // small).
+    return ListenableBuilder(
+      listenable: _clientColumnsVersion,
+      builder: (_, _) {
+        // Title-case labels — no letter-spacing tracking.  Matches the
+        // folder browser's header style (was tuned for ALL-CAPS
+        // before; dropped along with the casing per design refresh).
+        const style = TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          color: AppColors.textMutedV2,
+        );
 
-    return Container(
-      decoration: const BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Color(0x0DFFFFFF)),
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.s18, vertical: AppSpacing.s12),
-      child: const Row(
-        children: [
-          Expanded(flex: 16, child: Text('CLIENT', style: style)),
-          Expanded(flex: 10, child: Text('DEVICE', style: style)),
-          Expanded(flex: 11, child: Text('IP ADDRESS', style: style)),
-          Expanded(flex: 9, child: Text('STATUS', style: style)),
-          Expanded(flex: 10, child: Text('LAST ACTIVE', style: style)),
-          Expanded(flex: 16, child: Text('CURRENT STREAM', style: style)),
-          Expanded(
-            flex: 14,
-            child: Text('ACTIONS', style: style, textAlign: TextAlign.right),
+        // Header row sits on the `surfaceBandLow` band painted by
+        // the parent (see `_buildTable`).  Inter-column 1-px hairlines
+        // + trailing divider after the last column visually close the
+        // row.  Each divider is a `_ResizableClientColumnDivider` —
+        // drag to widen the column on its LEFT (Windows Explorer
+        // convention).  Body rows mirror the 9-px slots via
+        // `FluxColumnSpacer` (invisible) so columns line up pixel-
+        // for-pixel.
+        return Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s18, vertical: AppSpacing.s12),
+          child: Row(
+            children: [
+              _headerCell(ClientColumn.client, 'Client', style),
+              const _ResizableClientColumnDivider(
+                  leftColumn: ClientColumn.client),
+              _headerCell(ClientColumn.device, 'Device', style),
+              const _ResizableClientColumnDivider(
+                  leftColumn: ClientColumn.device),
+              _headerCell(ClientColumn.ip, 'IP address', style),
+              const _ResizableClientColumnDivider(
+                  leftColumn: ClientColumn.ip),
+              _headerCell(ClientColumn.status, 'Status', style),
+              const _ResizableClientColumnDivider(
+                  leftColumn: ClientColumn.status),
+              // Header label stays LEFT-aligned even though the body
+              // cells right-align (DESIGN.md "Flat data list rows" —
+              // headers read as labels / sort affordances, not values).
+              _headerCell(ClientColumn.lastActive, 'Last active', style),
+              const _ResizableClientColumnDivider(
+                  leftColumn: ClientColumn.lastActive),
+              _headerCell(ClientColumn.currentStream, 'Current stream', style),
+              const _ResizableClientColumnDivider(
+                  leftColumn: ClientColumn.currentStream),
+              // Header label LEFT-aligned even though the body cell
+              // right-aligns the action icons (DESIGN.md "Flat data
+              // list rows" — headers read as labels, not as values).
+              _headerCell(ClientColumn.actions, 'Actions', style),
+              // Trailing divider visually closes the header row +
+              // gives the rightmost column its own resize handle.
+              const _ResizableClientColumnDivider(
+                  leftColumn: ClientColumn.actions),
+            ],
           ),
-        ],
-      ),
+        );
+      },
+    );
+  }
+
+  /// One header cell — fixed-width sized box hosting the label.
+  /// Width reads through `effectiveClientColumnWidth` so a resize on
+  /// the adjacent divider takes effect on the same rebuild.
+  Widget _headerCell(
+    ClientColumn column,
+    String label,
+    TextStyle style, {
+    TextAlign? textAlign,
+  }) {
+    return SizedBox(
+      width: effectiveClientColumnWidth(column),
+      child: Text(label, style: style, textAlign: textAlign),
     );
   }
 }
@@ -711,6 +931,26 @@ class _ClientRowState extends State<_ClientRow> {
   bool _hovered = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Listen to column-resize ticks so each row re-lays-out the same
+    // frame the operator drags a divider in the header.  Cheaper than
+    // a per-cell ListenableBuilder — one listener per row, one
+    // setState per resize.
+    _clientColumnsVersion.addListener(_onColumnsChanged);
+  }
+
+  @override
+  void dispose() {
+    _clientColumnsVersion.removeListener(_onColumnsChanged);
+    super.dispose();
+  }
+
+  void _onColumnsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = widget.client;
     final bg = widget.isSelected
@@ -721,37 +961,49 @@ class _ClientRowState extends State<_ClientRow> {
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
+      // Guard against redundant onEnter/onExit firing on sibling rebuilds
+      // (e.g. SystemStats poll cascading through the active-streams stat
+      // tile). Without the guard the row re-paints every poll for nothing
+      // and risks racing the mouse tracker.
+      onEnter: (_) {
+        if (!_hovered) setState(() => _hovered = true);
+      },
+      onExit: (_) {
+        if (_hovered) setState(() => _hovered = false);
+      },
       child: GestureDetector(
         onTap: widget.onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 120),
-          decoration: BoxDecoration(
-            color: bg,
-            border: const Border(
-              top: BorderSide(color: Color(0x08FFFFFF)),
-            ),
-          ),
+          // Flat row chrome — transparent base + hover/selected tint
+          // layered on top.  No per-row border (DESIGN.md "Flat data
+          // list rows").
+          decoration: BoxDecoration(color: bg),
           padding: const EdgeInsets.symmetric(
               horizontal: AppSpacing.s18, vertical: AppSpacing.s12),
+          // Fixed-width cells matching the header's `_HeaderCell`
+          // widths so columns stay in lockstep when the operator
+          // resizes via a header divider.  Invisible 9-px
+          // `FluxColumnSpacer` spacers between cells mirror the
+          // header's resizable dividers.
           child: Row(
             children: [
-              // Client
-              Expanded(
-                flex: 16,
+              SizedBox(
+                width: effectiveClientColumnWidth(ClientColumn.client),
                 child: _ClientCell(client: c),
               ),
-              // Device
-              Expanded(
-                flex: 10,
+              const FluxColumnSpacer(),
+              SizedBox(
+                width: effectiveClientColumnWidth(ClientColumn.device),
                 child: _DeviceCell(platform: c.platform),
               ),
+              const FluxColumnSpacer(),
               // IP Address — populated by `clients.last_ip` (migration 023).
-              Expanded(
-                flex: 11,
+              SizedBox(
+                width: effectiveClientColumnWidth(ClientColumn.ip),
                 child: Text(
                   c.lastIp ?? '—',
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontFamily: 'JetBrains Mono',
                     fontSize: 12,
@@ -759,20 +1011,21 @@ class _ClientRowState extends State<_ClientRow> {
                   ),
                 ),
               ),
-              // Status
-              Expanded(
-                flex: 9,
+              const FluxColumnSpacer(),
+              SizedBox(
+                width: effectiveClientColumnWidth(ClientColumn.status),
                 child: _StatusChip(client: c),
               ),
-              // Last Active
-              Expanded(
-                flex: 10,
+              const FluxColumnSpacer(),
+              SizedBox(
+                width: effectiveClientColumnWidth(ClientColumn.lastActive),
                 child: _LastActiveCell(lastSeen: c.lastSeen),
               ),
+              const FluxColumnSpacer(),
               // Current Stream — joined from stream_sessions in
               // auth_service.list_clients (active_session.media_title).
-              Expanded(
-                flex: 16,
+              SizedBox(
+                width: effectiveClientColumnWidth(ClientColumn.currentStream),
                 child: Text(
                   c.activeSession?.mediaTitle ?? '—',
                   overflow: TextOverflow.ellipsis,
@@ -785,11 +1038,9 @@ class _ClientRowState extends State<_ClientRow> {
                   ),
                 ),
               ),
-              // Actions — flex 14 to fit 3×26 px icons + 4 px gaps without
-              // overflow when the detail panel is open and the table is
-              // narrower (~600 px).
-              Expanded(
-                flex: 14,
+              const FluxColumnSpacer(),
+              SizedBox(
+                width: effectiveClientColumnWidth(ClientColumn.actions),
                 child: _RowActions(
                   client: c,
                   isProcessing: widget.isProcessing,
@@ -798,6 +1049,9 @@ class _ClientRowState extends State<_ClientRow> {
                   onRevoke: widget.onRevoke,
                 ),
               ),
+              // Trailing spacer matches the header's trailing divider
+              // so the rightmost column lines up identically.
+              const FluxColumnSpacer(),
             ],
           ),
         ),
@@ -919,12 +1173,20 @@ class _LastActiveCell extends StatelessWidget {
   Widget build(BuildContext context) {
     final label = _formatRelative(lastSeen);
     final isNow = label == 'Now';
-    return Text(
-      label,
-      style: TextStyle(
-        fontFamily: 'Inter',
-        fontSize: 12,
-        color: isNow ? const Color(0xFF10B981) : AppColors.textMutedV2,
+    // Right-aligned per DESIGN.md "Flat data list rows" — relative
+    // timestamps stack the units digit vertically so the operator can
+    // scan recency down the column.  Header label stays LEFT-aligned
+    // (handled in `_TableHeaderRow`).
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Text(
+        label,
+        textAlign: TextAlign.right,
+        style: TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 12,
+          color: isNow ? const Color(0xFF10B981) : AppColors.textMutedV2,
+        ),
       ),
     );
   }
@@ -1259,23 +1521,33 @@ class _ClientDetailPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 300,
-      decoration: const BoxDecoration(
-        color: Color(0x800D0B1C), // rgba(13,11,28,0.5)
-        border: Border(
-          left: BorderSide(color: Color(0x0DFFFFFF)),
-        ),
-      ),
-      child: client == null
-          ? _EmptyDetailPanel(onClose: onClose)
-          : _PopulatedDetailPanel(
-              client: client!,
-              onClose: onClose,
-              onApprove: onApprove,
-              onReject: onReject,
-              onRevoke: onRevoke,
-            ),
+    // Detail panel now sits INSIDE the body FluxCard with the card
+    // surface continuing across the `_CardVerticalDivider`.  No more
+    // own background or left border — width is set by the parent
+    // SizedBox in `_buildTable`.
+    return client == null
+        ? _EmptyDetailPanel(onClose: onClose)
+        : _PopulatedDetailPanel(
+            client: client!,
+            onClose: onClose,
+            onApprove: onApprove,
+            onReject: onReject,
+            onRevoke: onRevoke,
+          );
+  }
+}
+
+/// 1-px vertical hairline rendered between the table half and the
+/// detail panel half inside the body FluxCard.  Matches the folder
+/// browser's `_CardVerticalDivider`.
+class _CardVerticalDivider extends StatelessWidget {
+  const _CardVerticalDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: 1,
+      child: ColoredBox(color: AppColors.borderSubtle),
     );
   }
 }
