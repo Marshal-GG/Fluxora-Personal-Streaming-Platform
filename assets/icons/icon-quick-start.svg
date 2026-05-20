@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Section icon: Quick start — a terminal window with a blinking cursor.
+  Violet stroke, glow pulse, classic ">_" shape.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <style>
+      @keyframes pulse { 0%,100%{opacity:.7;filter:drop-shadow(0 0 2px #A855F7)} 50%{opacity:1;filter:drop-shadow(0 0 6px #A855F7)} }
+      @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+      .ic  { animation: pulse 2.5s ease-in-out infinite; }
+      .cur { animation: blink 1s step-end infinite; }
+    </style>
+  </defs>
+  <g class="ic" fill="none" stroke="#A855F7" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="4" width="18" height="14" rx="2"/>
+    <polyline points="7,9 10,12 7,15"/>
+  </g>
+  <rect class="cur" x="12" y="13" width="4" height="1.6" rx="0.5" fill="#A855F7"/>
+</svg>

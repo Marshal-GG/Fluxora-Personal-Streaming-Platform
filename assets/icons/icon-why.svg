@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Section icon: Why — a lightning bolt, suggesting "fast" / "the spark".
+  Violet stroke with glow pulse.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <style>
+      @keyframes pulse { 0%,100%{opacity:.75;filter:drop-shadow(0 0 2px #A855F7)} 50%{opacity:1;filter:drop-shadow(0 0 7px #A855F7)} }
+      .ic { animation: pulse 2.2s ease-in-out infinite; }
+    </style>
+  </defs>
+  <g class="ic" fill="#A855F7" stroke="#22D3EE" stroke-width="1.2" stroke-linejoin="round">
+    <path d="M13 2 L4 12 L10 12 L9 20 L18 10 L12 10 Z"/>
+  </g>
+</svg>

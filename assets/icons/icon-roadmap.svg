@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Section icon: Roadmap / status — a milestone flag on a path. Violet
+  stroke with glow pulse and a gentle ripple at the planted base.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" width="22" height="22">
+  <defs>
+    <style>
+      @keyframes pulse  { 0%,100%{opacity:.7;filter:drop-shadow(0 0 2px #A855F7)} 50%{opacity:1;filter:drop-shadow(0 0 6px #A855F7)} }
+      @keyframes ripple { 0%{r:1;opacity:.8} 100%{r:5;opacity:0} }
+      .ic  { animation: pulse 2.5s ease-in-out infinite; }
+      .rip { animation: ripple 2s ease-out infinite; transform-origin:5px 18px; }
+    </style>
+  </defs>
+  <g class="ic" fill="none" stroke="#A855F7" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="5" y1="3" x2="5" y2="20"/>
+    <path d="M5 4 L17 4 L14 8 L17 12 L5 12 Z" fill="#A855F7" fill-opacity="0.18"/>
+  </g>
+  <circle class="rip" cx="5" cy="18" r="1" fill="none" stroke="#22D3EE" stroke-width="1"/>
+  <circle cx="5" cy="18" r="1.4" fill="#22D3EE"/>
+</svg>

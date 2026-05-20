@@ -1,0 +1,263 @@
+Fluxora — third-party notices
+=============================
+
+Effective: 2026-05-06
+
+Fluxora is proprietary software (see LICENSE + EULA.md). It bundles,
+links against, or makes use of the following third-party components.
+Each component is governed by its own license; Fluxora's proprietary
+license does not override those upstream terms. This file exists to
+credit the work, record the licenses, and point operators at the
+canonical sources — as required by the licenses of the third-party
+components themselves.
+
+This is not a complete dependency tree — Flutter, Python, npm, and pub
+each pull hundreds of transitive dependencies under MIT / BSD-2 / BSD-3 /
+Apache-2.0 / ISC. The list below covers (a) anything with explicit
+attribution requirements, (b) anything Fluxora ships as a runtime
+dependency the operator needs to install separately, and (c) anything
+where users see the brand or rely on a service.
+
+----------------------------------------------------------------------
+Runtime dependencies the operator installs separately
+----------------------------------------------------------------------
+
+FFmpeg
+  License: LGPL-2.1-or-later (default builds) / GPL-2.0-or-later (with
+           --enable-gpl). Component licenses vary; see
+           https://ffmpeg.org/legal.html.
+  Why we need it: HLS segment generation, transcoding (x264 / NVENC /
+                  QuickSync / VAAPI / VideoToolbox), HDR tonemap.
+  How we use it: spawned as a subprocess by `apps/server/services/
+                 ffmpeg_service.py`. We do not modify the FFmpeg source
+                 or statically link any GPL-only component into Fluxora.
+  Operator obligations: install FFmpeg from upstream
+                        (https://ffmpeg.org/download.html). Fluxora does
+                        not redistribute FFmpeg binaries.
+
+mpv (libmpv) — used via the `media_kit` Flutter plugin
+  License: GPL-2.0-or-later / LGPL-2.1-or-later (configurable).
+  Component licenses vary; see https://mpv.io/manual/master/#copyright.
+  Why we need it: video playback in the desktop and mobile clients.
+  How we use it: linked at runtime via `media_kit` per-platform native
+                 packages.
+  Operator obligations: none beyond accepting the license terms shipped
+                        with `media_kit_libs_*`.
+
+----------------------------------------------------------------------
+External services Fluxora integrates with (no code redistributed)
+----------------------------------------------------------------------
+
+TMDB — The Movie Database
+  Site: https://www.themoviedb.org
+  Required attribution: per TMDB's API terms, "This product uses the
+  TMDB API but is not endorsed or certified by TMDB." Operators who
+  surface TMDB-derived metadata (poster art, descriptions) in any
+  user-visible context should display the TMDB logo and the same
+  notice. Fluxora's library detail panels surface TMDB-derived metadata
+  to operators and any clients they pair.
+  Per-tier note: the operator supplies their own TMDB API key
+  (`user_settings.tmdb_api_key`). Fluxora does not proxy or pool keys.
+
+Polar.sh — payment processor for paid tiers
+  Site: https://polar.sh
+  Used by: the marketing site checkout flow + the server's webhook
+  handler (`apps/server/routers/webhook.py`). Fluxora does not store
+  card or address data; Polar (Stripe-backed) handles all PCI-scope.
+  See PRIVACY.md §3 for the data flow.
+
+Cloudflare — Tunnel + DNS + CDN
+  Site: https://www.cloudflare.com
+  Used by: the marketing site (Cloudflare Pages), the optional public
+  routing path for self-hosted servers (Cloudflare Tunnel), and the
+  Cloudflare-anycast DoH endpoint (`https://1.1.1.1/dns-query`) used
+  for the TMDB ISP-block workaround. See `docs/05_infrastructure/`.
+
+Sentry — error reporting (opt-in)
+  Site: https://sentry.io
+  Used by: optional error reporting on the server. Off by default.
+  Set `FLUXORA_SENTRY_DSN` to enable. See PRIVACY.md §3.5.
+
+----------------------------------------------------------------------
+Significant Flutter / pub.dev packages (non-exhaustive)
+----------------------------------------------------------------------
+
+Each is governed by its own license shipped at
+`<pub-cache>/<package>-<version>/LICENSE`. Listed here because they
+materially shape the product's surface area. License field reflects
+the version pinned in `pubspec.yaml` at the time of writing.
+
+  flutter / dart            BSD-3-Clause
+  flutter_bloc              MIT
+  go_router                 BSD-3-Clause (Flutter team)
+  get_it                    MIT
+  dio                       MIT
+  freezed / freezed_annotation   MIT
+  json_annotation / json_serializable   BSD-3-Clause
+  flutter_secure_storage    BSD-3-Clause
+  logger                    MIT
+  intl                      BSD-3-Clause
+  equatable                 MIT
+  file_picker               MIT
+  url_launcher              BSD-3-Clause
+  window_manager            MIT
+  qr_flutter                BSD-3-Clause
+  media_kit                 MIT (the Dart wrapper) — see mpv entry above
+                            for the underlying native binaries
+  flutter_webrtc            MIT
+  multicast_dns             BSD-3-Clause
+  audio_service             MIT
+  mobile_scanner            MIT
+  flutter_svg               MIT
+
+----------------------------------------------------------------------
+Significant Python / pip packages (server, non-exhaustive)
+----------------------------------------------------------------------
+
+  fastapi                   MIT
+  uvicorn                   BSD-3-Clause
+  starlette                 BSD-3-Clause
+  pydantic                  MIT
+  aiosqlite                 MIT
+  httpx                     BSD-3-Clause
+  zeroconf                  LGPL-2.1
+  psutil                    BSD-3-Clause
+  python-json-logger        BSD-2-Clause
+  slowapi                   MIT
+  cryptography              Apache-2.0 / BSD-3-Clause (dual)
+  sentry-sdk                MIT (optional dependency)
+
+The `zeroconf` LGPL is the most restrictive runtime dependency; we link
+it at runtime as a Python library, which the LGPL permits without
+imposing copyleft on Fluxora itself.
+
+----------------------------------------------------------------------
+Significant npm packages (web landing, non-exhaustive)
+----------------------------------------------------------------------
+
+  next                      MIT
+  react / react-dom         MIT
+  typescript                Apache-2.0
+  eslint                    MIT
+
+The marketing site is a static export; no npm runtime is shipped to
+end users.
+
+----------------------------------------------------------------------
+Brand, illustration, and font assets
+----------------------------------------------------------------------
+
+Inter font family
+  License: SIL Open Font License 1.1
+  Source: https://rsms.me/inter/
+
+JetBrains Mono font family
+  License: SIL Open Font License 1.1
+  Source: https://www.jetbrains.com/lp/mono/
+
+Fluxora brand marks (the F lettermark, the "Fluxora" wordmark, the
+gradient logos in `assets/brand/` and `packages/fluxora_core/assets/
+brand/`)
+  License: Reserved by Marshalx. No license is granted for any use
+           of these marks. Distinct from third-party assets above
+           which are governed by their own licenses. See LICENSE and
+           TERMS.md §10 for the brand policy.
+
+Animated SVG illustrations in
+`packages/fluxora_core/assets/illustrations/`
+  Created in-house. Proprietary to Marshalx — covered by the same
+  LICENSE + EULA as the surrounding software.
+
+----------------------------------------------------------------------
+Generating a fresh dependency manifest
+----------------------------------------------------------------------
+
+This file is hand-curated and will go stale as dependencies move.
+For a complete, current dependency list:
+
+  Flutter (mobile/desktop):  cd apps/desktop && flutter pub deps
+                             cd apps/mobile  && flutter pub deps
+                             cd packages/fluxora_core && flutter pub deps
+  Python (server):           cd apps/server && pip list --format json
+  npm (web_landing):         cd apps/web_landing && npm ls --all
+
+Each package's full license text lives next to it in the package cache
+(pub: `<pub-cache>/hosted/pub.dev/<pkg>-<ver>/LICENSE`; pip:
+`<site-packages>/<pkg>-<ver>.dist-info/LICENSE*`).
+
+----------------------------------------------------------------------
+Credits, inspirations, and special thanks
+----------------------------------------------------------------------
+
+Fluxora exists because other projects walked the road first. None of
+the projects below are affiliated with Fluxora; the credits are an
+acknowledgment that the design and engineering benefited materially
+from theirs.
+
+Plex (https://www.plex.tv)
+  The original "self-hosted media server" template — what a media
+  library + per-device clients + remote streaming should look like
+  from a UX standpoint. Fluxora's "Plex meets Syncthing" framing is
+  a deliberate reference.
+
+Jellyfin (https://jellyfin.org)
+  The open-source proof that a complete media server can be built
+  and maintained outside corporate ownership. Fluxora's metadata-
+  agent design (Phase-5+ "let users plug in MyAnimeList / TheTVDB
+  per library") is directly inspired by Jellyfin's plug-in agents.
+
+Syncthing (https://syncthing.net)
+  The "no cloud, peer-to-peer, mDNS-discoverable" philosophy. Fluxora
+  borrowed the idea that pairing should be a one-time human-mediated
+  trust event, not a perpetual account-and-password.
+
+Tailscale + Cloudflare Tunnel (https://tailscale.com,
+                               https://www.cloudflare.com/products/tunnel/)
+  Made it cheap and reliable to expose a home server to the internet
+  without port-forwarding, DDNS, or a static IP. Fluxora's "internet
+  streaming via Cloudflare Tunnel" path stands directly on this.
+
+The Movie Database (TMDB, https://www.themoviedb.org)
+  Free, community-edited movie + TV metadata, with an API permissive
+  enough that small projects like Fluxora can ship metadata + poster
+  art at zero cost. We are deeply grateful.
+
+FFmpeg (https://ffmpeg.org)
+  The Swiss Army knife of video pipelines. The single most important
+  open-source media tool of the last 25 years. Fluxora's stream-copy /
+  hardware-encode / HLS-segment / HDR-tonemap pipelines are all just
+  thin policy on top of what FFmpeg already does well.
+
+mpv (https://mpv.io)
+  The reference open-source video player. Fluxora's clients use mpv
+  via media_kit; the playback quality, codec coverage, and HDR support
+  are all mpv's, not ours.
+
+Polar (https://polar.sh)
+  A small payment platform built for indie devs that doesn't require
+  setting up an LLC or wrestling with Stripe Connect. Made the
+  paid-tier experiment possible at our scale.
+
+Flutter and the Dart team (https://flutter.dev)
+  Cross-platform UI that didn't suck. Without it, Fluxora would have
+  been three separate apps in three separate languages.
+
+The Flutter community packages used (see the dependency manifest
+above) — every one of them is free volunteer work that this project
+depends on.
+
+Special thanks to the early testers who hit the ISP-block / debugger-
+pause / hot-restart / Intel-iGPU-no-HEVC issues and reported them with
+specific reproduction steps. Those reports turned into commits, plan
+docs, and the gotchas catalog at
+docs/12_guidelines/03_gotchas.md.
+
+----------------------------------------------------------------------
+About the maintainer
+----------------------------------------------------------------------
+
+Fluxora is built and maintained by Marshalx (https://marshalx.dev),
+GitHub `@Marshal-GG`. One person, one project, no company behind it.
+If you find Fluxora useful, the best thanks is a star on the GitHub
+repo or a paid tier purchase if you can afford it — both directly
+fund the next milestone.

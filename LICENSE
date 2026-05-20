@@ -1,0 +1,22 @@
+Copyright (c) 2026 Marshalx (https://marshalx.dev)
+
+All rights reserved.
+
+This software and its source code are proprietary and confidential.
+No license is granted for use, copy, modification, distribution, or any
+other exploitation except as separately agreed in writing by the
+copyright holder. Possession of this source code does not grant any
+rights to it.
+
+The compiled Fluxora server software is distributed to end users under
+a separate End User License Agreement (EULA), available in this
+repository at EULA.md and rendered at https://fluxora.marshalx.dev/eula.
+
+The Fluxora client applications (mobile and desktop) are distributed
+free of charge under the same EULA. Installation and use of the
+clients does not grant any source-code rights.
+
+Third-party libraries shipped within the Fluxora binaries are governed
+by their own licenses; see NOTICE for attribution.
+
+For licensing inquiries, contact legal@fluxora.marshalx.dev.

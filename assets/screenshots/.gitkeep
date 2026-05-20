@@ -1,0 +1,19 @@
+# Placeholder so git tracks this directory even when empty.
+#
+# Drop actual showcase screenshots here as PNG / JPEG / WebP files; the
+# mirror-public.yml workflow copies the whole directory verbatim into
+# the public showcase repo and the README.public.md references them
+# for the marketing surface.
+#
+# Recommended captures (all from the V2-redesigned desktop CP + mobile):
+#   - desktop-dashboard.png        (Hero already references this on the landing site)
+#   - desktop-library.png
+#   - desktop-clients.png
+#   - desktop-transcoding.png
+#   - mobile-home.png
+#   - mobile-player.png
+#   - mobile-library.png
+#
+# Naming convention: kebab-case, surface-screen pattern. Keep file sizes
+# under ~500 KB each (use TinyPNG or similar) since they ship in the
+# public repo and visitors load them on the showcase README.

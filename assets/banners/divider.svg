@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Animated section divider for README.md.
+  Thin horizontal line with a violet→cyan highlight that drifts left to
+  right every 8 s, plus a centred pulsing dot. Reusable between any
+  README sections.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 1200 16"
+     preserveAspectRatio="none"
+     role="presentation"
+     aria-hidden="true">
+  <defs>
+    <linearGradient id="dGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#8B5CF6" stop-opacity="0"/>
+      <stop offset="40%"  stop-color="#A855F7" stop-opacity="0.85"/>
+      <stop offset="60%"  stop-color="#22D3EE" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#22D3EE" stop-opacity="0"/>
+      <animateTransform attributeName="gradientTransform"
+                        type="translate"
+                        from="-1.0 0" to="1.0 0"
+                        dur="8s" repeatCount="indefinite"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Faint base track -->
+  <line x1="0"    y1="8" x2="1200" y2="8" stroke="rgba(255,255,255,0.06)" stroke-width="1"/>
+
+  <!-- Animated highlight overlay -->
+  <line x1="0"    y1="8" x2="1200" y2="8" stroke="url(#dGrad)" stroke-width="2"/>
+
+  <!-- Centre pulse -->
+  <circle cx="600" cy="8" r="2.5" fill="#A855F7">
+    <animate attributeName="opacity" values="0.3;1;0.3" dur="3s" repeatCount="indefinite"/>
+    <animate attributeName="r"       values="2;3.5;2"   dur="3s" repeatCount="indefinite"/>
+  </circle>
+</svg>
